@@ -3,10 +3,12 @@ set dotenv-load := true
 # passes every argument through intact; `{{ARGS}}` would re-split and re-parse them.
 set positional-arguments := true
 
-# The `nodes` tool (github.com/ZurNetwork/nodes — the NODE.json normalizer and
+# The `nodes` tool (github.com/ZurNetwork/nodes — the node-tree normalizer and
 # lookup CLI), pinned to one release tag. Bump it HERE and nowhere else: the
-# NODE.json files and the tool's schema move in lockstep on this pin.
-NODES_VERSION := "v0.6.0"
+# node files (NODE.inf.json, with every ref in the root NODE.refs.json) and the
+# tool's schema move in lockstep on this pin. Exported so scripts/tools-check.sh
+# reads it.
+export NODES_VERSION := "v0.7.1"
 
 # The tool versions CI runs, so the local gate agrees with it. `just setup`
 # installs typos, cargo-deny and just at these; `just tools-check` warns when this
@@ -236,9 +238,10 @@ den-timing *ARGS:
     cargo test -p api --test not_found_timing {{ARGS}} -- --ignored --nocapture
 
 
-# --- The node tree (NODE.json) ---
+# --- The node tree (NODE.inf.json, NODE.refs.json) ---
 
-# The per-directory NODE.json chart, through the pinned `nodes` binary:
+# The per-directory node chart (one NODE.inf.json per directory; every ref lives
+# in the root NODE.refs.json), through the pinned `nodes` binary:
 # `just nodes tree` · `just nodes chain <path>` · `just nodes get <path> [field]`
 # · `just nodes refs <pageId>` · `just nodes find <term>` · `just nodes fmt [file…]`
 # · `just nodes set <path> <field> <json>` · add-ref / rm-ref / touch (`nodes --help`).
@@ -246,9 +249,9 @@ den-timing *ARGS:
 nodes *ARGS:
     nodes "$@"
 
-# Validate every NODE.json: the schema, path ↔ location, fs ↔ child nodes, and
-# every ref against the design pointer index (a SUPERSEDED entry warns). Part of
-# `just gate`; CI runs it as the `nodes` job.
+# Validate every NODE.inf.json and NODE.refs.json: the schema, path ↔ location,
+# fs ↔ child nodes, and every ref against the design pointer index (a SUPERSEDED
+# entry warns). Part of `just gate`; CI runs it as the `nodes` job.
 nodes-check:
     nodes check --ref-index docs/design-index.md
 
@@ -287,23 +290,23 @@ hooks-test:
     done
     exit "$status"
 
-# Fixture tests for the CI path classifier, the `changes` job, gate-light,
-# the dev-profile pins, pr-wait, tools-check, den-fill, the dev logs, the
-# private-papers check, the `jj push` gate's argument guard and workspace-init
-# (the design-index check's own tests run under `design-index-check-test`). CI
-# runs it in the `hooks` job, which has no jj: the jj fixtures skip themselves
-# there.
+# Fixture tests for the CI path classifier, the `changes` job, gate-light, the
+# dev-profile pins, pr-wait, tools-check, the nodes install check, the nodes fmt
+# hook, den-fill, the dev logs, the private-papers check, the `jj push` gate's
+# argument guard and workspace-init (the design-index check's own tests run
+# under `design-index-check-test`). CI runs it in the `hooks` job, which has no
+# jj: the jj fixtures skip themselves there.
 scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/jj-push.test.sh scripts/workspace-init.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/nodes-install.test.sh scripts/nodes-fmt-hook.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/jj-push.test.sh scripts/workspace-init.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done
     exit "$status"
 
-# Compare this machine's typos, cargo-deny, buf, just and rustc with CI's versions
+# Compare this machine's typos, cargo-deny, buf, just, nodes and rustc with CI's versions
 # (warns), and check every workflow pins its actions by SHA at the Justfile's
 # versions (fails). `--pins-only` skips the local half; CI runs that.
 tools-check *ARGS:
@@ -364,7 +367,7 @@ check:
 # browser-mode component tests, and the `buf` CLI at BUF_VERSION for the
 # contract lint (https://buf.build/docs/installation — a single Go binary).
 # Run it before a slice's first push for review and before handing it to QA;
-# restacks and fix rounds may use `just gate-light`.
+# base merges and fix rounds may use `just gate-light`.
 gate:
     just tools-check
     cargo fmt --all --check
@@ -417,7 +420,7 @@ engineer-tools-test:
     done
     exit "$status"
 
-# The light gate for restacks and fix rounds: fmt, clippy, typos and the
+# The light gate for base merges and fix rounds: fmt, clippy, typos and the
 # design-index check, plus the tests of the crates the change touches and the
 # web checks when frontend/ or contract/ changed. CI runs the full suite on
 # every push; see scripts/gate-light.sh for how the change is read.

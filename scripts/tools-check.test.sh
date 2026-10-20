@@ -36,7 +36,7 @@ EOF
 expect_exit() {
     set +e
     TYPOS_VERSION=1.51.1 CARGO_DENY_VERSION=0.20.2 BUF_VERSION=1.72.0 JUST_VERSION=1.49.0 \
-        sh "$work/repo/scripts/tools-check.sh" --pins-only >"$work/out" 2>&1
+        NODES_VERSION=v0.7.1 sh "$work/repo/scripts/tools-check.sh" --pins-only >"$work/out" 2>&1
     got=$?
     set -e
     if [ "$got" -eq "$2" ]; then
@@ -97,6 +97,41 @@ expect_exit "a just pin under env: instead of with: fails" 1
 new_tree
 replace_in_ci '/^          just-version: / { print "          just-version: \"1.49.0\" # pinned"; next } { print }'
 expect_exit "a double-quoted just pin passes" 0
+
+# expect_nodes_line <name> <nodes --version output> <pattern> — runs the local half
+# with a `nodes` stub printing that output first on PATH; the exit code stays 0
+# (local drift only warns) and the nodes line matches <pattern>. Every other
+# tool the local half calls is stubbed too, so no real one runs (a real rustc or
+# cargo through rustup could download the fixture's toolchain); their lines may
+# warn: only the nodes line is read.
+expect_nodes_line() {
+    new_tree
+    printf 'channel = "1.90.0"\n' >"$work/repo/rust-toolchain.toml"
+    rm -rf "$work/bin"
+    mkdir -p "$work/bin"
+    for tool in typos cargo buf just rustc; do
+        printf '#!/bin/sh\necho "%s 0.0.1"\n' "$tool" >"$work/bin/$tool"
+        chmod +x "$work/bin/$tool"
+    done
+    printf '#!/bin/sh\necho "%s"\n' "$2" >"$work/bin/nodes"
+    chmod +x "$work/bin/nodes"
+    set +e
+    PATH="$work/bin:$PATH" TYPOS_VERSION=1.51.1 CARGO_DENY_VERSION=0.20.2 BUF_VERSION=1.72.0 JUST_VERSION=1.49.0 \
+        NODES_VERSION=v0.7.1 sh "$work/repo/scripts/tools-check.sh" >"$work/out" 2>&1
+    got=$?
+    set -e
+    line="$(grep -F 'nodes' "$work/out" | grep -F 'tools-check:' | head -n 1 || true)"
+    if [ "$got" -eq 0 ] && printf '%s\n' "$line" | grep -qE "$3"; then
+        echo "ok   $1"
+    else
+        echo "FAIL $1: exit $got, nodes line '$line'"
+        awk '{ print "  " $0 }' "$work/out"
+        failures=$((failures + 1))
+    fi
+}
+
+expect_nodes_line "a nodes older than the pin warns" "nodes 0.6.0" '^tools-check: warning: nodes is 0\.6\.0 here, CI uses 0\.7\.1 '
+expect_nodes_line "a nodes at the pin matches" "nodes 0.7.1" '^tools-check: nodes 0\.7\.1 matches CI$'
 
 if [ "$failures" -ne 0 ]; then
     echo "$failures failure(s)"

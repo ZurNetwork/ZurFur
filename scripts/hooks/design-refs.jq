@@ -3,7 +3,7 @@
 # touched file's basename) and $index (design-index.md rows, [{id,dir,
 # status,title}]). Input: the chain array (root..leaf). Every free-text
 # field (title, governs, a node's `short`) is untrusted — someone else's
-# NODE.json — so it is neutralized (control chars stripped, newlines
+# node file — so it is neutralized (control chars stripped, newlines
 # collapsed, '<'/'>' removed) before it is truncated and formatted.
 
 def neutralize:

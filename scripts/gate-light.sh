@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The light local gate for restacks and fix rounds: fmt, clippy, typos and the
+# The light local gate for base merges and fix rounds: fmt, clippy, typos and the
 # design-index check always; the tests of the crates the change touches; the
 # web checks when the change touches the frontend or the contract. CI re-runs
 # the full suite on every push. Run via `just gate-light`.
