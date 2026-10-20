@@ -1,0 +1,72 @@
+{
+  "path": "frontend/web/src/routes/(session)",
+  "charted": "2026-09-12",
+  "short": "The signed-in area behind the session gate",
+  "is": "The signed-in area — a group layout that bounces anonymous visitors to `/login` and wraps every page in the Explorer frame (the My Den tree beside the pane), containing My Den (`den/`), the account screens and the logout action; its errors render inside the frame.",
+  "type": "code",
+  "tags": [
+    "category:ui",
+    "category:source"
+  ],
+  "conventions": [
+    "The sign-in gate is the server `handle` hook (`lib/server/session-gate.ts`): no `(session)` load, data request (whatever loads it asks to skip) or form action runs without a session — except the sign-out route's default action (a POST that isn't a data request and names no other action), which reads nothing and must clear the browser's session even when the backend is down. The group layout's redirect only narrows the type (a backstop should anything else on the sign-out route ever render). A backend that doesn't answer gets the gate's own \"isn't answering\" page (503), never the sign-in page. The backend still checks the session on every call.",
+    "New signed-in routes JOIN this group rather than re-implementing the check.",
+    "Detail pages derive from the caller's own listing — there is no fetch-by-id rpc in v1; destructive actions require typed confirmation (WCAG 3.3.4).",
+    "Each page's load returns `trail` (App.PageData) for the frame's path bar; the frame itself reads nothing from the backend.",
+    "The sidebar, the drawer and every way into My Den show on every signed-in page, on every stack; there is no switch for a run without a Den."
+  ],
+  "entry_points": [
+    "+layout.server.ts (the gate)",
+    "accounts/+page.server.ts"
+  ],
+  "fs": [
+    {
+      "name": "+error.svelte",
+      "role": "errors inside the frame, by status and route alone (ErrorView) — a failed sign-out says so; the error's message is never read",
+      "node": false
+    },
+    {
+      "name": "+layout.server.ts",
+      "role": "hands the frame the session (the hook already refused anyone without one; the redirect here only narrows the type)",
+      "node": false
+    },
+    {
+      "name": "+layout.svelte",
+      "role": "the Explorer frame (AppShell) around every signed-in page: the path from the page's `trail`; the My Den tree and the View options in the sidebar, fed by the frame's tree memory (never stored; started over on a flag flip, and on a form action's success, which the page that ran it reports, keeping `~` open); after each navigation the drawer closes and any open folder the tree lacks is fetched, at most four at a time through the frame's own queue (tree-loader's FetchQueue)",
+      "node": false
+    },
+    {
+      "name": "accounts/",
+      "role": "listing + create action; [id]/ detail with typed-handle delete confirmation; the create superform applies an error result (onError: 'apply'), so the gate's 503 answer to its enhanced post shows the frame's error view (gate-answer.svelte.spec.ts); the delete form is enhanced (kit's enhance, applyAction in place), so a failed delete shows its problem without the page's reads running again and a completed one starts the tree over (delete-enhance.svelte.spec.ts)",
+      "node": false
+    },
+    {
+      "name": "den/",
+      "role": "My Den: `[...path]` serves /den and every Den path below it, on every stack; request.spec.ts walks a signed-in and an anonymous `/den` through the real handle hook over the live port, and a page whose sixteen folder reads hang ending at the 15 s request deadline, counted from the request's start (the gate's /me included), through kit's real event.fetch. +page.server.ts is the only code that reads the Den (through lib/server/den.ts); +page.svelte is the right pane (DenPane) with in-place More (focus to the first new row), a one-place busy delay, heading focus, a generic title and a live region naming the opened item",
+      "node": false
+    },
+    {
+      "name": "error.svelte.spec.ts",
+      "role": "proves the in-frame error page never shows the error's message, that a failed sign-out says so, that a 503 says Zurfur isn't answering, and that its way back is My Den ($app/state mocked)",
+      "node": false
+    },
+    {
+      "name": "layout.server.spec.ts",
+      "role": "spec for the gate — anonymous redirects, signed-in passes the session through",
+      "node": false
+    },
+    {
+      "name": "layout.svelte.spec.ts",
+      "role": "the frame around a signed-in page with real styles ($app/state and afterNavigate mocked): banner + main + path, Accounts current, Sign out in the top bar, skip link first, drawer closes on navigation, one Accounts and a visible Sign out in the drawer, no sideways scroll at 320 px; the tree memory built for the session's DID and told the current DID on each navigation; missing folders fetched after a navigation to a page with no Den data; sixteen folders above a deep item fetched at most four at a time",
+      "node": false
+    },
+    {
+      "name": "logout/",
+      "role": "an action, not a page — a stray GET goes home; the action always clears zurfur.sid, mirrors the backend's clears when it confirms, and otherwise lands on /login?signout=unconfirmed",
+      "node": false
+    }
+  ],
+  "notes": [
+    "See also: internal ruling \"F1\" — no `GetAccount` rpc in v1, account detail derives from the caller's own account listing (cited in `accounts/[id]/+page.server.ts`); not yet a recorded DD, ask the Engineer if this should become one."
+  ]
+}

@@ -1,0 +1,112 @@
+{
+  "path": "scripts",
+  "charted": "2026-10-19",
+  "short": "Shell backing just recipes and hooks",
+  "is": "Shell scripts backing the `just` dev-loop recipes and jj/session hooks — not cargo tests, but scripted proofs and glue for the manual dev loop.",
+  "type": "code",
+  "tags": [
+    "category:tooling"
+  ],
+  "conventions": [
+    "`ZURFUR_*` env convention (env wins over `.env.example` defaults); each smoke script proves the dev loop itself at the shell/`just` level, distinct from the automated per-test-throwaway integration harness."
+  ],
+  "entry_points": [
+    "../Justfile (the pds-provision, pds-smoke, web-smoke, den-fill, workspace-init, nodes-install recipes call these)",
+    "nodes-fmt-hook.sh (run by .claude/settings.json on every Write|Edit)"
+  ],
+  "fs": [
+    {
+      "name": "ci-changes.sh",
+      "role": "the body of CI's changes job: verifies a PR's merge parents or a merge group's head and base, diffs, classifies with the base's ci-paths.sh (a merge group always runs everything); fails closed",
+      "node": false
+    },
+    {
+      "name": "ci-paths.sh",
+      "role": "classifies changed paths as docs-only or code for CI's changes job and just gate-light; fails closed",
+      "node": false
+    },
+    {
+      "name": "compose-logs.sh",
+      "role": "follows each compose service (db, plc, pds, caddy) from just before `just up` into logs/compose/<service>/: one setsid follower per service with a pidfile, the old one stopped first (only if its pid and start time still match), stopped by `just down` (tested by compose-logs.test.sh against a stub docker)",
+      "node": false
+    },
+    {
+      "name": "den-fill.sh",
+      "role": "fills your Den on just dev with two commissions, one archived, as you, through the commission routes (one read-only SELECT for the skeleton tab id); the session cookie reaches curl only on stdin (just den-fill; tested by den-fill.test.sh and api/tests/den_postgres.rs)",
+      "node": false
+    },
+    {
+      "name": "dev-log.sh",
+      "role": "the wrapper every dev recipe runs through: the terminal keeps its bytes, logs/<name>/<UTC stamp>.log gets them as plain text (a pipe through tee and a SIGINT-proof stripper, never script(1)), logs/latest/<name>.log links the newest, 10 kept, 0600 (tested by dev-log.test.sh)",
+      "node": false
+    },
+    {
+      "name": "gate-light.sh",
+      "role": "the light local gate for restacks and fix rounds (just gate-light)",
+      "node": false
+    },
+    {
+      "name": "hooks/",
+      "role": "the SessionStart/PreToolUse hook scripts wired in .claude/settings.json, and their tests",
+      "node": true
+    },
+    {
+      "name": "jj-push.sh",
+      "role": "pre-push gate for jj — fmt + lint before code leaves the machine",
+      "node": false
+    },
+    {
+      "name": "log-files.sh",
+      "role": "sourced by dev-log.sh, compose-logs.sh and logs.sh: the logs/ root (ZURFUR_LOG_DIR overrides), marked with .zurfur-logs only when missing or empty (a populated unmarked root is refused and left untouched), a fresh stamped file per run, the latest link (mv -fT) and the keep-10 retention",
+      "node": false
+    },
+    {
+      "name": "logs.sh",
+      "role": "behind `just logs-tail [name]` (tail -F the latest files; an unknown name lists the names) and `just logs-clean` (stops the followers, removes logs/, only a root carrying the .zurfur-logs marker) (tested by logs.test.sh)",
+      "node": false
+    },
+    {
+      "name": "nodes-fmt-hook.sh",
+      "role": "PostToolUse hook — nodes fmt on any NODE.json a model writes; fails soft without the binary",
+      "node": false
+    },
+    {
+      "name": "nodes-install.sh",
+      "role": "download the pinned nodes release binary (checksum-verified) into ~/.cargo/bin; cargo-install fallback",
+      "node": false
+    },
+    {
+      "name": "pds-provision.sh",
+      "role": "create/sign into the fixture test account on the local dev PDS, print session JSON",
+      "node": false
+    },
+    {
+      "name": "pds-smoke-test.sh",
+      "role": "shell-level scripted proof the local PDS+PLC dev loop boots and is repeatable",
+      "node": false
+    },
+    {
+      "name": "pr-wait.sh",
+      "role": "waits once for a PR's CI and Copilot review, then prints a short verdict",
+      "node": false
+    },
+    {
+      "name": "tools-check.sh",
+      "role": "local tool versions vs CI's pins (warns) and SHA-pinned workflow actions (fails); just tools-check",
+      "node": false
+    },
+    {
+      "name": "web-smoke.sh",
+      "role": "shell-level scripted proof the one-origin Caddy routing split works",
+      "node": false
+    },
+    {
+      "name": "workspace-init.sh",
+      "role": "gives a secondary jj workspace (or a git worktree) its own dev-loop ports, DB and compose project through a managed .env block; refuses the primary checkout (just workspace-init; tested by workspace-init.test.sh)",
+      "node": false
+    }
+  ],
+  "notes": [
+    "jj-push.sh (the `jj push` alias) runs as a hook, not just a recipe; the Claude Code hooks live in hooks/."
+  ]
+}

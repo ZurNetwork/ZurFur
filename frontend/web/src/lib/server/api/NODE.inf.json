@@ -1,0 +1,69 @@
+{
+  "path": "frontend/web/src/lib/server/api",
+  "charted": "2026-09-12",
+  "short": "The ZurfurApi port, errors, generated messages",
+  "is": "The backend boundary: one `ZurfurApi` service (a live HTTP Layer, a mock in-memory Layer for `yarn dev`, and an in-memory test Layer), a tagged error union, the Den read's port shape, and the protobuf-es messages generated from `contract/`.",
+  "type": "code",
+  "tags": [
+    "category:source",
+    "category:generated"
+  ],
+  "conventions": [
+    "Decode only through `decodeContract` / the generated schemas — hand-rolled `fromJson` and hand-written narrowing are banned.",
+    "Generated types stop at this directory.",
+    "Failures are values in the tagged union; the RFC 9457 Problem rides inside the tags that carry one.",
+    "`zurfur-api-mock.ts` implements the FULL `ZurfurApiShape`, not a `Partial` — it fails to compile when the shape grows, so mock mode can't silently drift from the real port."
+  ],
+  "entry_points": [
+    "zurfur-api.ts (the port and its live Layer)",
+    "errors.ts"
+  ],
+  "fs": [
+    {
+      "name": "*.spec.ts",
+      "role": "port specs (zurfur-api-limits.spec.ts: each call's own time limit on fake timers, the body bounded too, no timer left behind, an interrupted call aborted; the live Den reads' paths, failures and route-template-only errors among them) + den-wire.spec.ts (the tolerant reader's every Den fallback, through the live port and the den program) + two infrastructure pins (tolerant-reader decode option; undici redirect:'manual' against a live local server) + the mock Layer's own spec (mock mode only in a dev build, the live API otherwise; the boot guard's misconfiguration cases)",
+      "node": false
+    },
+    {
+      "name": "den-mock.ts",
+      "role": "the mock Den world: alice's Den per the approved fixture tree (accounts from the mock store, Ember, Kael-sona, \"Untitled\", posts) plus HAND-MADE extras (a card, an archived commission, a deactivated Account, a paged folder, a very long and a right-to-left name); 25-entry pages, `p1.<offset>` tokens",
+      "node": false
+    },
+    {
+      "name": "den-read.ts",
+      "role": "the Den reads' port shape (DenQuery, DenRead, DenReadNode…): the Den contract as plain data with raw vocabularies; the mock and the live decode both produce it",
+      "node": false
+    },
+    {
+      "name": "den-wire.ts",
+      "role": "the live Den decode: generated Den answers mapped to DenRead, failing closed (anything but open access is a card, unknown or absent content is none, empty soft-delete and page token are absent, an answer with no node is undefined); DEN_ROUTES, the route templates Den failures name",
+      "node": false
+    },
+    {
+      "name": "errors.ts",
+      "role": "the tagged failure union (NotAuthenticated, ApiProblem, ContractViolation, NetworkFailure, SignoutFailed); NetworkFailure carries only its reason (unreachable, timeout, aborted), never the fetch's rejection",
+      "node": false
+    },
+    {
+      "name": "generated/",
+      "role": "protobuf-es output from contract/ — messages only, no clients; prettier-ignored",
+      "node": false
+    },
+    {
+      "name": "zurfur-api-mock.ts",
+      "role": "the mock ZurfurApi Layer — full in-memory stand-in for ZurfurApiLive so `yarn dev` renders a signed-in app with no backend; the one place mock-mode-enabled is read",
+      "node": false
+    },
+    {
+      "name": "zurfur-api.ts",
+      "role": "the port: every backend call as one service, each through backendFetch, which bounds the whole call (body read included) by its time limit (time-limits.ts), settling by its own timer even if the abort never reaches the fetch (bounded-fetch.ts), and stops the fetch when the call is interrupted; a call that runs out fails NetworkFailure timeout (Den reads denRoot/denNode call GET /den and /den/{path}, decode through den-wire.ts, and name only the route template in any failure; a path the builder refuses is the one not-found with no fetch), decodeContract (tolerant reader), RequestFetch, ZurfurApiLive + zurfurApiTest; account delete builds its path through path-builder.ts",
+      "node": false
+    }
+  ],
+  "notes": [
+    "zurfur-api-mock.ts — why one shared flag reader: `mockModeRequested`/`mockModeEnabled`/`mockModeMisconfigured` are read in exactly this one module so `runtime.ts`'s seam branch, the `/mock/signin` route's fail-closed 404, and `hooks.server.ts`'s boot-time prod guard all agree on the same flag the same way — no second call site can drift from it. State lives in one shared `MockStore` (`sharedStore`) seeded signed-in with a fixture visitor and one owner membership; the dev process runs on a single module-scope instance so a request's Layer and the `/mock/signin` route see the same world, and it resets harmlessly on server restart or HMR (never load-bearing for anything real). A test builds its own store with `createMockStore` instead of touching the shared one. Loopback assumption: mock mode is safe only because `vite dev` binds `127.0.0.1` by default — `just dev-mock` must never be paired with `--host`.",
+    "See also: `contract/VERSIONING.md` §6 (tolerant reader — why `decodeContract` exists).",
+    "See also: `contract/zurfur/api/v1/` (the source the `generated/` tree comes from).",
+    "See also: memory `feedback_make_unsoundness_unreachable` (one shared enforced path, cited by `zurfur-api-mock.ts`)."
+  ]
+}
