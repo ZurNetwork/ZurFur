@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/identity/src",
-  "charted": "2026-10-17",
+  "charted": "2026-10-20",
   "short": "Identity elements and ports",
   "is": "Two public modules: the identity nouns (elements) and the seams that store and resolve them (ports).",
   "type": "code",
@@ -37,7 +37,7 @@
     },
     {
       "name": "ports/",
-      "role": "trait seams: account, user, profile, identity (DidMinter, DidOperations, KeyStore, PlcOperationLog), identity_resolver (IdentityResolver — handle↔DID lookups of actors Zurfur does not own), character, actor_identity, authenticator, public_records; errors.rs (HandleTaken, DidBelongsToAnotherActor, PublicRecordsError, AccountMismatch, BrowserMismatch, ResolveError)",
+      "role": "trait seams: account, user, profile, identity (DidMinter, DidOperations, KeyStore, PlcOperationLog), identity_resolver (IdentityResolver — handle↔DID lookups of actors Zurfur does not own), character, bug_report (BugReportStore: list_since; BugReportWrites: lock_reporter_and_count_since — the rate limit's count, reporter locked until the unit ends — and file), actor_identity, authenticator, public_records; errors.rs (HandleTaken, DidBelongsToAnotherActor, PublicRecordsError, AccountMismatch, BrowserMismatch, ResolveError)",
       "node": false
     }
   ],

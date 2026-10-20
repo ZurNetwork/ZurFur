@@ -21,7 +21,7 @@
 # vite dev server (`yarn dev`) run on the HOST, not in Docker, so there is
 # nothing for a script to `docker compose up`. Bring the stack up first
 # (`just dev`, or the three legs by hand), then run `just web-smoke`. The origin
-# is read from ZURFUR_PUBLIC_URL, so it targets whichever worktree you run it in.
+# is read from ZURFUR_PUBLIC_URL, so it targets whichever workspace you run it in.
 set -euo pipefail
 
 origin="${ZURFUR_PUBLIC_URL:-http://127.0.0.1:8080}"

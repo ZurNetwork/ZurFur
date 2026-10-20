@@ -17,7 +17,7 @@ log_level = "info,api=debug,application=debug,atta=debug,composition=debug,domai
 
 # Local reference-PDS endpoint (ZMVP-102; docker-compose.yml `pds` service).
 # Coherent with .env.example's ZURFUR_PDS_ENDPOINT default — env still wins if
-# a worktree overrides the port. Not read by any Config field yet: this
+# a workspace overrides the port. Not read by any Config field yet: this
 # establishes the key name/default ahead of its first consumer, ZMVP-105
 # (adapter-atproto's write-path), same as this file otherwise carries no PLC
 # keys today (those are Rust-side serde defaults, not TOML).

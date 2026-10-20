@@ -3,6 +3,7 @@ use std::future::Future;
 use async_trait::async_trait;
 
 use super::AccountRepo;
+use super::BugReportWrites;
 use super::UserWrites;
 use super::actor_identity::ActorIdentityWrites;
 use super::changelog::ChangelogWrites;
@@ -55,6 +56,9 @@ pub trait UnitOfWork: Send {
     fn columns(&mut self) -> Box<dyn ColumnWrites + '_>;
 
     fn characters(&mut self) -> Box<dyn CharacterWrites + '_>;
+
+    /// The bug-report write surface over this transaction: filing a report.
+    fn bug_reports(&mut self) -> Box<dyn BugReportWrites + '_>;
 
     /// Commit the unit, consuming the handle; every write lands atomically.
     /// Dropping the handle instead rolls the whole unit back.

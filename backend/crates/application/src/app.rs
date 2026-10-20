@@ -5,13 +5,14 @@
 use std::sync::Arc;
 
 use domain::ports::{
-    AccountStore, ChangelogStore, ColumnStore, CommissionStore, Database, DidMinter, FileStore,
-    IdentityResolver, ProfileCache, ProfileSource, UserStore, WorkflowStore,
+    AccountStore, BugReportStore, ChangelogStore, ColumnStore, CommissionStore, Database,
+    DidMinter, FileStore, IdentityResolver, ProfileCache, ProfileSource, UserStore, WorkflowStore,
     character::CharacterStore,
 };
 
 use crate::{
     account::Accounts,
+    bug_report::BugReports,
     commission::Commissions,
     den::Den,
     user::{ProfileLookups, Users},
@@ -37,6 +38,7 @@ pub struct Ports {
     pub workflows: Arc<dyn WorkflowStore>,
     pub columns: Arc<dyn ColumnStore>,
     pub characters: Arc<dyn CharacterStore>,
+    pub bug_reports: Arc<dyn BugReportStore>,
 }
 
 /// The orchestrator, built once at composition: a namespace over [`Ports`]
@@ -75,6 +77,11 @@ impl App {
     /// Den reads, with the bag's ports already bound.
     pub fn den(&self) -> Den<'_> {
         Den::from(self)
+    }
+
+    /// Bug-report use cases, with the bag's ports already bound.
+    pub fn bug_reports(&self) -> BugReports<'_> {
+        BugReports::from(self)
     }
 }
 

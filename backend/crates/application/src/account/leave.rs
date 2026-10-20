@@ -39,6 +39,8 @@ impl<'a> Accounts<'a> {
         };
 
         let uow = uow.open().await?;
+        // The store refuses the Owner, so a transfer that lands after the check above
+        // fails this unit instead of removing the new Owner.
         uow.accounts().leave(&leaving_user_id, &account_id).await?;
         Ok(Output)
     }

@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/test-support",
-  "charted": "2026-09-13",
+  "charted": "2026-10-17",
   "short": "Shared test rig: throwaway PDS, stub PLC, Postgres harness, the PostgreSQL app setup",
   "is": "The shared test rig: a hermetic throwaway PDS with an in-process stub PLC directory, a one-container/template-clone Postgres harness, the app served on PostgreSQL behind an in-process sign-in (`pg_app`) with the den world seeded on it (`pg_app::den_world`), and the cross-adapter PublicRecords conformance suite.",
   "type": "code",
@@ -70,6 +70,16 @@
       "node": false
     },
     {
+      "name": "src/membership.rs",
+      "role": "seat_member — seats a member through the port: issue, create and accept an invitation, always listed",
+      "node": false
+    },
+    {
+      "name": "src/membership/tests.rs",
+      "role": "pins seat_member's seat as listed: the member's public profile shows the Account",
+      "node": false
+    },
+    {
       "name": "src/pds.rs",
       "role": "ThrowawayPds::boot — container lifecycle, teardown on drop",
       "node": false
@@ -126,12 +136,12 @@
     },
     {
       "name": "src/runtime.rs",
-      "role": "shared test runtime helper",
+      "role": "the in-memory Runtime every fast suite boots: mem(did) -> MemRuntimeBuilder (profile, public_url, max_upload_bytes, build_id setters) -> MemRuntime { runtime, backend }",
       "node": false
     },
     {
       "name": "src/store_doubles.rs",
-      "role": "scripted wrappers over AccountStore and UserStore: real answers until a shared script makes a listing list a membership the store wouldn't, a read fail, or a user row read as gone; tests seed first, then script",
+      "role": "scripted wrappers over AccountStore and UserStore: real answers until a shared script makes a listing list a membership the store wouldn't, a read fail, a role read answer a stale role (as a read taken before a concurrent change would), or a user row read as gone; tests seed first, then script",
       "node": false
     },
     {

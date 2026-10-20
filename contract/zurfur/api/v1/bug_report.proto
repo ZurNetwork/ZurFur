@@ -1,0 +1,80 @@
+// Bug reports: a signed-in visitor files a bug report from the web app.
+//
+// Only messages are generated; the service block declares routes only. The
+// reporter comes from the session alone: no field names a reporter. Every
+// text field refuses control characters and the explicit bidirectional
+// formatting characters; the description alone may hold newlines and tabs.
+// Every optional text is trimmed, and an empty one is refused rather than
+// read as absent. Every item but the description is absent when the
+// reporter doesn't send it. Timestamps are `google.protobuf.Timestamp`:
+// RFC 3339 on the wire, Z-normalized (VERSIONING.md §7.3).
+
+syntax = "proto3";
+
+package zurfur.api.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+// `POST /api/v1/bug-reports`: what went wrong, and the page and browser it
+// went wrong in.
+message FileBugReportRequest {
+  // The size of the browser window, in CSS pixels.
+  message Window {
+    // Width, 1 to 100000.
+    int32 width = 1;
+    // Height, 1 to 100000.
+    int32 height = 2;
+  }
+
+  // The display preferences the browser reported.
+  message Display {
+    // `prefers-reduced-motion: reduce` matched.
+    bool reduced_motion = 1;
+    // `prefers-contrast: more` matched.
+    bool more_contrast = 2;
+    // `forced-colors: active` matched.
+    bool forced_colors = 3;
+  }
+
+  // What went wrong, in the reporter's words. Trimmed, non-empty, at most
+  // 4000 characters (code points); newlines and tabs are kept.
+  string description = 1;
+  // The app path the report was filed from: starts with `/` but not `//`, at
+  // most 2048 bytes, with no query (`?`), no fragment (`#`) and no backslash.
+  optional string page = 2;
+  // The kind of page the report was filed from, at most 64 bytes.
+  optional string page_kind = 3;
+  // The web app's build, at most 64 bytes.
+  optional string web_version = 4;
+  // The browser's user agent, at most 512 bytes.
+  optional string browser = 5;
+  // The browser window's size.
+  Window window = 6;
+  // The browser's display preferences.
+  Display display = 7;
+  // The HTTP status of the error page the report was filed from, 400 to 599;
+  // absent when the report wasn't filed from an error page.
+  optional int32 error_status = 8;
+}
+
+// `POST /api/v1/bug-reports` succeeds with the report's receipt.
+message FileBugReportResponse {
+  // A short reference to quote about this report: the last 8 characters of
+  // its id.
+  string reference = 1;
+  // When the server received the report.
+  google.protobuf.Timestamp received_at = 2;
+}
+
+// The bug-report service. Its route requires a session (401 otherwise) and
+// answers Problems per problem.proto.
+service BugReportService {
+  // File a bug report as the signed-in visitor; answers with the receipt.
+  rpc FileBugReport(FileBugReportRequest) returns (FileBugReportResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/bug-reports"
+      body: "*"
+    };
+  }
+}

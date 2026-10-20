@@ -14,6 +14,7 @@ use domain::elements::{
     handle::Handle,
     profile::Profile,
     role::Role,
+    user::UserId,
     user_account::UserAccount,
 };
 use serde_json::{Value, json};
@@ -63,15 +64,13 @@ async fn owner_transfers_ownership_and_the_roles_swap() {
         .await
         .expect("find owner")
         .expect("sign-in provisioned owner");
-    backend
-        .grant_role(&UserAccount {
-            user_id: heir.id.clone(),
-            account_id: domain::elements::account::AccountId::from(Did::from(account_id.clone())),
-            role: Role::Member,
-            alias: None,
-        })
-        .await
-        .expect("seat the heir as a member");
+    let heir_seat = UserAccount {
+        user_id: heir.id.clone(),
+        account_id: domain::elements::account::AccountId::from(Did::from(account_id.clone())),
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&heir_seat);
 
     let res = client
         .post(format!("{base}/accounts/{account_id}/transfer"))
@@ -142,15 +141,13 @@ async fn only_the_owner_may_transfer() {
         .create(&account, &owner_membership)
         .await
         .expect("found host account");
-    backend
-        .grant_role(&UserAccount {
-            user_id: me.id,
-            account_id: account.id.clone(),
-            role: Role::Member,
-            alias: None,
-        })
-        .await
-        .expect("seat me as a member");
+    let my_seat = UserAccount {
+        user_id: me.id,
+        account_id: account.id.clone(),
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&my_seat);
 
     let res = client
         .post(format!("{base}/accounts/{}/transfer", account.id))
@@ -192,6 +189,72 @@ async fn cannot_transfer_to_a_non_member() {
         .await
         .expect("POST /transfer");
     common::assert_problem(res, 404, "member_not_found").await;
+}
+
+// Seat-then-transfer is closed: a grant never seats a stranger, so it can't be the
+// first half of a hand-over. The Owner's grant to a stranger is the missing membership,
+// and the transfer that would follow is refused the same way. The Owner stays Owner;
+// the stranger holds nothing.
+#[tokio::test]
+async fn a_grant_then_transfer_never_hands_a_stranger_ownership() {
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:guardowner".to_string())).profile(
+            Profile::new(
+                Did::from("did:plc:guardowner".to_string()),
+                "owner.bsky.social",
+            ),
+        ),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
+    let client = client();
+    sign_in(&client, &base, "owner.bsky.social").await;
+
+    let account_id = found_account(&client, &base, "Guarded Studio", "guarded.zurfur.app").await;
+    let account = domain::elements::account::AccountId::from(Did::from(account_id.clone()));
+
+    // The stranger is a real User, but no member of this account.
+    let stranger = backend
+        .provision(&Did::from("did:plc:would-be-heir".to_string()))
+        .await
+        .expect("provision the stranger");
+
+    let grant = json!({ "user": "did:plc:would-be-heir", "role": "member" });
+    let res = client
+        .post(format!("{base}/accounts/{account_id}/members"))
+        .json(&grant)
+        .send()
+        .await
+        .expect("POST /members");
+    common::assert_problem(res, 404, "member_not_found").await;
+
+    let transfer = json!({ "new_owner": "did:plc:would-be-heir" });
+    let res = client
+        .post(format!("{base}/accounts/{account_id}/transfer"))
+        .json(&transfer)
+        .send()
+        .await
+        .expect("POST /transfer");
+    common::assert_problem(res, 404, "member_not_found").await;
+
+    let owner = UserId::from(Did::from("did:plc:guardowner".to_string()));
+    assert_eq!(
+        backend
+            .role_of(&owner, &account)
+            .await
+            .expect("role_of owner"),
+        Some(Role::Owner),
+        "the Owner is unchanged",
+    );
+    assert_eq!(
+        backend
+            .role_of(&stranger.id, &account)
+            .await
+            .expect("role_of stranger"),
+        None,
+        "the stranger holds no role",
+    );
 }
 
 #[tokio::test]
@@ -298,15 +361,13 @@ async fn after_transfer_the_former_owner_can_leave() {
         .provision(&Did::from("did:plc:successor".to_string()))
         .await
         .expect("provision successor");
-    backend
-        .grant_role(&UserAccount {
-            user_id: heir.id,
-            account_id: account,
-            role: Role::Member,
-            alias: None,
-        })
-        .await
-        .expect("seat the successor");
+    let successor_seat = UserAccount {
+        user_id: heir.id,
+        account_id: account,
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&successor_seat);
 
     // Before transfer, the Owner cannot leave.
     let res = client

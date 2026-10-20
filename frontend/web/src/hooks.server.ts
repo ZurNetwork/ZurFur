@@ -3,6 +3,8 @@ import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
 import { rewriteApiRequest } from '$lib/server/api-proxy';
 import { mockModeMisconfigured } from '$lib/server/api/zurfur-api-mock';
+import { refuseCrossSiteWrites } from '$lib/server/cross-site-writes';
+import { firstParty } from '$lib/server/first-party-origin';
 import { consoleSink, logRequests, logUpstreamCalls } from '$lib/server/dev-log';
 import { logUnexpectedError } from '$lib/server/error-log';
 import { refuseFraming } from '$lib/server/frame-headers';
@@ -51,7 +53,7 @@ function runtimeEnv(): Readonly<Record<string, string | undefined>> {
  * point same-origin `/api/*` at the internal axum origin (prefix stripped) and
  * forward the caller's session cookie — see {@link rewriteApiRequest}. The
  * upstream is read via `$env/dynamic/private` so the build never bakes it in and
- * a worktree's own port is honored at runtime. In dev, each call is logged by
+ * a workspace's own port is honored at runtime. In dev, each call is logged by
  * its page's route template, method, status and time (`logUpstreamCalls`).
  */
 const boundedFetch: HandleFetch = ({ event, request, fetch }) => {
@@ -81,14 +83,19 @@ export const handleFetch: HandleFetch = logUpstreamCalls(dev, consoleSink, bound
  * Every request gets one deadline for all its backend calls; every response
  * refuses to be framed; signed-in responses are never stored and never leak
  * their address (`private, no-store`, `Referrer-Policy: same-origin`); and no
- * `(session)` load or action runs without a session. In dev, each request is
- * logged by its method, route template, status and time (`logRequests`).
+ * `(session)` load or action runs without a session. A write (any method but
+ * GET, HEAD and OPTIONS) gets a 403 unless its `Origin` is ZURFUR_PUBLIC_URL's
+ * origin (`http://127.0.0.1:8080` in a dev build where it is unset; read once
+ * by `first-party-origin.ts`) or it sends no `Origin` and `Sec-Fetch-Site:
+ * same-origin`. In dev, each request is logged by its method, route template,
+ * status and time (`logRequests`).
  */
 export const handle: Handle = handleChain(
 	logRequests(dev, consoleSink),
 	requestDeadline,
 	refuseFraming,
 	sessionHeaders,
+	refuseCrossSiteWrites(firstParty),
 	sessionGate
 );
 

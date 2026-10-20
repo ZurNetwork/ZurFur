@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/identity/src/elements",
-  "charted": "2026-10-17",
+  "charted": "2026-10-20",
   "short": "Who acts: the identity nouns",
   "is": "The identity nouns: user, account, membership, invitation, role, actor identity, handle, custody keys, PLC operations, character, profile and public records.",
   "type": "code",
@@ -50,6 +50,16 @@
     {
       "name": "actor_identity/",
       "role": "split of actor_identity.rs; no information beyond its façade",
+      "node": false
+    },
+    {
+      "name": "bug_report.rs",
+      "role": "bug reports a signed-in User files from the web app — BugReportId (UUIDv7, minted by generate()) and BugReportReference (the id's last 8 characters); the values BugDescription (≤4000 code points, keeps LF and tab), PageAddress (starts with / but not //, ≤2048 bytes, no backslash, ? or #), PageKind and BuildId (≤64 bytes), BrowserText (≤512 bytes), WindowSide/WindowSize (1–100000), ErrorStatus (400–599, TryFrom<i32>), DisplaySettings; every text trimmed, never empty, refusing Cc and the nine bidi controls, the four one-line values U+2028 and U+2029 too, and nothing else (byte caps checked in the values, not the builder); rows NewBugReport (the write shape) and StoredBugReport (texts as StoredText, loaded without a re-check). No serde",
+      "node": false
+    },
+    {
+      "name": "bug_report/",
+      "role": "split of bug_report.rs; no information beyond its façade",
       "node": false
     },
     {

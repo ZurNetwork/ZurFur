@@ -7,6 +7,10 @@ describe('frameSectionOf', () => {
 		expect(frameSectionOf('/(session)/accounts/[id]')).toBe('accounts');
 	});
 
+	it('puts the report page in a section of its own, so its link is marked current', () => {
+		expect(frameSectionOf('/(session)/report-a-bug')).toBe('report');
+	});
+
 	it('puts anything else in no section', () => {
 		expect(frameSectionOf('/(session)/logout')).toBe('other');
 		expect(frameSectionOf(undefined)).toBe('other');

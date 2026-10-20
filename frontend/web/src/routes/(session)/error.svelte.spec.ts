@@ -1,6 +1,7 @@
 import { page } from 'vitest/browser';
 import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
+import { did } from '$lib/types/brand';
 
 /** An error message that names a real Den path and an internal detail. */
 const LEAKY_MESSAGE =
@@ -27,6 +28,8 @@ vi.mock('$app/state', () => ({
 }));
 
 const { default: ErrorPage } = await import('./+error.svelte');
+// After the mocks: the bug report reads `$app/state`, whose mock reads LEAKY_MESSAGE.
+const { BUG_REPORT_KEY, BugReport } = await import('$lib/components/explorer/bug-report.svelte');
 
 describe('(session) error page', () => {
 	it('never shows the error’s own message', async () => {
@@ -68,6 +71,28 @@ describe('(session) error page', () => {
 			.element(page.getByRole('heading', { name: "Zurfur isn't answering right now" }))
 			.toBeInTheDocument();
 		await expect.element(page.getByText('Try again in a moment.')).toBeInTheDocument();
+	});
+
+	it('offers "Report this problem" beside the way back, opening the report with the status', async () => {
+		errorState.status = 500;
+		errorState.routeId = '/(session)/accounts';
+		const report = new BugReport(did('did:plc:alice'), (extras) => ({
+			page: '/accounts',
+			pageType: 'Error page',
+			browser: '',
+			width: 1,
+			height: 1,
+			display: { reducedMotion: false, moreContrast: false, forcedColors: false },
+			extras
+		}));
+		render(ErrorPage, { context: new Map([[BUG_REPORT_KEY, report]]) } as never);
+
+		await expect.element(page.getByRole('link', { name: 'Back to My Den' })).toBeVisible();
+		await page.getByRole('link', { name: 'Report this problem' }).click();
+
+		expect(report.isOpen).toBe(true);
+		expect(report.snapshot?.extras).toStrictEqual({ errorStatus: 500 });
+		expect(document.body.textContent).not.toContain('secret');
 	});
 
 	it('leads back to My Den, never to the start', async () => {

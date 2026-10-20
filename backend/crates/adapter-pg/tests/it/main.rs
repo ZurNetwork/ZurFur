@@ -12,6 +12,7 @@
 mod account;
 mod actor_identity;
 mod actor_projection;
+mod bug_report;
 mod codegen_current;
 mod commission;
 mod commission_changelog;
