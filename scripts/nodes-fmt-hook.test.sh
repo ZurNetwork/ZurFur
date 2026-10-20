@@ -54,6 +54,10 @@ C="$work/no-refs"
 R="$work/refs-only"
 L="$work/legacy"
 S="$work/stray"
+# A legacy tree nested in a current one: the walk up from it must stop at its
+# own root NODE.json, never reach the current tree's root.
+N="$work/nested"
+NL="$N/legacy"
 current_tree "$A"
 current_tree "$B"
 current_tree "$S"
@@ -67,6 +71,10 @@ ln -s "$A" "$work/a-link"
 node "$L/NODE.json" .
 node "$L/sub/NODE.json" sub
 node "$L/sub/NODE.inf.json" sub
+current_tree "$N"
+node "$NL/NODE.json" .
+node "$NL/sub/NODE.json" sub
+node "$NL/sub/NODE.inf.json" sub
 node "$work/loose/NODE.inf.json" loose
 mkdir -p "$A/linked"
 ln -s "$A/sub/NODE.inf.json" "$A/linked/NODE.inf.json"
@@ -83,6 +91,19 @@ done
 # Without jq the hook cannot decode `\t`: a folder named with those two
 # characters is what a hook reading the escape as text would format.
 node "$A/sub\\t/NODE.inf.json" sub
+# Folders named with a C1 control (U+0080, U+0085, U+009F) or a line or
+# paragraph separator (U+2028, U+2029), raw UTF-8; and two that share a lead
+# byte with those but are ordinary text (U+00A9, U+2027), which are formatted.
+u0080="$(printf '\302\200')"
+u0085="$(printf '\302\205')"
+u009f="$(printf '\302\237')"
+u2028="$(printf '\342\200\250')"
+u2029="$(printf '\342\200\251')"
+u00a9="$(printf '\302\251')"
+u2027="$(printf '\342\200\247')"
+for c in "$u0080" "$u0085" "$u009f" "$u2028" "$u2029" "$u00a9" "$u2027"; do
+    node "$A/sub$c/NODE.inf.json" sub
+done
 node "$A/XNODE.inf.json" .
 
 # A PATH without any `nodes`, and a bare one without jq.
@@ -202,13 +223,15 @@ expect "NODE.refs.json gets a bare fmt at its root" 'exit_is 0' "fmt_calls_are '
 node "$A/sub/NODE.json" sub
 run "$A" "$(json "$A/sub/NODE.json")"
 expect "a nested NODE.json in a current tree is refused" 'exit_is 2' 'no_calls' \
-    'err_has NODE.inf.json' 'no_migrate'
+    'err_has NODE.inf.json' 'err_has "delete this NODE.json"' \
+    'err_has "write NODE.inf.json instead"' 'no_migrate'
 rm "$A/sub/NODE.json"
 
 node "$A/NODE.json" .
 run "$A" "$(json "$A/NODE.json")"
 expect "a root NODE.json in a current tree is refused" 'exit_is 2' 'no_calls' \
-    'err_has NODE.inf.json' 'no_migrate'
+    'err_has NODE.inf.json' 'err_has "delete this NODE.json"' \
+    'err_has "write NODE.inf.json instead"' 'no_migrate'
 rm "$A/NODE.json"
 
 # --- a tree from before 0.7 ---
@@ -221,6 +244,15 @@ expect "a NODE.inf.json in a legacy tree is left alone, silently" 'exit_is 0' 'n
 run "$A" "$(json "$L/NODE.json")"
 expect "a legacy root NODE.json is left alone, silently" 'exit_is 0' 'no_calls' \
     'out_empty' 'err_empty'
+run "$A" "$(json "$NL/NODE.json")"
+expect "a legacy tree nested in a current one: its root NODE.json is left alone" \
+    'exit_is 0' 'no_calls' 'out_empty' 'err_empty'
+run "$A" "$(json "$NL/sub/NODE.json")"
+expect "a legacy tree nested in a current one: a nested NODE.json is left alone" \
+    'exit_is 0' 'no_calls' 'out_empty' 'err_empty'
+run "$A" "$(json "$NL/sub/NODE.inf.json")"
+expect "a legacy tree nested in a current one: a NODE.inf.json is left alone" \
+    'exit_is 0' 'no_calls' 'out_empty' 'err_empty'
 
 # --- a stray root NODE.json beside a current tree's ---
 run "$A" "$(json "$S/sub/NODE.inf.json")"
@@ -281,6 +313,24 @@ run "$A" "$(json "$A/sub\\t/NODE.inf.json")"
 expect "a tab gets no call and no echo" 'exit_is 0' 'no_calls' 'no_echo'
 run "$A" "$(json "$A/sub/NODE.inf.json\\u0000")"
 expect "a NUL gets no call and no echo" 'exit_is 0' 'no_calls' 'no_echo'
+run "$A" "$(json "$A/sub\\u0085/NODE.inf.json")"
+expect "an escaped U+0085 gets no call and no echo" 'exit_is 0' 'no_calls' 'no_echo'
+run "$A" "$(json "$A/sub$u0085/NODE.inf.json")"
+expect "a raw U+0085 gets no call and no echo" 'exit_is 0' 'no_calls' 'no_echo'
+run "$A" "$(json "$A/sub$u0080/NODE.inf.json")"
+expect "a raw U+0080 gets no call and no echo" 'exit_is 0' 'no_calls' 'no_echo'
+run "$A" "$(json "$A/sub$u009f/NODE.inf.json")"
+expect "a raw U+009F gets no call and no echo" 'exit_is 0' 'no_calls' 'no_echo'
+run "$A" "$(json "$A/sub$u2028/NODE.inf.json")"
+expect "a raw U+2028 gets no call and no echo" 'exit_is 0' 'no_calls' 'no_echo'
+run "$A" "$(json "$A/sub$u2029/NODE.inf.json")"
+expect "a raw U+2029 gets no call and no echo" 'exit_is 0' 'no_calls' 'no_echo'
+run "$A" "$(json "$A/sub$u00a9/NODE.inf.json")"
+expect "a U+00A9 in a folder name is formatted" 'exit_is 0' \
+    "fmt_calls_are '$A/sub$u00a9|fmt $A/sub$u00a9/NODE.inf.json'"
+run "$A" "$(json "$A/sub$u2027/NODE.inf.json")"
+expect "a U+2027 in a folder name is formatted" 'exit_is 0' \
+    "fmt_calls_are '$A/sub$u2027|fmt $A/sub$u2027/NODE.inf.json'"
 
 run "$A" "$(json "$A/linked/NODE.inf.json")"
 expect "a symbolic link gets no call and exit 2" 'exit_is 2' 'no_calls' 'err_has "symbolic link"'
@@ -301,8 +351,28 @@ else
     run "$A" "$(json "$L/sub/NODE.inf.json")" "$work/nojq"
     expect "without jq: a legacy tree is left alone, silently" 'exit_is 0' 'no_calls' \
         'out_empty' 'err_empty'
+    run "$A" "$(json "$NL/NODE.json")" "$work/nojq"
+    expect "without jq: a nested legacy tree's root NODE.json is left alone" \
+        'exit_is 0' 'no_calls' 'out_empty' 'err_empty'
+    run "$A" "$(json "$NL/sub/NODE.json")" "$work/nojq"
+    expect "without jq: a nested legacy tree's nested NODE.json is left alone" \
+        'exit_is 0' 'no_calls' 'out_empty' 'err_empty'
+    run "$A" "$(json "$NL/sub/NODE.inf.json")" "$work/nojq"
+    expect "without jq: a nested legacy tree's NODE.inf.json is left alone" \
+        'exit_is 0' 'no_calls' 'out_empty' 'err_empty'
     run "$A" "$(json "$A/sub\\t/NODE.inf.json")" "$work/nojq"
     expect "without jq: a control character gets no call and no echo" 'exit_is 0' 'no_calls' 'no_echo'
+    for c in u0080 u0085 u009f u2028 u2029; do
+        eval "raw=\$$c"
+        run "$A" "$(json "$A/sub$raw/NODE.inf.json")" "$work/nojq"
+        expect "without jq: a raw U+${c#u} gets no call and no echo" 'exit_is 0' 'no_calls' 'no_echo'
+    done
+    run "$A" "$(json "$A/sub$u00a9/NODE.inf.json")" "$work/nojq"
+    expect "without jq: a U+00A9 in a folder name is formatted" 'exit_is 0' \
+        "fmt_calls_are '$A/sub$u00a9|fmt $A/sub$u00a9/NODE.inf.json'"
+    run "$A" "$(json "$A/sub$u2027/NODE.inf.json")" "$work/nojq"
+    expect "without jq: a U+2027 in a folder name is formatted" 'exit_is 0' \
+        "fmt_calls_are '$A/sub$u2027|fmt $A/sub$u2027/NODE.inf.json'"
 fi
 
 if [ "$failures" -ne 0 ]; then

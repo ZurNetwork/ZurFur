@@ -14,11 +14,15 @@
 #   - NODE.refs.json: a bare `nodes fmt` at the root (fmt takes node files
 #     alone as arguments).
 #   - NODE.json: refused with exit 2; node files are NODE.inf.json since 0.7.
+#   - a NODE.json at the root of a current tree: every node-file write there
+#     is refused with exit 2; nodes reads that tree as one from before 0.7 and
+#     writes nothing in it.
 #
 # A schema error (the model wrote a file nodes refuses) is fed back to the
 # model via exit 2 + stderr, so it fixes the file at once. Refused without a
-# call: a path holding a control character (silently, never echoed), a
-# symbolic link (exit 2), a file outside any tree (silently).
+# call: a path holding a control character (C0, DEL or C1) or a line or
+# paragraph separator (U+2028, U+2029) (silently, never echoed), a symbolic
+# link (exit 2), a file outside any tree (silently).
 #
 # Fails SOFT: without the `nodes` binary, or with one older than 0.7, it prints
 # a one-line hint and exits 0; the hard backstop is `just nodes-check` in the
@@ -27,24 +31,27 @@ set -eu
 
 input="$(cat)"
 
-# The path, or "!" when it holds a control character (or cannot be read
-# safely): a refused path is never echoed back.
+# The path, or "!" when it holds a control character, U+2028 or U+2029 (or
+# cannot be read safely): a refused path is never echoed back.
 if command -v jq >/dev/null 2>&1; then
     file="$(printf '%s' "$input" | jq -j '
         (.tool_input.file_path // "") as $f
-        | if ($f | explode | any(. < 32 or . == 127)) then "!" else $f end
+        | if ($f | explode | any(. < 32 or (. >= 127 and . <= 159) or . == 8232 or . == 8233))
+          then "!" else $f end
     ' 2>/dev/null)" || exit 0
 else
     # Without jq a JSON escape cannot be decoded: a value holding a backslash
-    # (every control character in valid JSON is escaped) is refused.
-    file="$(printf '%s' "$input" | awk '
+    # (every C0 control in valid JSON is escaped) is refused, and so are the
+    # raw UTF-8 bytes of C1 controls (C2 80-9F), U+2028 and U+2029 (E2 80 A8-A9),
+    # matched byte by byte in the C locale.
+    file="$(printf '%s' "$input" | LC_ALL=C awk '
         {
             if (!match($0, /"file_path"[[:space:]]*:[[:space:]]*"/)) next
             rest = substr($0, RSTART + RLENGTH)
             end_at = index(rest, "\"")
             if (end_at == 0) { printf "!"; exit }
             value = substr(rest, 1, end_at - 1)
-            if (value ~ /[\\[:cntrl:]]/) printf "!"
+            if (value ~ /[\\[:cntrl:]]|\302[\200-\237]|\342\200[\250\251]/) printf "!"
             else printf "%s", value
             exit
         }')"
@@ -106,7 +113,7 @@ if [ ! -f "$(root_file NODE.inf.json)" ] && [ ! -f "$(root_file NODE.refs.json)"
 fi
 
 if [ "$kind" = legacy ]; then
-    printf 'nodes-fmt-hook: %s: node files are NODE.inf.json since nodes 0.7; write that file instead\n' "$file" >&2
+    printf 'nodes-fmt-hook: %s: node files are NODE.inf.json since nodes 0.7; delete this NODE.json and write NODE.inf.json instead\n' "$file" >&2
     exit 2
 fi
 
