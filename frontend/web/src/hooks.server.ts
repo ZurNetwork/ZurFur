@@ -53,7 +53,7 @@ function runtimeEnv(): Readonly<Record<string, string | undefined>> {
  * point same-origin `/api/*` at the internal axum origin (prefix stripped) and
  * forward the caller's session cookie — see {@link rewriteApiRequest}. The
  * upstream is read via `$env/dynamic/private` so the build never bakes it in and
- * a worktree's own port is honored at runtime. In dev, each call is logged by
+ * a workspace's own port is honored at runtime. In dev, each call is logged by
  * its page's route template, method, status and time (`logUpstreamCalls`).
  */
 const boundedFetch: HandleFetch = ({ event, request, fetch }) => {

@@ -157,7 +157,7 @@ migrate-add name:
 # Drop the database volume and bring up a fresh PostgreSQL.
 # `down -v` removes this project's named volumes (project = COMPOSE_PROJECT_NAME,
 # default `zurfur`) — that's Postgres AND the dev PDS/PLC (ZMVP-102) together,
-# so it does the right thing in an isolated worktree too.
+# so it does the right thing in an isolated workspace too.
 db-reset:
     docker compose down -v
     just up
@@ -305,14 +305,15 @@ hooks-test:
 
 # Fixture tests for the CI path classifier, the `changes` job, gate-light,
 # the dev-profile pins, pr-wait, tools-check, den-fill, the dev logs, the
-# private-papers check and the `jj push` gate's argument guard (the
-# design-index check's own tests run under `design-index-check-test`). CI runs
-# it in the `hooks` job, which has no jj: the jj fixtures skip themselves there.
+# private-papers check, the `jj push` gate's argument guard and workspace-init
+# (the design-index check's own tests run under `design-index-check-test`). CI
+# runs it in the `hooks` job, which has no jj: the jj fixtures skip themselves
+# there.
 scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/jj-push.test.sh scripts/build-id.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/jj-push.test.sh scripts/workspace-init.test.sh scripts/build-id.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done
@@ -353,13 +354,13 @@ eval *ARGS:
     fi
     python3 "$runner" "$@"
 
-# --- Worktrees (parallel branches) ---
+# --- Workspaces (parallel branches) ---
 
 # Seed an isolated .env (unique DB + HTTP/proxy ports + compose project name)
-# for the CURRENT git worktree, so `just dev`/`just up`/tests here never collide
-# with another worktree's stack. Idempotent — safe to re-run. See /start --worktree.
-worktree-init:
-    bash scripts/worktree-init.sh
+# for the CURRENT jj workspace, so `just dev`/`just up`/tests here never collide
+# with another workspace's stack. Idempotent — safe to re-run.
+workspace-init:
+    bash scripts/workspace-init.sh
 
 # --- Code quality ---
 

@@ -1,9 +1,8 @@
 #!/bin/sh
-# Shared helpers for the Claude Code hook scripts (scripts/uow-status.sh,
-# scripts/hooks/*.sh): the ZURFUR_HOOKS_OFF kill switch, the untracked
-# .claude/hooks.off escape hatch, and the text-safety helpers every hook
-# applies to data it injects into a model's context. POSIX sh — sourced
-# from both sh and bash.
+# Shared helpers for the Claude Code hook scripts (scripts/hooks/*.sh): the
+# ZURFUR_HOOKS_OFF kill switch, the untracked .claude/hooks.off escape hatch,
+# and the text-safety helpers every hook applies to data it injects into a
+# model's context. POSIX sh — sourced from both sh and bash.
 
 # hooks_are_off <name> <project_dir> returns success when hooks named <name>
 # are disabled: an untracked "<project_dir>/.claude/hooks.off" file is
@@ -29,7 +28,7 @@ hooks_are_off() {
 
 # neutralize <text> — prints <text> with CR/LF/TAB collapsed to a single
 # space, every other control character stripped, and '<'/'>' removed, so
-# free-text pulled from a ledger or a NODE.json can't fake a newline-
+# free-text pulled from a pins file or a NODE.json can't fake a newline-
 # delimited record, a control sequence, or tag-shaped instruction text once
 # it lands in a model's context as injected data.
 neutralize() {
@@ -46,7 +45,7 @@ has_control_char() {
 
 # utf8_safe_head <n> — reads stdin, prints at most <n> bytes, backed off to
 # the nearest valid UTF-8 boundary. A plain `head -c N` can cut in the
-# middle of a multi-byte character (this text is design-corpus/ledger
+# middle of a multi-byte character (this text is design-corpus/pins
 # prose — em dashes are routine); a downstream UTF-8-strict reader (jq,
 # building the hookSpecificOutput JSON) then replaces that invalid tail
 # with U+FFFD, which can change the byte count the caller computed by a
@@ -61,27 +60,6 @@ utf8_safe_head() {
         head -c "$1" | { iconv -f UTF-8 -t UTF-8 -c 2>/dev/null || true; }
     else
         head -c "$1"
-    fi
-}
-
-# cap_bytes <text> <n> — prints <text> truncated to at most <n> bytes,
-# appending "..." when it was cut. Byte-bounded (not codepoint-aware) on
-# purpose: the guarantee that matters here is the hard size cap, not
-# perfectly preserving a multi-byte character at the cut point — hence
-# utf8_safe_head backing off to a valid boundary rather than an exact one.
-cap_bytes() {
-    _cap_text="$1"
-    _cap_n="$2"
-    _cap_len="$(printf '%s' "$_cap_text" | wc -c)"
-    if [ "$_cap_len" -le "$_cap_n" ]; then
-        printf '%s' "$_cap_text"
-        return 0
-    fi
-    if [ "$_cap_n" -gt 3 ]; then
-        printf '%s' "$_cap_text" | utf8_safe_head $((_cap_n - 3))
-        printf '...'
-    else
-        printf '%s' "$_cap_text" | utf8_safe_head "$_cap_n"
     fi
 }
 

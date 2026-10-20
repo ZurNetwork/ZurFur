@@ -1,6 +1,6 @@
 # Project name (and thus container/volume namespacing) defaults to `zurfur`.
-# A git worktree overrides COMPOSE_PROJECT_NAME via its isolated .env
-# (see scripts/worktree-init.sh) so parallel checkouts get their own stack.
+# A secondary jj workspace overrides COMPOSE_PROJECT_NAME via its isolated .env
+# (see scripts/workspace-init.sh) so parallel checkouts get their own stack.
 name: ${COMPOSE_PROJECT_NAME:-zurfur}
 
 services:
@@ -13,7 +13,7 @@ services:
     ports:
       # Bound to loopback: a published port with no host IP listens on every
       # interface, and these dev credentials and keys are public.
-      # Host port is env-driven so two worktrees can each run their own DB.
+      # Host port is env-driven so two workspaces can each run their own DB.
       # Defaults to 5432 for the primary checkout.
       - "127.0.0.1:${ZURFUR_DB_HOST_PORT:-5432}:5432"
     volumes:
@@ -24,7 +24,7 @@ services:
   # (see caddy/Caddyfile). Default-on — plain `just up` brings it up, no profile.
   #
   # `network_mode: host` (Linux dev): axum and the vite dev servers bind
-  # 127.0.0.1 on the HOST at per-worktree ports, which a bridge-networked
+  # 127.0.0.1 on the HOST at per-workspace ports, which a bridge-networked
   # container cannot reach. Host networking lets Caddy dial loopback directly
   # with zero new host dependencies, and keeps every bind loopback-only. With
   # host networking `ports:`/`extra_hosts:` are meaningless (there is no
@@ -35,7 +35,7 @@ services:
     network_mode: host
     environment:
       # Consumed by caddy/Caddyfile at config-load time. Defaults match the
-      # primary checkout; a worktree overrides them via its isolated .env.
+      # primary checkout; a workspace overrides them via its isolated .env.
       ZURFUR_PROXY_HOST_PORT: ${ZURFUR_PROXY_HOST_PORT:-8080}
       ZURFUR_API_UPSTREAM: ${ZURFUR_API_UPSTREAM:-http://127.0.0.1:8081}
       ZURFUR_WEB_PORT: ${ZURFUR_WEB_PORT:-5174}
@@ -46,7 +46,7 @@ services:
   # loopback-only on host networking like `caddy`, in front of the dev-profile
   # API and its own vite dev server. The `dev-profile` compose profile keeps it
   # out of plain `just up`. Its variables are its own, not `caddy`'s, so a
-  # worktree's .env (which sets `caddy`'s) never moves it onto `just dev`'s
+  # workspace's .env (which sets `caddy`'s) never moves it onto `just dev`'s
   # ports. The defaults (8180, 8181, 5184) sit clear of `just dev`'s.
   caddy-dev-profile:
     image: caddy:2-alpine
@@ -79,8 +79,8 @@ services:
     ports:
       # Reconciles onto the SAME endpoint the did:plc minter (ZMVP-49) already
       # points at (ZURFUR_PLC_DIRECTORY_ENDPOINT, http://localhost:2582) —
-      # not a second/different PLC. Host port is env-driven for worktree
-      # isolation (scripts/worktree-init.sh). Loopback-only, like `db`.
+      # not a second/different PLC. Host port is env-driven for workspace
+      # isolation (scripts/workspace-init.sh). Loopback-only, like `db`.
       - "127.0.0.1:${ZURFUR_PLC_HOST_PORT:-2582}:2582"
     networks:
       - pds_net

@@ -31,7 +31,7 @@ docs_only() {
         # Markdown outside the code trees: no Rust, web or contract job reads it.
         *.md) return 0 ;;
         # design-index.md (nodes job); documents; boardroom runs; agent settings.
-        docs/* | .understand/* | reports/* | forks/* | .claude/*) return 0 ;;
+        docs/* | reports/* | forks/* | .claude/*) return 0 ;;
         # Used by the always-on `nodes` and `hooks` jobs and locally.
         scripts/* | Justfile) return 0 ;;
     esac
