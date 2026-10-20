@@ -76,6 +76,7 @@ failing "$tmp/findings-awk-fails" awk 'countfile='
 failing "$tmp/print-awk-fails" awk 'me='
 failing "$tmp/sort-fails" sort
 failing "$tmp/cut-fails" cut
+failing "$tmp/find-fails" find
 
 # tree <dir>: the files of a small committed node tree.
 tree() {
@@ -264,6 +265,13 @@ if bites cut; then
     unset case_path
 else
     echo "skip (this sh runs its own cut): the failing-cut case"
+fi
+if bites find; then
+    case_path="$tmp/find-fails"
+    expect "a failing find fails closed" "$r" 2 "the walk of the checkout failed"
+    unset case_path
+else
+    echo "skip (this sh runs its own find): the failing-find case"
 fi
 
 mkdir "$tmp/empty"

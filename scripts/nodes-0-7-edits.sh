@@ -43,9 +43,11 @@
 #      branch has caught up:
 #        CARGO_HOME=<scratch> sh scripts/nodes-install.sh v0.6.0
 #      In the merge change, first, for every node file `jj resolve --list`
-#      names, note b's own change, then take X^'s side:
-#        jj diff --from 'fork_point(b | X-)' --to b <node file>   b's own change
-#        jj restore --from X- <node file>                          X^'s side
+#      names, note b's own change, then take X^'s side (`root-file:` keeps a
+#      path such as `frontend/web/src/routes/(session)/NODE.json` from being
+#      parsed as a fileset expression):
+#        jj diff --from 'fork_point(b | X-)' --to b 'root-file:"<node file>"'   b's own change
+#        jj restore --from X- 'root-file:"<node file>"'                          X^'s side
 #      Only once no node file is conflicted, redo b's noted changes with the
 #      scratch binary's `set` / `add-ref` (`<scratch>/bin/nodes --root <b's
 #      workspace> ...`): a conflicted root NODE.json would keep it from
