@@ -18,8 +18,10 @@
 # docs/design-index.md is generated from the design corpus
 # (ZurNetwork/zurfur-design) by `just design-index`; a spelling lint on
 # titles we don't author is meaningless. Skip it too.
+# forks/ holds boardroom forks: verbatim debate records, never edited, so a
+# spell check on them can't be acted on. Skip them.
 [files]
-extend-exclude = ["frontend/web/src/lib/server/api/generated/", "docs/design-index.md"]
+extend-exclude = ["frontend/web/src/lib/server/api/generated/", "docs/design-index.md", "forks/"]
 
 [default.extend-identifiers]
 # "the kind and state CHECKs" (adapter-pg/tests/it/actor_identity.rs) --
