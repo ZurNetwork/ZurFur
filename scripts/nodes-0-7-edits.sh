@@ -105,7 +105,10 @@ edits() {
    "new": "Migration headers that say `See NODE.md (\"<file>\")` or \"this crate's NODE.json notes\" mean this node"},
   {"id": "11", "node": "backend/crates/adapter-pg", "field": "fs", "op": "replace-role", "entry": "queries/",
    "old": "Carries NO NODE.json of its own",
-   "new": "Carries no node of its own"}
+   "new": "Carries no node of its own"},
+  {"id": "12", "node": "frontend/web/src/routes", "field": "conventions", "op": "replace",
+   "old": "(see `src/NODE.json`)",
+   "new": "(see the `src` node)"}
 ]
 EDITS
 }
