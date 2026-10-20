@@ -35,7 +35,9 @@
 //!
 //! Harness: the same in-process fakes as the account/sign-in e2e tests — no
 //! network, no database.
-use domain::elements::{did::Did, profile::Profile};
+use domain::elements::{
+    account::AccountId, did::Did, profile::Profile, role::Role, user_account::UserAccount,
+};
 use test_support::http::{client, serve, sign_in};
 
 /// Persona A — the handle that signs in during these tests.
@@ -67,8 +69,8 @@ async fn the_identity_surface_never_names_a_callers_other_persona() {
     sign_in(&client, &base, ALICE_HANDLE).await;
 
     // Found an account as A, then seat B in it — the worst case for correlation:
-    // A and B now share a row in the private account_members table. Granting via
-    // the real seam provisions B as a separate User with a separate DID.
+    // A and B now share a row in the private account_members table. B is recognized
+    // first as a separate User with a separate DID, then seated as a member.
     let res = client
         .post(format!("{base}/accounts"))
         .json(&serde_json::json!({ "name": "Shared Studio", "handle": "shared.zurfur.app" }))
@@ -81,17 +83,17 @@ async fn the_identity_surface_never_names_a_callers_other_persona() {
         .expect("account id")
         .to_string();
 
-    let res = client
-        .post(format!("{base}/accounts/{account_id}/members"))
-        .json(&serde_json::json!({ "user": BOB_DID, "role": "member" }))
-        .send()
+    let bob = backend
+        .provision(&Did::from(BOB_DID.to_string()))
         .await
-        .expect("POST members");
-    assert_eq!(
-        res.status(),
-        200,
-        "A seats B as a member of the shared account"
-    );
+        .expect("provision B");
+    let bob_seat = UserAccount {
+        user_id: bob.id,
+        account_id: AccountId::from(Did::from(account_id.clone())),
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&bob_seat);
 
     // B is now a real, separate User sharing private state with A.
     assert!(

@@ -1,8 +1,8 @@
 {
   "path": "contract/zurfur/api/v1",
-  "charted": "2026-09-12",
-  "short": "The v1 proto corpus (session, account, commission, den, problem)",
-  "is": "The v1 corpus — package `zurfur.api.v1`, one `.proto` per surface (session, account, commission, den, error), welded to `/api/v1`.",
+  "charted": "2026-10-17",
+  "short": "The v1 proto corpus (session, account, commission, den, bug report, problem)",
+  "is": "The v1 corpus — package `zurfur.api.v1`, one `.proto` per surface (session, account, commission, den, bug report, error), welded to `/api/v1`.",
   "type": "code",
   "tags": [
     "category:schema"
@@ -24,6 +24,11 @@
     {
       "name": "account.proto",
       "role": "ListAccounts, CreateAccount, ChangeHandle (PATCH /accounts/{id}/handle), DeleteAccount, AccountMembership (now carries an alias field); AccountService",
+      "node": false
+    },
+    {
+      "name": "bug_report.proto",
+      "role": "FileBugReport (POST /bug-reports): a signed-in visitor files a bug report; the reporter comes from the session, no field names one; the receipt carries a short reference and received_at; BugReportService",
       "node": false
     },
     {

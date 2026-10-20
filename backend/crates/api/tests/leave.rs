@@ -114,15 +114,13 @@ async fn a_member_leaves_and_is_no_longer_a_member() {
         .create(&account, &owner_membership)
         .await
         .expect("found host account");
-    backend
-        .grant_role(&UserAccount {
-            user_id: me.id.clone(),
-            account_id: account.id.clone(),
-            role: Role::Member,
-            alias: None,
-        })
-        .await
-        .expect("seat me as a member");
+    let my_seat = UserAccount {
+        user_id: me.id.clone(),
+        account_id: account.id.clone(),
+        role: Role::Member,
+        alias: None,
+    };
+    backend.seed_member(&my_seat);
 
     let res = client
         .delete(format!("{base}/accounts/{}/members/me", account.id))

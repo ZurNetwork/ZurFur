@@ -3,8 +3,9 @@
  * phone breakpoint. Read only tokens from tokens.css.
  *
  * The breakpoint (48rem) lives only in this file: a custom property can't sit
- * inside a media query, so the shell reads the switch this file sets
- * (`--shell-columns`) and the `.desktop-only` / `.phone-only` helpers.
+ * inside a media query, so the shell and the full-screen dialog read the
+ * switches this file sets (`--shell-columns`, `--full-dialog-*`) and the
+ * `.desktop-only` / `.phone-only` helpers.
  */
 
 *,
@@ -132,9 +133,19 @@ form button:not([class]):hover {
 	border: 0 !important;
 }
 
-/* The shell's grid: the sidebar column beside the pane. */
+/*
+ * The shell's grid: the sidebar column beside the pane. The full-screen-on-phone
+ * dialog's box: a centred modal (the user agent's own modal margins and height).
+ */
 :root {
 	--shell-columns: var(--sidebar-width) minmax(0, 1fr);
+	--full-dialog-width: var(--dialog-width);
+	--full-dialog-max-width: min(var(--dialog-width), calc(100vw - 2 * var(--space-4)));
+	--full-dialog-height: auto;
+	--full-dialog-max-height: calc(100% - 6px - 2em);
+	--full-dialog-margin: auto;
+	--full-dialog-border-width: var(--border-width);
+	--full-dialog-radius: var(--radius-lg);
 }
 
 /*
@@ -144,6 +155,13 @@ form button:not([class]):hover {
 @media (max-width: 48rem) {
 	:root {
 		--shell-columns: minmax(0, 1fr);
+		--full-dialog-width: 100%;
+		--full-dialog-max-width: none;
+		--full-dialog-height: 100%;
+		--full-dialog-max-height: none;
+		--full-dialog-margin: 0;
+		--full-dialog-border-width: 0;
+		--full-dialog-radius: 0;
 	}
 
 	.desktop-only {

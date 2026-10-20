@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/adapter-pg",
-  "charted": "2026-09-13",
+  "charted": "2026-10-17",
   "short": "Private boundary: the PostgreSQL adapter",
   "is": "The private data boundary in PostgreSQL: app-owned rows (actors keyed by their DID, everything else UUIDv7), SQL kept in per-statement files, and typed accessors generated from a live migrated schema.",
   "type": "code",
@@ -40,12 +40,12 @@
     },
     {
       "name": "migrations/",
-      "role": "timestamp-versioned forward-only SQL (46 files, latest deletes every stored atproto OAuth session and pending sign-in once, after sign-in became identity-only; before it, the by-user index on commission_participant for the participant listing), embedded and run on boot and by every test template",
+      "role": "timestamp-versioned forward-only SQL (47 files, latest creates bug_report — the bug reports Users file, with a CHECK per rule named bug_report_<column>_<rule> (a page never starts with // and holds no backslash; api_version 1 to 64 bytes) and the (reporter_id, received_at) index; before it, a one-off delete of every stored atproto OAuth session and pending sign-in; before that, the by-user index on commission_participant for the participant listing), embedded and run on boot and by every test template",
       "node": false
     },
     {
       "name": "queries/",
-      "role": "one .sql file per statement, grouped by namespace directory: account/ (28 — create/find/list, memberships & roles, invitations, alias, handle change + rate audit, soft & hard delete, departure re-homing, ownership transfer, locking find), commission/ (39 — create/find/delete, elements & tabs & surface modes, seats & invitations, slots, view grants, statuses, maturity, archive, files, markup add/read, linked channel, locking find, the participant listing, file and Slot lists), workflow/ + column/ (the account's boards and their cards, the per-account listing), actor_identity/ (create, intern, find, find_by_did, cache_handle), changelog/ (append + ordered read), session/, user/, profile/, file/ (put/get/delete, the name-only read), key_store/, plc/, health/. Directory name = generated module, file name = generated function, a leading -- comment becomes its doc. Carries NO NODE.json of its own: sqlx-rust-codegen refuses any non-directory under queries/, so the chart for it lives here.",
+      "role": "one .sql file per statement, grouped by namespace directory: account/ (30 — create/find/list, memberships & roles, invitations, alias, handle change + rate audit, soft & hard delete, departure (the member's row read FOR UPDATE, revocation, re-homing before and after the delete), the invitation issuer's membership (read FOR KEY SHARE), ownership transfer, locking find), commission/ (39 — create/find/delete, elements & tabs & surface modes, seats & invitations, slots, view grants, statuses, maturity, archive, files, markup add/read, linked channel, locking find, the participant listing, file and Slot lists), workflow/ + column/ (the account's boards and their cards, the per-account listing), bug_report/ (file, lock_reporter (the reporter's users row FOR NO KEY UPDATE), count_filed_since (run after it, in the same unit), list_since; error_status bound and read as integer, the generator mapping no smallint), actor_identity/ (create, intern, find, find_by_did, cache_handle), changelog/ (append + ordered read), session/, user/, profile/, file/ (put/get/delete, the name-only read), key_store/, plc/, health/. Directory name = generated module, file name = generated function, a leading -- comment becomes its doc. Carries NO NODE.json of its own: sqlx-rust-codegen refuses any non-directory under queries/, so the chart for it lives here.",
       "node": false
     },
     {
@@ -55,16 +55,21 @@
     },
     {
       "name": "src/",
-      "role": "port impls — uow (PgDatabase/PgUnitOfWork), account, user, commission (+markup), commission_changelog, workflow (boards/columns + placement), actor_identity, profile, session_store, file_store (streaming, buffers internally), key_store, key_vault, plc_operation_log; @generated queries.rs; lib.rs pool/migrator",
+      "role": "port impls — uow (PgDatabase/PgUnitOfWork), account, user, commission (+markup), commission_changelog, workflow (boards/columns + placement), actor_identity, bug_report (PgBugReportStore/PgBugReportWrites), profile, session_store, file_store (streaming, buffers internally), key_store, key_vault, plc_operation_log; @generated queries.rs; lib.rs pool/migrator",
       "node": false
     },
     {
       "name": "tests/it/",
-      "role": "one integration binary sharing a Postgres container across ~22 modules — per-surface suites + the codegen_current, no_bare_pool_writes, single_binary_guard, schema_status gates",
+      "role": "one integration binary sharing a Postgres container across ~24 modules (bug_report: the table checks asserted by constraint name, the users foreign key, the locked count (a second unit waits for the first, then counts its report), the list and round trips) — per-surface suites + the codegen_current, no_bare_pool_writes, single_binary_guard, schema_status gates",
       "node": false
     }
   ],
   "refs": [
+    {
+      "page": 2162692,
+      "title": "Roles",
+      "governs": "src/account.rs: the store's Owner backstops: grant_role never grants Owner or changes the Owner's role, and a departure (revoke_role, leave) never removes the Owner, refusing before any write; a departure re-homes children to the locked parent, again after its delete"
+    },
     {
       "page": 3014657,
       "title": "Deletion of Commissions",
@@ -93,7 +98,7 @@
     {
       "page": 24182820,
       "title": "Invitation Validity & Issuer Departure",
-      "governs": "`src/account.rs::settle_member_departure`"
+      "governs": "src/account.rs: settle_member_departure revokes the member's pending invitations before re-homing; create_invitation refuses an issuer who is not a member, key-share locking their row, so no offer outlives its issuer"
     },
     {
       "page": 26804226,
@@ -162,6 +167,7 @@
     "Fact-anchored deletion is encoded as two constants per aggregate — `{COMMISSION,ACCOUNT}_FACT_TABLES` / `_NON_FACT_TABLES`. Every table with an FK onto `commission(id)` / `accounts(id)` must appear in exactly one list; a schema tripwire test (`tests/it/commission.rs`, `tests/it/account.rs`) enforces it, and a `const_assert`-style guard fails the build when a FACT list gains its first entry (DD 3014657, DD 23003138).",
     "`account.rs::hard_delete` deletes children-first — `account_invitations` → `account_members` → `accounts` (the FKs do not cascade); `account_handle_changes` cascades off the account row.",
     "Composition writes serialize per tab: both the add and the remove path take the shared `require_tab` row lock before touching any element row, so a renumber `UPDATE` cannot race an append's position-assignment subquery.",
+    "A departure (`settle_member_departure`, behind `revoke_role` and `leave`) reads the departing member's row `FOR UPDATE` before any write and refuses the Owner, writing nothing, so a transfer to that member either commits first and is read as Owner, or waits for the departure and then finds the row gone. It then revokes the member's pending invitations before re-homing their children, so an accept in flight is either refused or committed first and re-homed, and after its delete it re-homes once more, so a child committed under the member while the departure waited (a member and their parent departing at once) is re-homed too. `create_invitation` reads the issuer's row `FOR KEY SHARE` and refuses an issuer who is not a member, writing nothing, so an issue racing its issuer's departure is either refused or committed first and then revoked by it.",
     "`src/queries.rs` still carries the old pointer-bearing doc text until the next `just gen-queries` picks up the cleaned `.sql` headers. Left as-is deliberately: in-body `--` explainers, `RAISE EXCEPTION` strings inside migration functions, and test-body section dividers are code, not documentation.",
     "Moved migration rationale: Full design-history text trimmed out of oversized migration headers during the 2026-09-12 sweep (Job 1), kept here for anyone who needs the \"why,\" not just the \"what.\"",
     "**`20260630140000_add_account_handle.sql`** — Adds the account's public handle: the validated, normalized atproto handle chosen by the founder at `POST /accounts` (either a Zurfur-issued `<label>.zurfur.app` subdomain or a brought/BYO domain, validated by the domain `Handle` newtype). REQUIRED and UNIQUE; the unique index (`accounts_handle_key`) is GLOBAL — not filtered on `deleted_at` — so a soft-deleted (tombstoned) account still reserves its handle, freed only on hard delete (deliberate: a tombstoned handle must not be silently re-claimable). NOT NULL with no default: every account has always been founded with a handle from this migration onward. The unique index is the store-level backstop the founding handler maps to a 409.",

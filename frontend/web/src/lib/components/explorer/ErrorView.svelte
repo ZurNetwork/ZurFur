@@ -4,12 +4,14 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import { errorCopy } from './error-copy';
+	import ReportBugButton from './ReportBugButton.svelte';
 
 	/**
 	 * The error view, chosen by status and route alone: it takes no message,
 	 * so no error's own text (which may hold a path or an internal detail) can
-	 * ever reach the screen. Inside the frame its way back is My Den; outside
-	 * it, the start page.
+	 * ever reach the screen. Inside the frame its way back is My Den, beside
+	 * "Report this problem", which opens the report with the status (never the
+	 * message); outside it, the start page alone.
 	 */
 	let {
 		status,
@@ -25,10 +27,26 @@
 	<EmptyState message={copy.message}>
 		{#snippet action()}
 			{#if inFrame}
-				<Button href={denRootPath()}>Back to My Den</Button>
+				<div class="error-view__actions">
+					<Button href={denRootPath()}>Back to My Den</Button>
+					<ReportBugButton
+						current={false}
+						label="Report this problem"
+						extras={{ errorStatus: status }}
+					/>
+				</div>
 			{:else}
 				<Button href={resolve('/')}>Back to the start</Button>
 			{/if}
 		{/snippet}
 	</EmptyState>
 </div>
+
+<style>
+	.error-view__actions {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--space-4);
+	}
+</style>

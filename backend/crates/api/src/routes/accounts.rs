@@ -380,8 +380,9 @@ async fn leave_account(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// The body of `POST /accounts/{id}/members`: grantee by `did`, and `role`
-/// (`"admin" | "manager" | "member"`; `"owner"` never grantable here).
+/// The body of `POST /accounts/{id}/members`: an existing member by `did`, and
+/// their new `role` (`"admin" | "manager" | "member"`; `"owner"` never grantable
+/// here). A newcomer joins by accepting an invitation, not through this body.
 ///
 /// Example: `{ "user": "did:plc:abc123", "role": "admin" }`.
 #[derive(Deserialize)]
@@ -390,7 +391,8 @@ struct GrantRoleBody {
     role: String,
 }
 
-/// `POST /accounts/{id}/members`'s `200` body — see [`grant_role`].
+/// `POST /accounts/{id}/members`'s `200` body: the member and their new role —
+/// see [`grant_role`].
 #[derive(Serialize)]
 struct GrantRoleResponse {
     account: String,
@@ -398,12 +400,12 @@ struct GrantRoleResponse {
     user: String,
 }
 
-/// `POST /accounts/{id}/members` — grants a role, seating the grantee as a
-/// member if they aren't one yet.
+/// `POST /accounts/{id}/members` — changes an existing member's role; a newcomer
+/// joins by accepting an invitation.
 ///
 /// - `200 { "account", "user", "role" }`
 /// - `401` — not signed in · `403` — not allowed to grant that role
-/// - `404` — no such account
+/// - `404` — no such account, or not a member
 /// - `422` — malformed body or an unknown role discriminant
 async fn grant_role(
     State(state): State<AppState>,

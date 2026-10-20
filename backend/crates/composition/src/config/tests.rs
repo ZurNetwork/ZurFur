@@ -159,6 +159,80 @@ fn a_missing_required_key_fails_the_load() {
     });
 }
 
+// ---- The build id --------------------------------------------------------
+
+/// Set every required key of a bootable dev configuration on a cleared `jail`.
+fn set_bootable_dev_env(jail: &mut figment::Jail) {
+    jail.clear_env();
+    jail.set_env("ZURFUR_CONFIG_DIR", jail.directory().display().to_string());
+    jail.set_env("ZURFUR_ENV", "dev");
+    jail.set_env("DATABASE_URL", "postgres://x");
+    jail.set_env("ZURFUR_PUBLIC_URL", "http://127.0.0.1:8080");
+    jail.set_env("ZURFUR_LOG_LEVEL", "info");
+    jail.set_env("ZURFUR_DID_KEY_ROOT_KEY", "ZmlsZQ==");
+}
+
+// With `ZURFUR_BUILD_ID` unset, the build id is "unknown".
+#[test]
+#[allow(clippy::result_large_err)] // figment::Jail's closure signature
+fn an_unset_build_id_is_unknown() {
+    figment::Jail::expect_with(|jail| {
+        set_bootable_dev_env(jail);
+
+        let config = Config::load().expect("the config loads");
+        assert_eq!(config.build_id.as_ref(), "unknown");
+        Ok(())
+    });
+}
+
+// A set `ZURFUR_BUILD_ID` is read, trimmed.
+#[test]
+#[allow(clippy::result_large_err)] // figment::Jail's closure signature
+fn a_set_build_id_is_read() {
+    figment::Jail::expect_with(|jail| {
+        set_bootable_dev_env(jail);
+        jail.set_env("ZURFUR_BUILD_ID", " api-7f3c2e1 ");
+
+        let config = Config::load().expect("the config loads");
+        assert_eq!(config.build_id.as_ref(), "api-7f3c2e1");
+        Ok(())
+    });
+}
+
+// A build id that looks like a number is kept as written, leading zero and all.
+#[test]
+#[allow(clippy::result_large_err)] // figment::Jail's closure signature
+fn a_numeric_build_id_is_read_verbatim() {
+    figment::Jail::expect_with(|jail| {
+        set_bootable_dev_env(jail);
+        jail.set_env("ZURFUR_BUILD_ID", "0123");
+
+        let config = Config::load().expect("the config loads");
+        assert_eq!(config.build_id.as_ref(), "0123");
+        Ok(())
+    });
+}
+
+// An invalid `ZURFUR_BUILD_ID` refuses to boot rather than falling back.
+#[test]
+#[allow(clippy::result_large_err)] // figment::Jail's closure signature
+fn an_invalid_build_id_fails_the_load() {
+    let over_cap = "b".repeat(65);
+    let invalid_build_ids = ["", " ", "api\u{7}build", over_cap.as_str()];
+    for invalid in invalid_build_ids {
+        figment::Jail::expect_with(|jail| {
+            set_bootable_dev_env(jail);
+            jail.set_env("ZURFUR_BUILD_ID", invalid);
+
+            let Err(error) = Config::load() else {
+                panic!("the build id {invalid:?} must not load");
+            };
+            assert!(error.to_string().contains("ZURFUR_BUILD_ID"), "{error}");
+            Ok(())
+        });
+    }
+}
+
 // ---- The environment guard ---------------------------------------------
 
 /// A loaded-looking configuration for `env`, over the given origin, listen
@@ -176,6 +250,7 @@ fn config(env: Environment, public_url: &str, http_addr: &str, handle_domain: &s
         plc_directory_submit: false,
         deadline_sweep_interval_secs: default_deadline_sweep_interval_secs(),
         max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
+        build_id: default_build_id(),
     }
 }
 

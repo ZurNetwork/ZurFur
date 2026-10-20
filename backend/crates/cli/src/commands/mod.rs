@@ -3,6 +3,7 @@
 //! [`dispatch`](crate::dispatch) routes to it.
 
 pub mod account;
+pub mod bug_reports;
 pub mod health;
 pub mod migrate;
 pub mod session;

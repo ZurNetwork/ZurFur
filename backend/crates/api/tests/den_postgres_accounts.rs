@@ -1,11 +1,14 @@
 //! identity's Accounts through the Den on PostgreSQL: a deactivated Account opens only to its
 //! Owner, another's and a missing Account answer alike, and a stored name unsafe to show is
 //! served as the Account's handle by the Den, `GET /accounts` and a handle change, while
-//! founding refuses it with a `422`. Requires a container runtime socket.
+//! founding refuses it with a `422`. It also proves on the real stores that a role grant
+//! never seats a stranger and only changes an existing member's role, and that a revoke or
+//! leave racing a transfer never leaves an Account without an Owner. Requires a container
+//! runtime socket.
 
 use std::sync::Arc;
 
-use domain::elements::{account::AccountId, user::UserId};
+use domain::elements::{account::AccountId, role::Role, user::UserId};
 use serde_json::{Value, json};
 use test_support::{
     den::{Answer, entry_names, get, ok_json},
@@ -13,7 +16,10 @@ use test_support::{
     recording::{
         CallLog, RecordingAccountStore, RecordingCommissionStore, RecordingProfileCache, SubjectLog,
     },
+    store_doubles::{AccountsScript, ScriptedAccounts},
 };
+
+mod common;
 
 /// A name holding a right-to-left override, a bidirectional control the Den's rule refuses.
 const WITH_A_BIDI_OVERRIDE: &str = "Studio\u{202E}gnp.exe";
@@ -543,4 +549,221 @@ async fn founding_accepts_a_slash_and_the_den_names_the_account_by_its_handle() 
         .find(|listing| listing["did"] == did)
         .expect("the Account is listed");
     assert_eq!(stored["name"], WITH_A_SLASH);
+}
+
+/// `POST /accounts/{account}/members` as alice, granting `user` the `role`.
+async fn alice_grants(
+    world: &DenWorld,
+    account: &AccountId,
+    user: &UserId,
+    role: &str,
+) -> reqwest::Response {
+    let grant = json!({ "user": user.to_string(), "role": role });
+    world
+        .alice
+        .post(format!("{}/accounts/{account}/members", world.base_url()))
+        .json(&grant)
+        .send()
+        .await
+        .expect("POST /accounts/{id}/members is answered")
+}
+
+/// The role `user` holds in `account`, read from the world's live Account store.
+async fn role_of(world: &DenWorld, user: &UserId, account: &AccountId) -> Option<Role> {
+    world
+        .served
+        .runtime
+        .accounts
+        .role_of(user, account)
+        .await
+        .expect("the Account store answers")
+}
+
+/// The DIDs of the Accounts on `viewer`'s `GET /accounts`.
+async fn listed_account_dids(world: &DenWorld, viewer: &reqwest::Client) -> Vec<String> {
+    let response = get(viewer, world.base_url(), "/accounts").await;
+    assert_eq!(response.status(), 200, "GET /accounts");
+    let body: Value = response.json().await.expect("a JSON body");
+    // Protobuf JSON omits an empty repeated field, so no `accounts` is the empty listing.
+    let Some(accounts) = body.get("accounts") else {
+        return Vec::new();
+    };
+    let accounts = accounts.as_array().expect("an accounts array");
+    accounts
+        .iter()
+        .map(|listing| listing["did"].as_str().expect("a DID").to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_grant_never_seats_a_stranger() {
+    let world = pg_app::den_world(api::app).await;
+
+    let granted = alice_grants(&world, &world.supreme_arts, &stranger(), "member").await;
+
+    common::assert_problem(granted, 404, "member_not_found").await;
+    let stranger_s_accounts = listed_account_dids(&world, &world.stranger).await;
+    assert!(
+        !stranger_s_accounts.contains(&world.supreme_arts.to_string()),
+        "{stranger_s_accounts:?}"
+    );
+    assert_eq!(
+        role_of(&world, &stranger(), &world.supreme_arts).await,
+        None
+    );
+}
+
+#[tokio::test]
+async fn a_grant_re_roles_a_member() {
+    let world = pg_app::den_world(api::app).await;
+    world.add_bob_as_member(&world.supreme_arts).await;
+    let bob = adapter_mem::fixture::bob();
+
+    let granted = alice_grants(&world, &world.supreme_arts, &bob, "manager").await;
+
+    assert_eq!(granted.status(), 200);
+    let body: Value = granted.json().await.expect("a JSON body");
+    assert_eq!(body["user"], bob.to_string());
+    assert_eq!(body["role"], "manager");
+    let held = role_of(&world, &bob, &world.supreme_arts).await;
+    assert_eq!(held, Some(Role::Manager));
+}
+
+#[tokio::test]
+async fn seat_then_transfer_is_closed() {
+    let world = pg_app::den_world(api::app).await;
+    let transfer = json!({ "new_owner": stranger().to_string() });
+
+    let granted = alice_grants(&world, &world.supreme_arts, &stranger(), "member").await;
+    let transferred = world
+        .alice
+        .post(format!(
+            "{}/accounts/{}/transfer",
+            world.base_url(),
+            world.supreme_arts
+        ))
+        .json(&transfer)
+        .send()
+        .await
+        .expect("POST /accounts/{id}/transfer is answered");
+
+    common::assert_problem(granted, 404, "member_not_found").await;
+    common::assert_problem(transferred, 404, "member_not_found").await;
+    let alice = adapter_mem::fixture::alice();
+    assert_eq!(
+        role_of(&world, &alice, &world.supreme_arts).await,
+        Some(Role::Owner)
+    );
+    assert_eq!(
+        role_of(&world, &stranger(), &world.supreme_arts).await,
+        None
+    );
+}
+
+/// The den world with the app's Account store behind a double scripted by `script`; the world's
+/// own runtime keeps the unscripted stores.
+async fn den_world_with_scripted_accounts(script: &AccountsScript) -> DenWorld {
+    let script = script.clone();
+    pg_app::den_world(move |mut runtime| {
+        let scripted = ScriptedAccounts::new(Arc::clone(&runtime.accounts), script);
+        runtime.accounts = Arc::new(scripted);
+        api::app(runtime)
+    })
+    .await
+}
+
+/// How many Owner rows `account` holds, read straight from `account_members`.
+async fn owner_count(world: &DenWorld, account: &AccountId) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM account_members WHERE account_id = $1 AND \"role\" = $2",
+    )
+    .bind(account.to_string())
+    .bind(<&'static str>::from(&Role::Owner))
+    .fetch_one(&world.served.runtime.pool)
+    .await
+    .expect("count the Owner rows")
+}
+
+/// Supreme Arts with bob seated as a Member, his role read scripted to answer Member from now
+/// on, and its ownership then transferred from alice to bob.
+async fn supreme_arts_handed_to_a_stale_bob(world: &DenWorld, script: &AccountsScript) {
+    world.add_bob_as_member(&world.supreme_arts).await;
+    let bob = adapter_mem::fixture::bob();
+    script.answer_role_of(bob.clone(), world.supreme_arts.clone(), Role::Member);
+    let transfer = json!({ "new_owner": bob.to_string() });
+    let transferred = world
+        .alice
+        .post(format!(
+            "{}/accounts/{}/transfer",
+            world.base_url(),
+            world.supreme_arts
+        ))
+        .json(&transfer)
+        .send()
+        .await
+        .expect("POST /accounts/{id}/transfer is answered");
+    assert_eq!(transferred.status(), 200, "alice hands Supreme Arts to bob");
+}
+
+/// Supreme Arts still has bob as its one Owner and alice as an Admin, and bob still lists it.
+async fn assert_bob_still_owns_supreme_arts(world: &DenWorld) {
+    let (alice, bob) = (adapter_mem::fixture::alice(), adapter_mem::fixture::bob());
+    assert_eq!(
+        role_of(world, &bob, &world.supreme_arts).await,
+        Some(Role::Owner)
+    );
+    assert_eq!(
+        role_of(world, &alice, &world.supreme_arts).await,
+        Some(Role::Admin)
+    );
+    assert_eq!(owner_count(world, &world.supreme_arts).await, 1);
+    let bob_s_accounts = listed_account_dids(world, &world.bob).await;
+    assert!(
+        bob_s_accounts.contains(&world.supreme_arts.to_string()),
+        "{bob_s_accounts:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_leave_racing_a_transfer_keeps_the_new_owner() {
+    let script = AccountsScript::default();
+    let world = den_world_with_scripted_accounts(&script).await;
+    supreme_arts_handed_to_a_stale_bob(&world, &script).await;
+
+    let left = world
+        .bob
+        .delete(format!(
+            "{}/accounts/{}/members/me",
+            world.base_url(),
+            world.supreme_arts
+        ))
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}/members/me is answered");
+
+    common::assert_problem(left, 500, "internal_error").await;
+    assert_bob_still_owns_supreme_arts(&world).await;
+}
+
+#[tokio::test]
+async fn a_revoke_racing_a_transfer_keeps_the_new_owner() {
+    let script = AccountsScript::default();
+    let world = den_world_with_scripted_accounts(&script).await;
+    supreme_arts_handed_to_a_stale_bob(&world, &script).await;
+    let revocation = json!({ "user": adapter_mem::fixture::bob().to_string() });
+
+    let revoked = world
+        .alice
+        .delete(format!(
+            "{}/accounts/{}/members",
+            world.base_url(),
+            world.supreme_arts
+        ))
+        .json(&revocation)
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}/members is answered");
+
+    common::assert_problem(revoked, 500, "internal_error").await;
+    assert_bob_still_owns_supreme_arts(&world).await;
 }

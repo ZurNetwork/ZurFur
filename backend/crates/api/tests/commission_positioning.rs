@@ -80,15 +80,13 @@ async fn seed_account(backend: &MemBackend, handle: &str, member: Option<UserId>
         .await
         .expect("found the account");
     if let Some(user) = member {
-        backend
-            .grant_role(&UserAccount {
-                user_id: user,
-                account_id: account.id.clone(),
-                role: Role::Member,
-                alias: None,
-            })
-            .await
-            .expect("seat the member");
+        let member_seat = UserAccount {
+            user_id: user,
+            account_id: account.id.clone(),
+            role: Role::Member,
+            alias: None,
+        };
+        backend.seed_member(&member_seat);
     }
     account.id
 }

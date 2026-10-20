@@ -130,6 +130,10 @@ impl UnitOfWork for RecordingUnit {
         self.inner.characters()
     }
 
+    fn bug_reports(&mut self) -> Box<dyn domain::ports::BugReportWrites + '_> {
+        self.inner.bug_reports()
+    }
+
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
         self.log.record("commit");
         self.inner.commit().await
