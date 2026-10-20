@@ -74,6 +74,7 @@ expect_plan "a domain crate change also tests domain" "-p identity" "-p domain"
 new_repo
 change docs/notes.md "hello"
 expect_plan "every plan lints the dev profile" "cargo clippy -p api --all-targets --locked --features dev-profile"
+expect_plan "every plan checks the node tree" "just nodes-check"
 
 new_repo
 change frontend/web/app.ts "export {}"

@@ -1,0 +1,26 @@
+{
+  "path": "docker",
+  "charted": "2026-09-12",
+  "short": "Dockerfiles for dev-only services (local did:plc)",
+  "is": "Dockerfiles for dev-loop-only services that don't ship an official image — currently just the local `did:plc` directory.",
+  "type": "code",
+  "tags": [
+    "category:infrastructure"
+  ],
+  "conventions": [
+    "In-memory/mock backing store, never persistent — the container is meant to be recreated (`just pds-reset` / `docker compose down -v`), not upgraded in place."
+  ],
+  "entry_points": [
+    "plc/Dockerfile"
+  ],
+  "fs": [
+    {
+      "name": "plc/",
+      "role": "thin Dockerfile wrapping the official @did-plc/server npm package",
+      "node": false
+    }
+  ],
+  "notes": [
+    "Wired into docker-compose.yml at the repo root as the `plc` service."
+  ]
+}

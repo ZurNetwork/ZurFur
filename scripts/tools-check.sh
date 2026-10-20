@@ -1,8 +1,8 @@
 #!/bin/sh
 # Compares this machine's tools with the versions CI uses, and checks that the
 # workflows agree with those pins. Run via `just tools-check`, which exports
-# TYPOS_VERSION, CARGO_DENY_VERSION, BUF_VERSION and JUST_VERSION from the
-# Justfile.
+# TYPOS_VERSION, CARGO_DENY_VERSION, BUF_VERSION, JUST_VERSION and
+# NODES_VERSION from the Justfile.
 #
 #   tools-check.sh              both checks; local drift only warns
 #   tools-check.sh --pins-only  the workflow check alone (what CI runs)
@@ -16,6 +16,7 @@ set -eu
 : "${CARGO_DENY_VERSION:?run through just tools-check}"
 : "${BUF_VERSION:?run through just tools-check}"
 : "${JUST_VERSION:?run through just tools-check}"
+: "${NODES_VERSION:?run through just tools-check}"
 
 pins_only=0
 case "${1:-}" in
@@ -144,6 +145,7 @@ if [ "$pins_only" = 0 ]; then
     local_version cargo-deny "$CARGO_DENY_VERSION" cargo deny --version
     local_version buf "$BUF_VERSION" buf --version
     local_version just "$JUST_VERSION" just --version
+    local_version nodes "${NODES_VERSION#v}" nodes --version
     channel="$(awk -F'"' '/^channel[[:space:]]*=/ { print $2; exit }' rust-toolchain.toml)"
     local_version rustc "$channel" rustc --version
 fi

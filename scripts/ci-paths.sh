@@ -19,12 +19,15 @@ set -eu
 # The always-on jobs (typos, nodes, hooks) still check every one of these.
 docs_only() {
     case "$1" in
-        # Generator-owned trees reject any stray file, a NODE.json included:
+        # Generator-owned trees reject any stray file, a node file included:
         # sqlx-rust-codegen reads queries/, contract_current and the contract
         # job's regeneration diff own generated/.
         */queries/* | */generated/*) return 1 ;;
-        # Read only by the `nodes` job (frontend/web's prettier ignores them).
-        NODE.json | */NODE.json | NODE.toml) return 0 ;;
+        # Read only by the `nodes` job (frontend/web's prettier ignores them). A
+        # stray NODE.json is not listed, so the cases below decide it: code at
+        # the root and in the code trees. The tree guard fails it wherever it is,
+        # hidden and build folders aside.
+        NODE.inf.json | */NODE.inf.json | NODE.refs.json | NODE.toml) return 0 ;;
         # Everything else in the code trees, Markdown included: the web job's
         # `prettier --check .` reads frontend/web's Markdown.
         backend/* | frontend/* | contract/*) return 1 ;;
