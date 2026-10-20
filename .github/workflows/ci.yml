@@ -255,6 +255,9 @@ jobs:
       # tree here, every node file tracked; the runner's git and jq suffice).
       - run: just nodes-install
       - run: just nodes-check
+      # TEMPORARY, like the script it tests: scripts/nodes-0-7-edits.sh (needs
+      # the pinned nodes just installed, and the runner's jq).
+      - run: sh scripts/nodes-0-7-edits.test.sh
 
   hooks:
     name: hooks

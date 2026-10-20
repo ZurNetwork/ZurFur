@@ -264,6 +264,61 @@ else
     fail "--check on an old text twice in one element: expected exit 1 naming edit $victim missing, got $got: $out"
 fi
 
+role_edit="$(printf '%s' "$table" | jq -c '[.[] | select(.op == "replace-role")] | first')"
+role_id="$(printf '%s' "$role_edit" | jq -r '.id')"
+role_node="$(printf '%s' "$role_edit" | jq -r '.node')"
+r="$tmp/role-twice"
+build "$r" old
+jq --argjson e "$role_edit" '
+    .fs |= map(if .name == $e.entry then .role |= (split($e.old) | join($e.old + " and " + $e.old)) else . end)
+' "$r/$role_node/NODE.inf.json" >"$tmp/doubled"
+cat "$tmp/doubled" >"$r/$role_node/NODE.inf.json"
+run "$r" --check
+if [ "$got" = 1 ] && holds "missing: edit $role_id, "; then
+    echo "ok   --check names an old role text held twice in one role as missing"
+else
+    fail "--check on an old role text twice in one role: expected exit 1 naming edit $role_id missing, got $got: $out"
+fi
+
+# --- a node file that exists but cannot be read, and a node properly removed ---
+broken="$(printf '%s' "$table" | jq -r '[.[] | select(.node != ".")] | first | .node')"
+r="$tmp/unreadable"
+build "$r" old
+printf 'not json at all\n' >"$r/$broken/NODE.inf.json"
+before="$(sums "$r")"
+run "$r" --check
+if [ "$got" = 2 ] && holds "nodes get $broken " "$r/$broken/NODE.inf.json: " " at line 1 column"; then
+    echo "ok   --check on an unreadable node file exits 2 with nodes' own message"
+else
+    fail "--check on an unreadable node file: expected exit 2 and nodes' message, got $got: $out"
+fi
+run "$r"
+if [ "$got" = 2 ] && holds "nodes get $broken " "$r/$broken/NODE.inf.json: " " at line 1 column" && [ ! -s "$tmp/sets" ] && [ "$(sums "$r")" = "$before" ]; then
+    echo "ok   apply on an unreadable node file exits 2 and writes nothing"
+else
+    fail "apply on an unreadable node file: expected exit 2, nodes' message and no set call, got $got: $out"
+fi
+
+r="$tmp/removed"
+build "$r" old
+rm "$r/$broken/NODE.inf.json"
+jq --arg name "$broken/" '.fs |= map(select(.name != $name))' "$r/NODE.inf.json" >"$tmp/dropped"
+cat "$tmp/dropped" >"$r/NODE.inf.json"
+"$real_nodes" --root "$r" fmt >/dev/null
+if ! "$real_nodes" --root "$r" check >"$tmp/check.out" 2>&1; then
+    fail "the tree without $broken is no valid tree: $(cat "$tmp/check.out")"
+fi
+run "$r" --check
+gone=yes
+for id in $(printf '%s' "$table" | jq -r --arg n "$broken" '.[] | select(.node == $n) | .id'); do
+    holds "missing: edit $id, " || gone=no
+done
+if [ "$got" = 1 ] && [ "$gone" = yes ]; then
+    echo "ok   --check names the edits of a properly removed node as missing"
+else
+    fail "--check on a removed node $broken: expected exit 1 naming its edits missing, got $got: $out"
+fi
+
 # --- an entry to add already there with another role ---
 r="$tmp/conflict"
 build "$r" old

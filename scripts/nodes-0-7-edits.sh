@@ -24,8 +24,9 @@
 #   sh scripts/nodes-0-7-edits.sh --print-edits   print the edit table (JSON)
 # Exit codes: 0 every edit applied (after the run); 1 `--check` found an edit
 # not applied (one line each), or apply found a missing edit and wrote nothing;
-# 2 a precondition failed (no current tree, no jq, no nodes 0.7 or later) or a
-# `nodes` write failed.
+# 2 a precondition failed (no current tree, no jq, no nodes 0.7 or later), a
+# `nodes` write failed, or `nodes get` failed on a node whose file exists (a
+# node whose file is gone is `missing`, not an error).
 #
 # Refresh, when `main` moves under the PR with node changes: in a merge change,
 #   jj restore --from main@origin 'glob:**/NODE.json' 'glob:**/NODE.inf.json' NODE.refs.json
@@ -34,8 +35,19 @@
 # Never replay `set` commands, and never hand-merge node JSON.
 #
 # Catch-up, for a branch b cut before X (X is the PR's squash commit on
-# `main`, X^ its parent):
-#   1. merge X^ into b the usual way, then the light gate;
+# `main`, X^ its parent, `X-` in jj):
+#   1. merge X^ into b the usual way (`jj new b X-`), then the light gate.
+#      Both sides are still in the old format here, so the pinned nodes 0.7
+#      can't write a conflicted node file, and node JSON is never merged by
+#      hand. So keep a scratch nodes 0.6.0, installed once, until the last
+#      branch has caught up:
+#        CARGO_HOME=<scratch> sh scripts/nodes-install.sh v0.6.0
+#      For each node file `jj resolve --list` names, in the merge change:
+#        jj diff --from 'fork_point(b | X-)' --to b <node file>   b's own change
+#        jj restore --from X- <node file>                          X^'s side
+#      then redo b's change to that file with the scratch binary's `set` /
+#      `add-ref` (`<scratch>/bin/nodes --root <b's workspace> ...`), and
+#      `<scratch>/bin/nodes --root <b's workspace> check` passes;
 #   2. `nodes migrate` on b, then commit it;
 #   3. `jj new b X`, then
 #      `jj restore --from b 'glob:**/NODE.inf.json' 'glob:**/NODE.json' NODE.refs.json`
@@ -187,7 +199,13 @@ evaluate() {
     while IFS="$tab" read -r node field; do
         mine="$(printf '%s' "$table" | jq -c --arg n "$node" --arg f "$field" 'map(select(.node == $n and .field == $f))')"
         if value="$(nodes --root "$root" --json get "$node" "$field" 2>"$work/err")"; then :; else
-            # The node itself is gone: its edits are missing, not a tool failure.
+            # A node whose file is gone has its edits missing; one whose file
+            # exists but cannot be read is a tool failure, never a guess.
+            file="$root/$node/NODE.inf.json"
+            [ "$node" != . ] || file="$root/NODE.inf.json"
+            if [ -e "$file" ]; then
+                fail_closed "nodes get $node $field failed on an existing node file: $(cat "$work/err")"
+            fi
             value='"(no such node or field)"'
         fi
         printf '%s' "$value" |

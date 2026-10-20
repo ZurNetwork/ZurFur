@@ -58,7 +58,7 @@ just test                  # cargo test --workspace (integration tests need a co
 just setup                 # First-time setup: copy .env, install tools (typos, cargo-deny at CI's versions)
 just gate                  # The full local mirror of CI (see "Branches and gates")
 just gate-light            # The light gate for base merges and fix rounds
-just tools-check           # Warn when local typos/cargo-deny/buf/rustc differ from CI's pins
+just tools-check           # Warn when local typos/cargo-deny/buf/just/nodes/rustc differ from CI's pins
 ```
 
 Building and running directly:
