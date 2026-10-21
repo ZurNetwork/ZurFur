@@ -84,7 +84,7 @@ Ports and adapters, per the design page "Domains and Applications" (`11763713`):
 backend/crates/
   shared/            # Build-time constants every layer may read, the domain crates included
   kernel/            # The base domain crate: the clock, the string builder, Did, text, maturity, BlobId, Markdown
-  identity/          # User, Account, Character, actor identities, handles, roles, invitations, profiles, public records; their ports
+  identity/          # User, Account, Character, actor identities, handles, roles, invitations, profiles, public records, bug reports; their ports
   workflow/          # Commission (elements, slots, seats, changelog, files) and Workflow boards; their ports
   gallery/           # Posts and the Gallery (a stub crate until the first post type)
   moderation/        # Platform safety (a stub crate until the first moderation type)

@@ -1,7 +1,7 @@
 -- Every LIVE account `$1` holds a role in, together with that role —
--- not owned-only: gaining a role is how a user joins an account on this
--- platform, so an accepted invitation belongs here exactly as a founded
--- account does. Keeps `find`'s `deleted_at IS NULL` liveness filter;
+-- not owned-only: an accepted invitation is how a user joins an account on
+-- this platform, so that membership belongs here exactly as a founded account
+-- does. Keeps `find`'s `deleted_at IS NULL` liveness filter;
 -- `accounts.id` IS the DID, so the actor_identity join that used to
 -- recover one is gone.
 --

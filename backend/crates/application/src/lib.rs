@@ -6,6 +6,7 @@
 
 pub mod account;
 pub mod app;
+pub mod bug_report;
 pub mod character;
 pub mod commission;
 pub mod common_error;

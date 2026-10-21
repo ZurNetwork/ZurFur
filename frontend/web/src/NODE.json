@@ -1,6 +1,6 @@
 {
   "path": "frontend/web/src",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "The app: handleFetch, $lib, routes",
   "is": "The app proper: a server-side `handleFetch` rewrite, a `$lib` split into an above-the-seam plain-data half and a below-the-seam Effect half, and the route tree (now with a dev-only mock signin endpoint under `routes/mock/`).",
   "type": "code",
@@ -11,13 +11,14 @@
   "conventions": [
     "THE RUNES SEAM — Effect lives only under `lib/server/**`; `runApi` (`ManagedRuntime.runPromise`) is the one place programs become promises; loads/actions/components receive plain data and never see a fiber.",
     "Generated protobuf types never cross the seam — they decode server-side and map to hand-written plain interfaces in `lib/api/`.",
-    "One-channel forms: values, field errors AND the backend Problem all ride the superform `message`.",
+    "One-channel forms: values, field errors AND the backend Problem all ride the superform `message`. The one exception is the bug-report form (the report page and the frame's dialog): it posts with plain SvelteKit `enhance`, no superforms, and its action answers `BugReportActionData` (`lib/api/bug-report.ts`) — `fail(status, data)` naming the refused item, the reporter's own text carried back on every failure.",
     "Absence is `T | undefined` — no `Option`, no `null`.",
     "Domain strings are branded (`AccountId`, `Did`, `Handle`).",
     "Every response to a signed-in request (one carrying any `zurfur.sid` pair, two included, though `handleFetch` forwards none then) leaves `Cache-Control: private, no-store` and `Referrer-Policy: same-origin`, set by the root `handle` hook — pages, 404/error pages and form-action JSON alike; no page can weaken it. The one exception is a redirect the sign-in gate throws: SvelteKit builds it outside the hook chain, so it leaves bare (a bodiless 303, which no cache stores without explicit freshness). Anonymous responses are untouched.",
     "Errors never show their own message: the error pages pick their words by status and route from a fixed list (`error-copy.ts`), `error(status, message)` takes only a literal (lint-enforced; a message still ships in the page source), and `handleError` logs only the route template and status.",
     "Every response carries `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY` (a redirect the sign-in gate throws is the one bodiless exception).",
-    "A backend that doesn't answer (unreachable, or past a time limit) is never read as signed out: the sign-in gate answers it with its own fixed page (503), a page's own read fails to the error view as 503 (\"isn't answering\"), and a write that runs out says it may have gone through. The gate's page is the one HTML the web writes outside Svelte and holds nothing from the request."
+    "A backend that doesn't answer (unreachable, or past a time limit) is never read as signed out: the sign-in gate answers it with its own fixed page (503), a page's own read fails to the error view as 503 (\"isn't answering\"), and a write that runs out says it may have gone through. The gate's page is the one HTML the web writes outside Svelte and holds nothing from the request.",
+    "Every write (any method but GET, HEAD and OPTIONS, in any letter case; any content type) is refused with a plain-text 403 before any load, action or backend call, unless its `Origin` is exactly ZURFUR_PUBLIC_URL's origin, or it sends no `Origin` and `Sec-Fetch-Site: same-origin` — in every build, dev included (the root `handle`'s `refuseCrossSiteWrites`). The yardstick is the configuration, never the request's own address. Outside dev, an unset or malformed ZURFUR_PUBLIC_URL refuses every write; a dev build falls back to http://127.0.0.1:8080 only when it is unset. SvelteKit's own production origin check stays on beside it. The one write it doesn't cover is the dev-only mock `GET /mock/signin`."
   ],
   "entry_points": [
     "hooks.server.ts",
@@ -36,12 +37,12 @@
     },
     {
       "name": "hooks.server.spec.ts",
-      "role": "specs for the hooks — handle stamps the session and anti-framing headers and refuses a crafted (session) data request before it resolves; handleError is wired to the route-only logger; handleFetch, driven through SvelteKit's real server fetch (kit internals, on purpose), sends only zurfur.sid upstream; a signed-in page whose /me never answers gets the gate's 503 page at 5 s with all four headers and no Set-Cookie; the request leaving the server stops on its own limit and on the deadline",
+      "role": "specs for the hooks — handle stamps the session and anti-framing headers and refuses a crafted (session) data request before it resolves; refuses a cross-site write, dev included, configured from a stubbed ZURFUR_PUBLIC_URL (its dev default, a set value, a malformed one, unset outside dev) and placed inside the framing and session stamps, before the sign-in gate; handleError is wired to the route-only logger; handleFetch, driven through SvelteKit's real server fetch (kit internals, on purpose), sends only zurfur.sid upstream; a signed-in page whose /me never answers gets the gate's 503 page at 5 s with all four headers and no Set-Cookie; the request leaving the server stops on its own limit and on the deadline",
       "node": false
     },
     {
       "name": "hooks.server.ts",
-      "role": "handle — one chain (lib/server/handle-chain.ts): in dev, each request logs one line, its method, route template, status and ms (logRequests, first in the chain: lib/server/dev-log.ts); every request gets one 15 s deadline for its backend calls (request-deadline.ts); every response refuses framing (frame-headers.ts); every signed-in response leaves Cache-Control: private, no-store and Referrer-Policy: same-origin (session-headers.ts); every (session) load, data request and action requires a session (session-gate.ts); handleError — logs an unexpected error by route template and status only, fixed message to the page (error-log.ts); handleFetch — in dev, each upstream call logs its page's route template, method, status and ms (logUpstreamCalls wraps it); binds every request leaving the server to that deadline (answered whole or failed by then, its requests held until it ends: bounded-fetch.ts), points same-origin /api/v1/* at the internal axum origin during SSR, forwards the session cookie",
+      "role": "handle — one chain (lib/server/handle-chain.ts): in dev, each request logs one line, its method, route template, status and ms (logRequests, first in the chain: lib/server/dev-log.ts); every request gets one 15 s deadline for its backend calls (request-deadline.ts); every response refuses framing (frame-headers.ts); every signed-in response leaves Cache-Control: private, no-store and Referrer-Policy: same-origin (session-headers.ts); every write from another origin than ZURFUR_PUBLIC_URL's (read once at load by lib/server/first-party-origin.ts; a dev build with it unset takes http://127.0.0.1:8080) is refused 403 (cross-site-writes.ts); every (session) load, data request and action requires a session (session-gate.ts); handleError — logs an unexpected error by route template and status only, fixed message to the page (error-log.ts); handleFetch — in dev, each upstream call logs its page's route template, method, status and ms (logUpstreamCalls wraps it); binds every request leaving the server to that deadline (answered whole or failed by then, its requests held until it ends: bounded-fetch.ts), points same-origin /api/v1/* at the internal axum origin during SSR, forwards the session cookie",
       "node": false
     },
     {

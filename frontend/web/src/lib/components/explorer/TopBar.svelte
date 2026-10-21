@@ -6,13 +6,15 @@
 	import IconButton from '$lib/components/ui/IconButton.svelte';
 	import PathBar from '$lib/components/ui/PathBar.svelte';
 	import type { FrameSection } from './frame-section';
+	import ReportBugButton from './ReportBugButton.svelte';
 	import SignOut from './SignOut.svelte';
 	import { denRootPath } from '$lib/api/den-route';
 
 	/**
 	 * The frame's top row. On a desktop: the brand, the path, the section
-	 * links, who is signed in and Sign out. On a phone: the drawer's ☰ and
+	 * links, "Report a bug", who is signed in and Sign out. On a phone: the drawer's ☰ and
 	 * the back link to the parent, the rest moving into the drawer.
+	 * `menuButton` binds ☰, so the frame can give it focus back.
 	 */
 	let {
 		session,
@@ -20,7 +22,8 @@
 		section,
 		drawerOpen,
 		drawerId,
-		onOpenDrawer
+		onOpenDrawer,
+		menuButton = $bindable()
 	}: {
 		session: Session;
 		trail: Trail;
@@ -28,6 +31,7 @@
 		drawerOpen: boolean;
 		drawerId: string;
 		onOpenDrawer: () => void;
+		menuButton?: HTMLButtonElement | undefined;
 	} = $props();
 </script>
 
@@ -40,6 +44,7 @@
 			controls={drawerId}
 			onclick={onOpenDrawer}
 			testid="open-drawer"
+			bind:element={menuButton}
 		/>
 	</span>
 	<a class="top-bar__brand desktop-only" href={resolve('/')}>zurfur</a>
@@ -58,6 +63,9 @@
 			data-testid="accounts-link">Accounts</a
 		>
 	</nav>
+	<span class="top-bar__report desktop-only">
+		<ReportBugButton current={section === 'report'} />
+	</span>
 	<div class="top-bar__session desktop-only">
 		<Avatar {session} />
 		<SignOut />
@@ -100,6 +108,10 @@
 	.top-bar__links a:hover,
 	.top-bar__links a[aria-current='page'] {
 		color: var(--color-text);
+	}
+
+	.top-bar__report {
+		display: inline-flex;
 	}
 
 	.top-bar__session {

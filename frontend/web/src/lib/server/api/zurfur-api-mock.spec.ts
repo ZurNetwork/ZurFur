@@ -4,6 +4,7 @@ import { fetchStub } from '$lib/testing/http';
 import { commissionId, fieldPointer, handleFromTrusted, type CommissionId } from '$lib/types/brand';
 import { segmentPath } from '../path-builder';
 import { accountsOutcome, createAccountOutcome, deleteAccountOutcome } from '../accounts';
+import type { BugDescription } from '$lib/types/bug-report-rules';
 import { optionalSession, signinOutcome, signoutOutcome } from '../session';
 import {
 	createMockStore,
@@ -321,6 +322,37 @@ describe('zurfurApiMock', () => {
 			avatarUrl: undefined
 		});
 		expect(storeB.accounts[0]?.name).toBe("Alice's Studio");
+	});
+});
+
+describe('zurfurApiMock: fileBugReport', () => {
+	const filing = {
+		description: 'Broken.' as BugDescription,
+		page: undefined,
+		pageType: undefined,
+		webVersion: undefined,
+		browser: undefined,
+		window: undefined,
+		display: undefined,
+		errorStatus: undefined
+	};
+	const fileBugReport = Effect.flatMap(ZurfurApi, (api) => api.fileBugReport(filing));
+
+	it('answers a made-up eight-character reference and keeps nothing', async () => {
+		const store = createMockStore();
+		const before = structuredClone(store);
+
+		const reference = await runOn(store, fileBugReport);
+
+		expect(reference).toMatch(/^[0-9a-f]{8}$/);
+		expect(store).toStrictEqual(before);
+	});
+
+	it('fails NotAuthenticated when nobody is signed in', async () => {
+		const store = createMockStore();
+		store.session = undefined;
+		const failure = await runOn(store, Effect.flip(fileBugReport));
+		expect(failure._tag).toBe('NotAuthenticated');
 	});
 });
 

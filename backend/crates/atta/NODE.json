@@ -57,7 +57,7 @@
     },
     {
       "name": "src/name.rs",
-      "role": "ShowableName, a name safe to show: input at most 2048 bytes, no line or paragraph separator; stripped (blank ends; fillers and zero-width spaces inside), then not empty, no Cc, no unassigned default-ignorable, no Cf but the joiners, subdivision-flag tags and a Mongolian vowel separator inside a Mongolian word. NodeName is a ShowableName with no / (the / clause outranks every rule but the length)",
+      "role": "ShowableName, a name safe to show: input at most 2048 bytes, no line or paragraph separator; stripped (blank ends; fillers and zero-width spaces inside), then not empty, no Cc, no unassigned default-ignorable, no Cf but the joiners, subdivision-flag tags and a Mongolian vowel separator inside a Mongolian word. NodeName is a ShowableName with no / (the / clause outranks every rule but the length). is_format and is_default_ignorable are public, re-exported from the root, so domain's copies of the two tables are pinned equal to these (application/tests/den_names.rs)",
       "node": false
     },
     {

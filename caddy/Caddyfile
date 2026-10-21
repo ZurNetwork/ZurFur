@@ -9,11 +9,11 @@
 # real origin.
 #
 # Runs under `network_mode: host` (docker-compose.yml): axum and the vite dev
-# servers bind 127.0.0.1 on the host at per-worktree ports, which a
+# servers bind 127.0.0.1 on the host at per-workspace ports, which a
 # bridge-networked container could not reach — host networking lets Caddy dial
 # loopback directly while every bind stays loopback-only (nothing on the LAN).
 # Env placeholders below are substituted at config-load time; their defaults
-# are the primary-checkout values, overridden per worktree via the compose
+# are the primary-checkout values, overridden per workspace via the compose
 # service `environment:` block.
 {
 	# Plain HTTP on a loopback port in dev — no ACME, no cert management, and

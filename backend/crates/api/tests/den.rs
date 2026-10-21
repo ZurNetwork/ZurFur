@@ -30,7 +30,6 @@ use domain::{
         profile::Profile,
         role::Role,
         user::{User, UserId},
-        user_account::UserAccount,
     },
     ports::{UnitOfWork, UserStore},
 };
@@ -88,16 +87,18 @@ async fn seed_closed_studio(backend: &MemBackend) {
         .expect("a valid name");
     let (account, ownership) =
         Account::open(bob(), closed_studio.did().clone(), handle, name, Utc::now());
-    let member = UserAccount {
-        user_id: alice(),
-        account_id: closed_studio.clone(),
-        role: Role::Member,
-        alias: None,
-    };
     let database = backend.database();
     application::transaction(&*database, async move |uow: &mut dyn UnitOfWork| {
         uow.accounts().create(&account, &ownership).await?;
-        uow.accounts().grant_role(&member).await?;
+        test_support::membership::seat_member(
+            uow,
+            &closed_studio,
+            &alice(),
+            Role::Member,
+            &bob(),
+            Utc::now(),
+        )
+        .await?;
         uow.accounts().soft_delete(&closed_studio).await
     })
     .await

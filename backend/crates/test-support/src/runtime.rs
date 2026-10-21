@@ -9,7 +9,7 @@ use adapter_mem::{
     MemAuthenticator, MemBackend, MemDidMinter, MemIdentityResolver, MemProfileSource,
 };
 use composition::{BareOrigin, Config, Environment, Runtime};
-use domain::elements::{did::Did, profile::Profile};
+use domain::elements::{bug_report::BuildId, did::Did, profile::Profile};
 
 /// The `Config::database_url` the fixture carries — what an identity file's
 /// fingerprint must be taken against to match this runtime.
@@ -28,6 +28,7 @@ pub struct MemRuntimeBuilder {
     profile: Profile,
     public_url: BareOrigin,
     max_upload_bytes: u64,
+    build_id: BuildId,
 }
 
 /// Start a runtime that authenticates as `did`, with a bare profile under the
@@ -39,6 +40,7 @@ pub fn mem(did: &Did) -> MemRuntimeBuilder {
         profile: Profile::new(did.clone(), "fixture.bsky.social"),
         public_url: "http://127.0.0.1:0".parse().expect("a bare origin"),
         max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
+        build_id: BuildId::try_from("unknown").expect("a build id"),
     }
 }
 
@@ -62,6 +64,12 @@ impl MemRuntimeBuilder {
         self
     }
 
+    /// `Config::build_id`, the API build a bug report records.
+    pub fn build_id(mut self, build_id: BuildId) -> Self {
+        self.build_id = build_id;
+        self
+    }
+
     pub fn build(self) -> MemRuntime {
         let backend = MemBackend::new();
         let config = Config {
@@ -76,6 +84,7 @@ impl MemRuntimeBuilder {
             plc_directory_submit: false,
             deadline_sweep_interval_secs: 60,
             max_upload_bytes: self.max_upload_bytes,
+            build_id: self.build_id,
         };
         let runtime = Runtime {
             config,
@@ -92,6 +101,7 @@ impl MemRuntimeBuilder {
             workflows: backend.workflow_store(),
             columns: backend.column_store(),
             characters: backend.character_store(),
+            bug_reports: backend.bug_report_store(),
             files: backend.file_store(),
             database: backend.database(),
             did_minter: Arc::new(MemDidMinter::new()),

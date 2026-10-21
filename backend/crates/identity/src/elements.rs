@@ -10,6 +10,7 @@ pub mod account;
 pub mod account_keys;
 pub mod achievement;
 pub mod actor_identity;
+pub mod bug_report;
 pub mod character;
 pub mod handle;
 pub mod invitation;

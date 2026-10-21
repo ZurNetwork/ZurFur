@@ -29,6 +29,11 @@
       "node": false
     },
     {
+      "name": "002-the-shell/",
+      "role": "boardroom fork 002 (ad-hoc review): GPT and Gemini review the epic \"The Shell\", a first-party CLI/REPL over the backend — brief, round-2 brief, seat transcripts, debate.md",
+      "node": false
+    },
+    {
       "name": "003-character-pds/",
       "role": "boardroom fork 003 (SCRUTINIZE): does a public Character get its own PDS repo — brief, S0–S3 seat transcripts, sealed ranking, added options, S4 judge delta, debate.md, run.py + usage.json",
       "node": false

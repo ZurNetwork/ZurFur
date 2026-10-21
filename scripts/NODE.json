@@ -1,6 +1,6 @@
 {
   "path": "scripts",
-  "charted": "2026-10-17",
+  "charted": "2026-10-20",
   "short": "Shell backing just recipes and hooks",
   "is": "Shell scripts backing the `just` dev-loop recipes and jj/session hooks — not cargo tests, but scripted proofs and glue for the manual dev loop.",
   "type": "code",
@@ -11,10 +11,15 @@
     "`ZURFUR_*` env convention (env wins over `.env.example` defaults); each smoke script proves the dev loop itself at the shell/`just` level, distinct from the automated per-test-throwaway integration harness."
   ],
   "entry_points": [
-    "../Justfile (the pds-provision, pds-smoke, web-smoke, den-fill, worktree-init, nodes-install recipes call these)",
+    "../Justfile (the pds-provision, pds-smoke, web-smoke, den-fill, workspace-init, nodes-install recipes call these)",
     "nodes-fmt-hook.sh (run by .claude/settings.json on every Write|Edit)"
   ],
   "fs": [
+    {
+      "name": "build-id.sh",
+      "role": "prints one line for ZURFUR_BUILD_ID: jj's working-copy parent commit (12 chars), else git HEAD, plus \" (local changes)\" when the working copy differs, else \"unknown\"; quiet, never fails, at most 64 bytes; the dev recipes export it when unset (tested by build-id.test.sh)",
+      "node": false
+    },
     {
       "name": "ci-changes.sh",
       "role": "the body of CI's changes job: verifies a PR's merge parents or a merge group's head and base, diffs, classifies with the base's ci-paths.sh (a merge group always runs everything); fails closed",
@@ -96,23 +101,18 @@
       "node": false
     },
     {
-      "name": "uow-status.sh",
-      "role": "SessionStart hook — print in-flight unit-of-work status from the ledger",
-      "node": false
-    },
-    {
       "name": "web-smoke.sh",
       "role": "shell-level scripted proof the one-origin Caddy routing split works",
       "node": false
     },
     {
-      "name": "worktree-init.sh",
-      "role": "give a git worktree its own isolated dev-loop ports/DB/compose project",
+      "name": "workspace-init.sh",
+      "role": "gives a secondary jj workspace (or a git worktree) its own dev-loop ports, DB and compose project through a managed .env block; refuses the primary checkout (just workspace-init; tested by workspace-init.test.sh)",
       "node": false
     }
   ],
   "refs": [],
   "notes": [
-    "uow-status.sh (SessionStart) and jj-push.sh (the `jj push` alias) run as hooks, not just recipes."
+    "jj-push.sh (the `jj push` alias) runs as a hook, not just a recipe; the Claude Code hooks live in hooks/."
   ]
 }

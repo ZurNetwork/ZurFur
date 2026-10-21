@@ -5,7 +5,7 @@ Architecture is ports & adapters:
 
 - `backend/crates/shared` — build-time constants every layer may read, the domain crates included
 - `backend/crates/kernel` — the base domain crate: the clock, the string builder, `Did`, text, maturity, `BlobId`, `Markdown`
-- `backend/crates/identity` — User, Account, Character, actor identities, handles, roles, invitations, profiles, public records, and their ports
+- `backend/crates/identity` — User, Account, Character, actor identities, handles, roles, invitations, profiles, public records, bug reports, and their ports
 - `backend/crates/workflow` — Commission and Workflow boards, and their ports
 - `backend/crates/gallery`, `backend/crates/moderation` — stub crates until their first types
 - `backend/crates/domain` — the façade: re-exports the domain crates that hold types as `domain::…` and owns the cross-domain unit of work, its only code of its own; no IO
@@ -39,4 +39,4 @@ You handle mechanical, locally-verifiable work: doc comments, test scaffolding, 
 
 - Do NOT make design or domain decisions (entity modeling, naming, schemas, API shapes, invariants). If a task requires one, stop and report it as an open question instead of choosing.
 - Never push to `main`. Never commit unless explicitly asked.
-- Design truth lives in the design corpus — the sibling repo `ZurNetwork/zurfur-design`, checked out at `~/code/zurfur-design`, one Markdown page per file under `entities/ decisions/ project/ data-layer/ superseded/`. Match the topic in `docs/design-index.md`, then read `<id>-<slug>.md` in the corpus, or `rg` it. Tickets stopped on 2026-09-19; the old Jira project ZMVP stays readable for history (read-only, `atl issue ZMVP-N`). Never run `atl page` — Confluence is a frozen archive, not a source. Never guess a design decision: read the page, or say you couldn't resolve it.
+- Design truth lives in the design corpus — the sibling repo `ZurNetwork/zurfur-design`, checked out at `~/code/zurfur-design`, one Markdown page per file under `entities/ decisions/ project/ data-layer/ superseded/`. Match the topic in `docs/design-index.md`, then read `<id>-<slug>.md` in the corpus, or `rg` it. Tickets stopped on 2026-09-19; Confluence is a frozen archive, not a source. Never guess a design decision: read the page, or say you couldn't resolve it.

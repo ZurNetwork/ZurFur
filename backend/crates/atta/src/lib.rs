@@ -26,7 +26,10 @@ pub use host::{
 };
 pub use level::Level;
 pub use metadata::{Metadata, Type};
-pub use name::{MAX_NAME_BYTES, NodeName, NodeNameError, ShowableName, ShowableNameError};
+pub use name::{
+    MAX_NAME_BYTES, NodeName, NodeNameError, ShowableName, ShowableNameError, is_default_ignorable,
+    is_format,
+};
 pub use ordinal::{NameOrdinal, NameOrdinalError};
 pub use page::{Listing, PageToken, PageTokenError};
 pub use path::RealPath;

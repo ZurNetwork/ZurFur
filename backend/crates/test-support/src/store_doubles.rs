@@ -1,8 +1,9 @@
 //! Store doubles that answer from a real store until a test scripts them otherwise: an Account
 //! listing that also lists a membership the store wouldn't, an Account or user read that fails,
-//! and a user read that finds no row. A script is shared, so a test seeds through the real
-//! answers first and scripts the double afterwards.
+//! a role read that answers a stale role, and a user read that finds no row. A script is shared,
+//! so a test seeds through the real answers first and scripts the double afterwards.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
@@ -35,6 +36,7 @@ struct AccountsPlan {
     also_listed: Option<MakeMembership>,
     find_fails: bool,
     list_for_user_fails: bool,
+    answered_roles: HashMap<(UserId, AccountId), Role>,
 }
 
 impl AccountsPlan {
@@ -69,8 +71,20 @@ impl AccountsScript {
         *self.plan().fails(read) = false;
     }
 
+    /// From now on `role_of` answers `role` for `user` in `account`, as a read taken before a
+    /// concurrent change would; every other pair reads through.
+    pub fn answer_role_of(&self, user: UserId, account: AccountId, role: Role) {
+        self.plan().answered_roles.insert((user, account), role);
+    }
+
     fn plan(&self) -> MutexGuard<'_, AccountsPlan> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The role scripted for `user` in `account`, else `None` to read through.
+    fn answered_role(&self, user: &UserId, account: &AccountId) -> Option<Role> {
+        let pair = (user.clone(), account.clone());
+        self.plan().answered_roles.get(&pair).cloned()
     }
 
     fn check(&self, read: AccountRead) -> anyhow::Result<()> {
@@ -108,6 +122,9 @@ impl AccountStore for ScriptedAccounts {
     }
 
     async fn role_of(&self, user: &UserId, account: &AccountId) -> anyhow::Result<Option<Role>> {
+        if let Some(role) = self.script.answered_role(user, account) {
+            return Ok(Some(role));
+        }
         self.inner.role_of(user, account).await
     }
 

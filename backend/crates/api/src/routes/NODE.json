@@ -22,6 +22,11 @@
       "node": false
     },
     {
+      "name": "bug_reports.rs",
+      "role": "POST /bug-reports on the cookie surface: the reporter from CallingUser alone, the API build from Config::build_id, each item checked by TryFrom with a fixed 422 sentence per field and one for a body that doesn't decode, the rate limit as 429, the receipt (reference, received_at) as 201; logs nothing of its own; no route reads reports",
+      "node": false
+    },
+    {
       "name": "commissions/",
       "role": "the commission JSON API, one file per act",
       "node": true

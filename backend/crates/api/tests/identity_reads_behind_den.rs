@@ -89,14 +89,13 @@ async fn found_account(owner: &reqwest::Client, base: &str, name: &str, label: &
     AccountId::from(Did::from(did.to_owned()))
 }
 
-/// alice's Member role on `account`.
-fn alice_member_of(account: &AccountId) -> UserAccount {
-    UserAccount {
-        user_id: alice(),
-        account_id: account.clone(),
-        role: Role::Member,
-        alias: None,
-    }
+/// Seats alice as a Member of `account` on `uow`, invited by bob, its Owner.
+async fn seat_alice_as_member(
+    uow: &mut dyn UnitOfWork,
+    account: &AccountId,
+) -> anyhow::Result<UserAccount> {
+    test_support::membership::seat_member(uow, account, &alice(), Role::Member, &bob(), Utc::now())
+        .await
 }
 
 /// A copy of `account`; an Account is not `Clone`.
@@ -164,12 +163,11 @@ async fn seed_closed_studio(backend: &adapter_mem::MemBackend) -> Account {
         .expect("a valid name");
     let (account, ownership) =
         Account::open(bob(), closed_studio.did().clone(), handle, name, Utc::now());
-    let member = alice_member_of(&closed_studio);
     let seeded = copy_of(&account);
     let database = backend.database();
     application::transaction(&*database, async move |uow: &mut dyn UnitOfWork| {
         uow.accounts().create(&account, &ownership).await?;
-        uow.accounts().grant_role(&member).await?;
+        seat_alice_as_member(uow, &closed_studio).await?;
         uow.accounts().soft_delete(&closed_studio).await
     })
     .await
@@ -214,10 +212,9 @@ async fn deactivate_with_alice_a_member(world: &DenWorld, account: AccountId) ->
         .await
         .expect("the Account store answers")
         .expect("the founded Account is live");
-    let member = alice_member_of(&account);
     runtime
         .transaction(async move |uow: &mut dyn UnitOfWork| {
-            uow.accounts().grant_role(&member).await?;
+            seat_alice_as_member(uow, &account).await?;
             uow.accounts().soft_delete(&account).await
         })
         .await

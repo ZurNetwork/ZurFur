@@ -100,6 +100,7 @@ async fn runtime(config: Config) -> anyhow::Result<AppState> {
         workflows: backend.workflow_store(),
         columns: backend.column_store(),
         characters: backend.character_store(),
+        bug_reports: backend.bug_report_store(),
         files: backend.file_store(),
         database: backend.database(),
         did_minter: Arc::new(MemDidMinter::new()),

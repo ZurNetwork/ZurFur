@@ -2,27 +2,42 @@
 	import type { Snippet } from 'svelte';
 	import IconButton from './IconButton.svelte';
 
-	/** A centred modal, or the drawer: a side sheet from the left. */
-	type DialogVariant = 'modal' | 'drawer';
+	/**
+	 * A centred modal; the drawer, a side sheet from the left; or a centred
+	 * modal that fills the screen at the phone breakpoint and narrower.
+	 */
+	type DialogVariant = 'modal' | 'drawer' | 'full-screen-on-phone';
 
 	/**
-	 * A modal dialog over an inert page. Opening it focuses its close button;
+	 * A modal dialog over an inert page, named by its visible title. Opening it
+	 * focuses the element whose id is `initialFocus`, else its close button;
 	 * Escape, the close button or a click on the backdrop closes it, and focus
-	 * goes back to whatever opened it. Its content exists only while open.
+	 * goes to `returnFocus`, else to whatever had focus when it opened. Its
+	 * body and footer exist only while open; the footer stays put while the
+	 * body scrolls.
 	 */
 	let {
 		open = $bindable(false),
 		label,
 		variant = 'modal',
 		id,
-		children
+		initialFocus,
+		returnFocus,
+		children,
+		footer
 	}: {
 		open?: boolean;
 		label: string;
 		variant?: DialogVariant;
 		id?: string | undefined;
+		initialFocus?: string | undefined;
+		returnFocus?: HTMLElement | undefined;
 		children: Snippet;
+		footer?: Snippet | undefined;
 	} = $props();
+
+	const ownId = $props.id();
+	const titleId = `${ownId}-title`;
 
 	let dialog: HTMLDialogElement | undefined = $state();
 	let closeButton: HTMLButtonElement | undefined = $state();
@@ -34,16 +49,29 @@
 			const active = document.activeElement;
 			opener = active instanceof HTMLElement ? active : undefined;
 			dialog.showModal();
-			closeButton?.focus();
+			focusOnOpen(dialog);
 		} else if (!open && dialog.open) {
 			dialog.close();
 		}
 	});
 
+	/** The chosen element inside the dialog, if it is there; else the close button. */
+	function focusOnOpen(element: HTMLDialogElement): void {
+		const chosen =
+			initialFocus === undefined
+				? undefined
+				: element.querySelector(`#${CSS.escape(initialFocus)}`);
+		if (chosen instanceof HTMLElement) {
+			chosen.focus();
+			return;
+		}
+		closeButton?.focus();
+	}
+
 	/** The dialog closed, by any route: sync the flag and give focus back. */
 	function closed(): void {
 		open = false;
-		opener?.focus();
+		(returnFocus ?? opener)?.focus();
 		opener = undefined;
 	}
 
@@ -57,14 +85,14 @@
 <dialog
 	bind:this={dialog}
 	class="dialog dialog--{variant}"
-	aria-label={label}
+	aria-labelledby={titleId}
 	{id}
 	onclose={closed}
 	onclick={backdropClick}
 >
 	<div class="dialog__sheet">
 		<div class="dialog__header">
-			<span class="dialog__title">{label}</span>
+			<span class="dialog__title" id={titleId}>{label}</span>
 			<IconButton
 				icon="x"
 				label="Close"
@@ -75,6 +103,9 @@
 		</div>
 		{#if open}
 			<div class="dialog__body">{@render children()}</div>
+			{#if footer !== undefined}
+				<div class="dialog__footer">{@render footer()}</div>
+			{/if}
 		{/if}
 	</div>
 </dialog>
@@ -88,6 +119,13 @@
 		box-shadow: var(--elevation-2);
 	}
 
+	/* Open, the dialog is a column the sheet fills, so only the body scrolls. */
+	.dialog[open] {
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+
 	.dialog::backdrop {
 		background: var(--color-backdrop);
 	}
@@ -95,6 +133,17 @@
 	.dialog--modal {
 		border-radius: var(--radius-lg);
 		max-width: min(var(--dialog-width), calc(100vw - 2 * var(--space-4)));
+	}
+
+	/* A centred modal that fills a phone's screen: base.css switches these at its breakpoint. */
+	.dialog--full-screen-on-phone {
+		width: var(--full-dialog-width);
+		max-width: var(--full-dialog-max-width);
+		height: var(--full-dialog-height);
+		max-height: var(--full-dialog-max-height);
+		margin: var(--full-dialog-margin);
+		border-width: var(--full-dialog-border-width);
+		border-radius: var(--full-dialog-radius);
 	}
 
 	.dialog--drawer {
@@ -112,7 +161,9 @@
 
 	.dialog__sheet {
 		display: flex;
+		flex: 1;
 		flex-direction: column;
+		min-height: 0;
 		height: 100%;
 	}
 
@@ -134,6 +185,16 @@
 		flex: 1;
 		min-height: 0;
 		overflow: auto;
+	}
+
+	.dialog__footer {
+		display: flex;
+		flex: none;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		gap: var(--space-2);
+		padding: var(--space-3) var(--space-4);
+		border-top: var(--border-width) solid var(--color-border);
 	}
 
 	@keyframes drawer-in {

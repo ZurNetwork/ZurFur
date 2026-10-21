@@ -11,9 +11,9 @@ use std::any::type_name;
 #[allow(unused_imports, reason = "each import pins one façade path")]
 mod element_modules {
     use domain::elements::{
-        account, account_keys, achievement, actor_identity, blob, character, commission, did,
-        handle, invitation, markdown, maturity, plc_operation, profile, public_record, role, text,
-        user, user_account, workflow,
+        account, account_keys, achievement, actor_identity, blob, bug_report, character,
+        commission, did, handle, invitation, markdown, maturity, plc_operation, profile,
+        public_record, role, text, user, user_account, workflow,
     };
     use domain::{datetime, string_builder};
 }
@@ -38,12 +38,13 @@ fn every_flat_port_name_resolves_to_its_crate() {
     use domain::ports::{
         AccountMismatch, AccountReads, AccountRepo, AccountStore, AccountWrites,
         ActorIdentityStore, ActorIdentityWrites, Authenticator, BrowserBinding, BrowserMismatch,
-        ChangelogStore, ChangelogWrites, CharacterStore, CharacterWrites, ColumnStore,
-        ColumnWrites, CommissionReads, CommissionRepo, CommissionStore, CommissionWrites, Database,
-        DidBelongsToAnotherActor, DidMinter, ElementNotFound, FileStore, HandleTaken,
-        IdentityResolver, KeyStore, PlcOperationLog, ProfileCache, ProfileSource, PublicRecords,
-        PublicRecordsError, ResolveError, SigninStarted, Unit, UnitOfWork, UnknownSurface,
-        UnknownTab, UserStore, UserWrites, WorkflowStore, WorkflowWrites,
+        BugReportStore, BugReportWrites, ChangelogStore, ChangelogWrites, CharacterStore,
+        CharacterWrites, ColumnStore, ColumnWrites, CommissionReads, CommissionRepo,
+        CommissionStore, CommissionWrites, Database, DidBelongsToAnotherActor, DidMinter,
+        ElementNotFound, FileStore, HandleTaken, IdentityResolver, KeyStore, PlcOperationLog,
+        ProfileCache, ProfileSource, PublicRecords, PublicRecordsError, ResolveError,
+        SigninStarted, Unit, UnitOfWork, UnknownSurface, UnknownTab, UserStore, UserWrites,
+        WorkflowStore, WorkflowWrites,
     };
 
     let identity_names = [
@@ -56,6 +57,8 @@ fn every_flat_port_name_resolves_to_its_crate() {
         type_name::<dyn Authenticator>(),
         type_name::<BrowserBinding>(),
         type_name::<SigninStarted>(),
+        type_name::<dyn BugReportStore>(),
+        type_name::<dyn BugReportWrites>(),
         type_name::<dyn CharacterStore>(),
         type_name::<dyn CharacterWrites>(),
         type_name::<AccountMismatch>(),

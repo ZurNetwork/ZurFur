@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { render } from 'svelte/server';
-import { denHref, denName, denType, did } from '$lib/types/brand';
+import { denHref, denName, denType, did, handleFromTrusted } from '$lib/types/brand';
+import type { BugBrowser, BugPage } from '$lib/types/bug-report-rules';
+import { BugReportDraft, offerItems } from './bug-report.svelte';
+import ReportBugForm from './ReportBugForm.svelte';
+import TopBar from './TopBar.svelte';
 import Tree from './Tree.svelte';
 import ViewOptions from './ViewOptions.svelte';
 import { TreeMemory } from './tree-memory.svelte';
@@ -84,5 +88,94 @@ describe('ViewOptions before the page’s script runs', () => {
 		expect(html).toContain('href="/den/commissions?includeDeleted=true"');
 		expect(html).toContain('Show archived and deactivated');
 		expect(html).not.toContain('role="switch"');
+	});
+});
+
+const alice = {
+	did: did('did:plc:alice'),
+	handle: handleFromTrusted('alice.zurfur.app'),
+	displayName: 'Alice',
+	avatarUrl: undefined
+};
+
+describe('the top bar before the page’s script runs', () => {
+	it('holds "Report a bug" as a plain link to the report page, promising no dialog', () => {
+		const html = render(TopBar, {
+			props: {
+				session: alice,
+				trail: [],
+				section: 'den',
+				drawerOpen: false,
+				drawerId: 'drawer',
+				onOpenDrawer: () => undefined
+			}
+		}).body;
+		expect(html).toMatch(/<a[^>]*href="\/report-a-bug"[^>]*>[\s\S]*?Report a bug/);
+		expect(html).not.toContain('aria-haspopup');
+	});
+});
+
+describe('the report form before the page’s script runs', () => {
+	it('is a plain form posting the report page’s action, its button inside it', () => {
+		const offer = {
+			page: { kind: 'known' as const, page: '/den' as BugPage },
+			pageType: 'My Den' as const,
+			browser: 'Mozilla/5.0' as BugBrowser
+		};
+		const html = render(ReportBugForm, {
+			props: {
+				draft: new BugReportDraft(),
+				items: offerItems(offer, 'web-1'),
+				session: alice,
+				descriptionId: 'report-a-bug-description',
+				sentId: 'sent',
+				testStack: 'none',
+				submitButton: true
+			}
+		}).body;
+		const form = /<form[^>]*method="POST"[^>]*action="\/report-a-bug"[^>]*>([\s\S]*)<\/form>/.exec(
+			html
+		);
+		expect(form).not.toBeNull();
+		const inside = form?.[1] ?? '';
+		expect(inside).toContain('name="description"');
+		expect(inside).not.toContain('maxlength');
+		expect(inside).toMatch(/<input[^>]*name="sendPage"[^>]*checked/);
+		expect(inside).toMatch(/<input[^>]*type="hidden"[^>]*name="page"[^>]*value="\/den"/);
+		expect(inside).toMatch(/<button[^>]*type="submit"[^>]*>[\s\S]*?Send report/);
+		expect(html).toMatch(/aria-live="polite"/);
+	});
+	it('says, in its fixed lines, that the dev profile’s test stack forgets reports', () => {
+		const html = render(ReportBugForm, {
+			props: {
+				draft: new BugReportDraft(),
+				items: [],
+				session: alice,
+				descriptionId: 'report-a-bug-description',
+				sentId: 'sent',
+				testStack: 'devProfile',
+				submitButton: true
+			}
+		}).body;
+
+		const fixed = /<div class="report-form__fixed[^"]*">([\s\S]*?)<\/div>/.exec(html);
+		expect(fixed?.[1]).toContain('This test stack forgets reports when it stops.');
+	});
+
+	it('says nothing about the stack on a real one', () => {
+		const html = render(ReportBugForm, {
+			props: {
+				draft: new BugReportDraft(),
+				items: [],
+				session: alice,
+				descriptionId: 'report-a-bug-description',
+				sentId: 'sent',
+				testStack: 'none',
+				submitButton: true
+			}
+		}).body;
+
+		expect(html).not.toContain('report-test-stack');
+		expect(html).not.toContain('test stack');
 	});
 });

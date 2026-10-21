@@ -27,6 +27,7 @@ import type { Session } from '$lib/api/session';
 import { SESSION_COOKIE, signInBindingCookieName } from '$lib/server/cookies';
 import {
 	accountId,
+	bugReference,
 	commissionId,
 	did,
 	fieldPointer,
@@ -396,6 +397,24 @@ function mockRenameCommission(
 }
 
 /**
+ * `fileBugReport`: keeps nothing; answers a made-up eight-character reference
+ * for a signed-in visitor, `NotAuthenticated` for anyone else.
+ */
+function mockFileBugReport(store: MockStore): ZurfurApiShape['fileBugReport'] {
+	return () =>
+		Effect.suspend((): ReturnType<ZurfurApiShape['fileBugReport']> => {
+			if (store.session === undefined)
+				return Effect.fail(new NotAuthenticated({ problem: NOT_AUTHENTICATED_PROBLEM }));
+			const reference = bugReference(crypto.randomUUID().replaceAll('-', '').slice(-8));
+			if (reference === undefined) {
+				const detail = 'made-up reference refused';
+				return Effect.fail(new ContractViolation({ path: '/bug-reports', status: 201, detail }));
+			}
+			return Effect.succeed(reference);
+		});
+}
+
+/**
  * The dev-mode Layer: the full {@link ZurfurApiShape} over `store` (the
  * shared singleton by default): the `mock*`-named entries, plus the Den
  * reads over the mock Den world (`den-mock.ts`), which reads this store's
@@ -419,7 +438,8 @@ export function zurfurApiMock(store: MockStore = sharedStore): Layer.Layer<Zurfu
 		createCommission: (title) => mockCreateCommission(store, title),
 		renameCommission: (id, title) => mockRenameCommission(store, id, title),
 		denRoot: (query) => mockDenRead(store, [], query),
-		denNode: (path, query) => mockDenRead(store, path, query)
+		denNode: (path, query) => mockDenRead(store, path, query),
+		fileBugReport: mockFileBugReport(store)
 	};
 	return Layer.succeed(ZurfurApi, shape);
 }
