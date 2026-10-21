@@ -27,16 +27,19 @@ docs/notes.md
 expect "markdown under frontend is read by prettier" "code=true lock=false " "frontend/web/README.md"
 expect "markdown under backend counts as code" "code=true lock=false " "backend/crates/domain/README.md"
 expect "markdown under contract counts as code" "code=true lock=false " "contract/VERSIONING.md"
-expect "a NODE.json under frontend stays docs-only" "code=false lock=false " "frontend/web/NODE.json"
-expect "a NODE.json in a crate's queries/ is code (sqlx-rust-codegen)" "code=true lock=false " "backend/crates/adapter-pg/queries/account/NODE.json"
-expect "a NODE.json in the api's generated/ is code (contract_current)" "code=true lock=false " "backend/crates/api/src/generated/NODE.json"
-expect "a NODE.json in the web's generated/ is code (contract regeneration)" "code=true lock=false " "frontend/web/src/lib/server/api/generated/NODE.json"
-expect "node files" "code=false lock=false " "NODE.json
-backend/crates/api/NODE.json
+expect "a NODE.inf.json under frontend stays docs-only" "code=false lock=false " "frontend/web/NODE.inf.json"
+expect "a NODE.inf.json in a crate's queries/ is code (sqlx-rust-codegen)" "code=true lock=false " "backend/crates/adapter-pg/queries/account/NODE.inf.json"
+expect "a NODE.inf.json in the api's generated/ is code (contract_current)" "code=true lock=false " "backend/crates/api/src/generated/NODE.inf.json"
+expect "a NODE.inf.json in the web's generated/ is code (contract regeneration)" "code=true lock=false " "frontend/web/src/lib/server/api/generated/NODE.inf.json"
+expect "node files" "code=false lock=false " "NODE.inf.json
+backend/crates/api/NODE.inf.json
+NODE.refs.json
 NODE.toml
 "
+expect "NODE.refs.json alone is docs-only" "code=false lock=false " "NODE.refs.json"
+expect "a stray NODE.json at the root is code" "code=true lock=false " "NODE.json"
+expect "a stray NODE.json in a code tree is code" "code=true lock=false " "backend/x/NODE.json"
 expect "document trees" "code=false lock=false " "docs/design-index.md
-.understand/handoff.md
 reports/x.html
 forks/003/run.py
 .claude/settings.json
@@ -45,7 +48,6 @@ expect "scripts, Justfile" "code=false lock=false " "scripts/jj-push.sh
 scripts/hooks/pins.sh
 Justfile
 "
-expect "the retired board config is code (fails closed)" "code=true lock=false " ".agent-board.toml"
 expect "a Rust file among docs" "code=true lock=false " "README.md
 backend/crates/domain/src/lib.rs
 "

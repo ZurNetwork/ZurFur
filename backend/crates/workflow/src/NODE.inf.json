@@ -1,0 +1,50 @@
+{
+  "path": "backend/crates/workflow/src",
+  "charted": "2026-10-17",
+  "short": "Workflow elements and ports",
+  "is": "Two public modules: the commission and board nouns (elements) and the seams that store them (ports).",
+  "type": "code",
+  "tags": [
+    "category:source"
+  ],
+  "conventions": [
+    "A new port area adds a file under `ports/` rather than growing `mod.rs`.",
+    "Time is injected, never read from the ambient clock."
+  ],
+  "entry_points": [
+    "ports.rs (the workflow ports, re-exported flat)"
+  ],
+  "fs": [
+    {
+      "name": "elements.rs",
+      "role": "module index for elements/: commission and workflow",
+      "node": false
+    },
+    {
+      "name": "elements/",
+      "role": "the commission aggregate and the boards",
+      "node": true
+    },
+    {
+      "name": "lib.rs",
+      "role": "crate root: the module declarations",
+      "node": false
+    },
+    {
+      "name": "ports.rs",
+      "role": "module index for ports/, re-exports the port traits flat",
+      "node": false
+    },
+    {
+      "name": "ports/",
+      "role": "trait seams: commission, changelog, workflow, file (FileStore); errors.rs (UnknownTab, UnknownSurface, ElementNotFound)",
+      "node": false
+    }
+  ],
+  "notes": [
+    "Adapters: `adapter-pg` implements these private-store ports, `adapter-mem` fakes them.",
+    "Changelog entries are appended in the same unit as the domain write they record, and nothing is derived from them (59310081).",
+    "`commission_element` carries a **composite** FK `(tab_id, commission_id) → commission_tab (id, commission_id)`, so an element citing another commission's tab is unwritable; `UnknownTab` is the friendly 404 half of that rule (45514754).",
+    "View grants are per-User, never per-Account; membership confers no view (29130754, amended 2026-09-04)."
+  ]
+}

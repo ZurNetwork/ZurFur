@@ -1,5 +1,5 @@
 //! The stdout data channel: exactly one JSON value (or one raw byte payload,
-//! for `completions`) per successful run.
+//! for `completions` and `bug-reports list`) per successful run.
 
 use std::io::Write as _;
 
@@ -27,7 +27,7 @@ impl Format {
 pub enum Output {
     /// A JSON value rendered per its format, newline-terminated.
     Json(serde_json::Value, Format),
-    /// Bytes written verbatim (a completion script).
+    /// Bytes written verbatim (a completion script, or the bug-report listing).
     Raw(Vec<u8>),
 }
 

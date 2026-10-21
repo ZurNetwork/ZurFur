@@ -229,6 +229,7 @@ fn config(public_url: &str, database_url: &str) -> Config {
         plc_directory_submit: false,
         deadline_sweep_interval_secs: 60,
         max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
+        build_id: "unknown".try_into().expect("a build id"),
     }
 }
 

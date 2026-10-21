@@ -4,7 +4,7 @@ use crate::elements::user::{User, UserId};
 use kernel::elements::did::Did;
 
 /// The write surface of Zurfur's record of recognized visitors — reachable only
-/// on an open [`UnitOfWork`].
+/// on an open `UnitOfWork`.
 #[async_trait]
 pub trait UserWrites: Send {
     /// Recognize a DID: the first call mints a User, every later call returns

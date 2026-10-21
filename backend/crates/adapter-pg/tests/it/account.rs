@@ -26,7 +26,10 @@ use domain::{
         user_account::UserAccount,
         workflow::{ColumnName, LexOrdering, WorkflowName},
     },
-    ports::{AccountStore, ColumnStore, CommissionStore, Database, HandleTaken, WorkflowStore},
+    ports::{
+        AccountStore, ColumnStore, CommissionStore, Database, HandleTaken, UnitOfWork,
+        WorkflowStore,
+    },
 };
 
 /// A fresh, fully migrated private database — a clone of the shared template
@@ -162,12 +165,19 @@ async fn revoke_role(pool: &PgPool, user: &UserId, account: &AccountId) {
     uow.commit().await.expect("commit");
 }
 
-/// Grant (seat or re-seat) a member's role directly, bypassing any invitation.
-async fn grant_role(pool: &PgPool, member: &UserAccount) {
+/// Change a member's role in one unit of work, committing it whatever the grant
+/// answers, so a refused grant is proven to leave nothing behind.
+async fn try_grant_role(
+    pool: &PgPool,
+    user: &UserId,
+    account: &AccountId,
+    role: &Role,
+) -> anyhow::Result<()> {
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
-    uow.accounts().grant_role(member).await.expect("grant_role");
+    let granted = uow.accounts().grant_role(user, account, role).await;
     uow.commit().await.expect("commit");
+    granted
 }
 
 /// Read an account by id off the pool-backed store.
@@ -542,54 +552,179 @@ async fn find_unknown_invitation_is_none() {
 
 // Bug guard — `account_members`'s PRIMARY KEY is `(account_id, user_id)`, and the
 // seat insert had no `ON CONFLICT` clause: accepting a still-pending invitation
-// for a pair that's ALREADY seated (granted a role through another path while the
-// offer sat pending) raised a PK violation and 500'd, leaving the invitation
-// permanently pending (a repeatable 500). `ON CONFLICT DO NOTHING` makes the seat
-// a no-op that keeps the ORIGINAL membership row.
+// for a pair that's ALREADY seated (a narrow issue/accept race: this offer passed
+// its membership check, another invitation for the pair was then accepted, and
+// only then was this offer stored) raised a PK violation and 500'd, leaving the
+// invitation permanently pending (a repeatable 500). `ON CONFLICT DO NOTHING`
+// makes the seat a no-op that keeps the ORIGINAL membership row: role, parent
+// and listing.
 #[tokio::test]
 async fn accepting_an_invitation_for_an_already_seated_pair_is_a_no_op() {
     let (pool, _container) = fresh_pool().await;
-    let (account, inviter, invitee) = invitation_fixture(&pool, "reseat").await;
-
-    // The invitee is granted Admin directly, bypassing any invitation.
-    grant_role(
+    let (account, owner, invitee) = invitation_fixture(&pool, "reseat").await;
+    let first_inviter = provision(&pool, "did:plc:pginviter2-reseat").await.id;
+    // An invitation's issuer must be a member, so the second inviter is seated first.
+    seat_under(
         &pool,
-        &UserAccount {
-            account_id: account.id.clone(),
-            user_id: invitee.clone(),
-            role: Role::Admin,
-            alias: None,
-        },
+        &account.id,
+        &first_inviter,
+        &owner,
+        Role::Admin,
+        true,
     )
     .await;
 
-    // A stale pending invitation (issued before the grant) offers only Member.
+    // The invitee is already seated as Admin, listed, under a second inviter.
+    seat_under(
+        &pool,
+        &account.id,
+        &invitee,
+        &first_inviter,
+        Role::Admin,
+        true,
+    )
+    .await;
+
+    // A later invitation from the Owner offers only Member, unlisted.
     let invitation = Invitation::issue(
         account.id.clone(),
         invitee.clone(),
         Role::Member,
-        inviter,
+        owner,
         Utc::now(),
     );
     create_invitation(&pool, &invitation).await;
 
-    // Accepting it must not error, and must not downgrade the already-granted role.
+    // Accepting it must not error, and must not touch the existing row.
     let seated = accept_invitation(&pool, invitation, false).await;
     assert_eq!(
         seated.role,
         Role::Admin,
-        "the returned membership reflects the original grant, not the invitation's role"
+        "the returned membership reflects the original seat, not the invitation's role"
     );
     assert_eq!(
-        role_of(&pool, &invitee.clone(), &account.id).await,
+        role_of(&pool, &invitee, &account.id).await,
         Some(Role::Admin),
-        "the persisted membership still holds the original grant"
+        "the persisted membership still holds the original seat"
     );
     assert_eq!(
         parent_of(&pool, &account.id, &invitee).await,
+        Some(first_inviter),
+        "the parent stays the first inviter, not this invitation's inviter"
+    );
+    let public_view = list_for_user(&pool, &invitee, ListingScope::PublicProfile).await;
+    let public_ids: Vec<&AccountId> = public_view.iter().map(|row| &row.account.id).collect();
+    assert_eq!(
+        public_ids,
+        vec![&account.id],
+        "the membership is still listed: the unlisted accept changed nothing"
+    );
+}
+
+// --- A role grant changes an existing member's role and seats no one ---
+
+#[tokio::test]
+async fn grant_role_on_a_non_member_fails_and_seats_no_one() {
+    let (pool, _container) = fresh_pool().await;
+    let (account, _owner, stranger) = invitation_fixture(&pool, "grantnone").await;
+
+    let refused = try_grant_role(&pool, &stranger, &account.id, &Role::Member)
+        .await
+        .expect_err("a grant to a non-member is refused");
+
+    assert!(
+        refused.to_string().contains("is not a non-Owner member"),
+        "unexpected refusal: {refused}"
+    );
+    assert_eq!(
+        role_of(&pool, &stranger, &account.id).await,
         None,
-        "the row is untouched entirely — parent stays NULL from the direct \
-         grant, not overwritten to this invitation's inviter"
+        "the refused grant seated no one, even after the unit committed"
+    );
+}
+
+#[tokio::test]
+async fn grant_role_never_grants_or_changes_an_owner() {
+    let (pool, _container) = fresh_pool().await;
+    let (account, owner, member) = invitation_fixture(&pool, "grantowner").await;
+    seat_under(&pool, &account.id, &member, &owner, Role::Member, true).await;
+
+    let owner_grant = try_grant_role(&pool, &member, &account.id, &Role::Owner)
+        .await
+        .expect_err("a grant never mints an Owner");
+    assert!(
+        owner_grant
+            .to_string()
+            .contains("ownership moves only by transfer"),
+        "unexpected refusal: {owner_grant}"
+    );
+    assert_eq!(
+        role_of(&pool, &member, &account.id).await,
+        Some(Role::Member),
+        "the member keeps their role"
+    );
+
+    let owner_change = try_grant_role(&pool, &owner, &account.id, &Role::Admin)
+        .await
+        .expect_err("a grant never changes the Owner's role");
+    assert!(
+        owner_change
+            .to_string()
+            .contains("is not a non-Owner member"),
+        "unexpected refusal: {owner_change}"
+    );
+    assert_eq!(
+        role_of(&pool, &owner, &account.id).await,
+        Some(Role::Owner),
+        "the Owner is still the Owner"
+    );
+}
+
+#[tokio::test]
+async fn grant_role_keeps_alias_and_listing() {
+    let (pool, _container) = fresh_pool().await;
+    let (account, owner, member) = invitation_fixture(&pool, "grantkeeps").await;
+    seat_under(&pool, &account.id, &member, &owner, Role::Member, false).await;
+    sqlx::query("UPDATE account_members SET alias = $1 WHERE account_id = $2 AND user_id = $3")
+        .bind("Colourist")
+        .bind(account.id.as_ref())
+        .bind(member.as_ref())
+        .execute(&pool)
+        .await
+        .expect("seed the alias column directly");
+
+    // Twice: a repeat matches the row though its value is unchanged, so it is Ok too.
+    try_grant_role(&pool, &member, &account.id, &Role::Manager)
+        .await
+        .expect("the grant changes the member's role");
+    try_grant_role(&pool, &member, &account.id, &Role::Manager)
+        .await
+        .expect("re-granting the current role is idempotent");
+
+    assert_eq!(
+        role_of(&pool, &member, &account.id).await,
+        Some(Role::Manager),
+        "the member holds the new role"
+    );
+    let own_view = list_for_user(&pool, &member, ListingScope::SelfView).await;
+    let own_aliases: Vec<(&AccountId, Option<&RoleAlias>)> = own_view
+        .iter()
+        .map(|row| (&row.account.id, row.alias.as_ref()))
+        .collect();
+    let alias: RoleAlias = "Colourist".parse().expect("a valid alias");
+    let expected_aliases = vec![(&account.id, Some(&alias))];
+    assert_eq!(own_aliases, expected_aliases, "the alias is kept");
+    let public_view = list_for_user(&pool, &member, ListingScope::PublicProfile).await;
+    assert!(
+        public_view.is_empty(),
+        "the membership stays unlisted on the public profile"
+    );
+    // Pins today's behaviour: the grant leaves the parent alone. A later rule that
+    // makes the promoter the parent changes this assertion.
+    assert_eq!(
+        parent_of(&pool, &account.id, &member).await,
+        Some(owner),
+        "the parent is still the inviter"
     );
 }
 
@@ -610,18 +745,26 @@ async fn parent_of(pool: &PgPool, account: &AccountId, user: &UserId) -> Option<
     parent.map(|did| UserId::from(Did::from(did)))
 }
 
-/// Seats `invited` as a Member under `inviter` (`parent = inviter`) by issuing and
-/// accepting an invitation — the only path that writes `account_members.parent`.
-async fn seat_under(pool: &PgPool, account: &AccountId, invited: &UserId, inviter: &UserId) {
+/// Seats `invited` at `role` under `inviter` (`parent = inviter`), with the given
+/// listing choice, by issuing and accepting an invitation — the only path that
+/// seats a member and writes `account_members.parent`.
+async fn seat_under(
+    pool: &PgPool,
+    account: &AccountId,
+    invited: &UserId,
+    inviter: &UserId,
+    role: Role,
+    listed: bool,
+) {
     let invitation = Invitation::issue(
         account.clone(),
         invited.clone(),
-        Role::Member,
+        role,
         inviter.clone(),
         Utc::now(),
     );
     create_invitation(pool, &invitation).await;
-    accept_invitation(pool, invitation, true).await;
+    accept_invitation(pool, invitation, listed).await;
 }
 
 // AC3 — when a leaving member has children in the role tree, those children re-home
@@ -643,9 +786,9 @@ async fn leave_rehomes_children_to_the_leavers_parent() {
         Utc::now(),
     );
     create(&pool, &account, &membership).await;
-    seat_under(&pool, &account.id, &a.id, &owner.id).await; // A's parent is the Owner
-    seat_under(&pool, &account.id, &b.id, &a.id).await; // B's parent is A
-    seat_under(&pool, &account.id, &c.id, &a.id).await; // C's parent is A
+    seat_under(&pool, &account.id, &a.id, &owner.id, Role::Member, true).await; // A's parent is the Owner
+    seat_under(&pool, &account.id, &b.id, &a.id, Role::Member, true).await; // B's parent is A
+    seat_under(&pool, &account.id, &c.id, &a.id, Role::Member, true).await; // C's parent is A
 
     leave(&pool, &a.id, &account.id).await; // A leaves
 
@@ -697,10 +840,10 @@ async fn leave_is_scoped_to_the_account_being_left() {
     create(&pool, &acct2, &m2).await;
 
     // A parents B in acct1 and D in acct2.
-    seat_under(&pool, &acct1.id, &a.id, &o1.id).await;
-    seat_under(&pool, &acct1.id, &b.id, &a.id).await;
-    seat_under(&pool, &acct2.id, &a.id, &o2.id).await;
-    seat_under(&pool, &acct2.id, &d.id, &a.id).await;
+    seat_under(&pool, &acct1.id, &a.id, &o1.id, Role::Member, true).await;
+    seat_under(&pool, &acct1.id, &b.id, &a.id, Role::Member, true).await;
+    seat_under(&pool, &acct2.id, &a.id, &o2.id, Role::Member, true).await;
+    seat_under(&pool, &acct2.id, &d.id, &a.id, Role::Member, true).await;
 
     leave(&pool, &a.id, &acct1.id).await; // A leaves acct1
 
@@ -739,7 +882,7 @@ async fn leave_revokes_the_leavers_pending_issued_invitations() {
         Utc::now(),
     );
     create(&pool, &account, &membership).await;
-    seat_under(&pool, &account.id, &a.id, &owner.id).await;
+    seat_under(&pool, &account.id, &a.id, &owner.id, Role::Member, true).await;
 
     // A (leaving) has a pending offer out to X; the Owner (staying) has one out to Y.
     let a_invites_x = Invitation::issue(
@@ -796,8 +939,8 @@ async fn revoke_role_rehomes_children_and_revokes_issued_invitations() {
         Utc::now(),
     );
     create(&pool, &account, &membership).await;
-    seat_under(&pool, &account.id, &a.id, &owner.id).await; // A under the Owner
-    seat_under(&pool, &account.id, &b.id, &a.id).await; // B under A
+    seat_under(&pool, &account.id, &a.id, &owner.id, Role::Member, true).await; // A under the Owner
+    seat_under(&pool, &account.id, &b.id, &a.id, Role::Member, true).await; // B under A
 
     // A has a pending offer out to X.
     let a_invites_x = Invitation::issue(
@@ -956,7 +1099,7 @@ async fn transfer_makes_the_heir_owner_and_demotes_the_prior_owner_to_admin() {
     );
     create(&pool, &account, &membership).await;
     // Seat the heir as a Member under the Owner (parent = Owner) before the transfer.
-    seat_under(&pool, &account.id, &heir.id, &owner.id).await;
+    seat_under(&pool, &account.id, &heir.id, &owner.id, Role::Member, true).await;
 
     transfer_ownership(&pool, owner.id.clone(), heir.id.clone(), account.id.clone()).await;
 
@@ -1000,8 +1143,8 @@ async fn transfer_from_a_non_owner_errors_and_changes_nothing() {
         Utc::now(),
     );
     create(&pool, &account, &membership).await;
-    seat_under(&pool, &account.id, &admin.id, &owner.id).await;
-    seat_under(&pool, &account.id, &heir.id, &owner.id).await;
+    seat_under(&pool, &account.id, &admin.id, &owner.id, Role::Member, true).await;
+    seat_under(&pool, &account.id, &heir.id, &owner.id, Role::Member, true).await;
 
     // `admin` is not the Owner, so the store guard rejects the transfer.
     let db = PgDatabase::new(pool.clone());
@@ -1627,7 +1770,7 @@ async fn found_account(pool: &PgPool, owner: &UserId, tag: &str) -> Account {
 }
 
 // The listing is every live account the caller holds a role in — founded AND
-// granted alike (Engineer ruling 2026-07-24) — each row carrying the caller's
+// joined by invitation alike (Engineer ruling 2026-07-24) — each row carrying the caller's
 // OWN role, ordered by id. The stranger's account is the containment case: it
 // proves the `user_id` predicate scopes the query rather than merely decorating
 // it, which is the property ZMVP-17 rests on.
@@ -1643,13 +1786,15 @@ async fn list_for_user_returns_every_live_membership_with_the_callers_own_role()
     // A second account someone else founded, on which the caller holds a
     // non-Owner role — the accepted-invitation shape (ZMVP-20).
     let joined = found_account(&pool, &stranger.id, "joined").await;
-    let seat = UserAccount {
-        user_id: caller.id.clone(),
-        account_id: joined.id.clone(),
-        role: Role::Member,
-        alias: None,
-    };
-    grant_role(&pool, &seat).await;
+    seat_under(
+        &pool,
+        &joined.id,
+        &caller.id,
+        &stranger.id,
+        Role::Member,
+        true,
+    )
+    .await;
 
     // A third the caller has nothing to do with: must never appear.
     let theirs = found_account(&pool, &stranger.id, "theirs").await;
@@ -1688,7 +1833,7 @@ async fn list_for_user_returns_every_live_membership_with_the_callers_own_role()
     let joined_row = rows
         .iter()
         .find(|row| row.account.id == joined.id)
-        .expect("the granted-only account is listed too — not owned-only");
+        .expect("the joined account is listed too — not owned-only");
     assert_eq!(
         joined_row.role,
         Role::Member,
@@ -1703,10 +1848,9 @@ async fn list_for_user_returns_every_live_membership_with_the_callers_own_role()
     assert_eq!(order, expected, "rows come back ascending by account id");
 }
 
-// A member's own [`RoleAlias`] round-trips through `grant_role` → `list_for_user`
-// once persisted: `grant_role` itself never sets it (there is no set-alias write
-// path yet, mirroring `grant_role.sql`, which only ever touches the `role`
-// column), so this reaches straight into the `account_members.alias` column with
+// A member's own [`RoleAlias`] round-trips through `list_for_user` once
+// persisted: no write path sets it yet (`grant_role.sql` only ever touches the
+// `role` column), so this reaches straight into the `account_members.alias` column with
 // a raw `UPDATE` — the pg-side mirror of `MemBackend::seed_role_alias`. Also
 // proves the unset case reads back `None`, not an empty string.
 #[tokio::test]
@@ -1855,13 +1999,7 @@ async fn the_deactivated_read_returns_a_soft_deleted_account_to_its_owner_only()
     let stranger = provision(&pool, "did:plc:deact-stranger").await;
     let live = found_owned(&pool, &owner.id, "live").await;
     let gone = found_owned(&pool, &owner.id, "gone").await;
-    let admin_membership = UserAccount {
-        user_id: admin.id.clone(),
-        account_id: gone.id.clone(),
-        role: Role::Admin,
-        alias: None,
-    };
-    grant_role(&pool, &admin_membership).await;
+    seat_under(&pool, &gone.id, &admin.id, &owner.id, Role::Admin, true).await;
     soft_delete(&pool, &gone.id).await;
 
     let owners = list_deactivated_for_owner(&pool, &owner.id).await;
@@ -1923,4 +2061,590 @@ async fn the_deactivated_read_orders_by_account_did() {
     let ids: Vec<&AccountId> = deactivated.iter().map(|account| &account.id).collect();
     let expected_ids = vec![&first.id, &second.id];
     assert_eq!(ids, expected_ids);
+}
+
+// --- A departure never removes the Owner ---
+
+/// Revoke a member's role in one unit of work, committing it whatever the store
+/// answers, so a refused departure is proven to leave nothing behind.
+async fn try_revoke_role(pool: &PgPool, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let revoked = uow.accounts().revoke_role(user, account).await;
+    uow.commit().await.expect("commit");
+    revoked
+}
+
+/// A member leaves in one unit of work, committed whatever the store answers.
+async fn try_leave(pool: &PgPool, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let left = uow.accounts().leave(user, account).await;
+    uow.commit().await.expect("commit");
+    left
+}
+
+/// How many Owner rows `account` holds, read straight from `account_members`.
+async fn owner_count(pool: &PgPool, account: &AccountId) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM account_members WHERE account_id = $1 AND \"role\" = $2",
+    )
+    .bind(account.as_ref())
+    .bind(<&'static str>::from(&Role::Owner))
+    .fetch_one(pool)
+    .await
+    .expect("count the Owner rows")
+}
+
+/// Waits until at least `at_least` sessions on this test's database wait on a lock,
+/// probing every 20 ms; panics after 10 s. Each probe is its own statement on the
+/// pool, since `pg_stat_activity` is a frozen snapshot inside one transaction.
+async fn wait_for_lock_waits(pool: &PgPool, at_least: i64) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let waiting = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM pg_stat_activity \
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("probe pg_stat_activity");
+        if waiting >= at_least {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "fewer than {at_least} lock waits within 10 s"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+/// Waits until some session on this test's database waits on a lock.
+async fn wait_for_a_lock_wait(pool: &PgPool) {
+    wait_for_lock_waits(pool, 1).await;
+}
+
+/// Founds `account` under `owner`, with `member` seated as a Member under the Owner.
+async fn found_with_member(pool: &PgPool, owner: &UserId, member: &UserId, tag: &str) -> AccountId {
+    let (account, membership) = Account::open(
+        owner.clone(),
+        Did::from(format!("did:plc:{tag}-acct")),
+        format!("{tag}-acct.example.com").parse::<Handle>().unwrap(),
+        "Studio".parse::<AccountName>().unwrap(),
+        Utc::now(),
+    );
+    create(pool, &account, &membership).await;
+    seat_under(pool, &account.id, member, owner, Role::Member, true).await;
+    account.id
+}
+
+#[tokio::test]
+async fn a_departure_after_a_transfer_never_removes_the_new_owner() {
+    let (pool, _container) = fresh_pool().await;
+    let o = provision(&pool, "did:plc:keep-o").await.id;
+    let x = provision(&pool, "did:plc:keep-x").await.id;
+    let y = provision(&pool, "did:plc:keep-y").await.id;
+    let stranger = provision(&pool, "did:plc:keep-s").await.id;
+    let account = found_with_member(&pool, &o, &x, "keep").await;
+    let x_invites_y = Invitation::issue(
+        account.clone(),
+        y.clone(),
+        Role::Member,
+        x.clone(),
+        Utc::now(),
+    );
+    create_invitation(&pool, &x_invites_y).await;
+    transfer_ownership(&pool, o.clone(), x.clone(), account.clone()).await;
+
+    let revoked = try_revoke_role(&pool, &x, &account)
+        .await
+        .expect_err("the Owner's revoke is refused");
+    let left = try_leave(&pool, &x, &account)
+        .await
+        .expect_err("the Owner's leave is refused");
+
+    let refusal = "the Owner never departs";
+    assert!(
+        revoked.to_string().contains(refusal),
+        "unexpected refusal: {revoked}"
+    );
+    assert!(
+        left.to_string().contains(refusal),
+        "unexpected refusal: {left}"
+    );
+    assert_eq!(role_of(&pool, &x, &account).await, Some(Role::Owner));
+    assert_eq!(role_of(&pool, &o, &account).await, Some(Role::Admin));
+    assert_eq!(owner_count(&pool, &account).await, 1);
+    assert_eq!(
+        parent_of(&pool, &account, &o).await,
+        Some(x.clone()),
+        "the refused departures re-homed no child"
+    );
+    let x_offer = find_invitation(&pool, x_invites_y.id)
+        .await
+        .expect("the offer is on file");
+    assert_eq!(
+        x_offer.state,
+        InvitationState::Pending,
+        "the refused departures revoked no invitation"
+    );
+
+    try_leave(&pool, &o, &account)
+        .await
+        .expect("the former Owner, now Admin, leaves");
+
+    assert_eq!(role_of(&pool, &o, &account).await, None);
+    assert_eq!(role_of(&pool, &x, &account).await, Some(Role::Owner));
+    assert_eq!(owner_count(&pool, &account).await, 1);
+
+    try_revoke_role(&pool, &stranger, &account)
+        .await
+        .expect("a stranger's departure is a no-op");
+
+    assert_eq!(role_of(&pool, &stranger, &account).await, None);
+    assert_eq!(role_of(&pool, &x, &account).await, Some(Role::Owner));
+    assert_eq!(owner_count(&pool, &account).await, 1);
+}
+
+#[tokio::test]
+async fn a_departure_waiting_on_a_transfer_never_removes_the_new_owner() {
+    let (pool, _container) = fresh_pool().await;
+    let o = provision(&pool, "did:plc:wait-o").await.id;
+    let x = provision(&pool, "did:plc:wait-x").await.id;
+    let account = found_with_member(&pool, &o, &x, "wait").await;
+    let db = PgDatabase::new(pool.clone());
+    let mut transfer_unit = db.begin().await.expect("begin the transfer");
+    transfer_unit
+        .accounts()
+        .transfer_ownership(&o, &x, &account)
+        .await
+        .expect("transfer_ownership");
+
+    let revoke = try_revoke_role(&pool, &x, &account);
+    let commit_the_transfer = async {
+        wait_for_a_lock_wait(&pool).await;
+        transfer_unit.commit().await.expect("commit the transfer");
+    };
+    let (revoked, ()) = tokio::join!(revoke, commit_the_transfer);
+
+    let revoked = revoked.expect_err("the revoke that waited on the transfer is refused");
+    assert!(
+        revoked.to_string().contains("the Owner never departs"),
+        "unexpected refusal: {revoked}"
+    );
+    assert_eq!(role_of(&pool, &x, &account).await, Some(Role::Owner));
+    assert_eq!(owner_count(&pool, &account).await, 1);
+}
+
+#[tokio::test]
+async fn an_accept_committing_during_a_departure_is_re_homed() {
+    let (pool, _container) = fresh_pool().await;
+    let o = provision(&pool, "did:plc:race-o").await.id;
+    let x = provision(&pool, "did:plc:race-x").await.id;
+    let y = provision(&pool, "did:plc:race-y").await.id;
+    let account = found_with_member(&pool, &o, &x, "race").await;
+    let x_invites_y = Invitation::issue(
+        account.clone(),
+        y.clone(),
+        Role::Member,
+        x.clone(),
+        Utc::now(),
+    );
+    let invitation_id = x_invites_y.id;
+    create_invitation(&pool, &x_invites_y).await;
+    let db = PgDatabase::new(pool.clone());
+    let mut accept_unit = db.begin().await.expect("begin the accept");
+    accept_unit
+        .accounts()
+        .accept_invitation(x_invites_y, true)
+        .await
+        .expect("accept_invitation");
+
+    let departure = try_leave(&pool, &x, &account);
+    let commit_the_accept = async {
+        wait_for_a_lock_wait(&pool).await;
+        accept_unit.commit().await.expect("commit the accept");
+    };
+    let (left, ()) = tokio::join!(departure, commit_the_accept);
+
+    left.expect("the inviter leaves");
+    assert_eq!(role_of(&pool, &y, &account).await, Some(Role::Member));
+    assert_eq!(
+        parent_of(&pool, &account, &y).await,
+        Some(o.clone()),
+        "the invitee seated during the departure is re-homed to the leaver's parent"
+    );
+    assert_eq!(role_of(&pool, &x, &account).await, None);
+    let accepted = find_invitation(&pool, invitation_id)
+        .await
+        .expect("the offer is on file");
+    assert_eq!(accepted.state, InvitationState::Accepted);
+}
+
+/// Ends a unit the way the use-case macro does: commits on `Ok`, rolls back on `Err`.
+async fn end_like_a_use_case<T>(
+    uow: Box<dyn UnitOfWork>,
+    result: anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    if result.is_ok() {
+        uow.commit().await.expect("commit");
+    } else {
+        uow.rollback().await.expect("roll back");
+    }
+    result
+}
+
+#[tokio::test]
+async fn a_transfer_waiting_on_the_heirs_departure_rolls_back() {
+    let (pool, _container) = fresh_pool().await;
+    let o = provision(&pool, "did:plc:heirgone-o").await.id;
+    let x = provision(&pool, "did:plc:heirgone-x").await.id;
+    let account = found_with_member(&pool, &o, &x, "heirgone").await;
+    let db = PgDatabase::new(pool.clone());
+    let mut departure_unit = db.begin().await.expect("begin the departure");
+    departure_unit
+        .accounts()
+        .revoke_role(&x, &account)
+        .await
+        .expect("a Member departs");
+
+    let transfer = async {
+        let mut uow = db.begin().await.expect("begin the transfer");
+        let transferred = uow.accounts().transfer_ownership(&o, &x, &account).await;
+        end_like_a_use_case(uow, transferred).await
+    };
+    let commit_the_departure = async {
+        wait_for_a_lock_wait(&pool).await;
+        departure_unit.commit().await.expect("commit the departure");
+    };
+    let (transferred, ()) = tokio::join!(transfer, commit_the_departure);
+
+    transferred.expect_err("the transfer finds the heir gone");
+    assert_eq!(role_of(&pool, &o, &account).await, Some(Role::Owner));
+    assert_eq!(role_of(&pool, &x, &account).await, None);
+    assert_eq!(owner_count(&pool, &account).await, 1);
+    assert_eq!(
+        parent_of(&pool, &account, &o).await,
+        None,
+        "the Owner is still the root"
+    );
+}
+
+#[tokio::test]
+async fn an_accept_waiting_on_a_departures_revocation_is_refused() {
+    let (pool, _container) = fresh_pool().await;
+    let o = provision(&pool, "did:plc:lateaccept-o").await.id;
+    let x = provision(&pool, "did:plc:lateaccept-x").await.id;
+    let y = provision(&pool, "did:plc:lateaccept-y").await.id;
+    let account = found_with_member(&pool, &o, &x, "lateaccept").await;
+    let x_invites_y = Invitation::issue(
+        account.clone(),
+        y.clone(),
+        Role::Member,
+        x.clone(),
+        Utc::now(),
+    );
+    let invitation_id = x_invites_y.id;
+    create_invitation(&pool, &x_invites_y).await;
+    let db = PgDatabase::new(pool.clone());
+    let mut departure_unit = db.begin().await.expect("begin the departure");
+    departure_unit
+        .accounts()
+        .leave(&x, &account)
+        .await
+        .expect("the inviter leaves");
+
+    let accept = async {
+        let mut uow = db.begin().await.expect("begin the accept");
+        let accepted = uow.accounts().accept_invitation(x_invites_y, true).await;
+        end_like_a_use_case(uow, accepted).await
+    };
+    let commit_the_departure = async {
+        wait_for_a_lock_wait(&pool).await;
+        departure_unit.commit().await.expect("commit the departure");
+    };
+    let (accepted, ()) = tokio::join!(accept, commit_the_departure);
+
+    let Err(refused) = accepted else {
+        panic!("the accept finds the offer revoked");
+    };
+    assert!(
+        refused.to_string().contains("is no longer pending"),
+        "unexpected refusal: {refused}"
+    );
+    assert_eq!(role_of(&pool, &y, &account).await, None);
+    let revoked = find_invitation(&pool, invitation_id)
+        .await
+        .expect("the offer is on file");
+    assert_eq!(revoked.state, InvitationState::Revoked);
+}
+
+#[tokio::test]
+async fn two_departures_of_one_member_both_answer_ok() {
+    let (pool, _container) = fresh_pool().await;
+    let o = provision(&pool, "did:plc:twice-o").await.id;
+    let x = provision(&pool, "did:plc:twice-x").await.id;
+    let y = provision(&pool, "did:plc:twice-y").await.id;
+    let account = found_with_member(&pool, &o, &x, "twice").await;
+    let x_invites_y = Invitation::issue(
+        account.clone(),
+        y.clone(),
+        Role::Member,
+        x.clone(),
+        Utc::now(),
+    );
+    create_invitation(&pool, &x_invites_y).await;
+    let db = PgDatabase::new(pool.clone());
+    let mut accept_unit = db.begin().await.expect("begin the accept");
+    accept_unit
+        .accounts()
+        .accept_invitation(x_invites_y, true)
+        .await
+        .expect("accept_invitation");
+
+    let leave = try_leave(&pool, &x, &account);
+    let revoke = try_revoke_role(&pool, &x, &account);
+    let commit_the_accept = async {
+        wait_for_lock_waits(&pool, 2).await;
+        accept_unit.commit().await.expect("commit the accept");
+    };
+    let (left, revoked, ()) = tokio::join!(leave, revoke, commit_the_accept);
+
+    left.expect("the leave answers Ok");
+    revoked.expect("the revoke answers Ok");
+    assert_eq!(role_of(&pool, &x, &account).await, None);
+    assert_eq!(
+        parent_of(&pool, &account, &y).await,
+        Some(o.clone()),
+        "the invitee seated during the departures is re-homed to the leaver's parent"
+    );
+}
+
+// --- A departure re-homes children that arrive while it waits ---
+
+/// Founds an Account under O with the chain O → P (Admin) → X (Manager) → C (Member),
+/// returning the Account and O, P, X, C.
+async fn found_with_chain(pool: &PgPool, tag: &str) -> (AccountId, UserId, UserId, UserId, UserId) {
+    let o = provision(pool, &format!("did:plc:{tag}-o")).await.id;
+    let p = provision(pool, &format!("did:plc:{tag}-p")).await.id;
+    let x = provision(pool, &format!("did:plc:{tag}-x")).await.id;
+    let c = provision(pool, &format!("did:plc:{tag}-c")).await.id;
+    let (account, membership) = Account::open(
+        o.clone(),
+        Did::from(format!("did:plc:{tag}-acct")),
+        format!("{tag}-acct.example.com").parse::<Handle>().unwrap(),
+        "Studio".parse::<AccountName>().unwrap(),
+        Utc::now(),
+    );
+    create(pool, &account, &membership).await;
+    seat_under(pool, &account.id, &p, &o, Role::Admin, true).await;
+    seat_under(pool, &account.id, &x, &p, Role::Manager, true).await;
+    seat_under(pool, &account.id, &c, &x, Role::Member, true).await;
+    (account.id, o, p, x, c)
+}
+
+#[tokio::test]
+async fn a_child_re_homed_onto_a_departing_parent_while_it_waits_is_re_homed_again() {
+    let (pool, _container) = fresh_pool().await;
+    let (account, o, p, x, c) = found_with_chain(&pool, "rehomeagain").await;
+    let db = PgDatabase::new(pool.clone());
+    let mut x_departure_unit = db.begin().await.expect("begin X's departure");
+    x_departure_unit
+        .accounts()
+        .revoke_role(&x, &account)
+        .await
+        .expect("X departs");
+
+    let p_departure = async {
+        let mut uow = db.begin().await.expect("begin P's departure");
+        let departed = uow.accounts().revoke_role(&p, &account).await;
+        end_like_a_use_case(uow, departed).await
+    };
+    let commit_x_departure = async {
+        wait_for_a_lock_wait(&pool).await;
+        x_departure_unit
+            .commit()
+            .await
+            .expect("commit X's departure");
+    };
+    let (p_departed, ()) = tokio::join!(p_departure, commit_x_departure);
+
+    p_departed.expect("P departs");
+    assert_eq!(role_of(&pool, &o, &account).await, Some(Role::Owner));
+    assert_eq!(owner_count(&pool, &account).await, 1);
+    assert_eq!(role_of(&pool, &p, &account).await, None);
+    assert_eq!(role_of(&pool, &x, &account).await, None);
+    assert_eq!(
+        parent_of(&pool, &account, &c).await,
+        Some(o.clone()),
+        "C, re-homed onto P while P's departure waited, ends under O, never under P"
+    );
+}
+
+// --- An invitation's issuer must still be a member ---
+
+/// Persist an invitation in one unit of work, committed whatever the store answers,
+/// so a refused issue is proven to leave nothing behind.
+async fn try_create_invitation(
+    pool: &PgPool,
+    invitation: &Invitation,
+) -> anyhow::Result<Invitation> {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let issued = uow.accounts().create_invitation(invitation).await;
+    uow.commit().await.expect("commit");
+    issued
+}
+
+/// Accept an invitation in one unit of work, committed whatever the store answers.
+async fn try_accept_invitation(
+    pool: &PgPool,
+    invitation: Invitation,
+    listed: bool,
+) -> anyhow::Result<UserAccount> {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let accepted = uow.accounts().accept_invitation(invitation, listed).await;
+    uow.commit().await.expect("commit");
+    accepted
+}
+
+#[tokio::test]
+async fn an_issue_from_a_departed_member_is_refused() {
+    let (pool, _container) = fresh_pool().await;
+    let o = provision(&pool, "did:plc:goneissuer-o").await.id;
+    let x = provision(&pool, "did:plc:goneissuer-x").await.id;
+    let y = provision(&pool, "did:plc:goneissuer-y").await.id;
+    let other_owner = provision(&pool, "did:plc:goneissuer-o2").await.id;
+    let account = found_with_member(&pool, &o, &x, "goneissuer").await;
+    // X keeps a seat elsewhere, so only a check scoped to this Account refuses.
+    let other_account = found_with_member(&pool, &other_owner, &x, "goneissuer-other").await;
+    leave(&pool, &x, &account).await;
+    assert!(
+        role_of(&pool, &x, &other_account).await.is_some(),
+        "X is still a member of the Account they didn't leave"
+    );
+    let x_invites_y = Invitation::issue(
+        account.clone(),
+        y.clone(),
+        Role::Member,
+        x.clone(),
+        Utc::now(),
+    );
+
+    let issued = try_create_invitation(&pool, &x_invites_y).await;
+
+    let Err(refused) = issued else {
+        panic!("an issue from a departed member is refused");
+    };
+
+    assert!(
+        refused
+            .to_string()
+            .contains("an invitation's issuer must be a member"),
+        "unexpected refusal: {refused}"
+    );
+    assert!(
+        find_pending(&pool, &account, &y).await.is_none(),
+        "the refused issue stored no offer"
+    );
+    assert_eq!(role_of(&pool, &y, &account).await, None);
+}
+
+#[tokio::test]
+async fn a_departure_waiting_on_an_issue_revokes_the_offer() {
+    let (pool, _container) = fresh_pool().await;
+    let o = provision(&pool, "did:plc:issuefirst-o").await.id;
+    let x = provision(&pool, "did:plc:issuefirst-x").await.id;
+    let y = provision(&pool, "did:plc:issuefirst-y").await.id;
+    let account = found_with_member(&pool, &o, &x, "issuefirst").await;
+    let x_invites_y = Invitation::issue(
+        account.clone(),
+        y.clone(),
+        Role::Member,
+        x.clone(),
+        Utc::now(),
+    );
+    let invitation_id = x_invites_y.id;
+    let db = PgDatabase::new(pool.clone());
+    let mut issue_unit = db.begin().await.expect("begin the issue");
+    issue_unit
+        .accounts()
+        .create_invitation(&x_invites_y)
+        .await
+        .expect("a member issues");
+
+    let departure = try_leave(&pool, &x, &account);
+    let commit_the_issue = async {
+        wait_for_a_lock_wait(&pool).await;
+        issue_unit.commit().await.expect("commit the issue");
+    };
+    let (left, ()) = tokio::join!(departure, commit_the_issue);
+
+    left.expect("the issuer leaves");
+    assert_eq!(role_of(&pool, &x, &account).await, None);
+    let revoked = find_invitation(&pool, invitation_id)
+        .await
+        .expect("the offer is on file");
+    assert_eq!(
+        revoked.state,
+        InvitationState::Revoked,
+        "the departure revoked the offer committed while it waited"
+    );
+    let accepted = try_accept_invitation(&pool, x_invites_y, true).await;
+    let Err(refused) = accepted else {
+        panic!("the revoked offer can't be accepted");
+    };
+    assert!(
+        refused.to_string().contains("is no longer pending"),
+        "unexpected refusal: {refused}"
+    );
+    assert_eq!(role_of(&pool, &y, &account).await, None);
+}
+
+#[tokio::test]
+async fn an_issue_waiting_on_its_issuers_departure_is_refused() {
+    let (pool, _container) = fresh_pool().await;
+    let o = provision(&pool, "did:plc:leavefirst-o").await.id;
+    let x = provision(&pool, "did:plc:leavefirst-x").await.id;
+    let y = provision(&pool, "did:plc:leavefirst-y").await.id;
+    let account = found_with_member(&pool, &o, &x, "leavefirst").await;
+    let db = PgDatabase::new(pool.clone());
+    let mut departure_unit = db.begin().await.expect("begin the departure");
+    departure_unit
+        .accounts()
+        .leave(&x, &account)
+        .await
+        .expect("the issuer leaves");
+    let x_invites_y = Invitation::issue(
+        account.clone(),
+        y.clone(),
+        Role::Member,
+        x.clone(),
+        Utc::now(),
+    );
+
+    let issue = try_create_invitation(&pool, &x_invites_y);
+    let commit_the_departure = async {
+        wait_for_a_lock_wait(&pool).await;
+        departure_unit.commit().await.expect("commit the departure");
+    };
+    let (issued, ()) = tokio::join!(issue, commit_the_departure);
+
+    let Err(refused) = issued else {
+        panic!("the issue that waited on its issuer's departure is refused");
+    };
+    assert!(
+        refused
+            .to_string()
+            .contains("an invitation's issuer must be a member"),
+        "unexpected refusal: {refused}"
+    );
+    assert!(
+        find_pending(&pool, &account, &y).await.is_none(),
+        "the refused issue stored no offer"
+    );
+    assert_eq!(role_of(&pool, &x, &account).await, None);
+    assert_eq!(role_of(&pool, &y, &account).await, None);
 }

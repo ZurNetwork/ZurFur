@@ -214,6 +214,7 @@ mod with_the_feature {
             plc_directory_submit: false,
             deadline_sweep_interval_secs: 60,
             max_upload_bytes: Config::DEFAULT_MAX_UPLOAD_BYTES,
+            build_id: "unknown".try_into().expect("a build id"),
         }
     }
 
@@ -364,6 +365,22 @@ mod with_the_feature {
             body["handle"], "alice.test",
             "her fixture profile is served"
         );
+    }
+
+    #[tokio::test]
+    async fn alice_files_a_bug_report() {
+        let base = serve_dev_profile().await;
+        let (browser, _cookie) = sign_in_to_dev_profile(&base).await;
+        let report = serde_json::json!({ "description": "The dev board froze." });
+
+        let filed = browser
+            .post(format!("{base}/bug-reports"))
+            .json(&report)
+            .send()
+            .await
+            .expect("POST /bug-reports");
+
+        assert_eq!(filed.status(), StatusCode::CREATED);
     }
 
     #[tokio::test]

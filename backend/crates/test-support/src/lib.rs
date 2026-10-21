@@ -3,8 +3,8 @@
 //! Boots a throwaway PDS in a container per test, with an in-process stub
 //! PLC directory so no request ever reaches the public atproto network,
 //! provisions a fixture account, and tears everything down on drop. See
-//! this directory's NODE.json for the usage recipe, the hermeticity
-//! guarantees, and the container-reuse escape hatch.
+//! this crate's node for the usage recipe, the hermeticity guarantees, and
+//! the container-reuse escape hatch.
 
 pub mod contract;
 pub mod cut;
@@ -13,6 +13,7 @@ mod fixture;
 pub mod http;
 pub mod identity_resolver_contract;
 pub mod log_capture;
+pub mod membership;
 mod pds;
 pub mod pg;
 pub mod pg_app;

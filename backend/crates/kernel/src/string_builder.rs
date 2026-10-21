@@ -7,6 +7,10 @@
 //! reports the FIRST violation. Newtypes stay the invariant carriers: each maps
 //! the shared [`StringBuilderViolation`] onto its own typed error.
 //!
+//! The Unicode tables the rules and a printer consult are public too:
+//! [`is_bidi_control`], and [`is_unsafe_to_print`] with its parts [`is_format`] and
+//! [`is_default_ignorable`].
+//!
 //! ```
 //! # use kernel::string_builder::{StringBuilder, StringBuilderViolation};
 //! # #[derive(Debug, PartialEq, Eq)]
@@ -36,6 +40,11 @@
 
 mod builder;
 mod errors;
+mod unicode;
 
 pub use builder::StringBuilder;
 pub use errors::StringBuilderViolation;
+pub use unicode::{
+    DEFAULT_IGNORABLE, FORMAT_CHARACTERS, is_bidi_control, is_default_ignorable, is_format,
+    is_unsafe_to_print,
+};

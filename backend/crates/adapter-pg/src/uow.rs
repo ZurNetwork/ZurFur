@@ -7,14 +7,15 @@
 use async_trait::async_trait;
 use domain::ports::character::CharacterWrites;
 use domain::ports::{
-    AccountRepo, ActorIdentityWrites, ChangelogWrites, ColumnWrites, CommissionRepo, Database,
-    UnitOfWork, UserWrites, WorkflowWrites,
+    AccountRepo, ActorIdentityWrites, BugReportWrites, ChangelogWrites, ColumnWrites,
+    CommissionRepo, Database, UnitOfWork, UserWrites, WorkflowWrites,
 };
 use sqlx::{PgPool, Postgres, Transaction};
 
 use crate::PgCommissionWrites;
 use crate::account::PgAccountWrites;
 use crate::actor_identity::PgActorIdentityWrites;
+use crate::bug_report::PgBugReportWrites;
 use crate::character::PgCharacterWrites;
 use crate::commission_changelog::PgChangelogWrites;
 use crate::user::PgUserWrites;
@@ -99,6 +100,11 @@ impl UnitOfWork for PgUnitOfWork {
     /// storage lands until the Character slice.
     fn characters(&mut self) -> Box<dyn CharacterWrites + '_> {
         Box::new(PgCharacterWrites)
+    }
+
+    /// The bug-report write surface over this transaction.
+    fn bug_reports(&mut self) -> Box<dyn BugReportWrites + '_> {
+        Box::new(PgBugReportWrites { conn: &mut self.tx })
     }
 
     /// Commits the unit, consuming the handle so it can't be reused.

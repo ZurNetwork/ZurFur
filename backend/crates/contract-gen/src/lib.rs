@@ -22,6 +22,7 @@ pub const SOURCES: &[&str] = &[
     "zurfur/api/v1/account.proto",
     "zurfur/api/v1/commission.proto",
     "zurfur/api/v1/den.proto",
+    "zurfur/api/v1/bug_report.proto",
 ];
 
 /// Generate the committed module: `zurfur.api.v1.rs` (prost structs),

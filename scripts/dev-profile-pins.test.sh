@@ -60,6 +60,16 @@ expect_line "the dev profile's Caddy waits for --profile dev-profile" "$dev_cadd
 expect_line "the dev profile's Caddy serves the shared Caddyfile" "$dev_caddy" "- ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro"
 expect_line "the Caddyfile binds loopback only" "$(cat "$root/caddy/Caddyfile")" "bind 127.0.0.1"
 
+# The body of the Justfile's `_dev-profile-web` recipe. Its vite run is the one
+# place ZURFUR_WEB_STACK=dev-profile is set: the web tells the dev profile apart
+# by it, and no spec sees a recipe.
+dev_profile_web="$(awk '
+    /^_dev-profile-web / { inside = 1; next }
+    inside && /^[^[:space:]]/ { inside = 0 }
+    inside { print }
+' "$root/Justfile")"
+expect "_dev-profile-web marks its web run as the dev profile" "$(printf '%s\n' "$dev_profile_web" | grep -F 'yarn dev')" "ZURFUR_WEB_STACK=dev-profile yarn dev"
+
 if [ "$failures" -gt 0 ]; then
     echo "$failures dev-profile pin(s) missing"
     exit 1

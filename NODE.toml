@@ -1,0 +1,28 @@
+# Project settings for the nodes pack ([tool], [refs], [root]) and for
+# design-sync ([design]).
+
+[tool]
+run = "just nodes"
+install = "just nodes-install"
+check = "just nodes-check"
+fmt_on_write = true
+
+[refs]
+index = "docs/design-index.md"
+kind = "design page"
+on_superseded = "re-point with just nodes add-ref / rm-ref"
+
+[root]
+local = false
+notes = [
+  "Doc comments exist in a vacuum: a `///`, `//!`, JSDoc or SQL-header comment states its fact plainly and never carries a DD number, design page id, Jira key, PR number or \"per ruling\" pointer — those live in `NODE.refs.json`, under the nearest node's path; documentation too big for its file (module essays, migration rationale) moves to that node's `notes` with a one-line summary left in place.",
+]
+
+[design]
+corpus = "${ZURFUR_DESIGN_DIR:-/home/zuri/code/zurfur-design}"
+rules = ["README.md", "migration/schema.md"]
+fmt = "cargo run -q -p design -- fmt --root ."
+check = "just gate"
+index_regen = "just design-index"
+index_check = "just design-index-check --strict"
+merge = "engineer"

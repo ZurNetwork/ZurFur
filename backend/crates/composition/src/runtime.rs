@@ -7,9 +7,9 @@ use adapter_pg::PgPool;
 use base64::Engine as _;
 use domain::ports::character::CharacterStore;
 use domain::ports::{
-    AccountStore, Authenticator, ChangelogStore, ColumnStore, CommissionStore, Database, DidMinter,
-    FileStore, IdentityResolver, ProfileCache, ProfileSource, UnitOfWorkFn, UserStore,
-    WorkflowStore,
+    AccountStore, Authenticator, BugReportStore, ChangelogStore, ColumnStore, CommissionStore,
+    Database, DidMinter, FileStore, IdentityResolver, ProfileCache, ProfileSource, UnitOfWorkFn,
+    UserStore, WorkflowStore,
 };
 use fluent_uri::Uri;
 
@@ -65,6 +65,10 @@ pub struct Runtime {
     pub columns: Arc<dyn ColumnStore>,
     /// Reads arrive with the Character slice; the port declares none yet.
     pub characters: Arc<dyn CharacterStore>,
+    /// The bug reports Users file: the per-reporter count behind the rate
+    /// limit, and the list. Filing is a [`UnitOfWork`](domain::ports::UnitOfWork)
+    /// view.
+    pub bug_reports: Arc<dyn BugReportStore>,
     /// The private blob store behind a commission file entry. Pool-backed and
     /// outside the unit of work — bytes cannot ride a transaction, so an
     /// orphan on rollback is accepted.
@@ -168,6 +172,7 @@ impl Runtime {
             workflows: Arc::new(adapter_pg::PgWorkflowStore::new(pool.clone())),
             columns: Arc::new(adapter_pg::PgColumnStore::new(pool.clone())),
             characters: Arc::new(adapter_pg::PgCharacterStore),
+            bug_reports: Arc::new(adapter_pg::PgBugReportStore::new(pool.clone())),
             files: Arc::new(adapter_pg::PgFileStore::new(pool.clone())),
             database: Arc::new(adapter_pg::PgDatabase::new(pool.clone())),
             pool,

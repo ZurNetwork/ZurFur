@@ -1,7 +1,7 @@
 //! The log canary: a whole signed-in visit on PostgreSQL, under the dev subscriber at `trace`
 //! with `log` records bridged, writes no token, cookie, session id or key at any level, and no
 //! DID or handle at info or above. Alone in its binary: it installs the global subscriber. The
-//! visitor's own thread stays out of the capture (the crate's NODE.json says why).
+//! visitor's own thread stays out of the capture (this crate's node says why).
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -37,6 +37,14 @@ const ROOT_KEY_BASE64: &str = "Y2FuYXJ5LXJvb3Qta2V5LTdmM2E5YzFlNWIyZDgwNDY=";
 
 /// The Account the visit founds, so the Den lists something.
 const ACCOUNT_HANDLE: &str = "canarystudio.zurfur.app";
+
+/// What the visit's bug report carries: the reporter's words, page and browser are theirs.
+const REPORT_DESCRIPTION: &str = "canarybugdescription4e8b1f";
+const REPORT_PAGE: &str = "/canarybugpage7d2a9c";
+const REPORT_BROWSER: &str = "canarybugbrowser1c5e";
+/// The refused report's description, which a bidirectional override refuses.
+const REFUSED_DESCRIPTION: &str = "canarybugrefused9a3d\u{202E}";
+const REFUSED_CANARY: &str = "canarybugrefused9a3d";
 
 /// An authenticator double that hands out [`BINDING`] and redirects back with [`CODE`],
 /// [`STATE`] and [`ISS`], accepting only those, as the user [`USER_DID`].
@@ -174,6 +182,24 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         .send()
         .await
         .expect("POST /accounts");
+    let report = serde_json::json!({
+        "description": REPORT_DESCRIPTION,
+        "page": REPORT_PAGE,
+        "browser": REPORT_BROWSER,
+    });
+    let filed = browser
+        .post(format!("{base}/bug-reports"))
+        .json(&report)
+        .send()
+        .await
+        .expect("POST /bug-reports");
+    let refused_report = serde_json::json!({ "description": REFUSED_DESCRIPTION });
+    let refused = browser
+        .post(format!("{base}/bug-reports"))
+        .json(&refused_report)
+        .send()
+        .await
+        .expect("POST /bug-reports");
     let root = browser
         .get(format!("{base}/den"))
         .send()
@@ -195,6 +221,8 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
     assert_eq!(callback.status(), 303);
     assert_eq!(me.status(), 200);
     assert_eq!(founded.status(), 201);
+    assert_eq!(filed.status(), 201);
+    assert_eq!(refused.status(), 422);
     assert_eq!(root.status(), 200);
     let listed = accounts_listing["listing"]["entries"]
         .as_array()
@@ -210,10 +238,14 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
     if let Some(dump) = std::env::var_os("LOG_CANARY_DUMP") {
         std::fs::write(dump, &text).expect("the dump file is writable");
     }
-    let controls: [(&str, &[&str]); 6] = [
+    let controls: [(&str, &[&str]); 7] = [
         (
             "the callback's finish",
             &["request finished", "route=\"/signin-callback\""],
+        ),
+        (
+            "the bug report's finish",
+            &["request finished", "route=\"/bug-reports\""],
         ),
         (
             "the Den root's finish",
@@ -246,6 +278,10 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         ("the session id as a number", session_number.as_str()),
         ("the root key", ROOT_KEY),
         ("the root key's base64", ROOT_KEY_BASE64),
+        ("the bug report's description", REPORT_DESCRIPTION),
+        ("the bug report's page", REPORT_PAGE),
+        ("the bug report's browser", REPORT_BROWSER),
+        ("the refused bug report's description", REFUSED_CANARY),
     ];
     for (secret, value) in secrets {
         let leaks: Vec<&str> = text.lines().filter(|line| line.contains(value)).collect();

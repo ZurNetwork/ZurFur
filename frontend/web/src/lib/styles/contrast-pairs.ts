@@ -157,6 +157,55 @@ export const CONTRAST_PAIRS: readonly ContrastPair[] = [
 		backgrounds: ['--color-surface-raised'],
 		kind: 'nonText',
 		where: "an unchecked toggle's thumb on its track"
+	},
+	{
+		foreground: '--color-danger',
+		backgrounds: ['--color-surface'],
+		kind: 'text',
+		where: "in a dialog: an invalid text box's message, and the error tone's icon"
+	},
+	{
+		foreground: '--color-danger',
+		backgrounds: ['--color-surface'],
+		kind: 'nonText',
+		where: "in a dialog: an invalid text box's edge against the dialog, and the error tone's edge"
+	},
+	{
+		foreground: '--color-control-edge',
+		backgrounds: ['--color-surface'],
+		kind: 'nonText',
+		where: "in a dialog: a checkbox's edge and a text box's edge against the dialog"
+	},
+	{
+		foreground: '--color-accent',
+		backgrounds: ['--color-surface'],
+		kind: 'nonText',
+		where: "in a dialog: a checked checkbox's fill against the dialog"
+	},
+	{
+		foreground: '--color-on-accent',
+		backgrounds: ['--color-accent'],
+		kind: 'nonText',
+		where: "a checked checkbox's tick on its fill"
+	},
+	{
+		foreground: '--color-accent',
+		backgrounds: ['--color-surface'],
+		kind: 'text',
+		where: "in a dialog: the info tone's icon"
+	},
+	{
+		foreground: '--color-accent',
+		backgrounds: ['--color-surface'],
+		kind: 'nonText',
+		where: "in a dialog: the info tone's edge"
+	},
+	{
+		foreground: '--color-text-muted',
+		backgrounds: ['--color-surface'],
+		kind: 'text',
+		where:
+			"in a dialog: an unticked checkbox's value, greyed by colour, never by opacity; a text box's hint"
 	}
 ];
 

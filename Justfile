@@ -3,10 +3,12 @@ set dotenv-load := true
 # passes every argument through intact; `{{ARGS}}` would re-split and re-parse them.
 set positional-arguments := true
 
-# The `nodes` tool (github.com/ZurNetwork/nodes — the NODE.json normalizer and
+# The `nodes` tool (github.com/ZurNetwork/nodes — the node-tree normalizer and
 # lookup CLI), pinned to one release tag. Bump it HERE and nowhere else: the
-# NODE.json files and the tool's schema move in lockstep on this pin.
-NODES_VERSION := "v0.6.0"
+# node files (NODE.inf.json, with every ref in the root NODE.refs.json) and the
+# tool's schema move in lockstep on this pin. Exported so scripts/tools-check.sh
+# reads it.
+export NODES_VERSION := "v0.7.1"
 
 # The tool versions CI runs, so the local gate agrees with it. `just setup`
 # installs typos, cargo-deny and just at these; `just tools-check` warns when this
@@ -34,10 +36,20 @@ default:
 # compose service into logs/compose/<service>/. `just logs-tail [name]` follows
 # them; `just logs-clean` removes them.
 
+# ZURFUR_BUILD_ID names the build in every bug report: scripts/build-id.sh's
+# jj or git commit, " (local changes)" when the working copy differs, else
+# "unknown". dev, dev-back, dev-web, dev-mock, dev-profile and dev-profile-web
+# export it only when it is unset, so a parent recipe's value wins (`dev`'s
+# dev-back and dev-web share one) and so does your shell's. It is stamped when
+# the recipe starts; cargo watch and vite reloads keep it until you restart the
+# recipe. Never put it in .env: dotenv-load would push one stale value into
+# every recipe.
+_export_build_id := 'export ZURFUR_BUILD_ID="${ZURFUR_BUILD_ID:-$(bash scripts/build-id.sh)}"'
+
 # The whole stack: compose, then the API and the web. It logs as `dev`, and the
 # recipes it runs log for themselves too.
 dev:
-    bash scripts/dev-log.sh dev just _dev
+    {{_export_build_id}} && bash scripts/dev-log.sh dev just _dev
 
 _dev:
     just up
@@ -48,11 +60,11 @@ _dev:
 dev-back:
     # -p api: the workspace has a second binary (contract-gen) since ZMVP-25;
     # a bare `run` is ambiguous and cargo-watch dies silently under `just dev`.
-    bash scripts/dev-log.sh dev-back cargo watch -C backend -x 'run -p api'
+    {{_export_build_id}} && bash scripts/dev-log.sh dev-back cargo watch -C backend -x 'run -p api'
 
 # The primary SvelteKit web app (frontend/web) behind Caddy's catch-all (ZMVP-150).
 dev-web:
-    cd frontend/web && bash ../../scripts/dev-log.sh dev-web yarn dev
+    {{_export_build_id}} && cd frontend/web && bash ../../scripts/dev-log.sh dev-web yarn dev
 
 # Mock-mode dev loop (ZMVP-198): the SvelteKit app alone, no axum, no Docker,
 # no Caddy — ZurfurApi is served by the in-memory mock Layer (runtime.ts's
@@ -60,7 +72,7 @@ dev-web:
 # without OAuth. Deliberately skips `just up`/wait-for-*: there is nothing to
 # wait for.
 dev-mock:
-    cd frontend/web && ZURFUR_WEB_MOCK=1 bash ../../scripts/dev-log.sh dev-mock yarn dev
+    {{_export_build_id}} && cd frontend/web && ZURFUR_WEB_MOCK=1 ZURFUR_PUBLIC_URL="http://127.0.0.1:${ZURFUR_WEB_PORT:-5174}" bash ../../scripts/dev-log.sh dev-mock yarn dev
 
 # The dev profile (no Docker, no PostgreSQL, no PDS): the API on the in-memory
 # fixture world, where every sign-in is alice. The `dev-profile` Cargo feature
@@ -73,7 +85,7 @@ dev-mock:
 # so target/debug/api is never the profile. Override either:
 # `just dev-profile 127.0.0.1:9191 http://127.0.0.1:9190`.
 dev-profile http_addr="127.0.0.1:8181" public_url="http://127.0.0.1:8180":
-    ZURFUR_ENV=dev ZURFUR_HTTP_ADDR="$1" ZURFUR_PUBLIC_URL="$2" CARGO_TARGET_DIR=target/dev-profile bash scripts/dev-log.sh dev-profile cargo run -p api --features dev-profile
+    {{_export_build_id}} && ZURFUR_ENV=dev ZURFUR_HTTP_ADDR="$1" ZURFUR_PUBLIC_URL="$2" CARGO_TARGET_DIR=target/dev-profile bash scripts/dev-log.sh dev-profile cargo run -p api --features dev-profile
 
 # The dev profile in a browser: its one origin (the `caddy-dev-profile` compose
 # service, the same Caddyfile, loopback only) on `proxy_port`, in front of the
@@ -88,7 +100,7 @@ dev-profile http_addr="127.0.0.1:8181" public_url="http://127.0.0.1:8180":
 # `just dev-profile 127.0.0.1:8281 http://127.0.0.1:8280` and
 # `just dev-profile-web 8280 http://127.0.0.1:8281 5284`.
 dev-profile-web proxy_port="8180" api_upstream="http://127.0.0.1:8181" web_port="5184":
-    bash scripts/dev-log.sh dev-profile-web just _dev-profile-web "$1" "$2" "$3"
+    {{_export_build_id}} && bash scripts/dev-log.sh dev-profile-web just _dev-profile-web "$1" "$2" "$3"
 
 _dev-profile-web proxy_port api_upstream web_port:
     #!/usr/bin/env bash
@@ -96,7 +108,7 @@ _dev-profile-web proxy_port api_upstream web_port:
     export ZURFUR_DEV_PROFILE_PROXY_PORT="$1" ZURFUR_DEV_PROFILE_API_UPSTREAM="$2" ZURFUR_DEV_PROFILE_WEB_PORT="$3"
     trap 'docker compose --profile dev-profile down caddy-dev-profile' EXIT
     docker compose --profile dev-profile up -d caddy-dev-profile
-    (cd frontend/web && ZURFUR_WEB_PORT="$3" ZURFUR_API_UPSTREAM="$2" yarn dev)
+    (cd frontend/web && ZURFUR_WEB_PORT="$3" ZURFUR_API_UPSTREAM="$2" ZURFUR_PUBLIC_URL="http://127.0.0.1:$1" ZURFUR_WEB_STACK=dev-profile yarn dev)
 
 # --- Docker ---
 
@@ -147,7 +159,7 @@ migrate-add name:
 # Drop the database volume and bring up a fresh PostgreSQL.
 # `down -v` removes this project's named volumes (project = COMPOSE_PROJECT_NAME,
 # default `zurfur`) — that's Postgres AND the dev PDS/PLC (ZMVP-102) together,
-# so it does the right thing in an isolated worktree too.
+# so it does the right thing in an isolated workspace too.
 db-reset:
     docker compose down -v
     just up
@@ -206,6 +218,12 @@ test:
 zurfur *ARGS:
     cargo run --quiet --package cli -- "$@"
 
+# The bug reports filed from the web, oldest first, through the operator command
+# `zurfur bug-reports list`: fenced text with every invisible character escaped,
+# or `--json` (printable ASCII). `just bug-reports --since 2026-10-17T00:00:00Z`.
+bug-reports *ARGS:
+    cargo run --quiet --package cli -- bug-reports list "$@"
+
 # Regenerate both adapters' src/queries.rs (typed query functions) from the
 # queries/*.sql trees, described against a throwaway migrated Postgres. Run
 # after adding/changing a .sql file or a migration, then commit the result —
@@ -236,9 +254,10 @@ den-timing *ARGS:
     cargo test -p api --test not_found_timing {{ARGS}} -- --ignored --nocapture
 
 
-# --- The node tree (NODE.json) ---
+# --- The node tree (NODE.inf.json, NODE.refs.json) ---
 
-# The per-directory NODE.json chart, through the pinned `nodes` binary:
+# The per-directory node chart (one NODE.inf.json per directory; every ref lives
+# in the root NODE.refs.json), through the pinned `nodes` binary:
 # `just nodes tree` · `just nodes chain <path>` · `just nodes get <path> [field]`
 # · `just nodes refs <pageId>` · `just nodes find <term>` · `just nodes fmt [file…]`
 # · `just nodes set <path> <field> <json>` · add-ref / rm-ref / touch (`nodes --help`).
@@ -246,11 +265,15 @@ den-timing *ARGS:
 nodes *ARGS:
     nodes "$@"
 
-# Validate every NODE.json: the schema, path ↔ location, fs ↔ child nodes, and
-# every ref against the design pointer index (a SUPERSEDED entry warns). Part of
-# `just gate`; CI runs it as the `nodes` job.
+# Validate every NODE.inf.json and NODE.refs.json: the schema, path ↔ location,
+# fs ↔ child nodes, and every ref against the design pointer index (a SUPERSEDED
+# entry warns). Then scripts/nodes-tree-check.sh guards what `nodes check` passes
+# over: a stray NODE.json, no node tree here (a refs-only check), an untracked
+# NODE.inf.json, an untracked NODE.refs.json. Part of `just gate`; CI runs it as
+# the `nodes` job.
 nodes-check:
     nodes check --ref-index docs/design-index.md
+    sh scripts/nodes-tree-check.sh
 
 # Download the pinned `nodes` release binary into ~/.cargo/bin (checksum-verified;
 # falls back to `cargo install --git` when no prebuilt archive fits this machine).
@@ -287,22 +310,25 @@ hooks-test:
     done
     exit "$status"
 
-# Fixture tests for the CI path classifier, the `changes` job, gate-light,
-# the dev-profile pins, pr-wait, tools-check, den-fill, the dev logs, the
-# private-papers check and the `jj push` gate's argument guard (the
-# design-index check's own tests run under `design-index-check-test`). CI runs
-# it in the `hooks` job, which has no jj: the jj fixtures skip themselves there.
+# Fixture tests for the CI path classifier, the `changes` job, gate-light, the
+# dev-profile pins, pr-wait, tools-check, the nodes install check, the nodes fmt
+# hook, den-fill, the dev logs, the private-papers check, the node-tree guard,
+# the nodes 0.7 node-text edits, the `jj push` gate's argument guard and
+# workspace-init (the design-index check's own tests run under
+# `design-index-check-test`). CI runs it in the `hooks` job, which has no jj
+# and no nodes: the jj fixtures and the node-text edits' tests skip themselves
+# there.
 scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/jj-push.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/nodes-install.test.sh scripts/nodes-fmt-hook.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/nodes-tree-check.test.sh scripts/nodes-0-7-edits.test.sh scripts/jj-push.test.sh scripts/workspace-init.test.sh scripts/build-id.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done
     exit "$status"
 
-# Compare this machine's typos, cargo-deny, buf, just and rustc with CI's versions
+# Compare this machine's typos, cargo-deny, buf, just, nodes and rustc with CI's versions
 # (warns), and check every workflow pins its actions by SHA at the Justfile's
 # versions (fails). `--pins-only` skips the local half; CI runs that.
 tools-check *ARGS:
@@ -337,13 +363,13 @@ eval *ARGS:
     fi
     python3 "$runner" "$@"
 
-# --- Worktrees (parallel branches) ---
+# --- Workspaces (parallel branches) ---
 
 # Seed an isolated .env (unique DB + HTTP/proxy ports + compose project name)
-# for the CURRENT git worktree, so `just dev`/`just up`/tests here never collide
-# with another worktree's stack. Idempotent — safe to re-run. See /start --worktree.
-worktree-init:
-    bash scripts/worktree-init.sh
+# for the CURRENT jj workspace, so `just dev`/`just up`/tests here never collide
+# with another workspace's stack. Idempotent — safe to re-run.
+workspace-init:
+    bash scripts/workspace-init.sh
 
 # --- Code quality ---
 
@@ -363,7 +389,7 @@ check:
 # browser-mode component tests, and the `buf` CLI at BUF_VERSION for the
 # contract lint (https://buf.build/docs/installation — a single Go binary).
 # Run it before a slice's first push for review and before handing it to QA;
-# restacks and fix rounds may use `just gate-light`.
+# base merges and fix rounds may use `just gate-light`.
 gate:
     just tools-check
     cargo fmt --all --check
@@ -416,7 +442,7 @@ engineer-tools-test:
     done
     exit "$status"
 
-# The light gate for restacks and fix rounds: fmt, clippy, typos and the
+# The light gate for base merges and fix rounds: fmt, clippy, typos and the
 # design-index check, plus the tests of the crates the change touches and the
 # web checks when frontend/ or contract/ changed. CI runs the full suite on
 # every push; see scripts/gate-light.sh for how the change is read.

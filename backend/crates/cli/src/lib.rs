@@ -1,7 +1,7 @@
 //! `zurfur`: the terminal driving adapter. Calls the same application-layer
 //! use cases as `api`, in-process via [`composition::Runtime`] — no HTTP, no
 //! bearer token. Commands are one-shot `clap` subcommands under [`commands`].
-//! See this crate's `NODE.json` for the stdout/stderr/exit-code conventions
+//! See this crate's node for the stdout/stderr/exit-code conventions
 //! and the problem-code vocabulary.
 
 use std::path::{Path, PathBuf};
@@ -25,7 +25,8 @@ pub use problem::{CliError, ExitClass, Problem};
 #[derive(Debug, Parser)]
 #[command(name = "zurfur", version, about = "Zurfur from the terminal", long_about = None)]
 pub struct Cli {
-    /// Print compact JSON on stdout (default: pretty-printed).
+    /// Print compact JSON on stdout (default: pretty-printed; `bug-reports
+    /// list` defaults to fenced text, and its JSON is printable ASCII).
     #[arg(long, global = true)]
     pub json: bool,
     /// Directory holding the `<ZURFUR_ENV>.toml` profile (default: the repo's
@@ -69,6 +70,12 @@ pub enum BackendCommand {
         #[command(subcommand)]
         op: commands::account::AccountOp,
     },
+    /// Bug reports filed from the web: `list` (an operator command; no
+    /// identity needed).
+    BugReports {
+        #[command(subcommand)]
+        op: commands::bug_reports::BugReportsOp,
+    },
 }
 
 /// Boot `tracing` to **stderr** under `RUST_LOG` (default `warn`), so stdout
@@ -100,6 +107,14 @@ pub async fn run(cli: Cli) -> Result<Output, CliError> {
             let value = commands::session::logout(&identity_path)?;
             Ok(Output::json(value, format))
         }
+        // An operator command: no identity file, and its own stdout — fenced
+        // text, or ASCII-only JSON — since the reports' texts are hostile.
+        Command::Backend(command @ BackendCommand::BugReports { op }) => {
+            let runtime = connect(cli.config_dir).await?;
+            require_current_schema(&runtime, &command).await?;
+            let listed = commands::bug_reports::list(&runtime, op).await?;
+            Ok(Output::raw(listed.printed(format)))
+        }
         Command::Backend(command) => {
             let identity_path = identity::default_path()?;
             let runtime = connect(cli.config_dir).await?;
@@ -123,6 +138,7 @@ pub async fn dispatch(
         BackendCommand::Migrate => commands::migrate::run(runtime).await,
         BackendCommand::Session { op } => commands::session::run(runtime, identity_path, op).await,
         BackendCommand::Account { op } => commands::account::run(runtime, identity_path, op).await,
+        BackendCommand::BugReports { op } => commands::bug_reports::run(runtime, op).await,
     }
 }
 

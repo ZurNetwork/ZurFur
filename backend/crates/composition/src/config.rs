@@ -7,10 +7,11 @@ mod origin;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use domain::elements::bug_report::BuildId;
 use domain::elements::handle::HandleDomain;
 use figment::{
     Figment,
-    providers::{Env, Format, Toml},
+    providers::{Env, Format, Serialized, Toml},
 };
 use serde::{Deserialize, Deserializer, de};
 
@@ -27,6 +28,10 @@ pub const ENV_PREFIX: &str = "ZURFUR_";
 /// `ENV_PREFIX` + [`Config::did_key_root_key`]; every harness that boots a
 /// runtime has to set it.
 pub const ROOT_KEY_ENV: &str = "ZURFUR_DID_KEY_ROOT_KEY";
+/// `ENV_PREFIX` + [`Config::build_id`]; read verbatim, never parsed as a number.
+const BUILD_ID_ENV: &str = "ZURFUR_BUILD_ID";
+/// [`Config::build_id`] when `ZURFUR_BUILD_ID` is unset.
+const UNKNOWN_BUILD_ID: &str = "unknown";
 
 /// The deployment profile, selected by `ZURFUR_ENV`. Spelled `DEV`/`STG`/`PROD`
 /// with the lowercase forms accepted as aliases, since `ZURFUR_ENV` both picks
@@ -55,8 +60,9 @@ impl Environment {
 
 /// The fully-resolved runtime configuration, produced by [`Config::load`] and
 /// handed to [`Runtime::connect`](crate::Runtime::connect). Every field is
-/// required at boot except [`http_addr`](Config::http_addr) and
-/// [`handle_domain`](Config::handle_domain), which default.
+/// required at boot except [`http_addr`](Config::http_addr),
+/// [`handle_domain`](Config::handle_domain) and [`build_id`](Config::build_id),
+/// which default.
 #[derive(Clone, Deserialize)]
 pub struct Config {
     /// The deployment profile; see [`Environment`].
@@ -109,6 +115,30 @@ pub struct Config {
     /// Defaults to [`Config::DEFAULT_MAX_UPLOAD_BYTES`].
     #[serde(default = "default_max_upload_bytes")]
     pub max_upload_bytes: u64,
+    /// This API's build, as a bug report records it. Read verbatim from
+    /// `ZURFUR_BUILD_ID`, defaulting to `unknown`; a value that is
+    /// no build id fails the load rather than falling back.
+    #[serde(
+        default = "default_build_id",
+        deserialize_with = "deserialize_build_id"
+    )]
+    pub build_id: BuildId,
+}
+
+/// Serde default for [`Config::build_id`]: [`UNKNOWN_BUILD_ID`].
+fn default_build_id() -> BuildId {
+    BuildId::try_from(UNKNOWN_BUILD_ID).expect("the unknown build id is valid")
+}
+
+/// Deserialize [`Config::build_id`] through [`BuildId`]'s validating
+/// `TryFrom`; the error names the rule, never the value.
+fn deserialize_build_id<'de, D>(deserializer: D) -> Result<BuildId, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    BuildId::try_from(raw)
+        .map_err(|refusal| de::Error::custom(format!("`{BUILD_ID_ENV}` is no build id: {refusal}")))
 }
 
 /// Serde default for [`Config::max_upload_bytes`].
@@ -192,14 +222,14 @@ pub fn ensure_custody_hardened(
         anyhow::bail!(
             "refusing to boot in {env:?}: did:plc key custody is config/env-root-backed, \
              which is DEV-ONLY (a config secret is not a hardware boundary). Cloud-KMS-backed \
-             custody must land before any real account is minted — ZMVP-53."
+             custody must land before any real account is minted."
         );
     }
     if submit && is_example_key {
         anyhow::bail!(
             "refusing PLC directory submission: the did:plc custody root key is the shipped \
              example key (its private value is public). Set a real ZURFUR_DID_KEY_ROOT_KEY and \
-             use KMS-backed custody — ZMVP-53."
+             use KMS-backed custody."
         );
     }
     Ok(())
@@ -252,12 +282,24 @@ impl Config {
             .unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../config")));
         let profile_file = config_dir.join(format!("{profile}.toml"));
 
-        let config: Self = Figment::new()
+        // The build id skips the env provider, which would read `0123` as the
+        // number 123; it is layered as the exact text instead.
+        let build_id_text = match std::env::var(BUILD_ID_ENV) {
+            Ok(text) => Some(text),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(std::env::VarError::NotUnicode(_)) => {
+                let build_id_error = figment::Error::from(format!("{BUILD_ID_ENV} must be UTF-8"));
+                return Err(LoadError::from(Box::new(build_id_error)));
+            }
+        };
+        let mut figment = Figment::new()
             .merge(Toml::file(profile_file))
             .merge(Env::raw().only(&[DATABASE_URL_ENV]))
-            .merge(Env::prefixed(ENV_PREFIX))
-            .extract()
-            .map_err(Box::new)?;
+            .merge(Env::prefixed(ENV_PREFIX).ignore(&["build_id"]));
+        if let Some(text) = build_id_text {
+            figment = figment.merge(Serialized::default("build_id", text));
+        }
+        let config: Self = figment.extract().map_err(Box::new)?;
         config.ensure_fits_environment()?;
         Ok(config)
     }

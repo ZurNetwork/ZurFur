@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
 	accountId,
+	bugReference,
 	commissionId,
 	did,
 	fieldPointer,
+	firstPartyOrigin,
 	handle,
 	handleFromTrusted,
 	nameOrdinal,
@@ -117,5 +119,55 @@ describe('commissionId (the opaque mint)', () => {
 		expect(commissionId(long)).toBe(long);
 		expect(commissionId(' padded ')).toBe(' padded ');
 		expect(commissionId('')).toBeUndefined();
+	});
+});
+
+describe('firstPartyOrigin (validated mint)', () => {
+	it.each(['http://127.0.0.1:8080', 'http://[::1]:8080', 'https://zurfur.app'])(
+		'accepts %s as itself',
+		(raw) => {
+			expect(firstPartyOrigin(raw)).toBe(raw);
+		}
+	);
+
+	it('normalises the scheme case and drops the bare trailing slash', () => {
+		expect(firstPartyOrigin('HTTP://127.0.0.1:8080/')).toBe('http://127.0.0.1:8080');
+	});
+
+	it.each([
+		'http://127.0.0.1:8080/app',
+		'http://127.0.0.1:8080?x=1',
+		'http://127.0.0.1:8080?',
+		'http://127.0.0.1:8080/?',
+		'http://127.0.0.1:8080#top',
+		'http://127.0.0.1:8080#',
+		'http://user:pass@127.0.0.1:8080',
+		'http://user@127.0.0.1:8080',
+		'ftp://127.0.0.1:8080',
+		'file:///etc/passwd',
+		'ws://127.0.0.1:8080',
+		'wss://zurfur.app',
+		'not a url',
+		'',
+		'127.0.0.1:8080'
+	])('refuses %j without throwing', (raw) => {
+		expect(firstPartyOrigin(raw)).toBeUndefined();
+	});
+});
+
+describe('bugReference', () => {
+	it.each(['3f9a1c2e', 'A', 'x'.repeat(64)])('accepts %j as itself', (raw) => {
+		expect(bugReference(raw)).toBe(raw);
+	});
+
+	it.each([
+		'',
+		'x'.repeat(65),
+		'has space',
+		'tab\there',
+		'émoji',
+		`${String.fromCodePoint(0x202e)}3f9a`
+	])('refuses %j', (raw) => {
+		expect(bugReference(raw)).toBeUndefined();
 	});
 });

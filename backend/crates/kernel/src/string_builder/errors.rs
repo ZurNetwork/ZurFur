@@ -16,9 +16,12 @@ pub enum StringBuilderViolation {
         /// The offending length, in `char`s.
         len: usize,
     },
-    /// [`StringBuilder::no_control`](super::StringBuilder::no_control) or
-    /// [`StringBuilder::no_control_except`](super::StringBuilder::no_control_except)
-    /// found a control character the rule doesn't allow.
+    /// [`StringBuilder::no_control`](super::StringBuilder::no_control),
+    /// [`StringBuilder::no_control_except`](super::StringBuilder::no_control_except),
+    /// [`StringBuilder::no_bidi_control`](super::StringBuilder::no_bidi_control) or
+    /// [`StringBuilder::no_line_separator`](super::StringBuilder::no_line_separator)
+    /// found a control, bidirectional formatting or line-separator character the rule
+    /// doesn't allow.
     #[error("must not contain control characters")]
     ControlCharacter,
 }

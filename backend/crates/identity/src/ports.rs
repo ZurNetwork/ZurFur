@@ -8,6 +8,7 @@ pub mod character;
 
 mod account;
 mod authenticator;
+mod bug_report;
 mod errors;
 mod identity;
 mod identity_resolver;
@@ -18,6 +19,7 @@ mod user;
 pub use account::{AccountReads, AccountRepo, AccountStore, AccountWrites};
 pub use actor_identity::{ActorIdentityStore, ActorIdentityWrites};
 pub use authenticator::{Authenticator, BrowserBinding, SigninStarted};
+pub use bug_report::{BugReportStore, BugReportWrites};
 pub use character::{CharacterStore, CharacterWrites};
 pub use errors::{
     AccountMismatch, BrowserMismatch, DidBelongsToAnotherActor, HandleTaken, PublicRecordsError,

@@ -31,18 +31,35 @@ import { HttpStatus } from '$lib/api/http-status';
 import type { Session } from '$lib/api/session';
 import {
 	accountId,
+	bugReference,
 	commissionId,
 	did,
 	fieldPointer,
 	handleFromTrusted,
+	type BugReference,
 	type CommissionId
 } from '$lib/types/brand';
+import type {
+	BugBrowser,
+	BugDescription,
+	BugPage,
+	BugVersion,
+	ErrorStatus,
+	PageType,
+	WindowSide
+} from '$lib/types/bug-report-rules';
 import {
 	CreateAccountRequestSchema,
 	CreateAccountResponseSchema,
 	DeleteAccountResponseSchema,
 	ListAccountsResponseSchema
 } from './generated/zurfur/api/v1/account_pb';
+import {
+	FileBugReportRequest_DisplaySchema,
+	FileBugReportRequest_WindowSchema,
+	FileBugReportRequestSchema,
+	FileBugReportResponseSchema
+} from './generated/zurfur/api/v1/bug_report_pb';
 import {
 	CreateCommissionRequestSchema,
 	CreateCommissionResponseSchema,
@@ -159,6 +176,47 @@ export interface ZurfurApiShape {
 	readonly denRoot: (query: DenQuery) => Effect.Effect<DenRead, DenReadError>;
 	/** `GET /den/{path}` — the node at a Den path below the root; failures as {@link denRoot}. */
 	readonly denNode: (path: SegmentPath, query: DenQuery) => Effect.Effect<DenRead, DenReadError>;
+	/**
+	 * `POST /bug-reports` — file a bug report as the signed-in visitor; succeeds
+	 * with the reference to quote. Fails `NotAuthenticated` for an ended
+	 * session, `ApiProblem` for any other refusal (the hourly limit among them).
+	 */
+	readonly fileBugReport: (
+		filing: BugReportFiling
+	) => Effect.Effect<
+		BugReference,
+		NotAuthenticated | ApiProblem | NetworkFailure | ContractViolation
+	>;
+}
+
+/** The browser window's size, each side 1 to 100000. */
+export interface BugWindow {
+	readonly width: WindowSide;
+	readonly height: WindowSide;
+}
+
+/** Which display preferences the browser matched. */
+export interface BugDisplay {
+	readonly reducedMotion: boolean;
+	readonly moreContrast: boolean;
+	readonly forcedColors: boolean;
+}
+
+/**
+ * A bug report as the port files it: the description, and each item only
+ * when the reporter chose to send it. The reporter is the session's, never
+ * named here.
+ */
+export interface BugReportFiling {
+	readonly description: BugDescription;
+	readonly page: BugPage | undefined;
+	readonly pageType: PageType | undefined;
+	readonly webVersion: BugVersion | undefined;
+	readonly browser: BugBrowser | undefined;
+	readonly window: BugWindow | undefined;
+	readonly display: BugDisplay | undefined;
+	/** The error page's HTTP status, 400 to 599. */
+	readonly errorStatus: ErrorStatus | undefined;
 }
 
 /**
@@ -663,6 +721,53 @@ const liveDenNode = (fetch: FetchFunction, denPath: SegmentPath, query: DenQuery
 	);
 };
 
+/** Where bug reports are filed. */
+const BUG_REPORTS_PATH = '/bug-reports';
+
+/** `filing` as the contract's request message: an item left out is absent on the wire. */
+function fileBugReportRequest(filing: BugReportFiling) {
+	const { window, display } = filing;
+	return create(FileBugReportRequestSchema, {
+		description: filing.description,
+		page: filing.page,
+		pageKind: filing.pageType,
+		webVersion: filing.webVersion,
+		browser: filing.browser,
+		window: window === undefined ? undefined : create(FileBugReportRequest_WindowSchema, window),
+		display:
+			display === undefined ? undefined : create(FileBugReportRequest_DisplaySchema, display),
+		errorStatus: filing.errorStatus
+	});
+}
+
+/**
+ * `POST /bug-reports`, encoded through the generated schema; a 2xx answer
+ * decodes to the reference, which must be a well-formed one.
+ */
+const liveFileBugReport = (fetch: FetchFunction, filing: BugReportFiling) =>
+	Effect.gen(function* () {
+		const request = fileBugReportRequest(filing);
+		const init: BackendInit = {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(toJson(FileBugReportRequestSchema, request))
+		};
+		const response = yield* backendFetch(fetch, BUG_REPORTS_PATH, init);
+		if (!response.ok) return yield* problemFailure(response, BUG_REPORTS_PATH);
+		const raw = yield* parsedBody(response, BUG_REPORTS_PATH);
+		const violation = new ContractViolation({
+			path: BUG_REPORTS_PATH,
+			status: response.status,
+			detail: 'malformed bug report answer'
+		});
+		const reference = yield* Effect.try({
+			try: () => bugReference(decodeContract(FileBugReportResponseSchema, raw).reference),
+			catch: () => violation
+		});
+		if (reference === undefined) return yield* violation;
+		return reference;
+	});
+
 /** The prod Layer: real HTTP through the per-request {@link RequestFetch}. */
 export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.effect(
 	ZurfurApi,
@@ -678,7 +783,8 @@ export const ZurfurApiLive: Layer.Layer<ZurfurApi, never, RequestFetch> = Layer.
 			createCommission: (title) => liveCreateCommission(fetch, title),
 			renameCommission: (id, title) => liveRenameCommission(fetch, id, title),
 			denRoot: (query) => liveDenRoot(fetch, query),
-			denNode: (path, query) => liveDenNode(fetch, path, query)
+			denNode: (path, query) => liveDenNode(fetch, path, query),
+			fileBugReport: (filing) => liveFileBugReport(fetch, filing)
 		});
 	})
 );
@@ -703,7 +809,8 @@ const anonymousDefaults: ZurfurApiShape = {
 	createCommission: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	renameCommission: () => Effect.fail(new ApiProblem({ problem: anonymousProblem })),
 	denRoot: () => Effect.fail(new NotAuthenticated({ problem: anonymousProblem })),
-	denNode: () => Effect.fail(new NotAuthenticated({ problem: anonymousProblem }))
+	denNode: () => Effect.fail(new NotAuthenticated({ problem: anonymousProblem })),
+	fileBugReport: () => Effect.fail(new NotAuthenticated({ problem: anonymousProblem }))
 };
 
 /**

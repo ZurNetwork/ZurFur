@@ -2,9 +2,9 @@
 //! fakes — the module the drivers call, exercised below the HTTP layer.
 //!
 //! Every test here pins a refusal the module shipped without: the delete
-//! role gate, the liveness gate `account/NODE.json` makes mandatory, the
-//! caller-named-account-vs-board reconciliation, and the order that keeps a
-//! non-member from reading board state off an error.
+//! role gate, the liveness gate the `account` module's node makes
+//! mandatory, the caller-named-account-vs-board reconciliation, and the
+//! order that keeps a non-member from reading board state off an error.
 
 #![allow(clippy::disallowed_methods, reason = "test seeding")]
 
@@ -64,18 +64,14 @@ async fn found(runtime: &Runtime, owner: &UserId, handle: &str) -> AccountId {
 }
 
 /// Seat `user` in `account_id` at `role` (test seed, no use case involved).
-async fn seat(fixture: &MemRuntime, user: &UserId, account_id: &AccountId, role: Role) {
+fn seat(fixture: &MemRuntime, user: &UserId, account_id: &AccountId, role: Role) {
     let member = UserAccount {
         user_id: user.clone(),
         account_id: account_id.clone(),
         role,
         alias: None,
     };
-    fixture
-        .backend
-        .grant_role(&member)
-        .await
-        .expect("seats the member");
+    fixture.backend.seed_member(&member);
 }
 
 /// Create one board on `account_id` as `actor`.
@@ -278,7 +274,7 @@ async fn an_admin_may_delete_a_board() {
     let owner = recognized(&fixture, "did:plc:board-admin-delete").await;
     let admin = recognized(&fixture, "did:plc:board-admin-member").await;
     let account_id = found(runtime, &owner, "admin-delete.zurfur.app").await;
-    seat(&fixture, &admin, &account_id, Role::Admin).await;
+    seat(&fixture, &admin, &account_id, Role::Admin);
     let workflow_id = board(runtime, &owner, &account_id, "Queue").await;
 
     delete_board(runtime, &admin, &workflow_id)
@@ -296,7 +292,7 @@ async fn a_member_may_not_delete_a_board() {
     let owner = recognized(&fixture, "did:plc:board-member-delete").await;
     let member = recognized(&fixture, "did:plc:board-plain-member").await;
     let account_id = found(runtime, &owner, "member-delete.zurfur.app").await;
-    seat(&fixture, &member, &account_id, Role::Member).await;
+    seat(&fixture, &member, &account_id, Role::Member);
     let workflow_id = board(runtime, &owner, &account_id, "Queue").await;
 
     let Err(error) = delete_board(runtime, &member, &workflow_id).await else {
@@ -318,7 +314,7 @@ async fn a_manager_may_not_delete_a_board() {
     let owner = recognized(&fixture, "did:plc:board-manager-delete").await;
     let manager = recognized(&fixture, "did:plc:board-manager").await;
     let account_id = found(runtime, &owner, "manager-delete.zurfur.app").await;
-    seat(&fixture, &manager, &account_id, Role::Manager).await;
+    seat(&fixture, &manager, &account_id, Role::Manager);
     let workflow_id = board(runtime, &owner, &account_id, "Queue").await;
 
     let Err(error) = delete_board(runtime, &manager, &workflow_id).await else {

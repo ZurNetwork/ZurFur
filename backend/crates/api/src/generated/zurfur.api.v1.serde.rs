@@ -2199,6 +2199,570 @@ impl<'de> serde::Deserialize<'de> for FieldError {
         deserializer.deserialize_struct("zurfur.api.v1.FieldError", FIELDS, GeneratedVisitor)
     }
 }
+impl serde::Serialize for FileBugReportRequest {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.description.is_empty() {
+            len += 1;
+        }
+        if self.page.is_some() {
+            len += 1;
+        }
+        if self.page_kind.is_some() {
+            len += 1;
+        }
+        if self.web_version.is_some() {
+            len += 1;
+        }
+        if self.browser.is_some() {
+            len += 1;
+        }
+        if self.window.is_some() {
+            len += 1;
+        }
+        if self.display.is_some() {
+            len += 1;
+        }
+        if self.error_status.is_some() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.FileBugReportRequest", len)?;
+        if !self.description.is_empty() {
+            struct_ser.serialize_field("description", &self.description)?;
+        }
+        if let Some(v) = self.page.as_ref() {
+            struct_ser.serialize_field("page", v)?;
+        }
+        if let Some(v) = self.page_kind.as_ref() {
+            struct_ser.serialize_field("pageKind", v)?;
+        }
+        if let Some(v) = self.web_version.as_ref() {
+            struct_ser.serialize_field("webVersion", v)?;
+        }
+        if let Some(v) = self.browser.as_ref() {
+            struct_ser.serialize_field("browser", v)?;
+        }
+        if let Some(v) = self.window.as_ref() {
+            struct_ser.serialize_field("window", v)?;
+        }
+        if let Some(v) = self.display.as_ref() {
+            struct_ser.serialize_field("display", v)?;
+        }
+        if let Some(v) = self.error_status.as_ref() {
+            struct_ser.serialize_field("errorStatus", v)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for FileBugReportRequest {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "description",
+            "page",
+            "page_kind",
+            "pageKind",
+            "web_version",
+            "webVersion",
+            "browser",
+            "window",
+            "display",
+            "error_status",
+            "errorStatus",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Description,
+            Page,
+            PageKind,
+            WebVersion,
+            Browser,
+            Window,
+            Display,
+            ErrorStatus,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "description" => Ok(GeneratedField::Description),
+                            "page" => Ok(GeneratedField::Page),
+                            "pageKind" | "page_kind" => Ok(GeneratedField::PageKind),
+                            "webVersion" | "web_version" => Ok(GeneratedField::WebVersion),
+                            "browser" => Ok(GeneratedField::Browser),
+                            "window" => Ok(GeneratedField::Window),
+                            "display" => Ok(GeneratedField::Display),
+                            "errorStatus" | "error_status" => Ok(GeneratedField::ErrorStatus),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = FileBugReportRequest;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.FileBugReportRequest")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<FileBugReportRequest, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut description__ = None;
+                let mut page__ = None;
+                let mut page_kind__ = None;
+                let mut web_version__ = None;
+                let mut browser__ = None;
+                let mut window__ = None;
+                let mut display__ = None;
+                let mut error_status__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Description => {
+                            if description__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("description"));
+                            }
+                            description__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Page => {
+                            if page__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("page"));
+                            }
+                            page__ = map_.next_value()?;
+                        }
+                        GeneratedField::PageKind => {
+                            if page_kind__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("pageKind"));
+                            }
+                            page_kind__ = map_.next_value()?;
+                        }
+                        GeneratedField::WebVersion => {
+                            if web_version__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("webVersion"));
+                            }
+                            web_version__ = map_.next_value()?;
+                        }
+                        GeneratedField::Browser => {
+                            if browser__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("browser"));
+                            }
+                            browser__ = map_.next_value()?;
+                        }
+                        GeneratedField::Window => {
+                            if window__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("window"));
+                            }
+                            window__ = map_.next_value()?;
+                        }
+                        GeneratedField::Display => {
+                            if display__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("display"));
+                            }
+                            display__ = map_.next_value()?;
+                        }
+                        GeneratedField::ErrorStatus => {
+                            if error_status__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("errorStatus"));
+                            }
+                            error_status__ = 
+                                map_.next_value::<::std::option::Option<::pbjson::private::NumberDeserialize<_>>>()?.map(|x| x.0)
+                            ;
+                        }
+                    }
+                }
+                Ok(FileBugReportRequest {
+                    description: description__.unwrap_or_default(),
+                    page: page__,
+                    page_kind: page_kind__,
+                    web_version: web_version__,
+                    browser: browser__,
+                    window: window__,
+                    display: display__,
+                    error_status: error_status__,
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.FileBugReportRequest", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for file_bug_report_request::Display {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.reduced_motion {
+            len += 1;
+        }
+        if self.more_contrast {
+            len += 1;
+        }
+        if self.forced_colors {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.FileBugReportRequest.Display", len)?;
+        if self.reduced_motion {
+            struct_ser.serialize_field("reducedMotion", &self.reduced_motion)?;
+        }
+        if self.more_contrast {
+            struct_ser.serialize_field("moreContrast", &self.more_contrast)?;
+        }
+        if self.forced_colors {
+            struct_ser.serialize_field("forcedColors", &self.forced_colors)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for file_bug_report_request::Display {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "reduced_motion",
+            "reducedMotion",
+            "more_contrast",
+            "moreContrast",
+            "forced_colors",
+            "forcedColors",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            ReducedMotion,
+            MoreContrast,
+            ForcedColors,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "reducedMotion" | "reduced_motion" => Ok(GeneratedField::ReducedMotion),
+                            "moreContrast" | "more_contrast" => Ok(GeneratedField::MoreContrast),
+                            "forcedColors" | "forced_colors" => Ok(GeneratedField::ForcedColors),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = file_bug_report_request::Display;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.FileBugReportRequest.Display")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<file_bug_report_request::Display, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut reduced_motion__ = None;
+                let mut more_contrast__ = None;
+                let mut forced_colors__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::ReducedMotion => {
+                            if reduced_motion__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("reducedMotion"));
+                            }
+                            reduced_motion__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::MoreContrast => {
+                            if more_contrast__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("moreContrast"));
+                            }
+                            more_contrast__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::ForcedColors => {
+                            if forced_colors__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("forcedColors"));
+                            }
+                            forced_colors__ = Some(map_.next_value()?);
+                        }
+                    }
+                }
+                Ok(file_bug_report_request::Display {
+                    reduced_motion: reduced_motion__.unwrap_or_default(),
+                    more_contrast: more_contrast__.unwrap_or_default(),
+                    forced_colors: forced_colors__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.FileBugReportRequest.Display", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for file_bug_report_request::Window {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.width != 0 {
+            len += 1;
+        }
+        if self.height != 0 {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.FileBugReportRequest.Window", len)?;
+        if self.width != 0 {
+            struct_ser.serialize_field("width", &self.width)?;
+        }
+        if self.height != 0 {
+            struct_ser.serialize_field("height", &self.height)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for file_bug_report_request::Window {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "width",
+            "height",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Width,
+            Height,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "width" => Ok(GeneratedField::Width),
+                            "height" => Ok(GeneratedField::Height),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = file_bug_report_request::Window;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.FileBugReportRequest.Window")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<file_bug_report_request::Window, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut width__ = None;
+                let mut height__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Width => {
+                            if width__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("width"));
+                            }
+                            width__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                        GeneratedField::Height => {
+                            if height__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("height"));
+                            }
+                            height__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                    }
+                }
+                Ok(file_bug_report_request::Window {
+                    width: width__.unwrap_or_default(),
+                    height: height__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.FileBugReportRequest.Window", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for FileBugReportResponse {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.reference.is_empty() {
+            len += 1;
+        }
+        if self.received_at.is_some() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.FileBugReportResponse", len)?;
+        if !self.reference.is_empty() {
+            struct_ser.serialize_field("reference", &self.reference)?;
+        }
+        if let Some(v) = self.received_at.as_ref() {
+            struct_ser.serialize_field("receivedAt", v)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for FileBugReportResponse {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "reference",
+            "received_at",
+            "receivedAt",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Reference,
+            ReceivedAt,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "reference" => Ok(GeneratedField::Reference),
+                            "receivedAt" | "received_at" => Ok(GeneratedField::ReceivedAt),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = FileBugReportResponse;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.FileBugReportResponse")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<FileBugReportResponse, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut reference__ = None;
+                let mut received_at__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Reference => {
+                            if reference__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("reference"));
+                            }
+                            reference__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::ReceivedAt => {
+                            if received_at__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("receivedAt"));
+                            }
+                            received_at__ = map_.next_value()?;
+                        }
+                    }
+                }
+                Ok(FileBugReportResponse {
+                    reference: reference__.unwrap_or_default(),
+                    received_at: received_at__,
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.FileBugReportResponse", FIELDS, GeneratedVisitor)
+    }
+}
 impl serde::Serialize for GetDenNodeRequest {
     #[allow(deprecated)]
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>

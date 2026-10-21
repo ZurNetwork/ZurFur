@@ -2,7 +2,7 @@
 //! domain port traits (see [`domain::ports`]) against PostgreSQL; writes go
 //! through the compile-enforced Unit of Work ([`PgDatabase`]/[`PgUnitOfWork`]).
 //! SQL lives in per-statement files under `queries/`, generated
-//! into [`queries`] (see the crate `NODE.json`/`CLAUDE.md`).
+//! into [`queries`] (see this crate's node and `CLAUDE.md`).
 
 use std::borrow::Cow;
 use std::time::Duration;
@@ -23,6 +23,7 @@ pub mod queries;
 
 mod account;
 mod actor_identity;
+mod bug_report;
 mod character;
 mod commission;
 mod commission_changelog;
@@ -37,6 +38,7 @@ mod user;
 mod workflow;
 pub use account::{ACCOUNT_FACT_TABLES, ACCOUNT_NON_FACT_TABLES, PgAccountStore, PgAccountWrites};
 pub use actor_identity::{PgActorIdentityStore, PgActorIdentityWrites};
+pub use bug_report::{PgBugReportStore, PgBugReportWrites};
 pub use character::PgCharacterStore;
 pub use commission::{
     COMMISSION_FACT_TABLES, COMMISSION_NON_FACT_TABLES, PgCommissionStore, PgCommissionWrites,
