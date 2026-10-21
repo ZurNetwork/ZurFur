@@ -1,0 +1,63 @@
+{
+  "path": "frontend/web/src/routes",
+  "charted": "2026-10-17",
+  "short": "The SvelteKit route tree",
+  "is": "The route tree: a root layout that resolves whoami once per render and loads the tokens, base styles and fonts; a `(public)` group (landing, `/login`) under today's plain header; and an auth-gated `(session)` group inside the Explorer frame.",
+  "type": "code",
+  "tags": [
+    "category:ui",
+    "category:source"
+  ],
+  "conventions": [
+    "Loads and actions are the seam's consumers — `runApi(program)` then branch; never `Effect` in a route file.",
+    "Forms are progressive-enhancement-first: `superValidate` + the effect adapter in the load, a form action for the POST, `problemMessage` for backend failures on the same form. The one exception is the report page (`(session)/report-a-bug`): plain SvelteKit `enhance` and an Effect Schema read in the action instead of superforms, and no `invalidateAll` or `applyAction` after a post (see `src/NODE.json`).",
+    "Navigation targets go through `resolve()` from `$app/paths`."
+  ],
+  "entry_points": [
+    "+layout.server.ts (the once-per-render whoami)",
+    "login/+page.server.ts"
+  ],
+  "fs": [
+    {
+      "name": "(public)/",
+      "role": "landing (`/`) and `/login` under SessionHeader — URLs unchanged by the group; login's handle form action → sets the backend's browser-binding cookie (Path=/, HttpOnly, SameSite=Lax; name, Secure and Max-Age as the backend set them) → PDS redirect, which the enhanced form follows by a full page load (never the client router), a sign-in start that can't reach the API or runs out says \"Zurfur isn't answering right now. Please try again.\" on the form; callback-errors.ts maps axum's ?error= codes to copy (browser_mismatch carries the ruled text, \"This sign-in expired or was started in a different browser. Please sign in again here.\")",
+      "node": false
+    },
+    {
+      "name": "(session)/",
+      "role": "the auth-gated group (accounts, logout) inside the Explorer frame (AppShell), behind a redirect-to-login layout guard",
+      "node": true
+    },
+    {
+      "name": "+error.svelte",
+      "role": "errors outside the frame, rendered by status and route alone (ErrorView), never by message",
+      "node": false
+    },
+    {
+      "name": "+layout.server.ts",
+      "role": "one whoami per server render shared via layout data (reusing the sign-in gate's answer on (session) routes); unreachable backend degrades to signed-out, contract breakage still 500s",
+      "node": false
+    },
+    {
+      "name": "+layout.svelte",
+      "role": "the root — tokens.css, base.css, the self-hosted fonts and the favicon; no header (each group brings its own)",
+      "node": false
+    },
+    {
+      "name": "error.svelte.spec.ts",
+      "role": "proves the public error page never shows the error's own text, nor a way to report the problem ($app/state mocked)",
+      "node": false
+    },
+    {
+      "name": "layout.server.spec.ts",
+      "role": "spec for the root layout load (the `+` is dropped in route spec names)",
+      "node": false
+    },
+    {
+      "name": "mock/",
+      "role": "dev-only mock signin (routes/mock/signin/+server.ts) — completes the login redirect loop with no OAuth/PDS/backend; fails closed with a 404 unless mock mode is enabled",
+      "node": false
+    }
+  ],
+  "notes": []
+}

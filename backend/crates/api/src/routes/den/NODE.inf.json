@@ -1,0 +1,57 @@
+{
+  "path": "backend/crates/api/src/routes/den",
+  "charted": "2026-10-17",
+  "short": "The Den read over HTTP: GET /den and GET /den/{*path}",
+  "is": "The den route group: a thin driver over `application::den` that checks the session (`CallingUser`), then parses the raw query string by hand, then splits the raw request path on `/` and percent-decodes each piece once, and maps the application's outputs onto den.proto's generated types. Every miss is the one `node_not_found`; every answer carries `Cache-Control: private, no-store`.",
+  "type": "code",
+  "tags": [
+    "category:source"
+  ],
+  "conventions": [
+    "Order, so no check depends on what exists: the session (401), then the query (400 unknown parameter, 422 repeated or unusable value), then the path.",
+    "The path is never read through axum's path extractors, which decode `%2F` inside a wildcard: the raw `Uri` path is stripped of `/den/`, split on `/`, then each piece is decoded exactly once.",
+    "The viewer is the session's user, from `CallingUser` only; nothing in the path, the query or a header names a viewer or a root.",
+    "Query keys and values are decoded exactly once with the same strict decoder as the path pieces: `+` stays `+`, a broken `%` escape or non-UTF-8 bytes refuse the key (400) or the value (422).",
+    "`DenError::NotFound` and an undecodable piece answer `Problem::node_not_found()`; `DenError::Store` is the house's 500 from `From<anyhow::Error>`, never rendering its cause.",
+    "The only log line is the fixed `a den read failed in a store`, on a 500, carrying the matched route template and nothing else: never the cause, a Den path, a piece, a page token or the viewer's DID. Nothing `Debug`-prints `RootQuery` or `NodeQuery`.",
+    "At most 17 raw pieces are decoded (one past the 16-piece cap), so a longer path still reaches the application's not-found without decoding the rest.",
+    "The API never names Atta in Rust and never depends on it directly; it reaches it only through `application` (guard tests in `api/tests/den.rs`; `application/tests/atta_exposure.rs` keeps Atta's types out of the application's public items)."
+  ],
+  "entry_points": [
+    "../den.rs",
+    "router.rs"
+  ],
+  "fs": [
+    {
+      "name": "errors.rs",
+      "role": "the From impls into Problem (query 400/422, undecodable path 404, DenError 404/500) and read_problem, which logs the fixed 500 line",
+      "node": false
+    },
+    {
+      "name": "params.rs",
+      "role": "DenParams and its FromStr over the raw query: includeDeleted, pageToken, each at most once",
+      "node": false
+    },
+    {
+      "name": "percent.rs",
+      "role": "PercentDecoded: strict decode-once of percent-encoded UTF-8",
+      "node": false
+    },
+    {
+      "name": "pieces.rs",
+      "role": "DenPieces: the raw path split on `/`, at most 17 pieces kept, then each decoded once",
+      "node": false
+    },
+    {
+      "name": "router.rs",
+      "role": "den_router (/den, /den/, /den/{*path}) under the private, no-store layer, and the two handlers",
+      "node": false
+    },
+    {
+      "name": "wire.rs",
+      "role": "the application's den outputs into the generated den.proto types: an open node's thing as `DenOpen.thing`'s case (`accountDid` or `commissionId`), a crumb's type as its word, a node's and a crumb's name ordinal as `nameOrdinal` (omitted when unset)",
+      "node": false
+    }
+  ],
+  "notes": []
+}
