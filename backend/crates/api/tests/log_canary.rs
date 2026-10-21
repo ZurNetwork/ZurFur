@@ -1,7 +1,7 @@
 //! The log canary: a whole signed-in visit on PostgreSQL, under the dev subscriber at `trace`
 //! with `log` records bridged, writes no token, cookie, session id or key at any level, and no
 //! DID or handle at info or above. Alone in its binary: it installs the global subscriber. The
-//! visitor's own thread stays out of the capture (the crate's NODE.json says why).
+//! visitor's own thread stays out of the capture (this crate's node says why).
 
 use std::cell::Cell;
 use std::sync::Arc;

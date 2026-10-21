@@ -40,7 +40,7 @@ expect() {
 
 expect "no paths passes" 0 ""
 expect "today's docs/ passes" 0 "docs/design-index.md
-docs/NODE.json
+docs/NODE.inf.json
 "
 
 expect "a .understand/ folder at the root" 1 ".understand/handoff.md"

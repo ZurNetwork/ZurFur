@@ -12,7 +12,7 @@
   ],
   "conventions": [
     "This is the index every `refs` entry resolves against, so it is the one place design page ids belong in bulk — but still ids, statuses and titles, never page bodies.",
-    "Generated, never hand-edited: `just design-index` rewrites it from the corpus, `just design-index-check` (inside `just gate`) reports drift, and `just nodes-check` resolves every NODE.json ref against it."
+    "Generated, never hand-edited: `just design-index` rewrites it from the corpus, `just design-index-check` (inside `just gate`) reports drift, and `just nodes-check` resolves every ref in `NODE.refs.json` against it."
   ],
   "entry_points": [
     "docs/design-index.md"

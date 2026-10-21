@@ -28,7 +28,7 @@ hooks_are_off() {
 
 # neutralize <text> — prints <text> with CR/LF/TAB collapsed to a single
 # space, every other control character stripped, and '<'/'>' removed, so
-# free-text pulled from a pins file or a NODE.json can't fake a newline-
+# free-text pulled from a pins file or a node file can't fake a newline-
 # delimited record, a control sequence, or tag-shaped instruction text once
 # it lands in a model's context as injected data.
 neutralize() {

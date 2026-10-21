@@ -47,7 +47,7 @@
     },
     {
       "name": "gate-light.sh",
-      "role": "the light local gate for restacks and fix rounds (just gate-light)",
+      "role": "the light local gate for base merges and fix rounds (just gate-light)",
       "node": false
     },
     {
@@ -71,13 +71,23 @@
       "node": false
     },
     {
+      "name": "nodes-0-7-edits.sh",
+      "role": "TEMPORARY: the node-text edits of the move to nodes 0.7, as idempotent get → set transforms; `--check` lists any not applied; a branch cut before the migration replays it when it catches up (tested by nodes-0-7-edits.test.sh)",
+      "node": false
+    },
+    {
       "name": "nodes-fmt-hook.sh",
-      "role": "PostToolUse hook — nodes fmt on any NODE.json a model writes; fails soft without the binary",
+      "role": "PostToolUse hook — nodes fmt on any NODE.inf.json or NODE.refs.json a model writes, in that file's own tree; silent on a tree from before nodes 0.7, refuses a NODE.json in a current one; fails soft without the binary or with one older than 0.7 (tested by nodes-fmt-hook.test.sh)",
       "node": false
     },
     {
       "name": "nodes-install.sh",
       "role": "download the pinned nodes release binary (checksum-verified) into ~/.cargo/bin; cargo-install fallback",
+      "node": false
+    },
+    {
+      "name": "nodes-tree-check.sh",
+      "role": "the tree guards `just nodes-check` runs after `nodes check`: no NODE.json outside hidden and build folders, a node tree here, every NODE.inf.json and NODE.refs.json tracked; fails closed (tested by nodes-tree-check.test.sh)",
       "node": false
     },
     {

@@ -10,7 +10,7 @@
   ],
   "conventions": [
     "Loads and actions are the seam's consumers — `runApi(program)` then branch; never `Effect` in a route file.",
-    "Forms are progressive-enhancement-first: `superValidate` + the effect adapter in the load, a form action for the POST, `problemMessage` for backend failures on the same form. The one exception is the report page (`(session)/report-a-bug`): plain SvelteKit `enhance` and an Effect Schema read in the action instead of superforms, and no `invalidateAll` or `applyAction` after a post (see `src/NODE.json`).",
+    "Forms are progressive-enhancement-first: `superValidate` + the effect adapter in the load, a form action for the POST, `problemMessage` for backend failures on the same form. The one exception is the report page (`(session)/report-a-bug`): plain SvelteKit `enhance` and an Effect Schema read in the action instead of superforms, and no `invalidateAll` or `applyAction` after a post (see the `src` node).",
     "Navigation targets go through `resolve()` from `$app/paths`."
   ],
   "entry_points": [

@@ -1,15 +1,16 @@
 #!/bin/sh
 # Install the pinned `nodes` release binary (github.com/ZurNetwork/nodes — the
-# NODE.json normalizer + lookup tool) into ${CARGO_HOME:-$HOME/.cargo}/bin.
+# node-tree normalizer + lookup tool) into ${CARGO_HOME:-$HOME/.cargo}/bin.
 #
 #   scripts/nodes-install.sh vX.Y.Z      (the Justfile passes NODES_VERSION)
 #
-# Idempotent: exits at once when the installed binary already reports the pinned
-# version. Prefers the prebuilt archive published for this OS/arch by the tool's
-# release workflow (checksum-verified); falls back to `cargo install --git
-# --locked --tag` when no archive fits this machine. The pin lives in ONE place,
-# the Justfile's NODES_VERSION: the NODE.json files and the tool's schema move
-# in lockstep on it.
+# Idempotent: exits at once when the binary in that bin folder already reports
+# the pinned version (PATH's `nodes` does not count: a scratch CARGO_HOME
+# installs into the scratch folder). Prefers the prebuilt archive published for
+# this OS/arch by the tool's release workflow (checksum-verified); falls back to
+# `cargo install --git --locked --tag` when no archive fits this machine. The
+# pin lives in ONE place, the Justfile's NODES_VERSION: the node files and the
+# tool's schema move in lockstep on it.
 set -eu
 
 TAG="${1:?usage: nodes-install.sh vX.Y.Z}"
@@ -17,8 +18,8 @@ REPO="https://github.com/ZurNetwork/nodes"
 BIN_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"
 WANT="${TAG#v}"
 
-if command -v nodes >/dev/null 2>&1; then
-    have="$(nodes --version 2>/dev/null | awk '{print $2}')"
+if [ -x "$BIN_DIR/nodes" ]; then
+    have="$("$BIN_DIR/nodes" --version 2>/dev/null | awk '{print $2}')"
     if [ "$have" = "$WANT" ]; then
         echo "nodes-install: nodes $have already installed."
         exit 0
