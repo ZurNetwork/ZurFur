@@ -43,7 +43,7 @@
     },
     {
       "name": "clippy.toml",
-      "role": "disallowed-methods: Database::begin, UnitOfWork::commit, UnitOfWork::rollback and `application::transaction` — only the `#[use_case]` wrapper and `LazyUnit` (and, under an `#[allow]`, `transaction()` callers) may use them; atta::DisplayName::host_checked — only DenHost::found (and, under an `#[allow]`, test doubles); UnitOfWork::nodes — nothing yet, each delegating unit-of-work double's `fn nodes` under an `#[expect]`",
+      "role": "disallowed-methods: Database::begin, UnitOfWork::commit, UnitOfWork::rollback and `application::transaction` — only the `#[use_case]` wrapper and `LazyUnit` (and, under an `#[allow]`, `transaction()` callers) may use them; atta::DisplayName::host_checked — only names::display_name (and, under an `#[allow]`, test doubles); UnitOfWork::nodes — only the den's write gate, plus delegating unit-of-work doubles and tests that seed or read node rows under an `#[allow]`/`#[expect]`; WriteCapability::gate_issued — only the den's write gate's issuer",
       "node": false
     },
     {
@@ -98,7 +98,7 @@
     },
     {
       "name": "src/den.rs",
-      "role": "den module root — the `Den` namespace, DenError, the public output values and the crate-private re-exports of Atta's values for the team arms",
+      "role": "den module root — the `Den` namespace, DenError, the public output values and the crate-private re-exports of Atta's values for the team arms; declares the write's modules (act, authority, gate, write, cfg(test) probe)",
       "node": false
     },
     {
@@ -188,7 +188,7 @@
     },
     {
       "name": "tests/node_and_name_seams.rs",
-      "role": "the scan that no production source of application, api, cli or composition reaches the node port (nodes, NodeRepo, NodeStore, NodeReads, NodeWrites, PgNodeStore, PgNodeWrites, node_store, MemNodeStore, MemNodeWrites) or names atta::DisplayName::host_checked outside DenHost::found: every identifier, macro bodies included, and every alias made anywhere in the workspace; tests.rs and proptests.rs skipped only when their parent declares them under #[cfg(test)]; fixture sources and trees for each evasion",
+      "role": "the scan that no production source of application, api, cli or composition reaches the node port (nodes, NodeRepo, NodeStore, NodeReads, NodeWrites, PgNodeStore, PgNodeWrites, node_store, MemNodeStore, MemNodeWrites) or names atta::DisplayName::host_checked outside names::display_name; the one exemption: den/gate.rs may name NodeRepo, NodeReads and NodeWrites, and `nodes` once, inside its free fn `gate` (the_gate_names_the_node_port_once); every identifier, macro bodies included, and every alias made anywhere in the workspace; tests.rs and proptests.rs skipped only when their parent declares them under #[cfg(test)]; fixture sources and trees for each evasion",
       "node": false
     },
     {

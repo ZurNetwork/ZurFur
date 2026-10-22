@@ -1,3 +1,4 @@
+use atta::DisplayName;
 use domain::elements::{commission::CommissionId, did::Did, name::NodeName};
 use uuid::Uuid;
 
@@ -580,4 +581,34 @@ async fn a_recorded_archived_node_lists_only_when_deleted_nodes_are_asked_for() 
 )]
 fn display_name(text: &str) -> DisplayName {
     DisplayName::host_checked(text.to_owned())
+}
+
+#[tokio::test]
+async fn a_read_host_s_apply_refuses() {
+    let ports = ports();
+    let alice = alice();
+    let mut host = DenHost::new(&ports, &alice, false);
+    let writer = atta::Writer {
+        viewer: host.viewer().clone(),
+        caps: atta::WriteCaps::default(),
+    };
+    let typ = type_key(DenType::Commission);
+    let node = atta::Placed {
+        path: path(&["commission", "an-id"]),
+        typ: typ.clone(),
+        level: atta::Level::Private,
+    };
+    let act = atta::Act {
+        name: atta::ActName::from("probe".to_owned()),
+        typ,
+        shape: atta::Shape::Change { node },
+        body: (),
+    };
+
+    let applied = writer.act(&mut host, act).await;
+
+    assert!(
+        matches!(applied, Err(atta::WriteError::Host(_))),
+        "{applied:?}"
+    );
 }

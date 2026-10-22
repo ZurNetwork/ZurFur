@@ -21,8 +21,8 @@ use crate::{
     user,
 };
 use atta::{
-    Access, Admission, DisplayName, Found, Host, HostError, Kind, Metadata, Mount, Reach, RealPath,
-    Segment, Type, Viewer,
+    Access, Admission, Found, Host, HostError, Kind, Metadata, Mount, Reach, RealPath, Segment,
+    Type, Viewer,
 };
 use domain::elements::{
     account::AccountId, character::CharacterId, commission::CommissionId, did::Did, level::Level,
@@ -47,7 +47,7 @@ pub(crate) struct DenHost<'a> {
 }
 
 /// An arm's failure as the engine's host failure.
-fn host_error(error: anyhow::Error) -> HostError {
+pub(in crate::den) fn host_error(error: anyhow::Error) -> HostError {
     let boxed: Box<dyn std::error::Error + Send + Sync> = error.into();
     HostError::from(boxed)
 }
@@ -57,8 +57,20 @@ fn answered_for(node: Option<Node>, key: &Segment) -> Option<Node> {
     node.filter(|node| node.place.key().as_ref() == Some(key))
 }
 
+/// Whether nodes of `typ` are directories or files, for every den host: a type key the Den
+/// doesn't know is a file, never traversed, never listed.
+pub(in crate::den) fn type_kind(typ: &Type) -> Kind {
+    let Ok(den_type) = DenType::from_str(typ.as_ref()) else {
+        return Kind::File;
+    };
+    match den_type.kind() {
+        NodeKind::Directory => Kind::Directory,
+        NodeKind::File | NodeKind::Symlink => Kind::File,
+    }
+}
+
 /// The engine's type key for a Den type.
-fn type_key(den_type: DenType) -> Type {
+pub(in crate::den) fn type_key(den_type: DenType) -> Type {
     let word: &'static str = den_type.into();
     Type::from(word.to_owned())
 }
@@ -128,18 +140,14 @@ impl<'a> DenHost<'a> {
 
     /// The engine's answer for an arm's node in the folder `parent` at `parent_path`, recorded
     /// under its real path; `None` when its place can't be a child of that folder or makes no
-    /// key. The one place a name enters the engine: the arm's name already passed the rule.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the one construction of the engine's display name, from a name the rule passed"
-    )]
+    /// key. The arm's name already passed the rule.
     fn found(&self, parent_path: &RealPath, parent: &Parent, node: Node) -> Option<Found> {
         if !node.place.is_child_of(parent) {
             return None;
         }
         let parent = parent_path;
         let key = node.place.key()?;
-        let name = DisplayName::host_checked(node.name.to_string());
+        let name = names::display_name(&node.name);
         let metadata = Metadata {
             key: key.clone(),
             parent: Some(parent.clone()),
@@ -341,13 +349,7 @@ impl Host for DenHost<'_> {
 
     /// A type key this host doesn't know is a file: never traversed, never listed.
     fn kind(&self, typ: &Type) -> Kind {
-        let Ok(den_type) = DenType::from_str(typ.as_ref()) else {
-            return Kind::File;
-        };
-        match den_type.kind() {
-            NodeKind::Directory => Kind::Directory,
-            NodeKind::File | NodeKind::Symlink => Kind::File,
-        }
+        type_kind(typ)
     }
 
     /// Answers from the record alone; refuses any viewer but the session's.

@@ -2,7 +2,7 @@
 
 use domain::elements::level::Level;
 
-/// Atta's level for a node's own level; the host's `found` is its one caller.
+/// Atta's level for a node's own level, as the read host's `found` and the write's builder hand it over.
 pub(in crate::den) fn atta_level(level: Level) -> atta::Level {
     match level {
         Level::Private => atta::Level::Private,

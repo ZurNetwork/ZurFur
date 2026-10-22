@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/application/src/commission",
-  "charted": "2026-10-17",
+  "charted": "2026-10-22",
   "short": "Commission use cases",
   "is": "Commission use cases — lifecycle (create/delete/archive/unarchive) and per-facet action trees (deadline, status, files, invitations, view, seats, slots, notes, maturity, markup, changelog), one Command/Query + Output + `#[use_case]` method file per action; the module root `../commission.rs` holds the `Commissions` namespace, `CommissionError`, `CommissionResult` and the system-actor `sweep_deadlines`.",
   "type": "code",
@@ -39,7 +39,7 @@
     },
     {
       "name": "den.rs",
-      "role": "commission's Den arm: CommissionPlace and its leaves — a commission by its real path (find then is_participant, always both), its four fixed entries, its files from its own file list, its slots, the viewer's commission mounts; products empty until Products can be stored; tests beside it in den/tests.rs",
+      "role": "commission's Den arm: CommissionPlace and its leaves — a commission by its real path (find then is_participant, always both), its four fixed entries, its files from its own file list, its slots, the viewer's commission mounts; products empty until Products can be stored; and the write's verdict (Verdict, StandingFacts, verdict, pool_verdict): no commission or no role is the one not-found, a role below the act's need forbidden; tests beside it in den/tests.rs",
       "node": false
     },
     {

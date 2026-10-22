@@ -379,3 +379,51 @@ async fn an_absent_file_key_and_another_commission_s_run_the_same_reads() {
     assert_eq!(for_an_absent_key, ["files"]);
     assert_eq!(for_another_commission_s_key, for_an_absent_key);
 }
+
+#[test]
+fn the_verdict_answers_each_standing_by_the_act_s_need() {
+    let at = |role| CommissionStanding {
+        role,
+        level: Level::Listed,
+        archived: true,
+    };
+    let granted = |role| {
+        Verdict::Granted(StandingFacts {
+            role,
+            level: Level::Listed,
+            archived: true,
+        })
+    };
+    let cases = [
+        (None, CommissionRole::Participant, Verdict::NotFound),
+        (
+            Some(at(None)),
+            CommissionRole::Participant,
+            Verdict::NotFound,
+        ),
+        (
+            Some(at(Some(CommissionRole::Participant))),
+            CommissionRole::Owner,
+            Verdict::Forbidden,
+        ),
+        (
+            Some(at(Some(CommissionRole::Participant))),
+            CommissionRole::Participant,
+            granted(CommissionRole::Participant),
+        ),
+        (
+            Some(at(Some(CommissionRole::Owner))),
+            CommissionRole::Participant,
+            granted(CommissionRole::Owner),
+        ),
+        (
+            Some(at(Some(CommissionRole::Owner))),
+            CommissionRole::Owner,
+            granted(CommissionRole::Owner),
+        ),
+    ];
+
+    for (standing, needs, expected) in cases {
+        assert_eq!(verdict(standing, needs), expected, "{standing:?} {needs:?}");
+    }
+}

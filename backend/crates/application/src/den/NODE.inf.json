@@ -30,8 +30,18 @@
       "node": false
     },
     {
+      "name": "act.rs",
+      "role": "DenAct, the enum of every act the write carries (only the cfg(test) probe in DEN-2), its ActSpec (word, type, Anchor, needed CommissionRole, ActShape), BornEntry, EntryDraft (a handler's entry kind and payload, naming no commission and no actor) and HandlerError",
+      "node": false
+    },
+    {
       "name": "admission.rs",
       "role": "the admit table: live, archived and deactivated nodes by access, reach and include_deleted",
+      "node": false
+    },
+    {
+      "name": "authority.rs",
+      "role": "who may write where: `admit`, the pool's verdict before any unit opens (a top-level anchor by rule, only a create, only /commission; a commission by commission::den::pool_verdict), and `grant`, made inside the unit from standing_for_update under the same rules; Grant (private fields, no Clone/Default, one private constructor plus a cfg(test) for_test) over GrantKind (Existing commission+role+level, or Create under an id minted here, v7, never the act's); cfg(test) MINT_AS plants the next minted id",
       "node": false
     },
     {
@@ -45,8 +55,13 @@
       "node": false
     },
     {
+      "name": "gate.rs",
+      "role": "DenWriteHost, the write's atta::Host (serves no read, kind from type_kind, the unit in a Mutex read through get_mut, apply refuses another viewer) and the gate it runs once per act: grant kind, D-1 (nothing wider than Private until 0.6), the node rows walked from the grant's commission and written under the one `nodes()` binding (SegmentTaken recognised once), the capability issued by `issue` (the one gate_issued call; the RoleTable trait maps AsParticipant, AsOwner and Creator to the grant they need) and lent with the commission repo alone, then the handler's draft appended as the entry; refusals ride inside Applied, store failures as HostError; gate/tests.rs: the issuer's role table, another viewer, a create through the write host",
+      "node": false
+    },
+    {
       "name": "host.rs",
-      "role": "DenHost, the one atta::Host: the request record, the viewer check, the dispatch to each team's arm; its record answers each open node's soft-deleted word and thing; `found` is the one place a name enters Atta (DisplayName::host_checked, banned everywhere else by application/clippy.toml, its #[expect] failing the gate if the ban stops matching); `for_check` builds den's access check's host, whose reads name the viewer's root from the cache only",
+      "role": "DenHost, the one atta::Host for reads: the request record, the viewer check, the dispatch to each team's arm; its record answers each open node's soft-deleted word and thing; `found` names a node through names::display_name; `type_kind` is the one kind table every den host answers from (a type key the Den doesn't know is a file); `for_check` builds den's access check's host, whose reads name the viewer's root from the cache only; its apply is Atta's refusing default (host/tests.rs pins it)",
       "node": false
     },
     {
@@ -56,7 +71,7 @@
     },
     {
       "name": "level.rs",
-      "role": "atta_level, the one map from kernel's Level to Atta's, run once in DenHost::found; den_level maps Atta's answer back for the output",
+      "role": "atta_level, the one map from kernel's Level to Atta's, run in DenHost::found and the write's builder; den_level maps Atta's answer back for the output and the gate's rows",
       "node": false
     },
     {
@@ -71,7 +86,7 @@
     },
     {
       "name": "names.rs",
-      "role": "the fixed folder words, the id and DID keys, and the stored-text name with its `Unnamed` fallback",
+      "role": "the fixed folder words, the id and DID keys (id_segment takes only the typed UUID ids, through the den trait UuidKey), the stored-text name with its `Unnamed` fallback, and display_name, the one place a name enters Atta (DisplayName::host_checked, banned everywhere else by application/clippy.toml, its #[expect] failing the gate if the ban stops matching)",
       "node": false
     },
     {
@@ -97,6 +112,11 @@
     {
       "name": "post.rs",
       "role": "den's arm for /post/<did>: the empty posts stub, named `posts`, Public, the same for every DID; it takes no ports, so it reads no store and calls no host; nothing below it",
+      "node": false
+    },
+    {
+      "name": "probe.rs",
+      "role": "cfg(test) only: the Probe act (anchor, shape, type, needed role, picked level, entries, handler Succeed/Refuse/Fail/Draft) and hand-built Atta acts for the tests that drive the write host below the builder",
       "node": false
     },
     {
@@ -127,6 +147,11 @@
     {
       "name": "thing.rs",
       "role": "DenThing: the Account or commission an open node stands for, by its id",
+      "node": false
+    },
+    {
+      "name": "write.rs",
+      "role": "the `write` use case (pub(crate), #[lazy_unit]): admit on the pool, open the unit, grant from the locked standing, the one builder of Atta's act (paths from the grant's typed ids, an existing node's level from the locked read, a create's key from the minted id), Writer::act through DenWriteHost; Command, WriteResult, DenWriteError (NotFound, Forbidden, Refused(RefusalClass), Store) and RefusalClass; write/tests.rs proves each rule on memory and the marked ones on PostgreSQL; write/log_tests.rs: four writes at trace on PostgreSQL log no identity at info, no name, no store detail",
       "node": false
     }
   ],

@@ -1,11 +1,15 @@
 //! The Den read: a viewer's own root and the nodes below it, resolved by Atta through
-//! Zurfur's one host. Atta's types stay inside this module; its use cases take and answer
-//! the application's own values.
+//! Zurfur's one host; and the Den write, every typed write's one door, checked by Atta and
+//! applied through the write gate. Atta's types stay inside this module; its use cases take
+//! and answer the application's own values.
 
 pub(crate) mod access;
+pub(crate) mod act;
 mod admission;
+mod authority;
 mod context;
 mod den_type;
+mod gate;
 pub(crate) mod host;
 mod kind;
 mod level;
@@ -17,12 +21,15 @@ mod output;
 mod page_token;
 mod place;
 pub(crate) mod post;
+#[cfg(test)]
+pub(crate) mod probe;
 pub(crate) mod read;
 pub mod root;
 mod segment;
 mod soft_delete;
 mod state;
 mod thing;
+pub(crate) mod write;
 
 use crate::ports::WithPorts;
 
