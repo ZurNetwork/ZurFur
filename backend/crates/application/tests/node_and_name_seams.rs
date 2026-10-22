@@ -12,9 +12,9 @@ use proc_macro2::{TokenStream, TokenTree};
 use quote::ToTokens;
 use syn::{ImplItem, Item, UseTree, ext::IdentExt};
 
-/// The identifiers that reach the node port: a unit of work's accessor, the port's traits and
-/// the PostgreSQL adapter's types.
-const NODE_PORT: [&str; 7] = [
+/// The identifiers that reach the node port: a unit of work's accessor, the port's traits, the
+/// PostgreSQL adapter's types, and the in-memory adapter's accessor and types.
+const NODE_PORT: [&str; 10] = [
     "nodes",
     "NodeRepo",
     "NodeStore",
@@ -22,6 +22,9 @@ const NODE_PORT: [&str; 7] = [
     "NodeWrites",
     "PgNodeStore",
     "PgNodeWrites",
+    "node_store",
+    "MemNodeStore",
+    "MemNodeWrites",
 ];
 
 /// Atta's checked-name constructor, named only in [`FOUND`] on [`DEN_HOST`] in the host file.
@@ -405,6 +408,9 @@ fn the_scan_refuses_each_way_of_reaching_the_node_port() {
         "struct Wrapper(Box<dyn UnitOfWork>); impl UnitOfWork for Wrapper { fn nodes(&mut self) -> Box<dyn Vended + '_> { self.0.vend() } }",
         "#[cfg(test)] mod tests { fn reach(uow: Unit<'_>) { uow.nodes(); } }",
         "fn reach() { let nodes = Vec::<u8>::new(); }",
+        "async fn reach(backend: MemBackend) -> anyhow::Result<()> { let den_store = backend.node_store(); let _read = den_store.children(&domain::elements::node::NodeId::mint()).await?; Ok(()) }",
+        "fn reach() { let store = adapter_mem::MemNodeStore::default(); }",
+        "fn reach(writes: adapter_mem::MemNodeWrites<'_>) {}",
     ];
 
     for source in planted {

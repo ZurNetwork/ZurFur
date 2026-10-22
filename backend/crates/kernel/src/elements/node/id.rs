@@ -1,4 +1,5 @@
-/// A node's app-private key (UUIDv7). It never leaves the server.
+/// A node's app-private key: UUIDv7 when the app mints it, v4 on rows backfilled from
+/// existing commissions. It never leaves the server.
 #[derive(
     Debug,
     Clone,

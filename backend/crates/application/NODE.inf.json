@@ -188,7 +188,7 @@
     },
     {
       "name": "tests/node_and_name_seams.rs",
-      "role": "the scan that no production source of application, api, cli or composition reaches the node port (nodes, NodeRepo, NodeStore, NodeReads, NodeWrites, PgNodeStore, PgNodeWrites) or names atta::DisplayName::host_checked outside DenHost::found: every identifier, macro bodies included, and every alias made anywhere in the workspace; tests.rs and proptests.rs skipped only when their parent declares them under #[cfg(test)]; fixture sources and trees for each evasion",
+      "role": "the scan that no production source of application, api, cli or composition reaches the node port (nodes, NodeRepo, NodeStore, NodeReads, NodeWrites, PgNodeStore, PgNodeWrites, node_store, MemNodeStore, MemNodeWrites) or names atta::DisplayName::host_checked outside DenHost::found: every identifier, macro bodies included, and every alias made anywhere in the workspace; tests.rs and proptests.rs skipped only when their parent declares them under #[cfg(test)]; fixture sources and trees for each evasion",
       "node": false
     },
     {

@@ -449,6 +449,50 @@ async fn changing_a_commission_s_id_re_checks_its_node_at_commit() {
     assert_refused_saying(committed, "a commission points only at its own node");
 }
 
+#[tokio::test]
+async fn changing_a_slot_s_element_id_re_checks_its_node_at_commit() {
+    let (pool, _container) = migrated().await;
+    let commission = bound_commission(&pool).await;
+    let slot = bound_slot(&pool, &commission).await;
+    let mut tx = pool.begin().await.expect("begin");
+    sqlx::query(
+        "WITH element AS (UPDATE commission_element SET id = $2 WHERE id = $1)
+         UPDATE commission_slot SET element_id = $2 WHERE element_id = $1",
+    )
+    .bind(slot.element_id)
+    .bind(Uuid::now_v7())
+    .execute(&mut *tx)
+    .await
+    .expect("the new element id is written; the check waits for commit");
+
+    let committed = tx.commit().await;
+
+    assert_refused_saying(committed, "a slot points only at its own node");
+}
+
+#[tokio::test]
+async fn moving_a_slot_to_another_commission_re_checks_its_node_at_commit() {
+    let (pool, _container) = migrated().await;
+    let commission = bound_commission(&pool).await;
+    bound_slot(&pool, &commission).await;
+    let other = bound_commission(&pool).await;
+    let mut tx = pool.begin().await.expect("begin");
+    sqlx::query(
+        "WITH tab AS (UPDATE commission_tab SET commission_id = $2 WHERE commission_id = $1),
+              element AS (UPDATE commission_element SET commission_id = $2 WHERE commission_id = $1)
+         UPDATE commission_slot SET commission_id = $2 WHERE commission_id = $1",
+    )
+    .bind(commission.id)
+    .bind(other.id)
+    .execute(&mut *tx)
+    .await
+    .expect("the slot moves; the check waits for commit");
+
+    let committed = tx.commit().await;
+
+    assert_refused_saying(committed, "a slot points only at its own node");
+}
+
 // ─── The stored vocabularies ───────────────────────────────────────────────
 
 #[tokio::test]

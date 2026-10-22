@@ -50,8 +50,8 @@ pub trait NodeReads: Send {
 
 /// The write surface of the Den's nodes — reachable only on an open `UnitOfWork`.
 ///
-/// A refusal ends the unit: once any node call fails, every later call on the unit
-/// fails, its commit returns an error, and nothing it wrote is kept.
+/// A refused node call ends the unit: every later node call fails, and the unit's
+/// `commit` returns an error and keeps nothing.
 #[async_trait]
 pub trait NodeWrites: Send {
     /// Store a new node. A segment its parent (or the top) already holds fails with

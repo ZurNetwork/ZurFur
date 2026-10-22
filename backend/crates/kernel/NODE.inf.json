@@ -90,7 +90,7 @@
     },
     {
       "name": "src/elements/node.rs",
-      "role": "the Den node element: NodeId (UUIDv7, mint(), no serde, never on the wire), NodeSegment (the segment rule: 1 to 2048 bytes of [A-Za-z0-9._:%~-], never . or ..; bytewise Ord), NodeType (closed: the eight stored words, per-variant strum serialize, UnknownNodeType), NewNode and NodeRow (name StoredText, level Level; Debug prints neither segment nor name)",
+      "role": "the Den node element: NodeId (UUIDv7 when the app mints it, v4 when backfilled; mint(), no serde, never on the wire), NodeSegment (the segment rule: 1 to 2048 bytes of [A-Za-z0-9._:%~-], never . or ..; bytewise Ord), NodeType (closed: the eight stored words, per-variant strum serialize, UnknownNodeType), NewNode and NodeRow (name StoredText, level Level; Debug prints neither segment nor name)",
       "node": false
     },
     {
