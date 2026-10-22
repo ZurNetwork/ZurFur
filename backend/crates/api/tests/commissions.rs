@@ -56,8 +56,13 @@ async fn signed_in_user_creates_a_commission_and_owns_it() {
     let all = backend.all_commissions().await.expect("list commissions");
     assert_eq!(all.len(), 1, "exactly one commission was persisted");
     let commission = &all[0];
+    let summary = backend
+        .commission_summary(commission.id)
+        .await
+        .expect("find the commission")
+        .expect("the commission is stored");
     assert_eq!(
-        commission.title.as_str(),
+        summary.title.as_str(),
         "A ref sheet",
         "the Title round-trips"
     );
@@ -67,7 +72,7 @@ async fn signed_in_user_creates_a_commission_and_owns_it() {
         "a new commission is born in Draft",
     );
     assert!(
-        matches!(commission.visibility, Level::Private),
+        matches!(summary.visibility, Level::Private),
         "a new commission is born Private (AC3)",
     );
 }

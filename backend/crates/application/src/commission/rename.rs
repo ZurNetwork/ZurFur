@@ -4,6 +4,7 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{CommissionId, CommissionTitle, NewChangelogEntry},
+        text::StoredText,
         user::UserId,
     },
 };
@@ -21,9 +22,10 @@ pub struct Command {
 }
 
 impl Commissions<'_> {
-    /// Rename the commission and answer it as stored. Owner-only through `require_owner`; the
-    /// title passed the Den's name rule when it was parsed. A rename to the stored title writes
-    /// nothing, and a real one appends a `renamed` entry naming neither title, in the same unit.
+    /// Rename the commission's node and answer the commission as stored. Owner-only through
+    /// `require_owner`; the title passed the Den's name rule when it was parsed. A rename to the
+    /// stored name writes nothing, and a real one appends a `renamed` entry naming neither
+    /// title, in the same unit. The level answered is the node's, read before the unit opens.
     #[use_case]
     pub async fn rename(
         &self,
@@ -38,6 +40,11 @@ impl Commissions<'_> {
             title,
         } = cmd;
         let commission = require_owner(ports, &commission_id, &actor_id).await?;
+        let summary = ports
+            .commissions
+            .find_summary(&commission.id)
+            .await?
+            .ok_or_else(CommonError::commission_not_found)?;
 
         let uow = uow.open().await?;
         let mut commissions = uow.commissions();
@@ -52,7 +59,13 @@ impl Commissions<'_> {
             let entry = NewChangelogEntry::renamed(commission.id, actor_id, now);
             uow.changelog().append(&entry).await?;
         }
-        Ok(CommissionValues::from(stored))
+        // Renamed or already so named, the node now holds `title`.
+        let name = StoredText::from(title);
+        Ok(CommissionValues::from_parts(
+            stored,
+            name,
+            summary.visibility,
+        ))
     }
 }
 

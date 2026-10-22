@@ -151,7 +151,7 @@
     {
       "page": 2026093001,
       "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
-      "governs": "src/commission.rs: a commission is created only at its own node (a top-level commission node whose segment is its id), taking its title and level from it; commit refuses a commission whose node isn't its own and a commission node without its commission; a deleted commission takes its node subtree; seed_bound_commission writes what the den's write gate writes; src/node.rs: the node port over the staged map"
+      "governs": "src/commission.rs: a commission is created only at its own node (a top-level commission node whose segment is its id), its name and level read from that node; commit refuses a commission whose node isn't its own and a commission node without its commission; a deleted commission takes its node subtree; seed_bound_commission writes what the den's write gate writes; src/node.rs: the node port over the staged map"
     },
     {
       "page": 2026100701,
@@ -253,12 +253,12 @@
     {
       "page": 2026093001,
       "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
-      "governs": "migrations/20261022052438_create_node.sql: the node table holds each node's key, real parent, segment, type, level and name (D24); a node is never moved or retyped; src/node.rs and queries/node/: the node port over that table; tests/it/node.rs and tests/it/node_backfill.rs; queries/commission/create_commission.sql and src/commission.rs: a commission is created at its own node, a top-level commission node whose segment is its id, taking its title and level from it"
+      "governs": "migrations/20261022052438_create_node.sql: the node table holds each node's key, real parent, segment, type, level and name (D24); a node is never moved or retyped; migrations/20261022132603_fill_commission_nodes.sql: every commission has its node and a commission node its commission, bound by node_id; src/node.rs and queries/node/: the node port over that table; tests/it/node.rs, tests/it/node_backfill.rs and tests/it/commission_fill.rs; queries/commission/create_commission.sql and src/commission.rs: a commission is created at its own node, a top-level commission node whose segment is its id, taking its title and level from it, and its name and level are read from that node"
     },
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "queries/account/list_deactivated_for_owner.sql: deactivated Accounts read by their Owner only; queries/commission/find_summary.sql: the narrow read behind the Den commission node (D21); src/commission.rs stored_level: an unreadable stored visibility counts as Private in find, find_for_update, list_owned_by, list_participating and find_summary (D22, D21); migrations/20261022052438_create_node.sql: each commission's node named by its title (D6), its fixed entries (D9) and its Slots' nodes, every entry and Slot node Private"
+      "governs": "queries/account/list_deactivated_for_owner.sql: deactivated Accounts read by their Owner only; queries/commission/find_summary.sql: the narrow read behind the Den commission node (D21), its name and level its node's; src/commission.rs stored_level: an unreadable node level counts as Private in find_summary, list_participating, standing and standing_for_update (D22, D21); migrations/20261022052438_create_node.sql: each commission's node named by its title (D6), its fixed entries (D9) and its Slots' nodes, every entry and Slot node Private; migrations/20261022132603_fill_commission_nodes.sql: each commission made since gets its node named by its title and its six Private entries (D6, D9)"
     }
   ],
   "backend/crates/api": [
@@ -1021,7 +1021,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "ports/commission.rs standing/standing_for_update (an unreadable stored visibility reads Private)"
+      "governs": "ports/commission.rs standing/standing_for_update (an unreadable node level reads Private)"
     }
   ],
   "backend/crates/workflow/src/elements": [

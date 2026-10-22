@@ -148,7 +148,7 @@ async fn on_a_live_public_or_listed_commission_a_stranger_s_causes_answer_alike(
 #[tokio::test]
 async fn with_old_sketch_s_visibility_unreadable_a_stranger_s_causes_still_answer_alike() {
     let world = pg_app::den_world(api::app).await;
-    world.store_unparsable_visibility(world.old_sketch.id).await;
+    world.store_unparsable_level(world.old_sketch.id).await;
 
     for pair in commission_read_stranger_pairs(&world.old_sketch) {
         let [absent, not_yours] = answers_of(&world.stranger, &world, &pair).await;
@@ -165,7 +165,7 @@ async fn with_old_sketch_s_visibility_unreadable_a_stranger_s_causes_still_answe
 #[tokio::test]
 async fn with_the_live_untitled_s_visibility_unreadable_a_stranger_s_causes_answer_alike() {
     let world = pg_app::den_world(api::app).await;
-    world.store_unparsable_visibility(world.untitled.id).await;
+    world.store_unparsable_level(world.untitled.id).await;
     let his_own = format!(
         "/commissions/{}/files/{}",
         world.untitled.id, world.untitled.file
@@ -188,7 +188,7 @@ async fn with_the_live_untitled_s_visibility_unreadable_a_stranger_s_causes_answ
 #[tokio::test]
 async fn with_old_sketch_s_visibility_unreadable_alice_still_downloads_and_reads_it() {
     let world = pg_app::den_world(api::app).await;
-    world.store_unparsable_visibility(world.old_sketch.id).await;
+    world.store_unparsable_level(world.old_sketch.id).await;
     let path = format!(
         "/commissions/{}/files/{}",
         world.old_sketch.id, world.old_sketch.file

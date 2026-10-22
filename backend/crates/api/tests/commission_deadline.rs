@@ -56,13 +56,12 @@ async fn create_commission(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201, "creating a commission returns 201");
     let title = body["title"].as_str().expect("body carries a title");
-    let all = backend.all_commissions().await.expect("list commissions");
-    uuid::Uuid::from(
-        all.iter()
-            .find(|c| c.title.as_str() == title)
-            .expect("the created commission was persisted")
-            .id,
-    )
+    let created = backend
+        .commission_titled(title)
+        .await
+        .expect("list commissions")
+        .expect("the created commission was persisted");
+    uuid::Uuid::from(created)
 }
 
 /// The persisted commission, rebuilt.

@@ -284,7 +284,12 @@ async fn find_roundtrips_the_linked_channel() {
         .await
         .expect("find")
         .expect("the commission exists");
-    assert_eq!(found.title.as_str(), "A ref sheet");
+    let summary = store
+        .find_summary(&commission.id)
+        .await
+        .expect("find_summary")
+        .expect("the commission exists");
+    assert_eq!(summary.title.as_str(), "A ref sheet");
     assert_eq!(found.owner_id, commission.owner_id);
     assert!(found.linked_channel.is_none(), "born with no channel");
 

@@ -4,18 +4,23 @@
 //! commission's nodes. The fact predicate is reachable only on an open [`UnitOfWork`]'s
 //! commissions view and, with no fact-minter wired anywhere, every commission answers
 //! `false`. The archive flag rides the same seam: `set_archived` is a transactional write
-//! reporting whether the state actually flipped.
+//! reporting whether the state actually flipped. A commission's name and level are read
+//! from its node.
 
 mod common;
 
 use adapter_mem::{CommissionSeed, MemBackend};
 use chrono::Utc;
 use domain::elements::{
-    commission::{CommissionBirth, CommissionId, CommissionTitle, LifecycleStep, NewCommission},
+    commission::{
+        CommissionBirth, CommissionId, CommissionRole, CommissionStanding, CommissionSummary,
+        CommissionTitle, LifecycleStep, NewCommission,
+    },
     did::Did,
     level::Level,
     maturity::{Maturity, MaturityRating},
     node::{NodeId, NodeType},
+    text::StoredText,
     user::UserId,
 };
 
@@ -274,8 +279,13 @@ async fn a_created_commission_is_born_draft_live_unlinked_and_unstatused() {
     assert_eq!(found.deadline, Some(deadline), "the chosen deadline");
     assert_eq!(found.owner_id, owner, "the gate's owner");
     assert_eq!(found.created_at, created_at, "the gate's time");
-    assert_eq!(found.title.as_str(), "A moonlit piece", "the node's name");
-    assert_eq!(found.visibility, Level::Listed, "the node's level");
+    let summary = backend
+        .commission_summary(id)
+        .await
+        .expect("find")
+        .expect("the commission is stored");
+    assert_eq!(summary.title.as_str(), "A moonlit piece", "the node's name");
+    assert_eq!(summary.visibility, Level::Listed, "the node's level");
 }
 
 /// A create at a node the unit can't see errs at the create and spends the unit: a node never
@@ -481,4 +491,58 @@ async fn deleting_a_commission_removes_its_nodes() {
             .any(|node| node.segment.as_ref() == survivor.id.to_string()),
         "the survivor's node stays"
     );
+}
+
+// The summary, the participant listing and both standing reads take the commission's name and
+// level from its node: a rename of the node alone is what they read.
+#[tokio::test]
+async fn the_summary_and_standing_read_the_node_s_name_and_level() {
+    let backend = MemBackend::new();
+    let owner = user(&backend, "did:plc:node-reads-owner").await;
+    let seed = CommissionSeed {
+        level: Level::Listed,
+        ..CommissionSeed::private("Untitled".parse().expect("a valid title"), owner.clone())
+    };
+    let node = backend
+        .seed_bound_commission(&seed)
+        .await
+        .expect("seed the commission");
+    let mut unit = backend.database().begin().await.expect("begin");
+    let renamed = unit
+        .nodes()
+        .set_name(&node, &StoredText::from("The node's name".to_owned()))
+        .await
+        .expect("rename the node");
+    unit.commit().await.expect("commit the rename");
+    assert!(renamed, "the node is renamed");
+    let store = backend.commission_store();
+
+    let summary = store.find_summary(&seed.id).await.expect("find_summary");
+    let listing = store
+        .list_participating(&owner)
+        .await
+        .expect("list_participating");
+    let standing = store.standing(&seed.id, &owner).await.expect("standing");
+    let mut unit = backend.database().begin().await.expect("begin");
+    let locked = unit
+        .commissions()
+        .standing_for_update(&seed.id, &owner)
+        .await
+        .expect("standing_for_update");
+
+    let expected_summary = CommissionSummary {
+        id: seed.id,
+        title: StoredText::from("The node's name".to_owned()),
+        visibility: Level::Listed,
+        archived: false,
+    };
+    let expected_standing = CommissionStanding {
+        role: Some(CommissionRole::Owner),
+        level: Level::Listed,
+        archived: false,
+    };
+    assert_eq!(summary, Some(expected_summary.clone()));
+    assert_eq!(listing, [expected_summary]);
+    assert_eq!(standing, Some(expected_standing));
+    assert_eq!(locked, Some(expected_standing));
 }

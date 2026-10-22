@@ -86,7 +86,7 @@ async fn a_swallowed_statement_failure_fails_the_commit_and_keeps_nothing() {
     );
 
     let stored = PgCommissionStore::new(pool.clone())
-        .find(&id)
+        .find_summary(&id)
         .await
         .expect("read back")
         .expect("the seeded commission exists");

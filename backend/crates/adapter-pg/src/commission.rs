@@ -448,8 +448,9 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Replaces `commission.title` via a conditional `UPDATE` (`IS DISTINCT FROM`),
-    /// so the return value IS the changed answer.
+    /// Renames the commission's node, joined through `commission.node_id`, via a
+    /// conditional `UPDATE` (`IS DISTINCT FROM`), so the return value IS the changed
+    /// answer; the node's trigger copies the name onto `commission.title`.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_title(
         &mut self,
@@ -634,18 +635,13 @@ impl PgCommissionStore {
 }
 
 /// Fields shared by the `find`, `find_for_update`, and `list_owned_by` rows, so
-/// [`to_commission`] rebuilds them through one body, re-validating every token
-/// (the title is carried as stored, never re-checked). Every field is a raw
-/// column value — nothing here is trusted.
+/// [`to_commission`] rebuilds them through one body, re-validating every token.
+/// Every field is a raw column value — nothing here is trusted.
 struct CommissionFields {
-    /// The stored title, carried as [`StoredText`] and never re-checked.
-    title: String,
     /// The owning User's DID.
     owner_id: String,
     /// The stored [`LifecycleStep`] token.
     lifecycle: String,
-    /// The stored [`Level`] token.
-    visibility: String,
     /// The nullable deadline.
     deadline: Option<DateTimeUtc>,
     /// The stored [`MaturityRating`] token, or `None` while unrated (both-or-neither with `graphic`).
@@ -668,10 +664,8 @@ impl From<sql::FindRow> for CommissionFields {
     /// From `queries/commission/find.sql`'s row (no `id` — the caller supplies it).
     fn from(row: sql::FindRow) -> Self {
         Self {
-            title: row.title,
             owner_id: row.owner_id,
             lifecycle: row.lifecycle,
-            visibility: row.visibility,
             deadline: row.deadline,
             maturity: row.maturity,
             graphic: row.graphic,
@@ -689,10 +683,8 @@ impl From<sql::FindForUpdateRow> for CommissionFields {
     /// [`FindRow`](sql::FindRow) under a locking read).
     fn from(row: sql::FindForUpdateRow) -> Self {
         Self {
-            title: row.title,
             owner_id: row.owner_id,
             lifecycle: row.lifecycle,
-            visibility: row.visibility,
             deadline: row.deadline,
             maturity: row.maturity,
             graphic: row.graphic,
@@ -710,10 +702,8 @@ impl From<sql::ListOwnedByRow> for CommissionFields {
     /// dropped here and lifted separately by the caller.
     fn from(row: sql::ListOwnedByRow) -> Self {
         Self {
-            title: row.title,
             owner_id: row.owner_id,
             lifecycle: row.lifecycle,
-            visibility: row.visibility,
             deadline: row.deadline,
             maturity: row.maturity,
             graphic: row.graphic,
@@ -726,13 +716,13 @@ impl From<sql::ListOwnedByRow> for CommissionFields {
     }
 }
 
-/// Reads a stored level token. A token outside the vocabulary counts as
+/// Reads a commission node's stored level token. A token outside the vocabulary counts as
 /// [`Level::Private`], so an unreadable row fails closed instead of failing the read,
 /// and logs one fixed warning that names nothing of the row.
 /// Not `From<&str>`: only stored rows read leniently; `TryFrom<&str>` stays the strict parse.
 fn stored_level(token: &str) -> Level {
     Level::try_from(token).unwrap_or_else(|_| {
-        tracing::warn!("a stored commission visibility is outside the vocabulary; read as private");
+        tracing::warn!("a stored commission node level is outside the vocabulary; read as private");
         Level::Private
     })
 }
@@ -743,11 +733,11 @@ fn archived_flag(archived: Option<bool>) -> bool {
     archived.unwrap_or(true)
 }
 
-/// Reads a standing row's columns leniently: the visibility through [`stored_level`]
+/// Reads a standing row's columns leniently: the node's level through [`stored_level`]
 /// (an absent one as Private), an unknown owner match as not the owner, and the archive
 /// flag through [`archived_flag`]. Every unreadable column reads as the closed state.
 fn to_standing(
-    visibility: Option<&str>,
+    level: Option<&str>,
     is_owner: Option<bool>,
     is_participant: bool,
     archived: Option<bool>,
@@ -755,15 +745,14 @@ fn to_standing(
     let owns = is_owner.unwrap_or(false);
     CommissionStanding {
         role: CommissionRole::held(owns, is_participant),
-        level: visibility.map_or(Level::Private, stored_level),
+        level: level.map_or(Level::Private, stored_level),
         archived: archived_flag(archived),
     }
 }
 
 /// Rebuilds the [`Commission`] from its persisted fields, re-validating each
 /// stored token through its domain gate; a value outside its vocabulary
-/// surfaces as an `Err`, never a panic or silent default. The one exception is
-/// the visibility, which [`stored_level`] reads as Private.
+/// surfaces as an `Err`, never a panic or silent default.
 fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<Commission> {
     let maturity = match (fields.maturity, fields.graphic) {
         (None, None) => None,
@@ -796,10 +785,8 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
     );
     let commission = Commission {
         id,
-        title: StoredText::from(fields.title),
         owner_id: UserId::from(Did::from(fields.owner_id)),
         lifecycle_step,
-        visibility: stored_level(&fields.visibility),
         deadline: fields.deadline,
         maturity,
         direction_status: fields
@@ -845,10 +832,10 @@ impl CommissionReads for PgCommissionWrites<'_> {
     }
 
     /// Two statements on the unit's connection: a locking select of the probe inner-joined
-    /// to `commission` (`FOR NO KEY UPDATE OF commission`), then the participant probe. The
-    /// probe runs after the lock is granted, so it reads a snapshot taken under the lock and
-    /// sees any standing change committed while the lock was awaited. An absent id answers
-    /// `None` without the probe.
+    /// to `commission` and its node (`FOR NO KEY UPDATE OF commission`), then the participant
+    /// probe. The probe runs after the lock is granted, so it reads a snapshot taken under
+    /// the lock and sees any standing change committed while the lock was awaited. An absent
+    /// id, or a commission with no node, answers `None` without the probe.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn standing_for_update(
         &mut self,
@@ -862,12 +849,7 @@ impl CommissionReads for PgCommissionWrites<'_> {
             return Ok(None);
         };
         let participates = sql::is_participant(&mut *self.conn, id, user.as_ref()).await?;
-        let standing = to_standing(
-            Some(&row.visibility),
-            row.is_owner,
-            participates,
-            row.archived,
-        );
+        let standing = to_standing(Some(&row.level), row.is_owner, participates, row.archived);
         Ok(Some(standing))
     }
 
@@ -909,15 +891,16 @@ impl CommissionStore for PgCommissionStore {
         to_commission(*id, row.into()).map(Some)
     }
 
-    /// Reads only the title, the visibility and whether it is archived; the visibility
-    /// through [`stored_level`], the title as stored. `None` if absent.
+    /// Reads only the node's name and level and whether it is archived; the level through
+    /// [`stored_level`], the name as stored. `None` if absent or without a node.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>> {
-        let row = sql::find_summary(&self.pool, uuid::Uuid::from(*id)).await?;
-        let summary = row.map(|row| CommissionSummary {
+        let rows = sql::find_summary(&self.pool, uuid::Uuid::from(*id)).await?;
+        // Both joins are on a key: at most one row.
+        let summary = rows.into_iter().next().map(|row| CommissionSummary {
             id: *id,
-            title: StoredText::from(row.title),
-            visibility: stored_level(&row.visibility),
+            title: StoredText::from(row.name),
+            visibility: stored_level(&row.level),
             archived: archived_flag(row.archived),
         });
         Ok(summary)
@@ -940,7 +923,7 @@ impl CommissionStore for PgCommissionStore {
             return Ok(None);
         }
         let standing = to_standing(
-            row.visibility.as_deref(),
+            row.level.as_deref(),
             row.is_owner,
             row.is_participant,
             row.archived,
@@ -1178,9 +1161,9 @@ impl CommissionStore for PgCommissionStore {
             .collect()
     }
 
-    /// One join from the participant record onto `commission`, seeking the
-    /// by-user index; archived rows included. Each visibility token is read
-    /// through [`stored_level`]; the title is carried as stored.
+    /// One join from the participant record onto `commission` and its node, seeking the
+    /// by-user index; archived rows included. Each node's level is read through
+    /// [`stored_level`]; its name is carried as stored.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn list_participating(&self, user: &UserId) -> anyhow::Result<Vec<CommissionSummary>> {
         let rows = sql::list_participating(&self.pool, user.as_ref()).await?;
@@ -1188,8 +1171,8 @@ impl CommissionStore for PgCommissionStore {
             .into_iter()
             .map(|row| CommissionSummary {
                 id: CommissionId::from(row.id),
-                title: StoredText::from(row.title),
-                visibility: stored_level(&row.visibility),
+                title: StoredText::from(row.name),
+                visibility: stored_level(&row.level),
                 archived: archived_flag(row.archived),
             })
             .collect();
@@ -1229,8 +1212,7 @@ impl CommissionStore for PgCommissionStore {
     }
 
     /// Active commissions (`archived_at IS NULL`) owned by `owner`, ordered by
-    /// id, each rebuilt through `to_commission`: tokens re-validated, the title
-    /// carried as stored.
+    /// id, each rebuilt through `to_commission`: tokens re-validated.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
         sql::list_owned_by(&self.pool, owner.as_ref())

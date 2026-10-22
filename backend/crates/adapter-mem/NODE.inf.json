@@ -42,7 +42,7 @@
     },
     {
       "name": "src/commission.rs",
-      "role": "commission/slot/seat/tab/element/changelog/markup fakes — MemCommissionStore/Writes (incl. the standing reads; standing_for_update reads the unit's staged maps, no lock), MemChangelogStore/Writes + Stored* rows; insert_commission (the one insert path: the owner must be a User and the node the unit's own top-level commission node whose segment is the id; title and level are copied from that node; Draft, no statuses, unlinked, live; a refused create spends the unit), check_bindings (commit's checks: every commission's node is its own, every commission node has its commission), CommissionSeed + seed_bound_commission (the gate's nodes and the bound commission through one committed unit); delete takes the commission's node subtree; seed helpers incl. seed_lifecycle_step (a stored step, since a create is born Draft), seed_participant and remove_participant (the owner's row too)",
+      "role": "commission/slot/seat/tab/element/changelog/markup fakes — MemCommissionStore/Writes (incl. the standing reads; standing_for_update reads the unit's staged maps, no lock), MemChangelogStore/Writes + Stored* rows; insert_commission (the one insert path: the owner must be a User and the node the unit's own top-level commission node whose segment is the id; the name and level stay on that node, and every read (the summary, the participant listing, both standing reads) takes them from the node map, a missing node reading absent or Private; Draft, no statuses, unlinked, live; a refused create spends the unit), check_bindings (commit's checks: every commission's node is its own, every commission node has its commission), CommissionSeed + seed_bound_commission (the gate's nodes and the bound commission through one committed unit); delete takes the commission's node subtree; set_title renames the commission's node; seed_stored_title writes its node's name; inspect helpers commission_summary and commission_titled (a commission by its node's name); seed helpers incl. seed_lifecycle_step (a stored step, since a create is born Draft), seed_participant and remove_participant (the owner's row too)",
       "node": false
     },
     {
@@ -87,7 +87,7 @@
     },
     {
       "name": "tests/commission.rs",
-      "role": "the commission write port against the mem fakes: a create makes only the starting state at its node's title and level, refuses an unseen node, a node that isn't its own and an unknown owner; commit refuses a commission node without its commission and a commission without its node; delete takes the commission's nodes; the fact predicate and the archive flag",
+      "role": "the commission write port against the mem fakes: a create makes only the starting state at its node's title and level, the summary and both standing reads take the name and level from the node, refuses an unseen node, a node that isn't its own and an unknown owner; commit refuses a commission node without its commission and a commission without its node; delete takes the commission's nodes; the fact predicate and the archive flag",
       "node": false
     },
     {

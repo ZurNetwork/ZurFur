@@ -108,8 +108,13 @@ async fn the_owner_archives_and_the_record_survives() {
         stored.archived_at.is_some(),
         "the commission is marked archived"
     );
+    let summary = backend
+        .commission_summary(domain::elements::commission::CommissionId::from(id))
+        .await
+        .expect("find")
+        .expect("the record survives archiving");
     assert_eq!(
-        stored.title.as_str(),
+        summary.title.as_str(),
         "A ref sheet",
         "the record survives intact"
     );

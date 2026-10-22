@@ -83,7 +83,7 @@ async fn rename(
 /// The title `backend` stores for `id`.
 async fn stored_title(backend: &MemBackend, id: CommissionId) -> String {
     let stored = backend
-        .find_commission(id)
+        .commission_summary(id)
         .await
         .expect("find the commission")
         .expect("the commission is stored");

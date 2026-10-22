@@ -78,9 +78,15 @@ async fn create_answers_the_row_as_stored() {
         .await
         .expect("the store reads")
         .expect("the commission exists");
+    let summary = ports
+        .commissions
+        .find_summary(&created.id)
+        .await
+        .expect("the store reads")
+        .expect("the commission exists");
     assert_eq!(created.title.as_str(), "Ref sheet");
-    assert_eq!(created.title.as_str(), stored.title.as_str());
-    assert_eq!(created.visibility, stored.visibility);
+    assert_eq!(created.title.as_str(), summary.title.as_str());
+    assert_eq!(created.visibility, summary.visibility);
     assert_eq!(created.lifecycle, stored.lifecycle_step);
     assert_eq!(created.deadline, Some(deadline));
     assert_eq!(created.created_at, stored.created_at);

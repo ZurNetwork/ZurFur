@@ -1,31 +1,22 @@
 use super::{ChannelPointer, CommissionId, DeadlineStatus, DirectionStatus, LifecycleStep};
 use identity::elements::user::UserId;
 use kernel::datetime::DateTimeUtc;
-use kernel::elements::level::Level;
 use kernel::elements::maturity::Maturity;
-use kernel::elements::text::StoredText;
 
 /// A stored commission and its fixed metadata, as a load returns it. A new one is
 /// written from a [`NewCommission`](super::NewCommission) and the gate's
 /// [`CommissionBirth`](super::CommissionBirth); it holds no participant list or
-/// composition, only the always-present envelope.
+/// composition, only the always-present envelope. Its name and level are its
+/// node's, read through a [`CommissionSummary`](super::CommissionSummary).
 #[derive(Debug)]
 pub struct Commission {
     /// The app-private id (UUIDv7, so it sorts by creation time).
     pub id: CommissionId,
-    /// The commission's Title as stored. It passed
-    /// [`CommissionTitle`](super::CommissionTitle)'s rule in force when it was
-    /// written, and a load never re-checks it.
-    pub title: StoredText,
     /// The User who created the commission and owns it.
     pub owner_id: UserId,
     /// The single lifecycle state the commission is in; a fresh one is
     /// [`LifecycleStep::Draft`].
     pub lifecycle_step: LifecycleStep,
-    /// Who may see the commission, the gate outside its composition's own
-    /// [`effective_visibility`](super::VisibilityMode::effective_visibility);
-    /// a fresh one is [`Level::Private`], and widening is an explicit later act.
-    pub visibility: Level,
     /// The deadline, or `None` when the commission carries none.
     pub deadline: Option<DateTimeUtc>,
     /// The commission's maturity posture, or `None` while unrated; a create may

@@ -20,6 +20,7 @@ use test_support::commission_standing_contract::ParticipantRows;
 use test_support::pg_app::{StatementLog, pg_runtime_recording};
 use test_support::seeder::{self, CommissionSeeder};
 
+use crate::commission_reads::{allow_any_node_level, store_node_level};
 use crate::seed::MintingSeeder;
 
 /// The participant table, written by direct statements: no port writes a non-owner row yet.
@@ -127,26 +128,24 @@ async fn the_row_is_held(pool: &PgPool, commission: &CommissionId) -> bool {
     true
 }
 
-// A stored visibility token outside the vocabulary reads as Private, on both reads.
+// A node level outside the vocabulary (stored with `node_level_known` dropped in this test's
+// own database) reads as Private, on both reads.
 #[tokio::test]
-async fn an_unreadable_visibility_reads_private() {
+async fn an_unreadable_node_level_reads_private_on_both_reads() {
     let (pool, _kept) = test_support::pg::fresh_pool().await;
     let database = PgDatabase::new(pool.clone());
     let store = PgCommissionStore::new(pool.clone());
     let owner = provision(&database, "did:plc:unreadableowner").await;
     let commission = committed_commission(&database, &owner).await;
-    let updated = sqlx::query("UPDATE commission SET visibility = 'public-ish' WHERE id = $1")
-        .bind(uuid::Uuid::from(commission))
-        .execute(&pool)
-        .await
-        .expect("store a visibility outside the vocabulary");
-    assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
-    let stored_level: String =
-        sqlx::query_scalar("SELECT visibility FROM commission WHERE id = $1")
-            .bind(uuid::Uuid::from(commission))
-            .fetch_one(&pool)
-            .await
-            .expect("read the stored token");
+    allow_any_node_level(&pool).await;
+    store_node_level(&pool, commission, "public-ish").await;
+    let stored_level: String = sqlx::query_scalar(
+        "SELECT n.level FROM node n JOIN commission c ON c.node_id = n.id WHERE c.id = $1",
+    )
+    .bind(uuid::Uuid::from(commission))
+    .fetch_one(&pool)
+    .await
+    .expect("read the stored token");
     assert_eq!(stored_level, "public-ish", "the token is stored as written");
 
     let expected = CommissionStanding {

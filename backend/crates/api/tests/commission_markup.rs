@@ -48,13 +48,12 @@ async fn create_commission_with(
         .await
         .expect("POST /commissions");
     assert_eq!(res.status(), 201);
-    let all = backend.all_commissions().await.expect("list commissions");
-    uuid::Uuid::from(
-        all.iter()
-            .find(|c| c.title.as_str() == title)
-            .expect("the just-created commission is persisted")
-            .id,
-    )
+    let created = backend
+        .commission_titled(&title)
+        .await
+        .expect("list commissions")
+        .expect("the just-created commission is persisted");
+    uuid::Uuid::from(created)
 }
 
 /// The single-commission convenience for tests that only make one.

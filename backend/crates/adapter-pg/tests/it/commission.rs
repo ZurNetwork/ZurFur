@@ -236,6 +236,11 @@ async fn set_archived_round_trips_and_reports_transitions() {
         .await
         .expect("find")
         .expect("the record survives archiving");
+    let summary = store
+        .find_summary(&id)
+        .await
+        .expect("find_summary")
+        .expect("the record survives archiving");
     let stored_stamp = stored.archived_at.expect("the flag is set");
     assert_eq!(
         stored_stamp.timestamp_micros(),
@@ -243,7 +248,7 @@ async fn set_archived_round_trips_and_reports_transitions() {
         "the stamp round-trips (at the column's microsecond precision)",
     );
     assert_eq!(
-        stored.title.as_str(),
+        summary.title.as_str(),
         "A ref sheet",
         "the record survives intact"
     );
@@ -414,13 +419,10 @@ async fn list_owned_by_returns_only_the_callers_active_commissions_in_id_order()
     expected.sort();
     assert_eq!(order, expected, "rows come back ascending by commission id");
 
-    let titles: Vec<&str> = rows
-        .iter()
-        .map(|commission| commission.title.as_str())
-        .collect();
+    let owners: Vec<_> = rows.iter().map(|commission| &commission.owner_id).collect();
     assert!(
-        titles.contains(&"A ref sheet") && titles.contains(&"A full illustration"),
-        "rows are hydrated, not just ids: {titles:?}"
+        owners.iter().all(|owner_id| **owner_id == owner.id),
+        "rows are hydrated, not just ids: {owners:?}"
     );
 }
 
@@ -476,9 +478,9 @@ async fn set_title_reports_only_a_real_change() {
     assert!(!missing, "an absent commission answers false");
     let store = adapter_pg::PgCommissionStore::new(pool.clone());
     let stored = store
-        .find(&created)
+        .find_summary(&created)
         .await
-        .expect("find")
+        .expect("find_summary")
         .expect("the commission exists");
     assert_eq!(stored.title.as_str(), "A full piece");
 }
@@ -552,8 +554,13 @@ async fn a_created_commission_is_born_draft_live_unlinked_and_unstatused() {
     assert_eq!(found.deadline, Some(deadline), "the chosen deadline");
     assert_eq!(found.owner_id, owner.id, "the gate's owner");
     assert_eq!(found.created_at, created_at, "the gate's time");
-    assert_eq!(found.title.as_str(), "A moonlit piece", "the node's name");
-    assert_eq!(found.visibility, Level::Listed, "the node's level");
+    let summary = store
+        .find_summary(&id)
+        .await
+        .expect("find_summary")
+        .expect("the commission is stored");
+    assert_eq!(summary.title.as_str(), "A moonlit piece", "the node's name");
+    assert_eq!(summary.visibility, Level::Listed, "the node's level");
     let node_id: Option<uuid::Uuid> =
         sqlx::query_scalar("SELECT node_id FROM commission WHERE id = $1")
             .bind(uuid::Uuid::from(id))

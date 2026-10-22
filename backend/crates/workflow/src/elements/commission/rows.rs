@@ -37,15 +37,15 @@ pub struct CommissionBirth {
     pub created_at: DateTimeUtc,
 }
 
-/// One commission as a listing reads it: its id, stored title, own visibility
-/// and whether it is archived. Nothing else of the commission crosses this read.
+/// One commission as a listing reads it: its id, its node's name and level, and whether
+/// it is archived. Nothing else of the commission crosses this read.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommissionSummary {
     /// The commission's id.
     pub id: CommissionId,
-    /// The title as stored, not re-checked on load.
+    /// Its node's name as stored, not re-checked on load.
     pub title: StoredText,
-    /// The commission's own visibility.
+    /// Its node's level.
     pub visibility: Level,
     /// Whether it carries an archive time; the time itself isn't read.
     pub archived: bool,

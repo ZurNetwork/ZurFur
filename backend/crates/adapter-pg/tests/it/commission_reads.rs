@@ -1,11 +1,17 @@
 //! The My Den read ports over PostgreSQL, against a throwaway container: the
 //! participant listing (archived rows included) and its by-user index, a
 //! commission's file list, the name-only file read, a commission's Slots and
-//! an Account's Workflows, and one commission's summary. A visibility no parser reads
-//! counts as Private on every read of it. Names load as stored text, never re-checked, so a
-//! row written under an older rule still reads. One named test per read.
+//! an Account's Workflows, and one commission's summary. A commission's name and level
+//! are its node's: the summary, the listing and the standing read them there, never the
+//! commission's own columns, and a commission with no node reads as absent. A node level no
+//! parser reads counts as Private on every read of it. Names load as stored text, never
+//! re-checked, so a row written under an older rule still reads. One named test per read.
 //! Requires a container runtime socket.
 
+use crate::migration_steps::{bare_pool, run_migrations_through};
+use crate::node_backfill::{
+    DEN_1_VERSION, OWNER_DID, seed_commission as seed_node_less, seed_owner,
+};
 use crate::seed;
 use adapter_pg::{PgCommissionStore, PgDatabase, PgFileStore, PgPool, PgWorkflowStore};
 use chrono::{SubsecRound, Utc};
@@ -13,14 +19,14 @@ use domain::{
     elements::{
         account::{Account, AccountId, AccountName},
         commission::{
-            CommissionFile, CommissionId, CommissionSummary, CommissionTitle, FileKey, FileName,
-            NewSlot, SlotTitle, SurfaceAddress, SurfaceName,
+            CommissionFile, CommissionId, CommissionRole, CommissionStanding, CommissionSummary,
+            CommissionTitle, FileKey, FileName, NewSlot, SlotTitle, SurfaceAddress, SurfaceName,
         },
         did::Did,
         handle::Handle,
         level::Level,
         text::StoredText,
-        user::User,
+        user::{User, UserId},
         workflow::{WorkflowId, WorkflowName},
     },
     ports::{CommissionStore, Database, FileStore, WorkflowStore},
@@ -62,15 +68,40 @@ async fn archive(pool: &PgPool, commission: CommissionId) {
     uow.commit().await.expect("commit");
 }
 
-/// Store `token` as `commission`'s visibility, a test-only update.
-async fn store_visibility(pool: &PgPool, commission: CommissionId, token: &str) {
-    let updated = sqlx::query("UPDATE commission SET visibility = $1 WHERE id = $2")
-        .bind(token)
-        .bind(uuid::Uuid::from(commission))
+/// Store `token` as the level of the node `commission` points at, a test-only update; the
+/// node's trigger copies it onto the commission's own column.
+pub(crate) async fn store_node_level(pool: &PgPool, commission: CommissionId, token: &str) {
+    let updated = sqlx::query(
+        "UPDATE node SET level = $1 FROM commission c WHERE c.id = $2 AND node.id = c.node_id",
+    )
+    .bind(token)
+    .bind(uuid::Uuid::from(commission))
+    .execute(pool)
+    .await
+    .expect("update the commission node's level");
+    assert_eq!(updated.rows_affected(), 1, "one node is updated");
+}
+
+/// Store `name` as the name of the node `commission` points at, a test-only update.
+async fn store_node_name(pool: &PgPool, commission: CommissionId, name: &str) {
+    let updated = sqlx::query(
+        "UPDATE node SET name = $1 FROM commission c WHERE c.id = $2 AND node.id = c.node_id",
+    )
+    .bind(name)
+    .bind(uuid::Uuid::from(commission))
+    .execute(pool)
+    .await
+    .expect("update the commission node's name");
+    assert_eq!(updated.rows_affected(), 1, "one node is updated");
+}
+
+/// Drop the node table's level check in this test's own database, so a level no parser reads
+/// can be stored.
+pub(crate) async fn allow_any_node_level(pool: &PgPool) {
+    sqlx::query("ALTER TABLE node DROP CONSTRAINT node_level_known")
         .execute(pool)
         .await
-        .expect("update the commission's visibility");
-    assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
+        .expect("drop node_level_known in the test database");
 }
 
 /// Add `member` as a Participant by a direct insert: no route admits a second
@@ -207,23 +238,23 @@ async fn the_participant_table_has_its_by_user_index() {
     );
 }
 
-// A stored title today's rule refuses still loads, verbatim, through the
-// listing and through `find`: loads never re-check a title.
+// A stored name today's rule refuses still loads, verbatim, through the
+// listing and through the summary: loads never re-check a name.
 #[tokio::test]
 async fn a_stored_title_loads_without_a_recheck() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:readslegacy").await;
     let id = seed_commission(&pool, &owner, "Legacy").await;
-    sqlx::query("UPDATE commission SET title = '   ' WHERE id = $1")
-        .bind(uuid::Uuid::from(id))
-        .execute(&pool)
-        .await
-        .expect("store a title today's rule refuses");
+    store_node_name(&pool, id, "   ").await;
     assert!("   ".parse::<CommissionTitle>().is_err());
     let store = PgCommissionStore::new(pool.clone());
 
     let listing = store.list_participating(&owner.id).await.expect("list");
-    let found = store.find(&id).await.expect("find").expect("present");
+    let found = store
+        .find_summary(&id)
+        .await
+        .expect("find_summary")
+        .expect("present");
 
     assert_eq!(listing[0].title.as_str(), "   ");
     assert_eq!(found.title.as_str(), "   ");
@@ -378,7 +409,7 @@ async fn the_summary_answers_the_stored_title_visibility_and_archived_flag() {
     let live = seed_commission(&pool, &owner, "Untitled").await;
     let archived = seed_commission(&pool, &owner, "Old sketch").await;
     archive(&pool, archived).await;
-    store_visibility(&pool, live, "listed").await;
+    store_node_level(&pool, live, "listed").await;
     let store = PgCommissionStore::new(pool.clone());
 
     let live_summary = store.find_summary(&live).await.expect("find_summary");
@@ -400,18 +431,21 @@ async fn the_summary_answers_the_stored_title_visibility_and_archived_flag() {
     assert_eq!(archived_summary, Some(expected_archived));
 }
 
-// A stored visibility no parser reads counts as Private: the summary, the whole
-// commission and the participant listing each read it so, and none fails.
+// A node level no parser reads (stored with `node_level_known` dropped in this test's own
+// database) counts as Private: the summary, the standing and the participant listing each
+// read it so, and none fails, the whole commission's read included.
 #[tokio::test]
-async fn an_unreadable_stored_level_counts_as_private_on_every_read() {
+async fn an_unreadable_node_level_reads_private() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:unreadableowner").await;
     let id = seed_commission(&pool, &owner, "Untitled").await;
-    store_visibility(&pool, id, "not-a-visibility").await;
+    allow_any_node_level(&pool).await;
+    store_node_level(&pool, id, "not-a-visibility").await;
     assert!("not-a-visibility".parse::<Level>().is_err());
     let store = PgCommissionStore::new(pool.clone());
 
     let summary = store.find_summary(&id).await.expect("find_summary");
+    let standing = store.standing(&id, &owner.id).await.expect("standing");
     let found = store.find(&id).await.expect("find");
     let listing = store
         .list_participating(&owner.id)
@@ -419,14 +453,112 @@ async fn an_unreadable_stored_level_counts_as_private_on_every_read() {
         .expect("list_participating");
 
     let summary = summary.expect("present");
-    let found = found.expect("present");
+    let standing = standing.expect("present");
+    assert!(found.is_some(), "the whole commission still reads");
     assert_eq!(summary.visibility, Level::Private);
-    assert_eq!(found.visibility, Level::Private);
+    assert_eq!(standing.level, Level::Private);
     let listed: Vec<(CommissionId, Level)> = listing
         .into_iter()
         .map(|summary| (summary.id, summary.visibility))
         .collect();
     assert_eq!(listed, [(id, Level::Private)]);
+}
+
+// The summary, the participant listing and the standing read the name and level of the node
+// the commission points at, not the commission's own title and visibility columns, which a
+// test-only update has set apart from the node's.
+#[tokio::test]
+async fn the_summary_and_standing_read_the_node_s_name_and_level() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:nodereadsowner").await;
+    let id = seed_commission(&pool, &owner, "Untitled").await;
+    store_node_level(&pool, id, "public").await;
+    store_node_name(&pool, id, "The node's name").await;
+    let updated = sqlx::query(
+        "UPDATE commission SET title = 'The old column', visibility = 'private' WHERE id = $1",
+    )
+    .bind(uuid::Uuid::from(id))
+    .execute(&pool)
+    .await
+    .expect("set the commission's own columns apart from its node");
+    assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
+    let store = PgCommissionStore::new(pool.clone());
+
+    let summary = store.find_summary(&id).await.expect("find_summary");
+    let listing = store
+        .list_participating(&owner.id)
+        .await
+        .expect("list_participating");
+    let standing = store.standing(&id, &owner.id).await.expect("standing");
+    let database = PgDatabase::new(pool.clone());
+    let mut unit = database.begin().await.expect("begin");
+    let locked = unit
+        .commissions()
+        .standing_for_update(&id, &owner.id)
+        .await
+        .expect("standing_for_update");
+
+    let expected_summary = CommissionSummary {
+        id,
+        title: StoredText::from("The node's name".to_owned()),
+        visibility: Level::Public,
+        archived: false,
+    };
+    let expected_standing = CommissionStanding {
+        role: Some(CommissionRole::Owner),
+        level: Level::Public,
+        archived: false,
+    };
+    assert_eq!(summary, Some(expected_summary.clone()));
+    assert_eq!(listing, [expected_summary]);
+    assert_eq!(standing, Some(expected_standing));
+    assert_eq!(locked, Some(expected_standing));
+}
+
+// On a database migrated only through the node table's migration, a commission row with no
+// node is absent to the summary, the participant listing and the locked standing, and the
+// pool's standing finds it at Private, whatever its own visibility column says.
+#[tokio::test]
+async fn a_node_less_commission_reads_as_absent_and_its_standing_as_private() {
+    let (pool, _container) = bare_pool().await;
+    run_migrations_through(&pool, DEN_1_VERSION).await;
+    seed_owner(&pool).await;
+    let id = CommissionId::from(seed_node_less(&pool, "No node", "public").await);
+    sqlx::query(
+        "INSERT INTO commission_participant (commission_id, user_id, created_at) \
+         VALUES ($1, $2, now())",
+    )
+    .bind(uuid::Uuid::from(id))
+    .bind(OWNER_DID)
+    .execute(&pool)
+    .await
+    .expect("insert the owner's participant row");
+    let owner = UserId::from(Did::from(OWNER_DID.to_owned()));
+    let store = PgCommissionStore::new(pool.clone());
+
+    let summary = store.find_summary(&id).await.expect("find_summary");
+    let listing = store
+        .list_participating(&owner)
+        .await
+        .expect("list_participating");
+    let standing = store.standing(&id, &owner).await.expect("standing");
+    let database = PgDatabase::new(pool.clone());
+    let mut unit = database.begin().await.expect("begin");
+    let locked = unit
+        .commissions()
+        .standing_for_update(&id, &owner)
+        .await
+        .expect("standing_for_update");
+
+    let expected_standing = CommissionStanding {
+        role: Some(CommissionRole::Owner),
+        level: Level::Private,
+        archived: false,
+    };
+    assert_eq!(summary, None, "the summary reads it as absent");
+    assert!(listing.is_empty(), "the listing leaves it out: {listing:?}");
+    assert_eq!(standing, Some(expected_standing), "the standing");
+    assert_eq!(locked, None, "the locked standing reads it as absent");
 }
 
 // An archive time chrono can't hold (`infinity`, by a test-only update) never

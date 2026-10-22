@@ -86,7 +86,7 @@ impl World {
         let commission = self
             .ports
             .commissions
-            .find(&id)
+            .find_summary(&id)
             .await
             .expect("the store reads")
             .expect("the commission exists");

@@ -34,14 +34,15 @@ pub struct CommissionValues {
     pub created_at: DateTimeUtc,
 }
 
-impl From<Commission> for CommissionValues {
-    /// The loaded commission's values, field for field.
-    fn from(commission: Commission) -> Self {
+impl CommissionValues {
+    /// The loaded commission's values, named `title` and levelled `visibility` as its node
+    /// holds them. Not `From`: the commission, its name and its level are three facts.
+    pub(crate) fn from_parts(commission: Commission, title: StoredText, visibility: Level) -> Self {
         Self {
             id: commission.id,
-            title: commission.title,
+            title,
             lifecycle: commission.lifecycle_step,
-            visibility: commission.visibility,
+            visibility,
             deadline: commission.deadline,
             maturity: commission.maturity,
             direction_status: commission.direction_status,
@@ -72,11 +73,10 @@ impl TryFrom<WriteResult> for CommissionValues {
             let unnamed = anyhow::anyhow!("the den's write gave the commission no name");
             CommonError::Infrastructure(unnamed)
         })?;
+        let title = StoredText::from(name.as_ref().to_owned());
         let values = Self {
             id,
-            title: StoredText::from(name.as_ref().to_owned()),
-            visibility: level,
-            ..Self::from(commission)
+            ..Self::from_parts(commission, title, level)
         };
         Ok(values)
     }

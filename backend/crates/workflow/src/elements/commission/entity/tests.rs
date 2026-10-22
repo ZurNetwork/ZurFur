@@ -8,10 +8,8 @@ fn stored_commission() -> Commission {
     )));
     Commission {
         id: CommissionId::mint(),
-        title: StoredText::from("Ref".to_owned()),
         owner_id: owner,
         lifecycle_step: LifecycleStep::Draft,
-        visibility: Level::Private,
         deadline: None,
         maturity: None,
         direction_status: None,

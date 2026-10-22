@@ -64,7 +64,8 @@ async fn a_seeded_commission_obeys_the_binding() {
         "every entry is Private"
     );
     let found = backend
-        .find_commission(seed.id)
+        .commission_store()
+        .find_summary(&seed.id)
         .await
         .expect("find")
         .expect("the commission is stored");

@@ -87,8 +87,8 @@ impl CommissionPlace {
     }
 }
 
-/// The node for a commission's summary: its visibility as its level, standing for a
-/// Participant, archived or live, and its title through the name rule.
+/// The node for a commission's summary: its node's level, standing for a Participant,
+/// archived or live, and its node's name through the name rule.
 fn commission_node(commission: &CommissionSummary, participant: bool) -> Option<Node> {
     let name = names::stored_name(commission.title.as_str())?;
     let lifts = if participant {

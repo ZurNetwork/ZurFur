@@ -80,15 +80,21 @@ async fn uow_create_commission_is_visible_after_commit() {
         .await
         .unwrap()
         .expect("commission present");
+    let summary = backend
+        .commission_store()
+        .find_summary(&id)
+        .await
+        .unwrap()
+        .expect("its summary present");
     assert_eq!(found.id, id);
-    assert_eq!(found.title.as_str(), "A ref sheet");
+    assert_eq!(summary.title.as_str(), "A ref sheet");
     assert_eq!(found.owner_id, owner, "the creating User owns it");
     assert!(
         matches!(found.lifecycle_step, LifecycleStep::Draft),
         "a fresh commission is in Draft"
     );
     assert!(
-        matches!(found.visibility, Level::Private),
+        matches!(summary.visibility, Level::Private),
         "a fresh commission is Private (the closed-door default)"
     );
     assert!(
@@ -2255,7 +2261,12 @@ async fn a_stored_title_is_loaded_without_a_recheck() {
         .list_participating(&owner)
         .await
         .unwrap();
-    let found = backend.find_commission(created.id).await.unwrap().unwrap();
+    let found = backend
+        .commission_store()
+        .find_summary(&created.id)
+        .await
+        .unwrap()
+        .unwrap();
 
     assert_eq!(listing[0].title.as_str(), "   ");
     assert_eq!(found.title.as_str(), "   ");
@@ -2470,7 +2481,7 @@ async fn set_title_reports_only_a_real_change() {
     assert!(!missing, "an absent commission answers false");
     let stored = backend
         .commission_store()
-        .find(&id)
+        .find_summary(&id)
         .await
         .unwrap()
         .expect("exists");

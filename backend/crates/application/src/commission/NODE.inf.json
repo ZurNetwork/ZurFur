@@ -74,7 +74,7 @@
     },
     {
       "name": "rename.rs + rename/tests.rs",
-      "role": "the owner renames the commission (still on its old path until it moves behind the Den's write): require_owner before the lazy unit opens, the title already the Den's name rule's from its parse, set_title on it, the row read back by id (gone → the one not-found), and a `renamed` entry (empty payload, no note) only on a real change; rename/tests.rs pins that a stranger and a non-owner Participant open no unit, and that a refused title is never a title",
+      "role": "the owner renames the commission (still on its old path until it moves behind the Den's write): require_owner and the commission's summary (its node's level) before the lazy unit opens, the title already the Den's name rule's from its parse, set_title on it (renaming the commission's node), the row read back by id (gone → the one not-found), the answer named by the title and levelled by the summary, and a `renamed` entry (empty payload, no note) only on a real change; rename/tests.rs pins that a stranger and a non-owner Participant open no unit, and that a refused title is never a title",
       "node": false
     },
     {
@@ -94,7 +94,7 @@
     },
     {
       "name": "values.rs",
-      "role": "CommissionValues: the flat values create and rename answer; TryFrom<WriteResult> builds create's from the write's answer, its id the thing written and its title and visibility the name and level the gate wrote; rename still builds its own from the row it reads back",
+      "role": "CommissionValues: the flat values create and rename answer; TryFrom<WriteResult> builds create's from the write's answer, its id the thing written and its title and visibility the name and level the gate wrote; rename builds its own through from_parts: the row it reads back, the title it wrote and the level its summary read",
       "node": false
     },
     {

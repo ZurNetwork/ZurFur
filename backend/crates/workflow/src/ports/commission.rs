@@ -33,15 +33,15 @@ pub trait CommissionStore: Send + Sync {
     /// found — filtering it out is a listing projection's job.
     async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
 
-    /// The [`CommissionSummary`] of the commission `id` names, or `None`: its stored title,
-    /// its own visibility and its archive time, and nothing else of the row. An archived
-    /// commission is still found.
+    /// The [`CommissionSummary`] of the commission `id` names, or `None`: its node's name and
+    /// level and whether it is archived, and nothing else of the row. A commission with no
+    /// node reads as absent; an archived one is still found.
     async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>>;
 
     /// The [`CommissionStanding`] `user` holds on `commission`, or `None` when no
     /// commission has that id. An absent id and a stranger take the same one-row
-    /// read, and the read carries no title and no whole row. An archived
-    /// commission is still found.
+    /// read, and the read carries no name and no whole row. The level is the
+    /// commission's node's, Private when it has none. An archived commission is still found.
     async fn standing(
         &self,
         commission: &CommissionId,
@@ -132,9 +132,10 @@ pub trait CommissionStore: Send + Sync {
     async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>>;
 
     /// The commissions `user` is a Participant of, read from the same
-    /// participant record as [`is_participant`](Self::is_participant). Archived
-    /// commissions are included; hiding them is the caller's. Ordered by
-    /// [`CommissionId`]; empty for a user who takes part in none.
+    /// participant record as [`is_participant`](Self::is_participant), each named and
+    /// levelled by its node; one with no node is left out. Archived commissions are
+    /// included; hiding them is the caller's. Ordered by [`CommissionId`]; empty for a
+    /// user who takes part in none.
     async fn list_participating(&self, user: &UserId) -> anyhow::Result<Vec<CommissionSummary>>;
 
     /// Every file entry of `commission` as a [`FileSummary`] (key and upload
@@ -247,7 +248,7 @@ pub trait CommissionWrites: Send {
         archived_at: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool>;
 
-    /// Replace the commission's title. Returns whether the stored title actually
+    /// Rename the commission's node to `title`. Returns whether the stored name actually
     /// changed, so the caller keys its `renamed` append on a real change in this
     /// same unit. A no-op on an absent commission, answering `false`.
     async fn set_title(
@@ -344,7 +345,8 @@ pub trait CommissionReads: Send {
     async fn find_for_update(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
 
     /// [`CommissionStore::standing`], with the commission row locked
-    /// (`FOR NO KEY UPDATE`) for the rest of the unit; `None` when it is absent.
+    /// (`FOR NO KEY UPDATE`) for the rest of the unit; `None` when it is absent or has
+    /// no node.
     /// Every change to someone's standing (evict, leave, role change, Admin grant
     /// or revoke, transfer) locks the commission row first, so this answer holds
     /// until the unit ends.

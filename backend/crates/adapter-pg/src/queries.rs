@@ -1131,10 +1131,8 @@ pub mod commission {
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
     pub struct FindForUpdateRow {
-        pub title: String,
         pub owner_id: String,
         pub lifecycle: String,
-        pub visibility: String,
         pub deadline: Option<chrono::DateTime<chrono::Utc>>,
         pub maturity: Option<String>,
         pub graphic: Option<bool>,
@@ -1148,10 +1146,8 @@ pub mod commission {
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
     pub struct FindRow {
-        pub title: String,
         pub owner_id: String,
         pub lifecycle: String,
-        pub visibility: String,
         pub deadline: Option<chrono::DateTime<chrono::Utc>>,
         pub maturity: Option<String>,
         pub graphic: Option<bool>,
@@ -1165,8 +1161,8 @@ pub mod commission {
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
     pub struct FindSummaryRow {
-        pub title: String,
-        pub visibility: String,
+        pub name: String,
+        pub level: String,
         pub archived: Option<bool>,
     }
 
@@ -1182,10 +1178,8 @@ pub mod commission {
     #[derive(Debug, sqlx::FromRow)]
     pub struct ListOwnedByRow {
         pub id: uuid::Uuid,
-        pub title: String,
         pub owner_id: String,
         pub lifecycle: String,
-        pub visibility: String,
         pub deadline: Option<chrono::DateTime<chrono::Utc>>,
         pub maturity: Option<String>,
         pub graphic: Option<bool>,
@@ -1200,8 +1194,8 @@ pub mod commission {
     #[derive(Debug, sqlx::FromRow)]
     pub struct ListParticipatingRow {
         pub id: uuid::Uuid,
-        pub title: String,
-        pub visibility: String,
+        pub name: String,
+        pub level: String,
         pub archived: Option<bool>,
     }
 
@@ -1273,7 +1267,8 @@ pub mod commission {
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
     pub struct StandingForUpdateRow {
-        pub visibility: String,
+        pub node_id: uuid::Uuid,
+        pub level: String,
         pub is_owner: Option<bool>,
         pub archived: Option<bool>,
     }
@@ -1282,7 +1277,7 @@ pub mod commission {
     #[derive(Debug, sqlx::FromRow)]
     pub struct StandingRow {
         pub found: Option<bool>,
-        pub visibility: Option<String>,
+        pub level: Option<String>,
         pub is_owner: Option<bool>,
         pub is_participant: bool,
         pub archived: Option<bool>,
@@ -1630,16 +1625,17 @@ pub mod commission {
 
     /// `queries/commission/find_summary.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// One commission's summary: its title as stored, its own visibility and
-    /// whether it is archived, and nothing else of the row. The archive time itself
+    /// One commission's summary: its node's name and level, and whether it is
+    /// archived, and nothing else of the row. The node is the one the commission
+    /// points at; a commission with no node reads as absent. The archive time itself
     /// is never decoded. Archived commissions are found.
     pub async fn find_summary(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
-    ) -> sqlx::Result<Option<FindSummaryRow>> {
+    ) -> sqlx::Result<Vec<FindSummaryRow>> {
         sqlx::query_as(include_str!("../queries/commission/find_summary.sql"))
             .bind(id)
-            .fetch_optional(conn)
+            .fetch_all(conn)
             .await
     }
 
@@ -1712,7 +1708,8 @@ pub mod commission {
     /// `queries/commission/list_participating.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// The commissions a User is a Participant of, read from the same
-    /// `commission_participant` record `is_participant` reads. Archived commissions
+    /// `commission_participant` record `is_participant` reads, each with its node's
+    /// name and level; a commission with no node is left out. Archived commissions
     /// are included; hiding them is the caller's. Seeks the by-user index; ordered
     /// by commission id (UUIDv7 sorts as creation order). The archive time itself
     /// is never decoded, only whether there is one.
@@ -2054,14 +2051,17 @@ pub mod commission {
     }
 
     /// `queries/commission/set_title.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Rename the commission's node, the one the commission points at, where its
+    /// name differs; the node's trigger copies the name onto the commission's title.
     pub async fn set_title(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
-        title: &str,
+        name: &str,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/commission/set_title.sql"))
             .bind(id)
-            .bind(title)
+            .bind(name)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
@@ -2085,10 +2085,11 @@ pub mod commission {
     /// `queries/commission/standing.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// One viewer's standing on one commission, always as exactly one row: a one-row
-    /// probe left-joined to `commission`, so an absent id and a stranger run the same
-    /// statement, get the same row shape and run the same participant probe. `found`
-    /// is false for an absent id. Reads no title and no whole row, and never decodes
-    /// the archive time, only whether there is one.
+    /// probe left-joined to `commission` and then to the node it points at, so an
+    /// absent id and a stranger run the same statement, get the same row shape and
+    /// run the same participant probe. `found` is false for an absent id; `level` is
+    /// NULL for a commission with no node. Reads no name and no whole row, and never
+    /// decodes the archive time, only whether there is one.
     pub async fn standing(
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,
@@ -2103,12 +2104,14 @@ pub mod commission {
 
     /// `queries/commission/standing_for_update.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// `standing`'s commission facets, with the commission row locked until the unit
-    /// of work ends: the same probe inner-joined, so an absent id answers no row.
-    /// FOR NO KEY UPDATE OF commission locks the commission row alone. Every change to
-    /// someone's standing locks that row first, so it waits for this unit. Holds no
-    /// participant probe: a probe in this statement reads the snapshot taken before
-    /// the lock was granted, so the caller runs `is_participant` after it instead.
+    /// `standing`'s commission facets and the commission's node, with the commission
+    /// row locked until the unit of work ends: the same probe inner-joined to the
+    /// commission and the node it points at, so an absent id, or a commission with
+    /// no node, answers no row. FOR NO KEY UPDATE OF commission locks the commission
+    /// row alone. Every change to someone's standing locks that row first, so it
+    /// waits for this unit. Holds no participant probe: a probe in this statement
+    /// reads the snapshot taken before the lock was granted, so the caller runs
+    /// `is_participant` after it instead.
     pub async fn standing_for_update(
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,

@@ -19,6 +19,7 @@ mod commission_changelog;
 mod commission_deadline;
 mod commission_element;
 mod commission_file;
+mod commission_fill;
 mod commission_maturity;
 mod commission_positioning;
 mod commission_reads;

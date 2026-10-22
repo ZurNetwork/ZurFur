@@ -132,8 +132,8 @@ fn is_own_node(id: CommissionId, node: &NodeRow) -> bool {
 }
 
 /// Store commission `id` on `backend` bound to `birth`'s node, in its starting state, with
-/// its skeleton tabs and its owner's participant row; the one insert path. Its title and
-/// visibility are the node's. Refuses an owner no User holds, a node `backend` doesn't hold
+/// its skeleton tabs and its owner's participant row; the one insert path. Its name and
+/// level stay the node's. Refuses an owner no User holds, a node `backend` doesn't hold
 /// or that isn't the commission's own, and a taken id.
 pub(crate) fn insert_commission(
     backend: &MemBackend,
@@ -169,10 +169,8 @@ pub(crate) fn insert_commission(
         );
         let stored = StoredCommission {
             node_id: node.id,
-            title: node.name,
             owner_id: birth.owner_id.clone(),
             lifecycle_step: LifecycleStep::Draft,
-            visibility: node.level,
             deadline: commission.deadline,
             maturity: commission.maturity,
             direction_status: None,
@@ -209,19 +207,15 @@ pub(crate) fn insert_commission(
 /// The fields of a [`Commission`] we keep behind the lock; a read rebuilds the
 /// aggregate, which is not `Clone`. `Clone` lets a unit stage the map,
 /// `PartialEq` lets [`crate::merge_map`] tell an untouched row from a written one.
+/// Its name and level live on its node, in the node map.
 #[derive(Clone, PartialEq)]
 pub(crate) struct StoredCommission {
     /// The commission's own node: a top-level `commission` node whose segment is its id.
     pub(crate) node_id: NodeId,
-    /// The commission's Title as the store holds it — the pg `title` text
-    /// column's mirror, so a load never re-checks it.
-    pub(crate) title: StoredText,
     /// The User who created it — the permanent owner.
     pub(crate) owner_id: UserId,
     /// Its single [`LifecycleStep`]; a freshly created commission is `Draft`.
     pub(crate) lifecycle_step: LifecycleStep,
-    /// Who may see it; a freshly created commission is [`Level::Private`].
-    pub(crate) visibility: Level,
     /// The nullable-but-fixed deadline envelope field.
     pub(crate) deadline: Option<domain::datetime::DateTimeUtc>,
     /// The maturity posture, or `None` while unrated; one field, so pg's
@@ -239,17 +233,18 @@ pub(crate) struct StoredCommission {
     pub(crate) created_at: domain::datetime::DateTimeUtc,
 }
 
-impl StoredCommission {
-    /// The listing's slim projection of this row, keyed by `id`.
-    fn summarize(&self, id: CommissionId) -> CommissionSummary {
-        CommissionSummary {
-            id,
-            title: self.title.clone(),
-            visibility: self.visibility,
-            archived: self.archived_at.is_some(),
-        }
+/// The listing's slim projection of commission `id`: its node's name and level, and whether
+/// it is archived.
+fn summarize(id: CommissionId, archived: bool, node: &NodeRow) -> CommissionSummary {
+    CommissionSummary {
+        id,
+        title: node.name.clone(),
+        visibility: node.level,
+        archived,
     }
+}
 
+impl StoredCommission {
     /// Rebuild the aggregate from its stored parts.
     fn rebuild(&self, id: CommissionId) -> Commission {
         // Late is derived fresh at lookup, never persisted; the stored
@@ -262,10 +257,8 @@ impl StoredCommission {
         );
         Commission {
             id,
-            title: self.title.clone(),
             owner_id: self.owner_id.clone(),
             lifecycle_step: self.lifecycle_step.clone(),
-            visibility: self.visibility,
             deadline: self.deadline,
             maturity: self.maturity,
             direction_status: self.direction_status,
@@ -848,26 +841,37 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Replace the stored title on this unit's staging snapshot; `false` when the
-    /// title is already the one stored, or the commission is absent.
+    /// Rename the commission's node, the one it points at, on this unit's staging
+    /// snapshot; `false` when the node already holds that name, or the commission or its
+    /// node is absent.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_title(
         &mut self,
         id: &CommissionId,
         title: &CommissionTitle,
     ) -> anyhow::Result<bool> {
-        let mut commissions = self
+        let bound = self
             .0
             .commissions
             .lock()
-            .expect("MemBackend commissions mutex poisoned");
-        let Some(stored) = commissions.get_mut(id) else {
+            .expect("MemBackend commissions mutex poisoned")
+            .get(id)
+            .map(|stored| stored.node_id);
+        let Some(node_id) = bound else {
             return Ok(false);
         };
-        if stored.title.as_str() == title.as_ref() {
+        let mut nodes = self
+            .0
+            .nodes
+            .lock()
+            .expect("MemBackend nodes mutex poisoned");
+        let Some(node) = nodes.get_mut(&node_id) else {
+            return Ok(false);
+        };
+        if node.name.as_str() == title.as_ref() {
             return Ok(false);
         }
-        stored.title = StoredText::from(title.clone());
+        node.name = StoredText::from(title.clone());
         Ok(true)
     }
 
@@ -1108,13 +1112,31 @@ impl CommissionReads for MemCommissionWrites<'_> {
         MemCommissionStore(self.0.clone()).find(id).await
     }
 
-    /// [`CommissionStore::standing`] over the unit's staged maps; there is no row to lock.
+    /// [`CommissionStore::standing`] over the unit's staged maps; there is no row to lock. A
+    /// commission whose node the unit doesn't hold answers `None`, as the locked join does.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn standing_for_update(
         &mut self,
         commission: &CommissionId,
         user: &UserId,
     ) -> anyhow::Result<Option<CommissionStanding>> {
+        let bound = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned")
+            .get(commission)
+            .map(|stored| stored.node_id);
+        let has_its_node = bound.is_some_and(|node_id| {
+            self.0
+                .nodes
+                .lock()
+                .expect("MemBackend nodes mutex poisoned")
+                .contains_key(&node_id)
+        });
+        if !has_its_node {
+            return Ok(None);
+        }
         MemCommissionStore(self.0.clone())
             .standing(commission, user)
             .await
@@ -1168,21 +1190,35 @@ impl CommissionStore for MemCommissionStore {
         Ok(commissions.get(&id).map(|stored| stored.rebuild(id)))
     }
 
-    /// The listing's slim projection of the commission `id` names, or `None`.
+    /// The listing's slim projection of the commission `id` names, its name and level read
+    /// from the node it points at, or `None` when there is no such commission or node.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>> {
         let id = *id;
-        let commissions = self
+        let found = self
             .0
             .commissions
             .lock()
-            .expect("MemBackend commissions mutex poisoned");
-        Ok(commissions.get(&id).map(|stored| stored.summarize(id)))
+            .expect("MemBackend commissions mutex poisoned")
+            .get(&id)
+            .map(|stored| (stored.node_id, stored.archived_at.is_some()));
+        let Some((node_id, archived)) = found else {
+            return Ok(None);
+        };
+        let nodes = self
+            .0
+            .nodes
+            .lock()
+            .expect("MemBackend nodes mutex poisoned");
+        let summary = nodes
+            .get(&node_id)
+            .map(|node| summarize(id, archived, node));
+        Ok(summary)
     }
 
-    /// The viewer's role, the commission's level and its archive flag, or `None` for an
-    /// absent commission: Owner when `user` owns it, else Participant when they hold a
-    /// participant row, else no role.
+    /// The viewer's role, the level of the node the commission points at (Private when
+    /// that node is absent) and its archive flag, or `None` for an absent commission: Owner
+    /// when `user` owns it, else Participant when they hold a participant row, else no role.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn standing(
         &self,
@@ -1197,12 +1233,19 @@ impl CommissionStore for MemCommissionStore {
                 .expect("MemBackend commissions mutex poisoned");
             commissions.get(commission).map(|stored| {
                 let owns = stored.owner_id == *user;
-                (owns, stored.visibility, stored.archived_at.is_some())
+                (owns, stored.node_id, stored.archived_at.is_some())
             })
         };
-        let Some((owns, level, archived)) = facets else {
+        let Some((owns, node_id, archived)) = facets else {
             return Ok(None);
         };
+        let level = self
+            .0
+            .nodes
+            .lock()
+            .expect("MemBackend nodes mutex poisoned")
+            .get(&node_id)
+            .map_or(Level::Private, |node| node.level);
         let participates = self
             .0
             .participants
@@ -1483,27 +1526,43 @@ impl CommissionStore for MemCommissionStore {
     }
 
     /// Scan the participant map for `user`'s memberships and summarize each
-    /// commission, archived ones included. Sorted by [`CommissionId`] (UUIDv7,
-    /// so creation order), since the `HashMap` scan has no natural order.
+    /// commission from the node it points at, archived ones included; one whose node is
+    /// absent is left out. Sorted by [`CommissionId`] (UUIDv7, so creation order), since
+    /// the `HashMap` scan has no natural order.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn list_participating(&self, user: &UserId) -> anyhow::Result<Vec<CommissionSummary>> {
-        let participants = self
+        let memberships: Vec<(CommissionId, NodeId, bool)> = {
+            let participants = self
+                .0
+                .participants
+                .lock()
+                .expect("MemBackend participants mutex poisoned");
+            let commissions = self
+                .0
+                .commissions
+                .lock()
+                .expect("MemBackend commissions mutex poisoned");
+            participants
+                .keys()
+                .filter(|(_, member)| member == user)
+                .filter_map(|(commission, _)| {
+                    commissions
+                        .get(commission)
+                        .map(|stored| (*commission, stored.node_id, stored.archived_at.is_some()))
+                })
+                .collect()
+        };
+        let nodes = self
             .0
-            .participants
+            .nodes
             .lock()
-            .expect("MemBackend participants mutex poisoned");
-        let commissions = self
-            .0
-            .commissions
-            .lock()
-            .expect("MemBackend commissions mutex poisoned");
-        let mut found: Vec<CommissionSummary> = participants
-            .keys()
-            .filter(|(_, member)| member == user)
-            .filter_map(|(commission, _)| {
-                commissions
-                    .get(commission)
-                    .map(|stored| stored.summarize(*commission))
+            .expect("MemBackend nodes mutex poisoned");
+        let mut found: Vec<CommissionSummary> = memberships
+            .into_iter()
+            .filter_map(|(commission, node_id, archived)| {
+                nodes
+                    .get(&node_id)
+                    .map(|node| summarize(commission, archived, node))
             })
             .collect();
         found.sort_by_key(|summary| uuid::Uuid::from(summary.id));
@@ -1722,6 +1781,35 @@ impl MemBackend {
             .collect())
     }
 
+    /// A commission's summary, its name and level read from its node (inspect helper over
+    /// [`CommissionStore::find_summary`]).
+    pub async fn commission_summary(
+        &self,
+        id: CommissionId,
+    ) -> anyhow::Result<Option<CommissionSummary>> {
+        MemCommissionStore(self.clone()).find_summary(&id).await
+    }
+
+    /// The id of a stored commission whose node is named `title`, or `None` (inspect helper);
+    /// with several so named, any one of them.
+    pub async fn commission_titled(&self, title: &str) -> anyhow::Result<Option<CommissionId>> {
+        let bindings: Vec<(CommissionId, NodeId)> = self
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned")
+            .iter()
+            .map(|(id, stored)| (*id, stored.node_id))
+            .collect();
+        let nodes = self.nodes.lock().expect("MemBackend nodes mutex poisoned");
+        let found = bindings.into_iter().find_map(|(id, node_id)| {
+            nodes
+                .get(&node_id)
+                .is_some_and(|node| node.name.as_str() == title)
+                .then_some(id)
+        });
+        Ok(found)
+    }
+
     /// A commission's changelog entries in stream order (inspect helper).
     pub async fn changelog_entries(
         &self,
@@ -1743,16 +1831,23 @@ impl MemBackend {
         MemCommissionStore(self.clone()).slots(&commission).await
     }
 
-    /// Overwrite a stored commission title with raw text (test-only seeder),
-    /// standing in for a row written under an older title rule. Panics if
-    /// `commission` is not stored.
+    /// Overwrite the name of a stored commission's node with raw text (test-only seeder),
+    /// standing in for a name written under an older rule. Panics if `commission` or its
+    /// node is not stored.
     pub fn seed_stored_title(&self, commission: CommissionId, title: &str) {
-        self.commissions
+        let node_id = self
+            .commissions
             .lock()
             .expect("MemBackend commissions mutex poisoned")
-            .get_mut(&commission)
+            .get(&commission)
             .expect("seed_stored_title: no such commission")
-            .title = StoredText::from(title.to_owned());
+            .node_id;
+        self.nodes
+            .lock()
+            .expect("MemBackend nodes mutex poisoned")
+            .get_mut(&node_id)
+            .expect("seed_stored_title: the commission has no node")
+            .name = StoredText::from(title.to_owned());
     }
 
     /// Overwrite a stored commission's lifecycle step (test-only seeder): a create is born
