@@ -42,7 +42,7 @@
     },
     {
       "name": "src/den.rs",
-      "role": "the den route suites' readers, shared by the in-memory and PostgreSQL setups: get, ok_json, cache_control, entry_names, PRIVATE_NO_STORE and Answer (status, every header but date, body bytes)",
+      "role": "the den route suites' readers, shared by the in-memory and PostgreSQL setups: get, patch_title (PATCH with a title body), ok_json, cache_control, entry_names, PRIVATE_NO_STORE and Answer (status, every header but date, body bytes)",
       "node": false
     },
     {
@@ -122,7 +122,7 @@
     },
     {
       "name": "src/pg_app/pairs.rs",
-      "role": "the pairs of not-found causes on the den world, shared by the route, read and statement suites and the timing run: MissPair (absent, not_yours, home), stranger_targets (Untitled Private live; Old sketch Private, Public and Listed archived); the den routes' den_stranger_pairs (the commission, its changelog, its file), den_account_pair, den_character_pair (bob's user DID stands in: no Character on PostgreSQL yet) and den_participant_pairs (a file key, a slot, a Workflow); commission's commission_read_stranger_pairs, commission_read_live_pairs (with each pair's problem code), public_live_download_pair and download_participant_pair",
+      "role": "the pairs of not-found causes on the den world, shared by the route, read and statement suites and the timing run: MissPair (absent, not_yours, home), stranger_targets (Untitled Private live; Old sketch Private, Public and Listed archived); the den routes' den_stranger_pairs (the commission, its changelog, its file), den_account_pair, den_character_pair (bob's user DID stands in: no Character on PostgreSQL yet) and den_participant_pairs (a file key, a slot, a Workflow); commission's commission_read_stranger_pairs, commission_read_live_pairs (with each pair's problem code), public_live_download_pair and download_participant_pair; the rename's rename_stranger_pair (PATCH …/title with RENAME_TITLE: a made-up id against alice's Old sketch, which bob takes no part in)",
       "node": false
     },
     {

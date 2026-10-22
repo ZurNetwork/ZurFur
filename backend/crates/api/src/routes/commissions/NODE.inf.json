@@ -91,7 +91,7 @@
     },
     {
       "name": "rename.rs",
-      "role": "PATCH /{id}/title → commission::rename, owner-only; the path's id wins over the body's; answers the renamed row read back by id, rendered into RenameCommissionResponse; the title is parsed before anyone's standing is checked, so a refused title → 422 with a field error at #/title for anyone, a Participant who isn't the owner included",
+      "role": "PATCH /{id}/title → commission::rename, owner-only; the path's id wins over the body's; answers the commission as the write left it, read by the gate's lent view in the write's unit, rendered into RenameCommissionResponse; the title is parsed before anyone's standing is checked, so a refused title → 422 with a field error at #/title for anyone, a Participant who isn't the owner included",
       "node": false
     },
     {

@@ -1,11 +1,13 @@
-//! What the Den's write logs on PostgreSQL, at trace, four ways: the owner's rename, a
-//! stranger's, a Participant's (a rename needs the Owner), and a create on a taken segment. No
-//! DID or handle at info or above, no name anywhere, and nothing of PostgreSQL's detail.
+//! What the Den's write logs on PostgreSQL, at trace, five ways: the owner's rename, a
+//! stranger's, a Participant's (a rename needs the Owner), a create on a taken segment, and a
+//! create whose store failure the gate latches. No DID or handle at info or above, no name
+//! anywhere, and nothing of PostgreSQL's detail.
 
 use std::sync::Arc;
 
 use domain::elements::{
     commission::{CommissionRole, CommissionStanding},
+    did::Did,
     level::Level,
 };
 use test_support::{
@@ -30,8 +32,26 @@ const STRANGER: &str = "did:plc:den-write-log-stranger";
 /// A Participant's DID, their standing scripted on the pool.
 const PARTICIPANT: &str = "did:plc:den-write-log-participant";
 
+/// A DID no user row holds: a create as them breaks the commission's owner key.
+const GHOST: &str = "did:plc:den-write-log-ghost";
+
+/// The commission's owner key, which the lent create's insert breaks for [`GHOST`].
+const OWNER_KEY: &str = "commission_owner_id_fkey";
+
 /// The new name the owner gives, which no line may carry.
 const SECRET_NAME: &str = "Quiet secret title";
+
+/// A log capture at trace, and the guard that makes it this thread's subscriber.
+fn capture_at_trace() -> (CapturedLog, tracing::subscriber::DefaultGuard) {
+    let log = CapturedLog::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .with_writer(log.clone())
+        .finish();
+    let guard = tracing::subscriber::set_default(subscriber);
+    (log, guard)
+}
 
 #[tokio::test]
 async fn the_write_path_logs_no_identity_no_name_and_no_store_detail() {
@@ -48,13 +68,7 @@ async fn the_write_path_logs_no_identity_no_name_and_no_store_detail() {
     };
     script.answer_standing(commission, participant.clone(), Some(participant_standing));
     ports.commissions = Arc::new(ScriptedStanding::new(ports.commissions.clone(), script));
-    let log = CapturedLog::default();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .with_ansi(false)
-        .with_writer(log.clone())
-        .finish();
-    let _guard = tracing::subscriber::set_default(subscriber);
+    let (log, _guard) = capture_at_trace();
 
     let renamed = write(&ports, &owner, rename_act(commission, SECRET_NAME)).await;
     let unseen = write(&ports, &stranger, rename_act(commission, SECRET_NAME)).await;
@@ -96,6 +110,41 @@ async fn the_write_path_logs_no_identity_no_name_and_no_store_detail() {
                     "an info line carries {identity}: {line}"
                 );
             }
+        }
+    }
+}
+
+// PostgreSQL refuses the commission's insert on its owner key with a DETAIL naming the DID.
+// The latch keeps that failure only as the write error's source, which holds the DETAIL; the
+// log, at every level, holds neither it nor the DID.
+#[tokio::test]
+async fn a_latched_store_failure_logs_no_store_detail_and_no_did() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let ghost = UserId::from(Did::from(GHOST.to_owned()));
+    let (log, _guard) = capture_at_trace();
+
+    let written = write(&ports, &ghost, create_act(SECRET_NAME)).await;
+
+    assert!(
+        matches!(written, Err(DenWriteError::Store(_))),
+        "{written:?}"
+    );
+    let kept = format!("{written:#?}");
+    for detail in [OWNER_KEY, "Key (", GHOST] {
+        assert!(
+            kept.contains(detail),
+            "the error's source lost {detail}: {kept}"
+        );
+    }
+    let text = log.text();
+    assert!(
+        text.contains("use case finished"),
+        "the capture saw nothing: {text}"
+    );
+    for line in text.lines() {
+        for leak in ["Key (", "DETAIL", GHOST, "did:plc:", SECRET_NAME] {
+            assert!(!line.contains(leak), "a line carries {leak}: {line}");
         }
     }
 }

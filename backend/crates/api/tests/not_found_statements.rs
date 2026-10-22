@@ -1,19 +1,20 @@
 //! Each pair of not-found causes at the same depth (absent; present but not the viewer's) runs
 //! the same SQL statements in the same order on PostgreSQL, through the den routes and through
-//! commission's reads behind den's check, with the profile cache warm and then cold. The
-//! statements are read off the wire by the recording proxy; only bound values may differ.
+//! commission's reads behind den's check, with the profile cache warm and then cold, and
+//! through the rename and the board card's placement. The statements are read off the wire by
+//! the recording proxy; only bound values may differ.
 //! Requires a container runtime socket.
 
 use domain::elements::did::Did;
 use strum::VariantArray as _;
 use test_support::{
-    den::get,
+    den::{get, patch_title},
     pg_app::{
-        self, COMMISSION_NOT_FOUND, DenWorld, MissPair, ProfileCacheState, Statement, StatementLog,
-        absent_commission, archived_participant_pairs, commission_read_live_pairs,
+        self, COMMISSION_NOT_FOUND, DenWorld, MissPair, ProfileCacheState, RENAME_TITLE, Statement,
+        StatementLog, absent_commission, archived_participant_pairs, commission_read_live_pairs,
         commission_read_stranger_pairs, den_account_pair, den_character_pair,
         den_participant_pairs, den_stranger_pairs, den_stranger_targets, download_participant_pair,
-        stranger_targets,
+        rename_stranger_pair, stranger_targets,
     },
 };
 
@@ -45,6 +46,10 @@ const NEVER_FOR_A_MISSING_FILE: [&str; 3] = ["commission/find_file", "file/filen
 /// What placing a card reads of a commission the actor can't see, and all of it: the
 /// actor's standing, then the actor's own view grant.
 const BOARD_CARD_CHECK: [&str; 2] = ["commission/standing", "commission/view_grant"];
+
+/// Everything a rename by someone outside the commission runs, and all of it: the session's
+/// load, then the actor's standing, read on the pool before any unit opens.
+const RENAME_MISS: [&str; 2] = ["session/load", "commission/standing"];
 
 /// The profile cache's read, by DID.
 const PROFILE_GET: &str = "profile/get";
@@ -487,4 +492,41 @@ async fn a_participant_s_board_card_reads_what_a_miss_reads() {
     let placed = placement_statements(&recorded, &bob, world.untitled.id, column, 204).await;
 
     assert_eq!(commission_data(&placed), BOARD_CARD_CHECK);
+}
+
+/// The statements `PATCH {path}` with [`RENAME_TITLE`] runs as `reader`, after checking it is a
+/// `404`.
+async fn rename_statements(recorded: &Recorded, reader: &Reader<'_>, path: &str) -> Vec<Statement> {
+    let mark = recorded.statements.mark();
+    let response = patch_title(reader.client, recorded.world.base_url(), path, RENAME_TITLE).await;
+    assert_eq!(response.status(), 404, "{path}");
+    let statements = recorded.statements.since(mark);
+    let unreadable = statements.iter().any(Statement::is_unreadable);
+    assert!(!unreadable, "{path}: {:?}", names(&statements));
+    statements
+}
+
+/// Whether `statement` opens a transaction.
+fn begins(statement: &Statement) -> bool {
+    let words = statement.sql.trim_start().to_ascii_uppercase();
+    words.starts_with("BEGIN") || words.starts_with("START TRANSACTION")
+}
+
+#[tokio::test]
+async fn a_stranger_s_rename_and_a_made_up_id_s_run_the_same_statements() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let bob = bob(world);
+    let pair = rename_stranger_pair(world);
+
+    // bob takes no part in "Old sketch".
+    let not_yours = rename_statements(&recorded, &bob, &pair.not_yours).await;
+    let absent = rename_statements(&recorded, &bob, &pair.absent).await;
+
+    for (cause, statements) in [("not yours", &not_yours), ("absent", &absent)] {
+        assert_eq!(names(statements), RENAME_MISS, "{cause}");
+        let opened = statements.iter().find(|statement| begins(statement));
+        assert_eq!(opened, None, "{cause}: a unit opened");
+    }
+    assert_eq!(texts(&absent), texts(&not_yours));
 }

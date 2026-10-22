@@ -1,13 +1,13 @@
 //! `POST /commissions` and `PATCH /commissions/{id}/title` on the PostgreSQL stores over the
 //! den world: each answers the commission as stored, a Participant who isn't the owner can't
-//! rename, and someone outside the commission gets the answer a made-up id gets. Requires a
-//! container runtime socket.
+//! rename, and someone outside the commission gets the answer a made-up id gets, which is
+//! also the answer their changelog read gets. Requires a container runtime socket.
 
 use chrono::{DateTime, Utc};
 use domain::elements::commission::CommissionId;
 use serde_json::{Value, json};
 use test_support::{
-    den::Answer,
+    den::{Answer, get},
     pg_app::{self, DenWorld, absent_commission},
 };
 
@@ -214,5 +214,27 @@ async fn bob_s_rename_of_alice_s_commission_answers_like_a_made_up_id() {
     assert_eq!(absent.status, 404);
     let problem: Value = serde_json::from_slice(&absent.body).expect("a JSON body");
     assert_eq!(problem["code"], "commission_not_found");
+    assert_eq!(problem.get("instance"), None, "the problem names no path");
+    assert_eq!(stored(&world, old_sketch).await.title, "Old sketch");
+}
+
+// The rename and the changelog read share one not-found, so a stranger can't learn more by
+// writing than by reading.
+#[tokio::test]
+async fn bob_s_rename_answers_as_his_changelog_read_does() {
+    let world = pg_app::den_world(api::app).await;
+    let old_sketch = world.old_sketch.id;
+    let changelog_path = format!("/commissions/{old_sketch}/changelog");
+
+    let renamed = rename(&world, &world.bob, old_sketch, "Bob's now").await;
+    let read = get(&world.bob, world.base_url(), &changelog_path).await;
+
+    let renamed = Answer::read(renamed).await;
+    let read = Answer::read(read).await;
+    assert_eq!(renamed, read);
+    assert_eq!(read.status, 404);
+    let problem: Value = serde_json::from_slice(&read.body).expect("a JSON body");
+    assert_eq!(problem["code"], "commission_not_found");
+    assert_eq!(problem.get("instance"), None, "the problem names no path");
     assert_eq!(stored(&world, old_sketch).await.title, "Old sketch");
 }
