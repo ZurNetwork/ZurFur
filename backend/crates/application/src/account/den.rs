@@ -1,14 +1,16 @@
 //! Identity's arm of the Den for an Account's directory: the node at `/account/<did>` and
 //! the folders inside it that identity answers for.
 
-use domain::elements::account::{Account, AccountId};
+use domain::elements::{
+    account::{Account, AccountId},
+    name::NodeName,
+};
 
 use crate::{
     account::workflow::den::WorkflowPlace,
     commission::den::CommissionPlace,
     den::{
-        DenContext, DenMount, DenType, Level, Node, NodeName, NodeState, Place, STANDING, Segment,
-        TopLevel,
+        DenContext, DenMount, DenType, Level, Node, NodeState, Place, STANDING, Segment, TopLevel,
         names::{self, CHARACTERS, COMMISSIONS, WORKFLOWS},
     },
     user::den::system_folder,

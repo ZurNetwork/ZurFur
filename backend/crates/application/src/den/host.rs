@@ -20,8 +20,8 @@ use crate::{
     user,
 };
 use atta::{
-    Access, Admission, Found, Host, HostError, Kind, Level, Metadata, Mount, Reach, RealPath,
-    Segment, Type, Viewer,
+    Access, Admission, DisplayName, Found, Host, HostError, Kind, Level, Metadata, Mount, Reach,
+    RealPath, Segment, Type, Viewer,
 };
 use domain::elements::{
     account::AccountId, character::CharacterId, commission::CommissionId, did::Did, user::UserId,
@@ -126,19 +126,24 @@ impl<'a> DenHost<'a> {
 
     /// The engine's answer for an arm's node in the folder `parent` at `parent_path`, recorded
     /// under its real path; `None` when its place can't be a child of that folder or makes no
-    /// key.
+    /// key. The one place a name enters the engine: the arm's name already passed the rule.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one construction of the engine's display name, from a name the rule passed"
+    )]
     fn found(&self, parent_path: &RealPath, parent: &Parent, node: Node) -> Option<Found> {
         if !node.place.is_child_of(parent) {
             return None;
         }
         let parent = parent_path;
         let key = node.place.key()?;
+        let name = DisplayName::host_checked(node.name.to_string());
         let metadata = Metadata {
             key: key.clone(),
             parent: Some(parent.clone()),
             typ: type_key(node.place.den_type()),
             level: node.level,
-            name: node.name,
+            name,
             symlink_target: None,
         };
         let recorded = Recorded {

@@ -660,7 +660,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "D1 a library below application, reached through one host trait answered by an exhaustive match; D2 keys are path segments and identity is the real path; D3 standing on the real subtree; D5 entry levels; D21–D24 one not-found, no stored level means Private, the mount guard, opaque page tokens; D23 one folder never shows two entries with the same name: ordinal.rs and list.rs number equal names at read time, per viewer; D24 the listing order"
+      "governs": "D1 a library below application, reached through one host trait answered by an exhaustive match; D2 keys are path segments and identity is the real path; D3 standing on the real subtree; D5 entry levels; D21–D24 one not-found, no stored level means Private, the mount guard, opaque page tokens; D23 one folder never shows two entries with the same name: ordinal.rs and list.rs number equal names at read time, per viewer; D24 the listing order; D19 (amended 2026-10-15) Atta takes names its host already checked: metadata.rs's DisplayName holds no rule"
     }
   ],
   "backend/crates/cli": [
@@ -887,6 +887,11 @@
       "page": 64290818,
       "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
       "governs": "newtype derive rules: path-qualified derives, thiserror owns errors, Deref dropped, FromStr/From derived only where the inner type carries the rule, IdError retired; strum allowed here exact-pinned with token tests; dev-dep proptest — StringBuilder properties beside their leaf (x/proptests.rs)"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "src/elements/name.rs: D19 names are validated (amended 2026-10-15: the rule lives in the domain, the checked value every name type wraps) — ShowableName and NodeName"
     }
   ],
   "backend/crates/shared": [

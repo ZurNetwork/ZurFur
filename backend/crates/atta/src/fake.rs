@@ -6,8 +6,8 @@ use std::{
 };
 
 use crate::{
-    Access, Admission, Entry, Found, Host, HostError, Kind, Level, Lift, Metadata, Mount, NodeName,
-    Reach, RealPath, Relationship, Scope, Segment, Type, View, Viewer,
+    Access, Admission, DisplayName, Entry, Found, Host, HostError, Kind, Level, Lift, Metadata,
+    Mount, Reach, RealPath, Relationship, Scope, Segment, Type, View, Viewer,
 };
 
 /// One call the fake host received.
@@ -101,7 +101,7 @@ impl FakeHost {
     pub fn node(mut self, at: &str, typ: &str, level: Level, lifts: &[Lift]) -> Self {
         let path = path(at);
         let (key, parent) = path.segments().split_last().expect("a node below the root");
-        let name = NodeName::try_from(format!("name of {key}")).expect("a valid test name");
+        let name = DisplayName::host_checked(format!("name of {key}"));
         let metadata = Metadata {
             key: key.clone(),
             parent: Some(parent.iter().cloned().collect()),
@@ -120,7 +120,7 @@ impl FakeHost {
 
     /// Changes the display name of the node at `at`.
     pub fn named(mut self, at: &str, name: &str) -> Self {
-        let name = NodeName::try_from(name).expect("a valid test name");
+        let name = DisplayName::host_checked(name.to_owned());
         self.found_mut(at).metadata.name = name;
         self
     }

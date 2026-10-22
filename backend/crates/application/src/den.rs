@@ -38,9 +38,7 @@ pub use soft_delete::SoftDelete;
 pub use thing::DenThing;
 
 pub(crate) use atta::Level;
-pub(crate) use atta::NodeName;
 pub(crate) use atta::Segment;
-pub(crate) use atta::ShowableName;
 pub(crate) use context::{DenContext, RootNaming};
 pub(crate) use name::showable_refusal;
 pub(crate) use place::STANDING;

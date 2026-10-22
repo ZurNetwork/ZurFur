@@ -1,6 +1,4 @@
-use domain::elements::account::Account;
-
-use crate::den::ShowableName;
+use domain::elements::{account::Account, name::ShowableName};
 
 /// An Account's name as every Account output serves it: the stored name as the rule for a
 /// name safe to show keeps it, else the Account's handle. The stored name never leaves as-is.

@@ -64,7 +64,7 @@ impl Files<'_> {
             .ok_or(CommissionError::FileBlobMissing)?;
         // The Den has no node for a file it can't name, so neither has the download.
         let save_name = names::stored_name(result.metadata.filename.as_str())
-            .map(DenName::new)
+            .map(DenName::from)
             .ok_or(CommissionError::FileNotFound)?;
 
         Ok(Output { result, save_name })

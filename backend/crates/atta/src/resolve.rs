@@ -1,5 +1,5 @@
 use crate::{
-    Access, Admission, Found, Host, HostError, Kind, Level, Lift, NameOrdinal, NodeName, Reach,
+    Access, Admission, DisplayName, Found, Host, HostError, Kind, Level, Lift, NameOrdinal, Reach,
     RealPath, Relationship, Scope, Segment, Type, Via, Viewer,
 };
 
@@ -56,7 +56,7 @@ pub enum View {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     /// Its display name; a mount shows its target's.
-    pub name: NodeName,
+    pub name: DisplayName,
     /// Its type; a mount shows its target's.
     pub typ: Type,
     /// Whether it is one of the viewer's mounts rather than a real child of its folder.

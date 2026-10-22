@@ -1,4 +1,5 @@
-use atta::{Level, Lift, NodeName, RealPath, Relationship, Scope, Segment};
+use atta::{Level, Lift, RealPath, Relationship, Scope, Segment};
+use domain::elements::name::NodeName;
 
 use crate::{
     account::{den::AccountPlace, workflow::den::WorkflowPlace},

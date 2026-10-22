@@ -1,3 +1,6 @@
+//! The rule for a name safe to show, [`ShowableName`], and a node's display name, [`NodeName`]:
+//! a name safe to show with no `/`.
+
 use std::{ops::RangeInclusive, str::FromStr};
 
 use combining_marks::is_combining_mark;

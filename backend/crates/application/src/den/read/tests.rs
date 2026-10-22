@@ -1,8 +1,7 @@
 use std::{collections::HashMap, str::FromStr, sync::Mutex};
 
 use atta::{
-    Access, Admission, Found, HostError, Lift, Metadata, Mount, NodeName, Reach, Relationship,
-    Scope, Type,
+    Access, Admission, Found, HostError, Lift, Metadata, Mount, Reach, Relationship, Scope, Type,
 };
 use domain::elements::commission::CommissionId;
 use uuid::Uuid;
@@ -19,6 +18,15 @@ fn path(text: &str) -> RealPath {
         .filter(|piece| !piece.is_empty())
         .map(segment)
         .collect()
+}
+
+/// `text` as the engine's display name, as a host hands it over.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a test double stands in for the host's one construction site"
+)]
+fn display_name(text: &str) -> DisplayName {
+    DisplayName::host_checked(text.to_owned())
 }
 
 fn pieces(texts: &[&str]) -> Vec<String> {
@@ -99,7 +107,7 @@ impl FakeHost {
             parent: Some(parent.iter().cloned().collect()),
             typ: Type::from(den_type.to_string()),
             level,
-            name: NodeName::try_from(format!("name of {key}")).expect("a valid test name"),
+            name: display_name(&format!("name of {key}")),
             symlink_target: None,
         };
         let found = Found {
@@ -513,7 +521,7 @@ async fn a_mounted_crumb_carries_its_target_s_type() {
 #[test]
 fn a_crumb_of_an_unknown_type_is_a_store_error() {
     let entry = Entry {
-        name: NodeName::try_from("Mystery".to_owned()).expect("a valid test name"),
+        name: display_name("Mystery"),
         typ: Type::from("mystery".to_owned()),
         mount: false,
         view: View::Open {
@@ -528,4 +536,36 @@ fn a_crumb_of_an_unknown_type_is_a_store_error() {
     let crumb = crumb(&entry);
 
     assert!(matches!(crumb, Err(DenError::Store(_))));
+}
+
+#[test]
+fn an_entry_whose_name_fails_the_rule_is_a_store_error() {
+    let refused_text = "Studio\u{202E}gnp.exe";
+    let entry = Entry {
+        name: display_name(refused_text),
+        typ: Type::from(DenType::Commission.to_string()),
+        mount: false,
+        view: View::Card,
+        ordinal: None,
+    };
+    let host = tree();
+    let viewer = Viewer::from("did:plc:alice".to_owned());
+    let reader = Reader::new(&host, viewer, &NothingRecorded, Caps::default());
+    let expected_message = "the den host answered with a name the Den's rule refuses";
+
+    let crumb = crumb(&entry);
+    let node = reader.node(&entry);
+
+    let Err(DenError::Store(crumb_error)) = crumb else {
+        panic!("a crumb whose name fails the rule is a store error");
+    };
+    let Err(DenError::Store(node_error)) = node else {
+        panic!("a node whose name fails the rule is a store error");
+    };
+    for store_error in [crumb_error, node_error] {
+        let whole_chain = format!("{store_error:#}");
+        assert_eq!(store_error.to_string(), expected_message);
+        assert!(!whole_chain.contains("Studio"), "{whole_chain}");
+        assert!(!whole_chain.contains("gnp"), "{whole_chain}");
+    }
 }

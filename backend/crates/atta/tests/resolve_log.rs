@@ -5,8 +5,8 @@
 use std::sync::{Arc, Mutex};
 
 use atta::{
-    Access, Admission, Caps, Found, Host, HostError, Kind, Level, Lift, Metadata, Mount, NodeName,
-    Reach, RealPath, Relationship, Resolver, Scope, Segment, Type, Viewer,
+    Access, Admission, Caps, DisplayName, Found, Host, HostError, Kind, Level, Lift, Metadata,
+    Mount, Reach, RealPath, Relationship, Resolver, Scope, Segment, Type, Viewer,
 };
 use tracing_subscriber::fmt::MakeWriter;
 
@@ -83,7 +83,7 @@ fn node(pieces: &[&str], level: Level, lifts: &[Lift]) -> (RealPath, Found) {
         parent: Some(parent.iter().cloned().collect()),
         typ: Type::from("folder".to_owned()),
         level,
-        name: NodeName::try_from("a node").expect("a valid name"),
+        name: DisplayName::host_checked("a node".to_owned()),
         symlink_target: None,
     };
     let found = Found {

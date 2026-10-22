@@ -5,6 +5,7 @@ use domain::{
     elements::{
         account::{Account, AccountId, AccountName, AccountNameError},
         handle::{Handle, HandleDomain},
+        name::ShowableName,
         user::UserId,
     },
 };
@@ -12,7 +13,7 @@ use domain::{
 use crate::{
     Ports,
     account::{AccountError, AccountResult, Accounts, ServedName, ensure_handle_claimable},
-    den::{DenNameError, ShowableName, showable_refusal},
+    den::{DenNameError, showable_refusal},
 };
 
 pub struct Command {

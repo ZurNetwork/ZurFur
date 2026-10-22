@@ -12,7 +12,7 @@ use std::any::type_name;
 mod element_modules {
     use domain::elements::{
         account, account_keys, achievement, actor_identity, blob, bug_report, character,
-        commission, did, handle, invitation, markdown, maturity, plc_operation, profile,
+        commission, did, handle, invitation, markdown, maturity, name, plc_operation, profile,
         public_record, role, text, user, user_account, workflow,
     };
     use domain::{datetime, string_builder};

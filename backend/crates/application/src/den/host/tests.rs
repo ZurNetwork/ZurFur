@@ -1,5 +1,4 @@
-use atta::NodeName;
-use domain::elements::{commission::CommissionId, did::Did};
+use domain::elements::{commission::CommissionId, did::Did, name::NodeName};
 use uuid::Uuid;
 
 use super::*;
@@ -545,7 +544,7 @@ async fn a_recorded_archived_node_lists_only_when_deleted_nodes_are_asked_for() 
             parent: Some(path(&["commission"])),
             typ: type_key(DenType::Commission),
             level: Level::Private,
-            name: NodeName::try_from("Old sketch").expect("a valid test name"),
+            name: display_name("Old sketch"),
             symlink_target: None,
         };
 
@@ -572,4 +571,13 @@ async fn a_recorded_archived_node_lists_only_when_deleted_nodes_are_asked_for() 
         (true, Admission::Admit, Admission::Admit),
     ];
     assert_eq!(answers, expected);
+}
+
+/// `text` as the engine's display name, as the host hands it over.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a test builds the metadata the host's one construction site would"
+)]
+fn display_name(text: &str) -> DisplayName {
+    DisplayName::host_checked(text.to_owned())
 }

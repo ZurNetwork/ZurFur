@@ -2,8 +2,8 @@
 
 use std::fmt::Display;
 
-use atta::{NodeName, Segment};
-use domain::elements::{did::Did, text::StoredText};
+use atta::Segment;
+use domain::elements::{did::Did, name::NodeName, text::StoredText};
 
 /// A user's folder of Account memberships.
 pub(crate) const ACCOUNTS: &str = "accounts";

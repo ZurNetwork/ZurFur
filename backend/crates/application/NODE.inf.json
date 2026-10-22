@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/application",
-  "charted": "2026-10-17",
+  "charted": "2026-10-22",
   "short": "Use cases: one #[use_case] method each",
   "is": "The application layer (DD 55836674): one `#[use_case]` method per use case on a per-entity namespace (`Accounts`, `Commissions`, `Users`, `Characters`), called by every driver (api, cli), holding orchestration between routing and domain — organized as `account/` and `commission/` entity trees, the flat `user` and `character` modules, the `bug_report` module (the `BugReports` namespace: `file`, a rate-limited filing that locks the reporter and counts inside the unit it files in, and `list`, the reports oldest first), the `den` module (the Den read: the `Den` namespace's Queries over Atta and Zurfur's one Atta host, whose arms live in each owning module's `den.rs`), and the `transaction()` orchestrator for callers that are not use-case methods.",
   "type": "code",
@@ -42,7 +42,7 @@
     },
     {
       "name": "clippy.toml",
-      "role": "disallowed-methods: Database::begin, UnitOfWork::commit, UnitOfWork::rollback and `application::transaction` — only the `#[use_case]` wrapper and `LazyUnit` (and, under an `#[allow]`, `transaction()` callers) may use them",
+      "role": "disallowed-methods: Database::begin, UnitOfWork::commit, UnitOfWork::rollback and `application::transaction` — only the `#[use_case]` wrapper and `LazyUnit` (and, under an `#[allow]`, `transaction()` callers) may use them; atta::DisplayName::host_checked — only DenHost::found (and, under an `#[allow]`, test doubles)",
       "node": false
     },
     {

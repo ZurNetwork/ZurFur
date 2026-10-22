@@ -3,7 +3,10 @@
 
 use std::str::FromStr;
 
-use atta::{Caps, Entry, Host, Kind, Level, RealPath, Resolved, Resolver, Segment, View, Viewer};
+use atta::{
+    Caps, DisplayName, Entry, Host, Kind, Level, RealPath, Resolved, Resolver, Segment, View,
+    Viewer,
+};
 use domain::elements::user::UserId;
 
 use crate::den::{
@@ -48,6 +51,16 @@ fn den_type(entry: &Entry) -> Result<DenType, DenError> {
     })
 }
 
+/// An entry's name, re-checked by the Den's name rule on its way out of the engine; a name
+/// the rule refuses is a broken host. The error never carries the name.
+fn den_name(name: &DisplayName) -> Result<DenName, DenError> {
+    DenName::try_from(name.as_ref()).map_err(|refusal| {
+        let refused_name = anyhow::Error::new(refusal)
+            .context("the den host answered with a name the Den's rule refuses");
+        DenError::Store(refused_name)
+    })
+}
+
 /// A level in the Den's own words.
 fn node_level(level: Level) -> NodeLevel {
     match level {
@@ -78,7 +91,7 @@ fn segments(view: &View) -> Vec<DenSegment> {
 pub(crate) fn crumb(entry: &Entry) -> Result<DenCrumb, DenError> {
     let crumb = DenCrumb {
         segments: segments(&entry.view),
-        name: DenName::new(entry.name.clone()),
+        name: den_name(&entry.name)?,
         name_ordinal: entry.ordinal.map(NameOrdinal::new),
         den_type: den_type(entry)?,
     };
@@ -178,7 +191,7 @@ impl<'h> Reader<'h> {
         };
         let node = DenNode {
             segments: segments(&entry.view),
-            name: DenName::new(entry.name.clone()),
+            name: den_name(&entry.name)?,
             name_ordinal: entry.ordinal.map(NameOrdinal::new),
             den_type,
             mount: entry.mount,
@@ -241,5 +254,7 @@ impl<'h> Reader<'h> {
     }
 }
 
+#[cfg(test)]
+mod proptests;
 #[cfg(test)]
 mod tests;
