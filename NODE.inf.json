@@ -1,6 +1,6 @@
 {
   "path": ".",
-  "charted": "2026-10-19",
+  "charted": "2026-10-22",
   "short": "The Zurfur monorepo: Rust backend, SvelteKit frontend, contract, lexicons",
   "is": "Zurfur — an AT Protocol-native art-commission platform: a Rust ports-and-adapters backend, a SvelteKit frontend, and the protobuf contract + atproto lexicons that sit between them and the network.",
   "type": "code",
@@ -116,7 +116,7 @@
     },
     {
       "name": "docker-compose.yml",
-      "role": "dev stack db/pds/plc/caddy, namespaced by COMPOSE_PROJECT_NAME; caddy-dev-profile (the dev profile's one origin) only under the `dev-profile` compose profile",
+      "role": "dev stack db/pds/plc/caddy, namespaced by COMPOSE_PROJECT_NAME; the db logs errors tersely (no DETAIL line with a failing row's values); caddy-dev-profile (the dev profile's one origin) only under the `dev-profile` compose profile",
       "node": false
     },
     {

@@ -6,6 +6,9 @@ name: ${COMPOSE_PROJECT_NAME:-zurfur}
 services:
   db:
     image: postgres:16-alpine
+    # Terse error logging keeps a failing row's values (such as a taken handle)
+    # out of the server log; the app still gets the full error over the wire.
+    command: ["postgres", "-c", "log_error_verbosity=terse"]
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: password
