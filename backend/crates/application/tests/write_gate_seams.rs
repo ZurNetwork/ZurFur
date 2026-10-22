@@ -4,17 +4,16 @@
 //! nothing else in the gate file reaching the lent view's fields, no compiled source the scans
 //! can't read, the write host and the gate named once each, the write use case kept inside the
 //! crate, nothing of it (and no raw SQL or in-memory seeder) in a driver, no lint silencer in
-//! the den, in commission's acts (derived: every file implementing the gate's handler) or on
-//! the modules above them, every method of the commission write view taking kernel's write
-//! capability in place of the commission's id or named, and none with a default body, the
-//! named writes clippy holds exactly the ones `application`'s clippy settings ban, the
-//! commission field writes not yet gated, frozen, and the commission tables written only by
+//! any production file of the use-case layer, every method of the commission write view taking
+//! kernel's write capability in place of the commission's id or named, and none with a default
+//! body, the named writes clippy holds exactly the ones `application`'s clippy settings ban,
+//! the commission field writes not yet gated, frozen, and the commission tables written only by
 //! the commission write view in each adapter, whatever port a write is called through: in
-//! PostgreSQL, every statement writing a commission table in the commission's query folder,
-//! its generated write functions named only in the write view, and the view built only by
-//! the unit; in memory, the commission map changed only by the write view, the insert path,
-//! the lifecycle seeder and the unit's staging and merge, its rows built only by the insert
-//! path, and the view built only by the unit.
+//! PostgreSQL, every statement writing a commission table in the commission's query folder, its
+//! generated write functions named only in the write view, and the view built only by the unit;
+//! in memory, the commission map changed only by the write view, the insert path, the lifecycle
+//! seeder and the unit's staging and merge, its rows built only by the insert path, and the
+//! view built only by the unit.
 
 mod seams;
 
@@ -2579,10 +2578,10 @@ fn the_scan_reads_every_crate_that_depends_on_composition() {
     );
 }
 
-// No lint silencer in the den, in commission's acts or on the modules above them.
+// No lint silencer in any production file of the use-case layer.
 
-/// The lints nothing in the den's production files or commission's act files may silence:
-/// an item no real act reaches is removed, never silenced. `warnings` silences them all.
+/// The lints no production file of the use-case layer may silence: an item no real act
+/// reaches is removed, never silenced. `warnings` silences them all.
 const SILENCED_LINTS: [&str; 5] = [
     "dead_code",
     "unused",
@@ -2597,71 +2596,28 @@ const SILENCERS: [&str; 2] = ["allow", "expect"];
 /// The attribute that applies others under a condition.
 const CFG_ATTR: &str = "cfg_attr";
 
-/// The gate's handler trait: a file implementing it holds one of the den's acts.
-const HANDLER: &str = "Handler";
-
-/// Commission's files guarded by name though they implement no handler: the act enum's file
-/// and commission's Den arm, relative to the use-case layer's sources.
-const COMMISSION_ACT_FLOOR: [&str; 2] = ["commission/act.rs", "commission/den.rs"];
-
-/// Whether `tokens`, at any depth, hold one of `handlers` followed by `for`, through any generic
-/// arguments: an impl of the gate's handler, under a path or in a macro body alike.
-fn implements_a_handler(tokens: TokenStream, handlers: &BTreeSet<String>) -> bool {
-    levels(tokens).iter().any(|level| {
-        (0..level.len()).any(|at| {
-            let Some(ident) = ident_at(level, at) else {
-                return false;
-            };
-            let after = if punct_at(level, at + 1, '<') {
-                past_generics(level, at + 1)
-            } else {
-                at + 1
-            };
-            handlers.contains(&ident) && ident_at(level, after).as_deref() == Some("for")
-        })
-    })
+/// What the silencer scan of one source tree read and found.
+struct SilencerScan {
+    /// Each file read, relative to the tree's `src`.
+    read: Vec<String>,
+    /// Each silencer found, as `file: silencer`.
+    found: Vec<String>,
 }
 
-/// Every production file under `src` that implements the gate's handler, relative to `src`:
-/// [`HANDLER`], or a name the sources bind to it, followed by `for`.
-fn handler_files(src: &Path) -> BTreeSet<String> {
-    let sources: Vec<(String, String)> = walk(src)
-        .production
-        .iter()
-        .map(|path| {
-            let source = std::fs::read_to_string(path).expect("a readable source");
-            (relative(path, src), source)
-        })
-        .collect();
-    let texts: Vec<String> = sources.iter().map(|(_, source)| source.clone()).collect();
-    let handlers = with_aliases(&[HANDLER], &texts);
-    sources
-        .into_iter()
-        .filter(|(_, source)| {
-            let tokens: TokenStream = source.parse().expect("the source lexes");
-            implements_a_handler(tokens, &handlers)
-        })
-        .map(|(file, _)| file)
-        .collect()
-}
-
-/// Commission's act files under `src`: every file implementing the gate's handler, and
-/// [`COMMISSION_ACT_FLOOR`].
-fn act_files(src: &Path) -> BTreeSet<String> {
-    let mut files = handler_files(src);
-    files.extend(COMMISSION_ACT_FLOOR.map(str::to_owned));
-    files
-}
-
-/// Each silencer in the files `files` names, relative to `src`.
-fn silencer_offenders(src: &Path, files: &[&str]) -> Vec<String> {
-    files
-        .iter()
-        .flat_map(|file| {
-            let source = std::fs::read_to_string(src.join(file)).expect("a readable source");
-            silencer_findings(file, &source)
-        })
-        .collect()
+/// Reads every production file under `src`, the crate root and every module file included,
+/// for a silencer: nothing depends on how a file's code is written or which files hold acts.
+fn silencer_scan(src: &Path) -> SilencerScan {
+    let mut scan = SilencerScan {
+        read: Vec::new(),
+        found: Vec::new(),
+    };
+    for path in walk(src).production {
+        let file = relative(&path, src);
+        let source = std::fs::read_to_string(&path).expect("a readable source");
+        scan.found.extend(silencer_findings(&file, &source));
+        scan.read.push(file);
+    }
+    scan
 }
 
 /// An identifier's text, a raw identifier's `r#` dropped.
@@ -2758,75 +2714,25 @@ fn silencer_findings(file: &str, source: &str) -> Vec<String> {
         .collect()
 }
 
-/// The files above the `guarded` ones (paths relative to the use-case layer's sources) that
-/// aren't guarded themselves, each with the modules it declares on the way down to a guarded
-/// file: `lib.rs` declares a top module, `a.rs` declares `a/b.rs`'s `b`.
-fn ancestor_modules(guarded: &[&str]) -> BTreeMap<String, BTreeSet<String>> {
-    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for file in guarded {
-        let modules: Vec<&str> = file.trim_end_matches(".rs").split('/').collect();
-        for (depth, module) in modules.iter().enumerate() {
-            let parent = match depth {
-                0 => "lib.rs".to_owned(),
-                _ => format!("{}.rs", modules[..depth].join("/")),
-            };
-            if !guarded.contains(&parent.as_str()) {
-                out.entry(parent).or_default().insert((*module).to_owned());
-            }
-        }
-    }
-    out
-}
-
-/// Each silencer in the ancestor module file `file` that reaches a guarded file: an inner one,
-/// which silences the whole file and its modules, or an outer one on the `mod` item declaring
-/// a module in `declared`.
-fn ancestor_silencer_findings(
-    file: &str,
-    source: &str,
-    declared: &BTreeSet<String>,
-) -> Vec<String> {
-    let parsed = syn::parse_file(source).expect("the source parses");
-    let inner: TokenStream = parsed
-        .attrs
-        .iter()
-        .map(|attribute| attribute.to_token_stream())
-        .collect();
-    let mut found = silencers(inner);
-    for item in &parsed.items {
-        let Item::Mod(module) = item else {
-            continue;
-        };
-        if !declared.contains(&unraw(&module.ident)) {
-            continue;
-        }
-        let outer: TokenStream = module
-            .attrs
-            .iter()
-            .map(|attribute| attribute.to_token_stream())
-            .collect();
-        found.extend(silencers(outer));
-    }
-    found
-        .into_iter()
-        .map(|silencer| format!("{file}: {silencer}"))
-        .collect()
-}
-
 #[test]
-fn den_and_commission_hold_no_lint_silencer() {
+fn no_production_source_holds_a_lint_silencer() {
     let src = application_src();
-    let guarded: BTreeSet<String> = den_production()
-        .into_iter()
-        .map(|(file, _)| file)
-        .chain(act_files(&src))
+
+    let scan = silencer_scan(&src);
+
+    assert_eq!(scan.found, Vec::<String>::new());
+    let production: Vec<String> = walk(&src)
+        .production
+        .iter()
+        .map(|path| relative(path, &src))
         .collect();
-    let read: Vec<&str> = guarded.iter().map(String::as_str).collect();
-
-    let offenders = silencer_offenders(&src, &read);
-
-    assert_eq!(offenders, Vec::<String>::new());
+    assert_eq!(
+        scan.read, production,
+        "the scan reads every production file"
+    );
     for file in [
+        "lib.rs",
+        "commission.rs",
         "den.rs",
         GATE_FILE,
         "den/act.rs",
@@ -2835,33 +2741,78 @@ fn den_and_commission_hold_no_lint_silencer() {
         "commission/act.rs",
         "commission/create.rs",
         "commission/rename.rs",
+        "commission/archive.rs",
         "commission/den.rs",
     ] {
-        assert!(read.contains(&file), "the scan reads {file}: {read:?}");
+        assert!(
+            scan.read.iter().any(|read| read == file),
+            "the scan reads {file}: {:?}",
+            scan.read
+        );
     }
-    let ancestors = ancestor_modules(&read);
-    let ancestor_offenders: Vec<String> = ancestors
-        .iter()
-        .flat_map(|(file, declared)| {
-            let source = std::fs::read_to_string(src.join(file)).expect("a readable source");
-            ancestor_silencer_findings(file, &source, declared)
-        })
-        .collect();
-    assert_eq!(ancestor_offenders, Vec::<String>::new());
-    let named = |modules: &[&str]| -> BTreeSet<String> {
-        modules.iter().map(|module| (*module).to_owned()).collect()
-    };
-    let expected_ancestors = BTreeMap::from([
-        (
-            "commission.rs".to_owned(),
-            named(&["act", "create", "den", "rename"]),
-        ),
-        ("lib.rs".to_owned(), named(&["commission", "den"])),
-    ]);
-    assert_eq!(
-        ancestors, expected_ancestors,
-        "the scan reads lib.rs and commission.rs"
+}
+
+#[test]
+fn a_silencer_is_found_in_any_production_file_however_its_acts_are_written() {
+    let library = "#[allow(dead_code)]\nmod bystander;\nmod commission;\nmod den;\n#[cfg(test)]\nmod test_world;\n";
+    let stamping = "macro_rules! read_back_handler {\n    ($act:ident) => {\n        impl crate::den::Handler for $act {}\n    };\n}\n\npub(crate) use read_back_handler;\n";
+    let stamped = "pub(crate) struct Archive;\n\ncrate::commission::act::read_back_handler!(Archive);\n\n#[allow(dead_code)]\nfn never_back_to_draft() -> bool {\n    false\n}\n";
+    let blanket =
+        "pub(crate) trait FieldAct {}\n\nimpl<T: FieldAct> crate::den::Handler for T {}\n";
+    let field_act = "pub(crate) struct Rename;\n\nimpl crate::commission::field::FieldAct for Rename {}\n\n#[expect(unused_variables)]\nfn later(name: &str) {}\n";
+    let in_a_body = "pub(crate) struct Planted;\n\nfn hidden() {\n    use crate::den::Handler as Deed;\n    impl Deed for Planted {}\n    #[allow(unreachable_code)]\n    let never = 1;\n}\n";
+    let bystander = "#![allow(warnings)]\n\nfn untouched() {}\n";
+    let test_world = "#[allow(dead_code)]\nfn only_a_test_builds_it() {}\n";
+    let src = fixture_tree(
+        "silencer_scan",
+        &[
+            ("lib.rs", library),
+            ("den.rs", "pub(crate) trait Handler {}\n"),
+            (
+                "commission.rs",
+                "mod act;\nmod archive;\nmod deed;\nmod field;\nmod rename;\n",
+            ),
+            ("commission/act.rs", stamping),
+            ("commission/archive.rs", stamped),
+            ("commission/field.rs", blanket),
+            ("commission/rename.rs", field_act),
+            ("commission/deed.rs", in_a_body),
+            ("bystander.rs", bystander),
+            ("test_world.rs", test_world),
+        ],
     );
+
+    let scan = silencer_scan(&src);
+
+    let mut found = scan.found;
+    found.sort();
+    let expected_found = [
+        "bystander.rs: allow(warnings)",
+        "commission/archive.rs: allow(dead_code)",
+        "commission/deed.rs: allow(unreachable_code)",
+        "commission/rename.rs: expect(unused_variables)",
+        "lib.rs: allow(dead_code)",
+    ];
+    assert_eq!(found, expected_found);
+    let mut read = scan.read;
+    read.sort();
+    let expected_read = [
+        "bystander.rs",
+        "commission.rs",
+        "commission/act.rs",
+        "commission/archive.rs",
+        "commission/deed.rs",
+        "commission/field.rs",
+        "commission/rename.rs",
+        "den.rs",
+        "lib.rs",
+    ];
+    assert_eq!(read, expected_read, "a test-only module is not production");
+}
+
+#[test]
+fn the_silencer_parser_finds_every_spelling() {
+    let sweep = "#[allow(\n    clippy::disallowed_methods,\n    reason = \"the sweep is a system job, not a use-case method\"\n)]\npub async fn sweep_deadlines() {}";
     let refused = [
         "#[allow(dead_code)]\nfn grant_fits() {}",
         "#[expect(dead_code, reason = \"only a test builds it\")]\nenum Anchor { Thing }",
@@ -2879,6 +2830,14 @@ fn den_and_commission_hold_no_lint_silencer() {
         "fn later() { #[allow(unused_variables)] let grant = 1; }",
         "impl Grant { #[expect(dead_code)] fn later(&self) {} }",
         "macro_rules! later { () => { #[allow(dead_code)] fn later() {} }; }",
+        "#![allow(dead_code)]\npub mod den;",
+        "#[allow(dead_code)]\npub mod den;",
+        "#[allow(dead_code)]\nmod values;",
+        "#[expect(unused, reason = \"later\")]\npub mod commission;",
+        "#![cfg_attr(not(test), allow(warnings))]\npub mod account;",
+        "#[cfg_attr(not(test), allow(dead_code))]\npub(crate) mod act;",
+        "#[allow(Dead_Code)]\npub(crate) mod r#den;",
+        "const _: () = {\n    use crate::den::Handler as Deed;\n    #[allow(dead_code)]\n    fn later() {}\n};",
     ];
     for source in refused {
         let found = silencer_findings("den/gate.rs", source);
@@ -2888,8 +2847,11 @@ fn den_and_commission_hold_no_lint_silencer() {
     let kept = [
         "#[allow(clippy::disallowed_methods, reason = \"a test opens its unit\")]\nfn opens() {}",
         "#[expect(clippy::disallowed_methods, reason = \"the gate's one node port\")]\nfn gate() {}",
+        sweep,
         "#[cfg_attr(test, derive(Debug))]\nstruct Grant;",
+        "#[cfg_attr(test, derive(Debug))]\npub mod den;",
         "/// Never `#[allow(dead_code)]` here.\nfn documented() {}",
+        "//! Never `#![allow(dead_code)]` here.\n\npub mod den;",
         "fn named() { let allow = \"dead_code\"; }",
         "#[cfg(test)]\nmod tests;",
     ];
@@ -2898,156 +2860,6 @@ fn den_and_commission_hold_no_lint_silencer() {
 
         assert_eq!(found, Vec::<String>::new(), "{source}");
     }
-}
-
-#[test]
-fn the_act_files_are_every_handler_impl_and_the_floor() {
-    let archive = "pub(crate) struct PlantedArchive;\n\n#[allow(dead_code)]\nfn later() {}\n\nimpl crate::den::Handler for PlantedArchive {}\n";
-    let aliased = "use crate::den::Handler as Act;\n\nstruct Planted;\n\nimpl Act for Planted {}\n";
-    let expanded = "macro_rules! act {\n    ($act:ident) => {\n        impl crate::den::Handler for $act {}\n    };\n}\n\nstruct Planted;\n\nact!(Planted);\n";
-    let generic = "struct Planted<T>(T);\n\nimpl<T> crate::den::Handler<T> for Planted<T> {}\n";
-    let commented = "// impl Handler for Planted {}\n/// impl Handler for Planted {}\nstruct Planted;\n\nconst NOTE: &str = \"impl Handler for Planted {}\";\n";
-    let named = "fn takes(handler: &dyn crate::den::Handler) {}\n";
-    let src = fixture_tree(
-        "act_files",
-        &[
-            ("lib.rs", "mod commission;\nmod den;\n"),
-            ("den.rs", "pub(crate) trait Handler {}\n"),
-            (
-                "commission.rs",
-                "mod aliased;\nmod archive;\nmod commented;\nmod expanded;\nmod generic;\nmod named;\n",
-            ),
-            ("commission/archive.rs", archive),
-            ("commission/aliased.rs", aliased),
-            ("commission/expanded.rs", expanded),
-            ("commission/generic.rs", generic),
-            ("commission/commented.rs", commented),
-            ("commission/named.rs", named),
-        ],
-    );
-
-    let found = handler_files(&src);
-    let read: Vec<&str> = found.iter().map(String::as_str).collect();
-    let offenders = silencer_offenders(&src, &read);
-
-    let expected: BTreeSet<String> = [
-        "commission/aliased.rs",
-        "commission/archive.rs",
-        "commission/expanded.rs",
-        "commission/generic.rs",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect();
-    assert_eq!(found, expected);
-    assert_eq!(offenders, ["commission/archive.rs: allow(dead_code)"]);
-    let with_floor = act_files(&src);
-    for file in [
-        "commission/archive.rs",
-        "commission/act.rs",
-        "commission/den.rs",
-    ] {
-        assert!(with_floor.contains(file), "{file}: {with_floor:?}");
-    }
-}
-
-#[test]
-fn the_modules_above_the_guarded_files_silence_none_of_them() {
-    let library = BTreeSet::from(["commission".to_owned(), "den".to_owned()]);
-    let commission = ["act", "create", "den", "rename"]
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<BTreeSet<String>>();
-    let refused = [
-        ("lib.rs", &library, "#[allow(dead_code)]\npub mod den;"),
-        ("lib.rs", &library, "#![allow(dead_code)]\npub mod den;"),
-        (
-            "lib.rs",
-            &library,
-            "#[expect(unused, reason = \"later\")]\npub mod commission;",
-        ),
-        (
-            "lib.rs",
-            &library,
-            "#![cfg_attr(not(test), allow(warnings))]\npub mod account;",
-        ),
-        (
-            "commission.rs",
-            &commission,
-            "#[cfg_attr(not(test), allow(dead_code))]\npub(crate) mod act;",
-        ),
-        (
-            "commission.rs",
-            &commission,
-            "#[expect(unused)]\npub mod rename;",
-        ),
-        (
-            "commission.rs",
-            &commission,
-            "#[allow(dead_code)]\npub mod create;",
-        ),
-        (
-            "commission.rs",
-            &commission,
-            "#[allow(Dead_Code)]\npub(crate) mod r#den;",
-        ),
-        (
-            "commission.rs",
-            &commission,
-            "#![expect(unused_variables, reason = \"later\")]\npub mod archive;",
-        ),
-    ];
-    for (file, declared, source) in refused {
-        let found = ancestor_silencer_findings(file, source, declared);
-
-        assert_eq!(found.len(), 1, "{file}: {source}: {found:?}");
-    }
-    let sweep = "#[allow(\n    clippy::disallowed_methods,\n    reason = \"the sweep is a system job, not a use-case method\"\n)]\npub async fn sweep_deadlines() {}";
-    let kept = [
-        ("commission.rs", &commission, sweep),
-        (
-            "commission.rs",
-            &commission,
-            "#[allow(dead_code)]\nmod values;",
-        ),
-        ("lib.rs", &library, "#[cfg(test)]\nmod test_world;"),
-        (
-            "lib.rs",
-            &library,
-            "#[cfg_attr(test, derive(Debug))]\npub mod den;",
-        ),
-        (
-            "lib.rs",
-            &library,
-            "//! Never `#![allow(dead_code)]` here.\n\npub mod den;",
-        ),
-    ];
-    for (file, declared, source) in kept {
-        let found = ancestor_silencer_findings(file, source, declared);
-
-        assert_eq!(found, Vec::<String>::new(), "{file}: {source}");
-    }
-    let guarded = [
-        "den.rs",
-        "den/gate.rs",
-        "den/read/walk.rs",
-        "commission/act.rs",
-    ];
-    let expected = BTreeMap::from([
-        (
-            "commission.rs".to_owned(),
-            BTreeSet::from(["act".to_owned()]),
-        ),
-        (
-            "lib.rs".to_owned(),
-            BTreeSet::from(["commission".to_owned(), "den".to_owned()]),
-        ),
-        (
-            "den/read.rs".to_owned(),
-            BTreeSet::from(["walk".to_owned()]),
-        ),
-    ]);
-    assert_eq!(ancestor_modules(&guarded), expected);
 }
 
 // The interim guard: the frozen list.
