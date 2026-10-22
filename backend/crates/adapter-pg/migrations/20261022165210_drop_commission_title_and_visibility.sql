@@ -6,10 +6,11 @@
 -- commission's id alone. No row is written and the table is not rewritten:
 -- PostgreSQL's DROP COLUMN only hides a column. The old values stay in the
 -- commission table's files, where no query or pg_dump returns them but a
--- superuser reading raw pages can, until each row is updated and vacuumed or
--- the table is rewritten. Old row versions, and the dropped columns'
--- statistics rows in pg_statistic, keep copies until vacuumed. Why the file
--- is shaped this way: this crate's NODE.inf.json notes, under this file.
+-- superuser reading raw pages can, until the table is rewritten; an update
+-- and a vacuum free a row's old bytes for reuse but aren't promised to clear
+-- them. Old row versions, and the dropped columns' statistics rows in
+-- pg_statistic, keep copies the same way. Why the file is shaped this way:
+-- this crate's NODE.inf.json notes, under this file.
 
 -- No commission or node is written while the check and the drop run.
 LOCK TABLE commission, node IN SHARE ROW EXCLUSIVE MODE;
