@@ -52,8 +52,9 @@ DROP TRIGGER commission_columns_follow_their_node ON node;
 DROP FUNCTION commission_columns_follow_their_node();
 
 -- Every row has its node, so node_id holds it from here on and the check that
--- stood in for that goes. Nothing depending on a dropped column is dropped
--- with it: anything that did stops the migration.
+-- stood in for that goes. No CASCADE: anything outside the table depending on
+-- a dropped column stops the migration instead of being dropped with it. The
+-- two columns carry no index or constraint of their own.
 ALTER TABLE commission
     ALTER COLUMN node_id SET NOT NULL,
     DROP CONSTRAINT commission_has_its_node,

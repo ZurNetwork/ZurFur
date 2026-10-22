@@ -13,65 +13,21 @@ use adapter_pg::PgPool;
 use sqlx::migrate::MigrateError;
 use uuid::Uuid;
 
-use crate::commission_fill::FILL_VERSION;
-use crate::migration_steps::{
-    bare_pool, run_migrations_before, run_migrations_through, try_run_migrations_through,
+use crate::commission_fill::{
+    FILL_VERSION, LEVEL_TOKENS, commission_node, just_before_den_1, ledger_records, node_id_of,
+    refusal, through_den_1,
 };
-use crate::node_backfill::{DEN_1_VERSION, NodeRow, archive, seed_commission, seed_owner};
+use crate::migration_steps::{bare_pool, run_migrations_through, try_run_migrations_through};
+use crate::node_backfill::{DEN_1_VERSION, archive, seed_commission};
 
 /// The commission column drop's migration, as sqlx numbers it.
 const DROP_VERSION: i64 = 20261022165210;
-
-/// The three level tokens.
-const LEVEL_TOKENS: [&str; 3] = ["private", "listed", "public"];
 
 /// The title every planted row of the refusal-text test carries.
 const CANARY_TITLE: &str = "A distinctive commission title";
 
 /// The title the title plant of the refusal-text test sets apart from the node's name.
 const CANARY_APART: &str = "A distinctive title set apart";
-
-/// A fresh database migrated up to just before the node table, with its owner.
-async fn just_before_den_1() -> (PgPool, impl Sized) {
-    let (pool, container) = bare_pool().await;
-    run_migrations_before(&pool, DEN_1_VERSION).await;
-    seed_owner(&pool).await;
-    (pool, container)
-}
-
-/// A fresh database migrated through the node table's migration, with its owner.
-async fn through_den_1() -> (PgPool, impl Sized) {
-    let (pool, container) = just_before_den_1().await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
-    (pool, container)
-}
-
-/// The node a commission row points at.
-async fn commission_node(pool: &PgPool, commission: Uuid) -> NodeRow {
-    sqlx::query_as("SELECT n.* FROM node n JOIN commission c ON c.node_id = n.id WHERE c.id = $1")
-        .bind(commission)
-        .fetch_one(pool)
-        .await
-        .expect("read a commission's node")
-}
-
-/// The node id a commission row points at, or `None`.
-async fn node_id_of(pool: &PgPool, commission: Uuid) -> Option<Uuid> {
-    sqlx::query_scalar("SELECT node_id FROM commission WHERE id = $1")
-        .bind(commission)
-        .fetch_one(pool)
-        .await
-        .expect("read a commission's node_id")
-}
-
-/// Whether the ledger records `version`.
-async fn ledger_records(pool: &PgPool, version: i64) -> bool {
-    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM _sqlx_migrations WHERE version = $1)")
-        .bind(version)
-        .fetch_one(pool)
-        .await
-        .expect("read the ledger")
-}
 
 /// Whether `commission` has the column `column`.
 async fn commission_has_column(pool: &PgPool, column: &str) -> bool {
@@ -129,7 +85,7 @@ async fn function_exists(pool: &PgPool, name: &str) -> bool {
         .expect("read the catalog's functions")
 }
 
-/// Set `commission`'s own title, a test-only update after the fill; no trigger copies it.
+/// Set `commission`'s own title, a test-only update; no trigger copies a title onto a node.
 async fn set_title_apart(pool: &PgPool, commission: Uuid, title: &str) {
     let updated = sqlx::query("UPDATE commission SET title = $2 WHERE id = $1")
         .bind(commission)
@@ -183,17 +139,6 @@ async fn plant_node_less(pool: &PgPool, title: &str) -> Uuid {
     .await
     .expect("add commission_has_its_node back as the fill did");
     node_less
-}
-
-/// The database's own refusal text inside `stopped`.
-fn refusal(stopped: &MigrateError) -> String {
-    let (MigrateError::Execute(error) | MigrateError::ExecuteMigration(error, _)) = stopped else {
-        panic!("the database refused the drop: {stopped:?}");
-    };
-    let database_error = error
-        .as_database_error()
-        .unwrap_or_else(|| panic!("the database refused the drop: {stopped:?}"));
-    database_error.message().to_owned()
 }
 
 /// Asserts the drop stopped naming `named`, left no ledger row, and left both columns.
