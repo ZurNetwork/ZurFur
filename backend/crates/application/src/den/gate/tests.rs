@@ -26,6 +26,7 @@ use crate::{
     Ports,
     den::{
         Den, DenThing,
+        act::EntryConstructor,
         authority::{GrantKind, MINT_AS},
         test_acts::{
             commission_path, create_act, hand_built_create, hand_built_rename, rename_act,
@@ -240,7 +241,7 @@ enum Swallowing {
 impl Handler for Swallowing {
     type Role = Creator;
 
-    const ENTRY: EntryRule = EntryRule::Always(ChangelogEntryKind::Created);
+    const ENTRY: EntryRule = EntryRule::Always(NewChangelogEntry::created);
 
     async fn handle(&self, lent: &mut Lent<'_, Creator>) -> Result<Handled, HandlerError> {
         let chosen = NewCommission {
@@ -489,6 +490,51 @@ async fn the_gate_s_entries_carry_an_empty_payload_and_no_note_on_postgres() {
     let actor = provision(&*ports.database, "did:plc:gate-entry").await;
 
     the_entry_is_the_gate_s(&ports, &actor).await;
+}
+
+/// A constructor that builds a create's entry on another commission than it was given.
+fn on_another_commission(_: CommissionId, actor: UserId, at: DateTimeUtc) -> NewChangelogEntry {
+    NewChangelogEntry::created(old_sketch(), actor, at)
+}
+
+/// A constructor that builds a create's entry by another actor than it was given.
+fn by_another_actor(commission: CommissionId, _: UserId, at: DateTimeUtc) -> NewChangelogEntry {
+    NewChangelogEntry::created(commission, bob(), at)
+}
+
+/// A constructor that builds a create's entry at another time than it was given.
+fn at_another_time(commission: CommissionId, actor: UserId, at: DateTimeUtc) -> NewChangelogEntry {
+    let earlier = at - chrono::TimeDelta::seconds(1);
+    NewChangelogEntry::created(commission, actor, earlier)
+}
+
+// A rule's constructor could name any function: an entry it builds off the grant's commission,
+// actor or time is a broken rule, and the gate appends nothing.
+#[test]
+fn an_entry_built_off_the_grant_is_a_broken_rule() {
+    let now = Utc::now();
+    let written = Written {
+        node: NodeId::mint(),
+        commission: untitled(),
+        name: None,
+        level: atta::Level::Private,
+        changed: true,
+    };
+    let misbuilt: [EntryConstructor; 3] =
+        [on_another_commission, by_another_actor, at_another_time];
+
+    for constructor in misbuilt {
+        let built = built_entry(EntryRule::Always(constructor), &written, &alice(), now);
+        assert!(built.is_err(), "{built:?}");
+    }
+    let built = built_entry(
+        EntryRule::Always(NewChangelogEntry::created),
+        &written,
+        &alice(),
+        now,
+    )
+    .expect("the domain's constructor builds as granted");
+    assert!(built.is_some());
 }
 
 // The entry's append fails after the node rows and the commission are written: the unit

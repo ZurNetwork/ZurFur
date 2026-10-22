@@ -3,10 +3,14 @@
 
 use std::fmt;
 
-use domain::elements::{
-    commission::{ChangelogEntryKind, Commission, CommissionRole},
-    level::Level,
-    name::NodeName,
+use domain::{
+    datetime::DateTimeUtc,
+    elements::{
+        commission::{Commission, CommissionId, CommissionRole, NewChangelogEntry},
+        level::Level,
+        name::NodeName,
+        user::UserId,
+    },
 };
 
 use crate::{
@@ -98,22 +102,25 @@ impl fmt::Debug for DenAct {
     }
 }
 
-/// Which changelog entry the gate writes once an act lands: one of a kind on every landing,
-/// or one only when the act changed its node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A gated kind's domain constructor: its entry on a commission, by an actor, at a time.
+pub(crate) type EntryConstructor = fn(CommissionId, UserId, DateTimeUtc) -> NewChangelogEntry;
+
+/// Which changelog entry the gate writes once an act lands, by its kind's domain constructor:
+/// one on every landing, or one only when the act changed its node.
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum EntryRule {
-    /// One entry of this kind, whatever the act changed.
-    Always(ChangelogEntryKind),
-    /// One entry of this kind when the act changed its node; none when it changed nothing.
-    OnChange(ChangelogEntryKind),
+    /// One entry, whatever the act changed.
+    Always(EntryConstructor),
+    /// One entry when the act changed its node; none when it changed nothing.
+    OnChange(EntryConstructor),
 }
 
 impl EntryRule {
-    /// The kind of the one entry an act that `changed` its node writes, or `None`.
-    pub(crate) fn entry(self, changed: bool) -> Option<ChangelogEntryKind> {
+    /// The constructor of the one entry an act that `changed` its node writes, or `None`.
+    pub(crate) fn entry(self, changed: bool) -> Option<EntryConstructor> {
         match self {
-            Self::Always(kind) => Some(kind),
-            Self::OnChange(kind) => changed.then_some(kind),
+            Self::Always(constructor) => Some(constructor),
+            Self::OnChange(constructor) => changed.then_some(constructor),
         }
     }
 }

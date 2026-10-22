@@ -234,7 +234,8 @@ pub(crate) trait Handler {
     /// The role of its capability; the act's needed role is read from it, never written apart.
     type Role: RoleTable;
 
-    /// When the gate writes the act's one changelog entry, and of what kind.
+    /// When the gate writes the act's one changelog entry, and the domain constructor it
+    /// builds that entry with.
     const ENTRY: EntryRule;
 
     /// Acts through `lent` alone, and answers the thing it acted on as `lent` read it.
@@ -616,10 +617,35 @@ fn grant_fits(grant: &Grant, shape: &Shape) -> bool {
     }
 }
 
+/// The act's one entry, if `rule` writes one for what `written` changed: built by the rule's
+/// domain constructor on the grant's commission, by `actor`, at `now`. An entry the
+/// constructor built on another commission, by another actor or at another time is a broken
+/// rule.
+fn built_entry(
+    rule: EntryRule,
+    written: &Written,
+    actor: &UserId,
+    now: DateTimeUtc,
+) -> anyhow::Result<Option<NewChangelogEntry>> {
+    let Some(constructor) = rule.entry(written.changed) else {
+        return Ok(None);
+    };
+    let entry = constructor(written.commission, actor.clone(), now);
+    let as_granted = entry.commission_id == written.commission
+        && entry.actor_id.as_ref() == Some(actor)
+        && entry.created_at == now;
+    if !as_granted {
+        return Err(facts_lied(
+            "an entry's constructor built it off the grant's commission, actor or time",
+        ));
+    }
+    Ok(Some(entry))
+}
+
 /// The gate, run once per act from the write host's apply: the grant's kind against the act;
 /// no made node wider than Private until 0.6; the node rows, under the unit's one node-port
 /// binding; the act lent to its handler; then, as the act's entry rule says of what changed,
-/// its one entry, built here with an empty payload and no note, on the grant's commission, by
+/// its one entry, built here by the rule's domain constructor on the grant's commission, by
 /// the grant's actor, at `now`.
 pub(in crate::den) async fn gate(
     unit: Unit<'_>,
@@ -655,14 +681,7 @@ pub(in crate::den) async fn gate(
         Ok(landed) => landed,
         Err(refusal) => return Ok(Err(refusal)),
     };
-    if let Some(kind) = landed.entry.entry(written.changed) {
-        let entry = NewChangelogEntry::event(
-            written.commission,
-            kind,
-            grant.actor().clone(),
-            serde_json::json!({}),
-            now,
-        );
+    if let Some(entry) = built_entry(landed.entry, &written, grant.actor(), now)? {
         unit.changelog().append(&entry).await?;
     }
     let applied = DenApplied {

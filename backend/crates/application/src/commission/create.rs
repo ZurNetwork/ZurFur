@@ -2,7 +2,7 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{ChangelogEntryKind, CommissionTitle, NewCommission},
+        commission::{CommissionTitle, NewChangelogEntry, NewCommission},
         maturity::Maturity,
         user::UserId,
     },
@@ -74,7 +74,7 @@ impl Act {
 impl Handler for Act {
     type Role = Creator;
 
-    const ENTRY: EntryRule = EntryRule::Always(ChangelogEntryKind::Created);
+    const ENTRY: EntryRule = EntryRule::Always(NewChangelogEntry::created);
 
     /// Creates the commission at the node the gate made, then answers it as the unit holds it.
     async fn handle(&self, lent: &mut Lent<'_, Creator>) -> Result<Handled, HandlerError> {
