@@ -5,8 +5,14 @@
 //! host and the gate named once each, the write use case kept inside the crate, nothing of it
 //! (and no raw SQL or in-memory seeder) in a driver, no lint silencer in the den, in
 //! commission's acts (derived: every file implementing the gate's handler) or on the modules
-//! above them, every method of the commission write view taking a capability or named, and
-//! the commission field writes not yet gated, frozen.
+//! above them, every method of the commission write view taking a capability or named, the
+//! commission field writes not yet gated, frozen, and the commission tables written only by
+//! the commission write view in each adapter, whatever port a write is called through: in
+//! PostgreSQL, every statement writing a commission table in the commission's query folder,
+//! its generated write functions named only in the write view, and the view built only by
+//! the unit; in memory, the commission map changed only by the write view, the insert path,
+//! the lifecycle seeder and the unit's staging and merge, its rows built only by the insert
+//! path, and the view built only by the unit.
 
 mod seams;
 
@@ -171,10 +177,12 @@ fn type_name(typ: &Type) -> String {
 }
 
 /// A piece of a file a finding names: the function it sits in (`Type::method` in an impl or a
-/// trait, `module::` before it in an inline module), or the item that holds no function.
+/// trait, `module::` before it in an inline module), or the item that holds no function. A
+/// piece of an impl carries its self type, and the last name of its trait.
 struct Piece {
     context: String,
     impl_of: Option<String>,
+    trait_of: Option<String>,
     tokens: TokenStream,
 }
 
@@ -182,6 +190,7 @@ fn pieces_in(items: &[Item], prefix: &str, out: &mut Vec<Piece>) {
     let piece = |context: String, impl_of: Option<String>, tokens: TokenStream| Piece {
         context,
         impl_of,
+        trait_of: None,
         tokens,
     };
     for item in items {
@@ -201,11 +210,18 @@ fn pieces_in(items: &[Item], prefix: &str, out: &mut Vec<Piece>) {
                 for attribute in &implementation.attrs {
                     header.extend(attribute.to_token_stream());
                 }
-                out.push(piece(
-                    format!("{prefix}impl {self_name}"),
-                    Some(self_name.clone()),
-                    header,
-                ));
+                let trait_of = implementation
+                    .trait_
+                    .as_ref()
+                    .and_then(|(_, trait_path, _)| trait_path.segments.last())
+                    .map(|segment| segment.ident.unraw().to_string());
+                let in_impl = |context: String, tokens: TokenStream| Piece {
+                    context,
+                    impl_of: Some(self_name.clone()),
+                    trait_of: trait_of.clone(),
+                    tokens,
+                };
+                out.push(in_impl(format!("{prefix}impl {self_name}"), header));
                 for impl_item in &implementation.items {
                     let context = match impl_item {
                         ImplItem::Fn(method) => {
@@ -213,11 +229,7 @@ fn pieces_in(items: &[Item], prefix: &str, out: &mut Vec<Piece>) {
                         }
                         _ => format!("{prefix}impl {self_name}"),
                     };
-                    out.push(piece(
-                        context,
-                        Some(self_name.clone()),
-                        impl_item.to_token_stream(),
-                    ));
+                    out.push(in_impl(context, impl_item.to_token_stream()));
                 }
             }
             Item::Trait(tr) => {
@@ -264,6 +276,7 @@ fn pieces(file: &syn::File) -> Vec<Piece> {
     let mut out = vec![Piece {
         context: "the file's attributes".to_owned(),
         impl_of: None,
+        trait_of: None,
         tokens: inner,
     }];
     pieces_in(&file.items, "", &mut out);
@@ -3274,6 +3287,1518 @@ fn the_port_scan_names_each_planted_write() {
             findings[0].starts_with(expected),
             "{replacement}: {findings:?}"
         );
+    }
+}
+
+// Commission writes are pinned at the store: whichever port a write is called through, the
+// commission tables change only inside the commission write view.
+
+/// The commission's table, its query folder and its generated query module.
+const COMMISSION_TABLE: &str = "commission";
+
+/// The prefix every other commission table's name starts with.
+const COMMISSION_TABLE_PREFIX: &str = "commission_";
+
+/// The changelog port's own table, written under `queries/changelog/`.
+const CHANGELOG_TABLE: &str = "commission_changelog";
+
+/// The SQL words a written table follows, past any of [`SQL_WRITE_FILLERS`].
+const SQL_WRITES: [&str; 6] = ["INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE", "COPY"];
+
+/// The SQL words that may stand between a write and its table.
+const SQL_WRITE_FILLERS: [&str; 4] = ["INTO", "FROM", "ONLY", "TABLE"];
+
+/// The PostgreSQL adapter's generated query module, and its list of write functions.
+const QUERIES: &str = "queries";
+
+/// The generated list of every write function, as `namespace::function`.
+const WRITE_QUERY_FNS: &str = "WRITE_QUERY_FNS";
+
+/// The generated file, which defines the query functions and calls none.
+const GENERATED_QUERIES: &str = "queries.rs";
+
+/// Each adapter's commission file, relative to its `src`.
+const COMMISSION_FILE: &str = "commission.rs";
+
+/// The PostgreSQL adapter's unit file, relative to its `src`.
+const PG_UNIT_FILE: &str = "uow.rs";
+
+/// The PostgreSQL commission write view.
+const PG_WRITE_VIEW: &str = "PgCommissionWrites";
+
+/// The one function that builds [`PG_WRITE_VIEW`]: the unit's `commissions()`.
+const PG_UNIT_COMMISSIONS: &str = "PgUnitOfWork::commissions";
+
+/// The in-memory adapter's crate root, relative to its `src`.
+const MEM_LIB_FILE: &str = "lib.rs";
+
+/// The in-memory commission write view.
+const MEM_WRITE_VIEW: &str = "MemCommissionWrites";
+
+/// The one function that builds [`MEM_WRITE_VIEW`]: the unit's `commissions()`.
+const MEM_UNIT_COMMISSIONS: &str = "MemUnitOfWork::commissions";
+
+/// The in-memory backend, and its field holding the commission map.
+const MEM_BACKEND: &str = "MemBackend";
+
+/// The in-memory backend's commission map, a field also named by each column's card list.
+const MEM_MAP: &str = "commissions";
+
+/// The in-memory commission row.
+const STORED_COMMISSION: &str = "StoredCommission";
+
+/// The one insert path, the only place a [`STORED_COMMISSION`] is built.
+const INSERT_COMMISSION: &str = "insert_commission";
+
+/// The pieces besides the write view's methods that may change the in-memory commission map,
+/// by file and context: the insert path, the lifecycle seeder, and the unit's staging and
+/// merge.
+const MEM_MAP_WRITERS: [(&str, &str); 4] = [
+    (COMMISSION_FILE, INSERT_COMMISSION),
+    (COMMISSION_FILE, "MemBackend::seed_lifecycle_step"),
+    (MEM_LIB_FILE, "MemBackend::stage"),
+    (MEM_LIB_FILE, "MemBackend::merge"),
+];
+
+/// The one piece that builds a [`MEM_BACKEND`] naming its commission map.
+const MEM_STAGE: (&str, &str) = (MEM_LIB_FILE, "MemBackend::stage");
+
+/// A column's card list is a field also named `commissions`: the places that hand it on or set
+/// it, by file and context, each with how often.
+const COLUMN_CARD_LISTS: [(&str, &str, usize); 3] = [
+    ("workflow.rs", "StoredColumn::rebuild", 1),
+    ("workflow.rs", "MemWorkflowWrites::set_indexes", 1),
+    ("workflow.rs", "MemColumnWrites::set_commissions", 1),
+];
+
+/// The mutex methods the commission map is reached past.
+const MUTEX_LOCKS: [&str; 2] = ["lock", "try_lock"];
+
+/// The methods that pass the map, or its lock, on unchanged; `clone` too before the lock.
+const MAP_PASSES: [&str; 8] = [
+    "expect",
+    "unwrap",
+    "unwrap_or_else",
+    "map_err",
+    "as_ref",
+    "as_deref",
+    "borrow",
+    "deref",
+];
+
+/// The methods that only read the map, or a column's card list.
+const MAP_READS: [&str; 10] = [
+    "get",
+    "get_key_value",
+    "contains_key",
+    "contains",
+    "iter",
+    "keys",
+    "values",
+    "len",
+    "is_empty",
+    "clone",
+];
+
+/// The PostgreSQL adapter's folder.
+fn adapter_pg() -> PathBuf {
+    crates().join("adapter-pg")
+}
+
+/// The in-memory adapter's sources.
+fn adapter_mem_src() -> PathBuf {
+    crates().join("adapter-mem/src")
+}
+
+/// A crate's production sources under `src`, each with its path relative to `src`, the files
+/// in `skipped` aside.
+fn sources_under(src: &Path, skipped: &[&str]) -> Vec<(String, String)> {
+    walk(src)
+        .production
+        .iter()
+        .map(|path| (relative(path, src), path))
+        .filter(|(file, _)| !skipped.contains(&file.as_str()))
+        .map(|(file, path)| {
+            let source = std::fs::read_to_string(path).expect("a readable source");
+            (file, source)
+        })
+        .collect()
+}
+
+/// `files` with the file `file` holding `source` instead, or added.
+fn with_file(files: &[(String, String)], file: &str, source: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = files
+        .iter()
+        .filter(|(name, _)| name != file)
+        .cloned()
+        .collect();
+    out.push((file.to_owned(), source.to_owned()));
+    out
+}
+
+/// `files` with `addition` put after `anchor` in the file `file`, which holds it.
+fn planted_after(
+    files: &[(String, String)],
+    file: &str,
+    anchor: &str,
+    addition: &str,
+) -> Vec<(String, String)> {
+    let (_, source) = files
+        .iter()
+        .find(|(name, _)| name == file)
+        .unwrap_or_else(|| panic!("the tree holds {file}"));
+    assert!(source.contains(anchor), "{file} holds `{anchor}`");
+    let planted = source.replacen(anchor, &format!("{anchor}\n{addition}\n"), 1);
+    with_file(files, file, &planted)
+}
+
+/// The text of a table name in SQL: a bare name folded to lower case as PostgreSQL folds it,
+/// or a quoted one as written.
+fn table_name(word: Option<&SqlWord>) -> Option<String> {
+    match word {
+        Some(SqlWord::Bare(bare)) => Some(bare.to_ascii_lowercase()),
+        Some(SqlWord::Quoted(quoted)) => Some(quoted.clone()),
+        _ => None,
+    }
+}
+
+/// Whether `name` is a commission table other than the changelog's.
+fn is_a_commission_table(name: &str) -> bool {
+    let owned = name == COMMISSION_TABLE || name.starts_with(COMMISSION_TABLE_PREFIX);
+    owned && name != CHANGELOG_TABLE
+}
+
+/// The index of the name a table reference starting at `at` ends on: `t`, or the last part of
+/// `schema.t`.
+fn table_name_at(words: &[SqlWord], at: usize) -> usize {
+    let mut name = at;
+    while words.get(name + 1) == Some(&SqlWord::Other('.'))
+        && matches!(
+            words.get(name + 2),
+            Some(SqlWord::Bare(_) | SqlWord::Quoted(_))
+        )
+    {
+        name += 2;
+    }
+    name
+}
+
+/// Each commission table `sql` writes, its comments stripped: the table after each of
+/// [`SQL_WRITES`] past any of [`SQL_WRITE_FILLERS`], and each table in a list after it.
+fn commission_tables_written(sql: &str) -> Vec<String> {
+    let words = sql_words(&without_sql_comments(sql));
+    let mut out = Vec::new();
+    for at in 0..words.len() {
+        let writes = SQL_WRITES
+            .iter()
+            .any(|keyword| is_bare(words.get(at), keyword));
+        if !writes {
+            continue;
+        }
+        let mut table = at + 1;
+        loop {
+            while SQL_WRITE_FILLERS
+                .iter()
+                .any(|filler| is_bare(words.get(table), filler))
+            {
+                table += 1;
+            }
+            let name_at = table_name_at(&words, table);
+            if let Some(name) = table_name(words.get(name_at))
+                && is_a_commission_table(&name)
+            {
+                out.push(name);
+            }
+            let mut past = name_at + 1;
+            if words.get(past) == Some(&SqlWord::Other('*')) {
+                past += 1;
+            }
+            if words.get(past) != Some(&SqlWord::Other(',')) {
+                break;
+            }
+            table = past + 1;
+        }
+    }
+    out
+}
+
+/// What `sql` holds that only the commission's query folder may: a write to a commission
+/// table, or a Unicode-escaped identifier (which can spell any table's name).
+fn commission_sql_findings(sql: &str) -> Vec<String> {
+    let mut out: Vec<String> = commission_tables_written(sql)
+        .into_iter()
+        .map(|table| format!("writes table `{table}`"))
+        .collect();
+    if holds_a_unicode_identifier(sql) {
+        out.push("holds a Unicode-escaped identifier".to_owned());
+    }
+    out
+}
+
+/// Each statement file under `folder`, with its path relative to `queries` and its text.
+fn sql_files(folder: &Path, queries: &Path, out: &mut Vec<(String, String)>) {
+    let entries = std::fs::read_dir(folder).expect("a readable query folder");
+    for entry in entries {
+        let path = entry.expect("a query folder entry").path();
+        if path.is_dir() {
+            sql_files(&path, queries, out);
+        } else if path.extension().is_some_and(|extension| extension == "sql") {
+            let sql = std::fs::read_to_string(&path).expect("a readable statement");
+            out.push((relative(&path, queries), sql));
+        }
+    }
+}
+
+/// Every statement under the PostgreSQL adapter's `queries/`, by path relative to it.
+fn adapter_queries() -> Vec<(String, String)> {
+    let queries = adapter_pg().join(QUERIES);
+    let mut out = Vec::new();
+    sql_files(&queries, &queries, &mut out);
+    out.sort();
+    out
+}
+
+/// Each statement in `files` (by path relative to `queries/`) outside the commission's folder
+/// that writes a commission table or holds a Unicode-escaped identifier.
+fn misplaced_commission_sql(files: &[(String, String)]) -> Vec<String> {
+    let commission_folder = format!("{COMMISSION_TABLE}/");
+    files
+        .iter()
+        .filter(|(file, _)| !file.starts_with(&commission_folder))
+        .flat_map(|(file, sql)| {
+            commission_sql_findings(sql)
+                .into_iter()
+                .map(move |finding| format!("adapter-pg/queries/{file}: {finding}"))
+        })
+        .collect()
+}
+
+/// The generated commission write functions: each `commission::…` entry of the generated
+/// [`WRITE_QUERY_FNS`] list, by function name.
+fn commission_write_fns(generated: &syn::File) -> BTreeSet<String> {
+    let prefix = format!("{COMMISSION_TABLE}::");
+    every_item(&generated.items)
+        .into_iter()
+        .filter_map(|item| match item {
+            Item::Static(list) if list.ident == WRITE_QUERY_FNS => Some(list),
+            _ => None,
+        })
+        .flat_map(|list| string_literals(list.expr.to_token_stream()))
+        .filter_map(|entry| entry.strip_prefix(&prefix).map(str::to_owned))
+        .collect()
+}
+
+/// `seeds`, and every name `sources` bind to one of them at any depth, function bodies
+/// included: a rename (`… as x`) or a type alias naming one, through any chain.
+fn token_aliases(seeds: &[&str], sources: &[String]) -> BTreeSet<String> {
+    let all_levels: Vec<Vec<TokenTree>> = sources
+        .iter()
+        .flat_map(|source| {
+            let file = syn::parse_file(source).expect("the source parses");
+            levels(file.to_token_stream())
+        })
+        .collect();
+    let mut names: BTreeSet<String> = seeds.iter().map(|seed| (*seed).to_owned()).collect();
+    loop {
+        let mut grown = names.clone();
+        for level in &all_levels {
+            for at in 0..level.len() {
+                let Some(ident) = ident_at(level, at) else {
+                    continue;
+                };
+                if names.contains(&ident)
+                    && ident_at(level, at + 1).as_deref() == Some("as")
+                    && let Some(bound) = ident_at(level, at + 2)
+                    && bound != "_"
+                {
+                    grown.insert(bound);
+                }
+                if ident == "type"
+                    && let Some(alias) = ident_at(level, at + 1)
+                {
+                    let end = (at..level.len())
+                        .find(|index| punct_at(level, *index, ';'))
+                        .unwrap_or(level.len());
+                    let names_one = level[(at + 2).min(end)..end].iter().any(|tree| {
+                        identifiers(TokenStream::from(tree.clone()))
+                            .iter()
+                            .any(|name| names.contains(name))
+                    });
+                    if names_one {
+                        grown.insert(alias);
+                    }
+                }
+            }
+        }
+        if grown == names {
+            return names;
+        }
+        names = grown;
+    }
+}
+
+/// What one path element after `queries::` reaches: the commission module, a glob, or an
+/// alias of `queries` itself.
+fn query_element_reach(element: &[TokenTree]) -> Option<String> {
+    let first = ident_at(element, 0);
+    if first.as_deref() == Some(COMMISSION_TABLE) {
+        return Some(format!("`{QUERIES}::{COMMISSION_TABLE}`"));
+    }
+    if punct_at(element, 0, '*') {
+        return Some(format!("a glob from `{QUERIES}`"));
+    }
+    let renamed = first.as_deref() == Some("self") && ident_at(element, 1).as_deref() == Some("as");
+    renamed.then(|| format!("an alias of `{QUERIES}`"))
+}
+
+/// Each way `level` reaches the generated commission module from outside the commission file:
+/// a `queries::commission` path, `commission` in a group under `queries::`, a glob from
+/// `queries`, or an alias of `queries`.
+fn query_module_reaches(level: &[TokenTree]) -> Vec<String> {
+    let mut out = Vec::new();
+    for at in 0..level.len() {
+        if ident_at(level, at).as_deref() != Some(QUERIES) {
+            continue;
+        }
+        if ident_at(level, at + 1).as_deref() == Some("as") {
+            out.push(format!("an alias of `{QUERIES}`"));
+            continue;
+        }
+        if !path_separator_at(level, at + 1) {
+            continue;
+        }
+        let next = &level[(at + 3).min(level.len())..];
+        match next.first() {
+            Some(TokenTree::Group(group)) if group.delimiter() == Delimiter::Brace => {
+                let reached = comma_separated(group.stream())
+                    .into_iter()
+                    .filter_map(|element| query_element_reach(&element));
+                out.extend(reached);
+            }
+            _ => out.extend(query_element_reach(next)),
+        }
+    }
+    out
+}
+
+/// The names `levels` give the generated commission module: `commission`, each rename of it
+/// (`commission as sql`, or `commission::{self as sql}`), and each rename of those.
+fn query_module_names(levels: &[Vec<TokenTree>]) -> BTreeSet<String> {
+    let mut names = BTreeSet::from([COMMISSION_TABLE.to_owned()]);
+    loop {
+        let mut grown = names.clone();
+        for level in levels {
+            for at in 0..level.len() {
+                let Some(ident) = ident_at(level, at) else {
+                    continue;
+                };
+                if !names.contains(&ident) {
+                    continue;
+                }
+                if ident_at(level, at + 1).as_deref() == Some("as")
+                    && let Some(bound) = ident_at(level, at + 2)
+                {
+                    grown.insert(bound);
+                }
+                if path_separator_at(level, at + 1)
+                    && let Some(TokenTree::Group(group)) = level.get(at + 3)
+                {
+                    for element in comma_separated(group.stream()) {
+                        let renames_self = ident_at(&element, 0).as_deref() == Some("self")
+                            && ident_at(&element, 1).as_deref() == Some("as");
+                        if renames_self && let Some(bound) = ident_at(&element, 2) {
+                            grown.insert(bound);
+                        }
+                    }
+                }
+            }
+        }
+        if grown == names {
+            return names;
+        }
+        names = grown;
+    }
+}
+
+/// What one path element after a commission module name names: a write function, or a glob.
+fn write_fn_element(element: &[TokenTree], write_fns: &BTreeSet<String>) -> Option<String> {
+    if punct_at(element, 0, '*') {
+        return Some("*".to_owned());
+    }
+    ident_at(element, 0).filter(|name| write_fns.contains(name))
+}
+
+/// Each generated commission write function `level` names through one of `modules`: `m::f`,
+/// `m::{f, …}`, or a glob `m::*`.
+fn write_fn_namings(
+    level: &[TokenTree],
+    modules: &BTreeSet<String>,
+    write_fns: &BTreeSet<String>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for at in 0..level.len() {
+        let through_a_module = ident_at(level, at).is_some_and(|name| modules.contains(&name));
+        if !through_a_module || !path_separator_at(level, at + 1) {
+            continue;
+        }
+        let next = &level[(at + 3).min(level.len())..];
+        match next.first() {
+            Some(TokenTree::Group(group)) if group.delimiter() == Delimiter::Brace => {
+                let named = comma_separated(group.stream())
+                    .into_iter()
+                    .filter_map(|element| write_fn_element(&element, write_fns));
+                out.extend(named);
+            }
+            _ => out.extend(write_fn_element(next, write_fns)),
+        }
+    }
+    out
+}
+
+/// Each name of `names` `level` calls or paths to as a method or an associated function:
+/// after a `.` or a `::`.
+fn calls_into(level: &[TokenTree], names: &BTreeSet<String>) -> Vec<String> {
+    (0..level.len())
+        .filter_map(|at| {
+            let name = ident_at(level, at)?;
+            let after_dot = at >= 1 && punct_at(level, at - 1, '.');
+            let after_path = at >= 2 && path_separator_at(level, at - 2);
+            let called = names.contains(&name) && (after_dot || after_path);
+            called.then_some(name)
+        })
+        .collect()
+}
+
+/// The method name a piece in an impl stands for: the last part of its context.
+fn method_of(piece: &Piece) -> &str {
+    piece
+        .context
+        .rsplit("::")
+        .next()
+        .unwrap_or(piece.context.as_str())
+}
+
+/// Whether `piece` sits in the PostgreSQL write view: `impl CommissionWrites for
+/// PgCommissionWrites` or an inherent impl of it.
+fn in_the_pg_write_view(piece: &Piece) -> bool {
+    let trait_ok = matches!(piece.trait_of.as_deref(), None | Some(COMMISSION_WRITES));
+    piece.impl_of.as_deref() == Some(PG_WRITE_VIEW) && trait_ok
+}
+
+/// The inherent methods of the PostgreSQL write view in `pieces` that name a write function,
+/// directly or through another of them.
+fn pg_write_helpers(
+    pieces: &[Piece],
+    modules: &BTreeSet<String>,
+    write_fns: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let inherent: Vec<(&str, Vec<Vec<TokenTree>>)> = pieces
+        .iter()
+        .filter(|piece| piece.impl_of.as_deref() == Some(PG_WRITE_VIEW))
+        .filter(|piece| piece.trait_of.is_none() && piece.context.contains("::"))
+        .map(|piece| (method_of(piece), levels(piece.tokens.clone())))
+        .collect();
+    let mut helpers: BTreeSet<String> = inherent
+        .iter()
+        .filter(|(_, piece_levels)| {
+            piece_levels
+                .iter()
+                .any(|level| !write_fn_namings(level, modules, write_fns).is_empty())
+        })
+        .map(|(name, _)| (*name).to_owned())
+        .collect();
+    loop {
+        let reached: BTreeSet<String> = inherent
+            .iter()
+            .filter(|(_, piece_levels)| {
+                piece_levels
+                    .iter()
+                    .any(|level| !calls_into(level, &helpers).is_empty())
+            })
+            .map(|(name, _)| (*name).to_owned())
+            .collect();
+        let grown: BTreeSet<String> = helpers.union(&reached).cloned().collect();
+        if grown == helpers {
+            return helpers;
+        }
+        helpers = grown;
+    }
+}
+
+/// Each struct literal or pattern of one of `names` (or `Self`, when `self_named`) in
+/// `level`, a struct definition and a return type aside: a name followed by a brace group,
+/// directly or past `::<…>`. Each comes with its brace group's contents.
+fn struct_literals(
+    level: &[TokenTree],
+    names: &BTreeSet<String>,
+    self_named: bool,
+) -> Vec<TokenStream> {
+    let mut out = Vec::new();
+    for at in 0..level.len() {
+        let Some(ident) = ident_at(level, at) else {
+            continue;
+        };
+        let named = names.contains(&ident) || (self_named && ident == "Self");
+        let defined = at >= 1 && ident_at(level, at - 1).as_deref() == Some("struct");
+        let returned = at >= 2 && punct_at(level, at - 1, '>') && punct_at(level, at - 2, '-');
+        if !named || defined || returned {
+            continue;
+        }
+        let mut next = at + 1;
+        if path_separator_at(level, next) && punct_at(level, next + 2, '<') {
+            next = past_generics(level, next + 2);
+        }
+        if let Some(TokenTree::Group(group)) = level.get(next)
+            && group.delimiter() == Delimiter::Brace
+        {
+            out.push(group.stream());
+        }
+    }
+    out
+}
+
+/// The commission write view's methods, by name, from the port file.
+fn commission_write_methods() -> BTreeSet<String> {
+    let port = parse(&commission_port_file());
+    traits_named(&port, COMMISSION_WRITES)
+        .into_iter()
+        .flat_map(|tr| tr.items.iter())
+        .filter(|item| matches!(item, TraitItem::Fn(_)))
+        .map(trait_item_name)
+        .collect()
+}
+
+/// What breaks the PostgreSQL pin in the adapter's sources `files` (each by path relative to
+/// its `src`, the generated queries aside): outside the commission file, any reach into the
+/// generated commission module; in it, a write function named (or a write helper or a write
+/// method called) outside the write view; a write-view literal outside the unit's
+/// `commissions()`; and SQL in Rust that writes a commission table or names a `.sql` file.
+fn pg_pin_findings(
+    files: &[(String, String)],
+    write_fns: &BTreeSet<String>,
+    write_methods: &BTreeSet<String>,
+) -> Vec<String> {
+    let sources: Vec<String> = files.iter().map(|(_, source)| source.clone()).collect();
+    let views = token_aliases(&[PG_WRITE_VIEW], &sources);
+    let mut out = Vec::new();
+    for (file, source) in files {
+        let shown = format!("adapter-pg/src/{file}");
+        let parsed =
+            syn::parse_file(source).unwrap_or_else(|error| panic!("{shown} parses: {error}"));
+        let file_pieces = pieces(&parsed);
+        let in_commission = file == COMMISSION_FILE;
+        let file_levels: Vec<Vec<TokenTree>> = file_pieces
+            .iter()
+            .flat_map(|piece| levels(piece.tokens.clone()))
+            .collect();
+        let modules = query_module_names(&file_levels);
+        let helpers = pg_write_helpers(&file_pieces, &modules, write_fns);
+        let mut literals_left = usize::from(file == PG_UNIT_FILE);
+        for piece in &file_pieces {
+            let context = &piece.context;
+            let self_named = piece
+                .impl_of
+                .as_ref()
+                .is_some_and(|name| views.contains(name));
+            for level in levels(piece.tokens.clone()) {
+                if !in_commission {
+                    for reach in query_module_reaches(&level) {
+                        out.push(format!("{shown}: {reach} in {context}"));
+                    }
+                } else if !in_the_pg_write_view(piece) {
+                    for name in write_fn_namings(&level, &modules, write_fns) {
+                        out.push(format!("{shown}: write query `{name}` in {context}"));
+                    }
+                    for name in calls_into(&level, &helpers) {
+                        out.push(format!("{shown}: write helper `{name}` in {context}"));
+                    }
+                    if piece.impl_of.as_deref() == Some(PG_WRITE_VIEW) {
+                        for name in calls_into(&level, write_methods) {
+                            out.push(format!("{shown}: write method `{name}` in {context}"));
+                        }
+                    }
+                }
+                for _ in struct_literals(&level, &views, self_named) {
+                    if context == PG_UNIT_COMMISSIONS && literals_left > 0 {
+                        literals_left -= 1;
+                    } else {
+                        out.push(format!("{shown}: `{PG_WRITE_VIEW} {{ … }}` in {context}"));
+                    }
+                }
+            }
+            for text in string_literals(piece.tokens.clone()) {
+                let mut findings = commission_sql_findings(&text);
+                if text.to_ascii_lowercase().ends_with(".sql") {
+                    findings.push("names a .sql file".to_owned());
+                }
+                for finding in findings {
+                    out.push(format!("{shown}: SQL {text:?} {finding} in {context}"));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The PostgreSQL adapter's production sources, the generated queries aside.
+fn pg_sources() -> Vec<(String, String)> {
+    sources_under(&adapter_pg().join("src"), &[GENERATED_QUERIES])
+}
+
+/// The generated commission write functions, read from the generated file.
+fn pg_commission_write_fns() -> BTreeSet<String> {
+    let generated = adapter_pg().join("src").join(GENERATED_QUERIES);
+    commission_write_fns(&parse(&generated))
+}
+
+#[test]
+fn every_commission_write_statement_lives_in_the_commission_folder() {
+    let files = adapter_queries();
+
+    let misplaced = misplaced_commission_sql(&files);
+
+    assert_eq!(misplaced, Vec::<String>::new());
+    let set_archived = files
+        .iter()
+        .find(|(file, _)| file == "commission/set_archived.sql")
+        .expect("the scan reads commission/set_archived.sql");
+    assert_eq!(commission_tables_written(&set_archived.1), ["commission"]);
+    let changelog = files
+        .iter()
+        .find(|(file, _)| file == "changelog/append.sql")
+        .expect("the scan reads changelog/append.sql");
+    assert!(changelog.1.contains("INSERT INTO commission_changelog"));
+}
+
+#[test]
+fn the_statement_scan_refuses_each_planted_write() {
+    let refused = [
+        "UPDATE commission SET archived_at = now() WHERE id = $1",
+        "update Commission set archived_at = now()",
+        "UPDATE \"commission\" SET archived_at = now()",
+        "UPDATE public.commission SET archived_at = now()",
+        "UPDATE public . \"commission\" SET archived_at = now()",
+        "UPDATE ONLY commission SET archived_at = now()",
+        "UPDATE /* the card */ commission SET archived_at = now()",
+        "UPDATE -- the card\n commission SET archived_at = now()",
+        "DELETE FROM commission_tab WHERE commission_id = $1",
+        "INSERT INTO commission_participant (commission_id, user_id) VALUES ($1, $2)",
+        "MERGE INTO commission_seat s USING workflow w ON true WHEN MATCHED THEN DELETE",
+        "TRUNCATE workflow_column, commission",
+        "TRUNCATE TABLE ONLY commission_slot",
+        "COPY commission FROM stdin",
+        "WITH gone AS (DELETE FROM commission WHERE id = $1 RETURNING id) SELECT id FROM gone",
+        "UPDATE U&\"\\0063ommission\" SET archived_at = now()",
+    ];
+    for sql in refused {
+        let files = [("column/retire_card.sql".to_owned(), sql.to_owned())];
+
+        let found = misplaced_commission_sql(&files);
+
+        assert!(!found.is_empty(), "{sql}");
+        assert!(
+            found
+                .iter()
+                .all(|finding| finding.starts_with("adapter-pg/queries/column/retire_card.sql")),
+            "{sql}: {found:?}"
+        );
+    }
+    let kept = [
+        (
+            "workflow/cards.sql",
+            "SELECT w.id FROM workflow w JOIN commission c ON c.id = w.id",
+        ),
+        (
+            "column/cards.sql",
+            "SELECT c.id FROM commission c FOR UPDATE OF c",
+        ),
+        (
+            "column/add_card.sql",
+            "INSERT INTO workflow_column_commission (column_id, commission_id) VALUES ($1, $2) ON CONFLICT DO UPDATE SET position = 1",
+        ),
+        (
+            "workflow/rename.sql",
+            "UPDATE workflow SET name = c.id::text FROM commission c WHERE c.id = $1",
+        ),
+        ("workflow/rename.sql", "UPDATE \"Commission\" SET name = $1"),
+        (
+            "column/delete.sql",
+            "DELETE FROM workflow_column_commission USING commission c WHERE true",
+        ),
+        (
+            "changelog/append.sql",
+            "INSERT INTO commission_changelog (commission_id) VALUES ($1)",
+        ),
+        (
+            "commission/set_archived.sql",
+            "UPDATE commission SET archived_at = $2 WHERE id = $1",
+        ),
+    ];
+    for (file, sql) in kept {
+        let files = [(file.to_owned(), sql.to_owned())];
+
+        let found = misplaced_commission_sql(&files);
+
+        assert_eq!(found, Vec::<String>::new(), "{file}: {sql}");
+    }
+}
+
+#[test]
+fn only_the_commission_write_view_calls_the_commission_write_queries() {
+    let files = pg_sources();
+    let write_fns = pg_commission_write_fns();
+    let write_methods = commission_write_methods();
+
+    let findings = pg_pin_findings(&files, &write_fns, &write_methods);
+
+    assert_eq!(findings, Vec::<String>::new());
+    assert!(
+        write_fns.contains("set_archived") && write_fns.contains("create_commission"),
+        "the generated list holds the commission writes: {write_fns:?}"
+    );
+    assert!(write_methods.contains("set_archived"), "{write_methods:?}");
+    let read: BTreeSet<&str> = files.iter().map(|(file, _)| file.as_str()).collect();
+    for file in [COMMISSION_FILE, PG_UNIT_FILE, "workflow.rs", "lib.rs"] {
+        assert!(read.contains(file), "the scan reads {file}");
+    }
+    let (_, commission) = files
+        .iter()
+        .find(|(file, _)| file == COMMISSION_FILE)
+        .expect("the commission file");
+    let commission_pieces = pieces(&syn::parse_file(commission).expect("it parses"));
+    let commission_levels: Vec<Vec<TokenTree>> = commission_pieces
+        .iter()
+        .flat_map(|piece| levels(piece.tokens.clone()))
+        .collect();
+    let modules = query_module_names(&commission_levels);
+    assert!(
+        modules.contains("sql"),
+        "the module's alias is read: {modules:?}"
+    );
+    let archive = commission_pieces
+        .iter()
+        .find(|piece| piece.context == "PgCommissionWrites::set_archived")
+        .expect("the write view's set_archived");
+    let named: Vec<String> = levels(archive.tokens.clone())
+        .iter()
+        .flat_map(|level| write_fn_namings(level, &modules, &write_fns))
+        .collect();
+    assert_eq!(named, ["set_archived"]);
+    let helpers = pg_write_helpers(&commission_pieces, &modules, &write_fns);
+    assert!(helpers.contains("insert_element"), "{helpers:?}");
+}
+
+#[test]
+fn the_pg_pin_refuses_each_planted_write() {
+    let files = pg_sources();
+    let write_fns = pg_commission_write_fns();
+    let write_methods = commission_write_methods();
+    let column_writes = "impl ColumnWrites for PgColumnWrites<'_> {";
+    let store = "impl CommissionStore for PgCommissionStore {";
+    let reads = "impl CommissionReads for PgCommissionWrites<'_> {";
+    let retire = |body: &str| {
+        format!(
+            "    async fn retire_card(&mut self, commission: &CommissionId) -> anyhow::Result<bool> {{ {body} }}"
+        )
+    };
+    let refused = [
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "let written = crate::queries::commission::set_archived(&mut *self.conn, uuid::Uuid::from(*commission), Some(chrono::Utc::now())).await?; Ok(written == 1)",
+            ),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "use crate::queries::commission as q; let written = q::set_archived(&mut *self.conn, uuid::Uuid::from(*commission), None).await?; Ok(written == 1)",
+            ),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "use crate::queries::*; let written = commission::set_archived(&mut *self.conn, uuid::Uuid::from(*commission), None).await?; Ok(written == 1)",
+            ),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "use crate::{queries::{column, commission::set_archived}}; Ok(set_archived(&mut *self.conn, uuid::Uuid::from(*commission), None).await? == 1)",
+            ),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "use crate::queries as q; Ok(q::commission::set_archived(&mut *self.conn, uuid::Uuid::from(*commission), None).await? == 1)",
+            ),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "use crate::queries::{self as q}; Ok(q::commission::delete(&mut *self.conn, uuid::Uuid::from(*commission)).await? == 1)",
+            ),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "let mut spent = false; CommissionWrites::set_archived(&mut crate::PgCommissionWrites { conn: &mut *self.conn, failed: &mut spent }, commission, None).await",
+            ),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "type View<'a> = crate::PgCommissionWrites<'a>; let mut spent = false; let mut view = View::<'_> { conn: &mut *self.conn, failed: &mut spent }; view.set_archived(commission, None).await",
+            ),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "let written = sqlx::query(\"UPDATE commission SET archived_at = now() WHERE id = $1\").bind(uuid::Uuid::from(*commission)).execute(&mut *self.conn).await?; Ok(written.rows_affected() == 1)",
+            ),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "let written = sqlx::query(include_str!(\"../queries/commission/set_archived.sql\")).execute(&mut *self.conn).await?; Ok(written.rows_affected() == 1)",
+            ),
+        ),
+        (
+            COMMISSION_FILE,
+            store,
+            "    async fn retire_card(&self, id: &CommissionId) -> anyhow::Result<bool> { Ok(sql::set_archived(&self.pool, uuid::Uuid::from(*id), None).await? == 1) }".to_owned(),
+        ),
+        (
+            COMMISSION_FILE,
+            store,
+            "    async fn retire_card(&self, id: &CommissionId) -> anyhow::Result<bool> { Ok(crate::queries::commission::delete(&self.pool, uuid::Uuid::from(*id)).await? == 1) }".to_owned(),
+        ),
+        (
+            COMMISSION_FILE,
+            reads,
+            "    async fn retire_card(&mut self, id: &CommissionId) -> anyhow::Result<bool> { Ok(sql::set_maturity(&mut *self.conn, uuid::Uuid::from(*id), None, None).await? == 1) }".to_owned(),
+        ),
+        (
+            COMMISSION_FILE,
+            reads,
+            "    async fn retire_card(&mut self, id: &CommissionId) -> anyhow::Result<()> { self.set_archived(id, None).await.map(drop) }".to_owned(),
+        ),
+        (
+            COMMISSION_FILE,
+            reads,
+            "    async fn retire_card(&mut self, element: &NewElement) -> anyhow::Result<()> { self.insert_element(element).await }".to_owned(),
+        ),
+        (
+            COMMISSION_FILE,
+            reads,
+            "    async fn retire_card(&mut self) -> anyhow::Result<()> { let mut view = Self { conn: &mut *self.conn, failed: &mut *self.failed }; view.delete(&id).await }".to_owned(),
+        ),
+        (
+            COMMISSION_FILE,
+            "use crate::{PgColumnStore, queries::commission as sql};",
+            "async fn retire(conn: &mut PgConnection, id: uuid::Uuid) -> anyhow::Result<u64> { Ok(sql::set_archived(conn, id, None).await?) }".to_owned(),
+        ),
+        (
+            COMMISSION_FILE,
+            "use crate::{PgColumnStore, queries::commission as sql};",
+            "use sql as statements;\nasync fn retire(pool: &PgPool, id: uuid::Uuid) -> anyhow::Result<u64> { Ok(statements::delete(pool, id).await?) }".to_owned(),
+        ),
+        (
+            COMMISSION_FILE,
+            "use crate::{PgColumnStore, queries::commission as sql};",
+            "use sql::set_archived as archive_row;".to_owned(),
+        ),
+        (
+            COMMISSION_FILE,
+            "use crate::{PgColumnStore, queries::commission as sql};",
+            "use crate::queries::commission::*;".to_owned(),
+        ),
+        (
+            COMMISSION_FILE,
+            "use crate::{PgColumnStore, queries::commission as sql};",
+            "use crate::queries::commission::{self as rows};\nfn wipe(pool: &PgPool) { let _ = rows::revoke_view; }".to_owned(),
+        ),
+    ];
+    for (file, anchor, addition) in &refused {
+        let planted = planted_after(&files, file, anchor, addition);
+
+        let found = pg_pin_findings(&planted, &write_fns, &write_methods);
+
+        assert!(!found.is_empty(), "{file}: {addition}");
+        let shown = format!("adapter-pg/src/{file}: ");
+        assert!(
+            found.iter().all(|finding| finding.starts_with(&shown)),
+            "{addition}: {found:?}"
+        );
+    }
+    let kept = [
+        (
+            COMMISSION_FILE,
+            store,
+            "    async fn probe(&self, id: &CommissionId) -> anyhow::Result<bool> { Ok(sql::find(&self.pool, uuid::Uuid::from(*id)).await?.is_some()) }",
+        ),
+        (
+            COMMISSION_FILE,
+            store,
+            "    async fn probe(&self, id: &CommissionId) -> anyhow::Result<()> { crate::queries::column::position_in_column(&self.pool, uuid::Uuid::from(*id), uuid::Uuid::nil()).await?; Ok(()) }",
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            "    async fn probe(&mut self) -> anyhow::Result<()> { column_sql::clear_cards(&mut *self.conn, uuid::Uuid::nil()).await?; Ok(()) }",
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            "    async fn probe(&mut self) -> anyhow::Result<()> { sqlx::query(\"SELECT id FROM commission WHERE id = $1\").execute(&mut *self.conn).await?; Ok(()) }",
+        ),
+    ];
+    for (file, anchor, addition) in kept {
+        let planted = planted_after(&files, file, anchor, addition);
+
+        let found = pg_pin_findings(&planted, &write_fns, &write_methods);
+
+        assert_eq!(found, Vec::<String>::new(), "{file}: {addition}");
+    }
+}
+
+/// How a reach of the in-memory commission map (or of a column's card list) is used.
+#[derive(Debug, PartialEq)]
+enum MapUse {
+    /// Only read.
+    Read,
+    /// Bound to a local by a `let`, which carries the reach on.
+    Bound(String),
+    /// Changed through a method other than a read, or one the scan doesn't know.
+    Changed(String),
+    /// Handed on: passed, returned, matched on, or assigned to or through.
+    Escaped,
+}
+
+/// The first token of the place expression ending at `at`: `a.b.0.name`, past a leading `&`,
+/// `&mut` or `*`.
+fn place_start(level: &[TokenTree], at: usize) -> usize {
+    let mut start = at;
+    while start >= 2
+        && punct_at(level, start - 1, '.')
+        && matches!(
+            level.get(start - 2),
+            Some(TokenTree::Ident(_) | TokenTree::Literal(_))
+        )
+    {
+        start -= 2;
+    }
+    loop {
+        if start >= 1 && (punct_at(level, start - 1, '&') || punct_at(level, start - 1, '*')) {
+            start -= 1;
+        } else if start >= 2
+            && ident_at(level, start - 1).as_deref() == Some("mut")
+            && punct_at(level, start - 2, '&')
+        {
+            start -= 2;
+        } else {
+            return start;
+        }
+    }
+}
+
+/// The local a `let` binds to the expression from `start` to `end`: `let [mut] x [: T] = …;`.
+fn bound_by_let(level: &[TokenTree], start: usize, end: usize) -> Option<String> {
+    if !punct_at(level, end, ';') {
+        return None;
+    }
+    let equals = start.checked_sub(1)?;
+    if !punct_at(level, equals, '=') {
+        return None;
+    }
+    let keyword = (0..equals)
+        .rev()
+        .find(|at| punct_at(level, *at, ';') || ident_at(level, *at).as_deref() == Some("let"))?;
+    if ident_at(level, keyword).as_deref() != Some("let") {
+        return None;
+    }
+    let name_at = if ident_at(level, keyword + 1).as_deref() == Some("mut") {
+        keyword + 2
+    } else {
+        keyword + 1
+    };
+    let name = ident_at(level, name_at)?;
+    let plain = name_at + 1 == equals || punct_at(level, name_at + 1, ':');
+    plain.then_some(name)
+}
+
+/// How the reach whose place runs from `start` to `at` is used, and whether it passed a lock
+/// (`locked`: it had before it was reached here).
+fn map_use(level: &[TokenTree], start: usize, at: usize, locked: bool) -> (MapUse, bool) {
+    let mut index = at + 1;
+    let mut locked = locked;
+    loop {
+        if punct_at(level, index, '?') {
+            index += 1;
+            continue;
+        }
+        let method = if punct_at(level, index, '.') {
+            ident_at(level, index + 1)
+        } else {
+            None
+        };
+        let Some(method) = method else {
+            let bound = bound_by_let(level, start, index);
+            return (bound.map_or(MapUse::Escaped, MapUse::Bound), locked);
+        };
+        if !parenthesized_at(level, index + 2) {
+            return (MapUse::Changed(method), locked);
+        }
+        index += 3;
+        let name = method.as_str();
+        if MUTEX_LOCKS.contains(&name) {
+            locked = true;
+            continue;
+        }
+        let passes = MAP_PASSES.contains(&name) || (name == "clone" && !locked);
+        if passes {
+            continue;
+        }
+        let reach = if MAP_READS.contains(&name) {
+            MapUse::Read
+        } else {
+            MapUse::Changed(method)
+        };
+        return (reach, locked);
+    }
+}
+
+/// Whether the identifier at `at` is a local in use: not a field, a path's tail, a binding
+/// or a field name in a struct literal or pattern.
+fn local_in_use(level: &[TokenTree], at: usize) -> bool {
+    let after_dot = at >= 1 && punct_at(level, at - 1, '.');
+    let after_path = at >= 2 && path_separator_at(level, at - 2);
+    let previous = at.checked_sub(1).and_then(|before| ident_at(level, before));
+    let binds_mut = previous.as_deref() == Some("mut")
+        && at >= 2
+        && ident_at(level, at - 2).as_deref() == Some("let");
+    let binds = previous.as_deref() == Some("let") || binds_mut;
+    let field_name = punct_at(level, at + 1, ':') && !path_separator_at(level, at + 1);
+    !(after_dot || after_path || binds || field_name)
+}
+
+/// Each reach in `level` of the in-memory commission map or of a local `bound` from one (with
+/// whether it was bound past a lock), and whether the reach passed a lock: a `.commissions`
+/// field (a method call aside), a bound local, and a bare `commissions` local reached past a
+/// lock.
+fn map_reaches(level: &[TokenTree], bound: &BTreeMap<String, bool>) -> Vec<(MapUse, bool)> {
+    let mut out = Vec::new();
+    for at in 0..level.len() {
+        let Some(ident) = ident_at(level, at) else {
+            continue;
+        };
+        let field = ident == MEM_MAP
+            && at >= 1
+            && punct_at(level, at - 1, '.')
+            && !parenthesized_at(level, at + 1)
+            && !path_separator_at(level, at + 1);
+        let local = bound
+            .get(&ident)
+            .copied()
+            .filter(|_| local_in_use(level, at));
+        if field {
+            out.push(map_use(level, place_start(level, at), at, false));
+        } else if let Some(locked) = local {
+            out.push(map_use(level, place_start(level, at), at, locked));
+        } else if ident == MEM_MAP && local_in_use(level, at) {
+            let reach = map_use(level, place_start(level, at), at, false);
+            if reach.1 {
+                out.push(reach);
+            }
+        }
+    }
+    out
+}
+
+/// Every reach of the in-memory commission map in `piece`, locals bound from one followed.
+fn piece_map_uses(piece: &Piece) -> Vec<(MapUse, bool)> {
+    let piece_levels = levels(piece.tokens.clone());
+    let mut bound: BTreeMap<String, bool> = BTreeMap::new();
+    loop {
+        let uses: Vec<(MapUse, bool)> = piece_levels
+            .iter()
+            .flat_map(|level| map_reaches(level, &bound))
+            .collect();
+        let mut grown = bound.clone();
+        for (reach, locked) in &uses {
+            if let MapUse::Bound(name) = reach {
+                let was_locked = grown.entry(name.clone()).or_insert(false);
+                *was_locked |= *locked;
+            }
+        }
+        if grown == bound {
+            return uses;
+        }
+        bound = grown;
+    }
+}
+
+/// Whether `piece`, in the in-memory adapter's file `file`, may change the commission map:
+/// a method of `impl CommissionWrites for MemCommissionWrites`, or one of [`MEM_MAP_WRITERS`].
+fn changes_the_mem_map(file: &str, piece: &Piece) -> bool {
+    let write_view = file == COMMISSION_FILE
+        && piece.impl_of.as_deref() == Some(MEM_WRITE_VIEW)
+        && piece.trait_of.as_deref() == Some(COMMISSION_WRITES);
+    let named = MEM_MAP_WRITERS
+        .iter()
+        .any(|(writer, context)| *writer == file && piece.context == *context)
+        && piece.trait_of.is_none();
+    write_view || named
+}
+
+/// Whether `piece` is a `use` item: its first word, past attributes and a visibility, is `use`.
+fn is_use_item(piece: &Piece) -> bool {
+    let level: Vec<TokenTree> = piece.tokens.clone().into_iter().collect();
+    let mut at = 0;
+    loop {
+        if punct_at(&level, at, '#') {
+            at += 2;
+        } else if ident_at(&level, at).as_deref() == Some("pub") {
+            at += 1;
+            if parenthesized_at(&level, at) {
+                at += 1;
+            }
+        } else {
+            return ident_at(&level, at).as_deref() == Some("use");
+        }
+    }
+}
+
+/// Whether the struct literal or pattern `fields` names the commission map's field.
+fn names_the_map_field(fields: TokenStream) -> bool {
+    comma_separated(fields)
+        .iter()
+        .any(|field| ident_at(field, 0).as_deref() == Some(MEM_MAP))
+}
+
+/// What breaks the in-memory pin in the adapter's sources `files` (each by path relative to
+/// its `src`): the commission map changed or handed on outside [`changes_the_mem_map`]'s
+/// pieces (a column's card list handed on only where [`COLUMN_CARD_LISTS`] allows); a
+/// `StoredCommission` built or matched outside the insert path; a `MemBackend` literal or
+/// pattern naming the map outside staging; and the write view named outside its definition,
+/// its impls, a `use` and the unit's `commissions()`, which names it once. Aliases included.
+fn mem_pin_findings(files: &[(String, String)]) -> Vec<String> {
+    let sources: Vec<String> = files.iter().map(|(_, source)| source.clone()).collect();
+    let rows = token_aliases(&[STORED_COMMISSION], &sources);
+    let backends = token_aliases(&[MEM_BACKEND], &sources);
+    let views = token_aliases(&[MEM_WRITE_VIEW], &sources);
+    let mut card_lists: BTreeMap<(String, String), usize> = COLUMN_CARD_LISTS
+        .iter()
+        .map(|(file, context, count)| (((*file).to_owned(), (*context).to_owned()), *count))
+        .collect();
+    let mut out = Vec::new();
+    for (file, source) in files {
+        let shown = format!("adapter-mem/src/{file}");
+        let parsed =
+            syn::parse_file(source).unwrap_or_else(|error| panic!("{shown} parses: {error}"));
+        let mut view_left = usize::from(file == MEM_LIB_FILE);
+        for piece in pieces(&parsed) {
+            let context = &piece.context;
+            if !changes_the_mem_map(file, &piece) {
+                let key = (file.clone(), context.clone());
+                for (reach, locked) in piece_map_uses(&piece) {
+                    let card_list = !locked && card_lists.get(&key).is_some_and(|left| *left > 0);
+                    match reach {
+                        MapUse::Read | MapUse::Bound(_) => {}
+                        MapUse::Escaped if card_list => {
+                            if let Some(left) = card_lists.get_mut(&key) {
+                                *left -= 1;
+                            }
+                        }
+                        MapUse::Escaped => {
+                            out.push(format!(
+                                "{shown}: the commission map handed on in {context}"
+                            ));
+                        }
+                        MapUse::Changed(method) => {
+                            out.push(format!(
+                                "{shown}: the commission map changed (`{method}`) in {context}"
+                            ));
+                        }
+                    }
+                }
+            }
+            let in_row = piece
+                .impl_of
+                .as_ref()
+                .is_some_and(|name| rows.contains(name));
+            let in_backend = piece
+                .impl_of
+                .as_ref()
+                .is_some_and(|name| backends.contains(name));
+            let in_view = piece
+                .impl_of
+                .as_ref()
+                .is_some_and(|name| views.contains(name));
+            for level in levels(piece.tokens.clone()) {
+                let inserts = file == COMMISSION_FILE && context == INSERT_COMMISSION;
+                for _ in struct_literals(&level, &rows, in_row) {
+                    if !inserts {
+                        out.push(format!(
+                            "{shown}: `{STORED_COMMISSION} {{ … }}` in {context}"
+                        ));
+                    }
+                }
+                let stages = (file.as_str(), context.as_str()) == MEM_STAGE;
+                for fields in struct_literals(&level, &backends, in_backend) {
+                    if !stages && names_the_map_field(fields) {
+                        out.push(format!(
+                            "{shown}: `{MEM_BACKEND} {{ {MEM_MAP}, … }}` in {context}"
+                        ));
+                    }
+                }
+            }
+            let header = in_view
+                && *context == format!("impl {}", piece.impl_of.as_deref().unwrap_or_default());
+            let defines = *context == format!("struct {MEM_WRITE_VIEW}");
+            if header || defines || is_use_item(&piece) {
+                continue;
+            }
+            for name in identifiers(piece.tokens.clone()) {
+                if !views.contains(&name) {
+                    continue;
+                }
+                if context == MEM_UNIT_COMMISSIONS && view_left > 0 {
+                    view_left -= 1;
+                } else {
+                    out.push(format!("{shown}: `{name}` named in {context}"));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The in-memory adapter's production sources.
+fn mem_sources() -> Vec<(String, String)> {
+    sources_under(&adapter_mem_src(), &[])
+}
+
+#[test]
+fn only_the_commission_write_view_changes_the_in_memory_commissions() {
+    let files = mem_sources();
+
+    let findings = mem_pin_findings(&files);
+
+    assert_eq!(findings, Vec::<String>::new());
+    let (_, commission) = files
+        .iter()
+        .find(|(file, _)| file == COMMISSION_FILE)
+        .expect("the scan reads the commission file");
+    let commission_pieces = pieces(&syn::parse_file(commission).expect("it parses"));
+    let uses_in = |context: &str| -> Vec<(MapUse, bool)> {
+        let piece = commission_pieces
+            .iter()
+            .find(|piece| piece.context == context)
+            .unwrap_or_else(|| panic!("the commission file holds {context}"));
+        piece_map_uses(piece)
+    };
+    let archive = uses_in("MemCommissionWrites::set_archived");
+    assert!(
+        archive.contains(&(MapUse::Changed("get_mut".to_owned()), true)),
+        "{archive:?}"
+    );
+    let delete = uses_in("MemCommissionWrites::delete");
+    assert!(
+        delete.contains(&(MapUse::Changed("remove".to_owned()), true)),
+        "{delete:?}"
+    );
+    let all = uses_in("MemBackend::all_commissions");
+    assert!(all.contains(&(MapUse::Read, true)), "{all:?}");
+    let read: BTreeSet<&str> = files.iter().map(|(file, _)| file.as_str()).collect();
+    for file in [COMMISSION_FILE, MEM_LIB_FILE, "workflow.rs"] {
+        assert!(read.contains(file), "the scan reads {file}");
+    }
+}
+
+#[test]
+fn the_mem_pin_refuses_each_planted_change() {
+    let files = mem_sources();
+    let column_writes = "impl ColumnWrites for MemColumnWrites {";
+    let store = "impl CommissionStore for MemCommissionStore {";
+    let reads = "impl CommissionReads for MemCommissionWrites<'_> {";
+    let backend = "impl MemBackend {";
+    let lock = ".lock().expect(\"MemBackend commissions mutex poisoned\")";
+    let retire = |body: String| {
+        format!(
+            "    async fn retire_card(&mut self, commission: &CommissionId) -> anyhow::Result<bool> {{ {body} }}"
+        )
+    };
+    let refused = [
+        (
+            "workflow.rs",
+            column_writes,
+            retire(format!(
+                "let removed = self.0.commissions{lock}.remove(commission); Ok(removed.is_some())"
+            )),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(format!(
+                "let mut commissions = self.0.commissions{lock}; let retired = commissions.get_mut(commission).is_some(); Ok(retired)"
+            )),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(format!(
+                "let map = &self.0.commissions; map{lock}.clear(); Ok(true)"
+            )),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire("let shared = Arc::clone(&self.0.commissions); Ok(wipe(shared))".to_owned()),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(format!(
+                "*self.0.commissions{lock} = HashMap::new(); Ok(true)"
+            )),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(format!(
+                "let mut guard = self.0.commissions{lock}; *guard = HashMap::new(); Ok(true)"
+            )),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(format!(
+                "for (_, stored) in self.0.commissions{lock}.iter_mut() {{ retire(stored); }} Ok(true)"
+            )),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(format!(
+                "let MemBackend {{ commissions, .. }} = self.0.clone(); commissions{lock}.clear(); Ok(true)"
+            )),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(format!(
+                "let kept = self.0.commissions{lock}.get(commission).cloned(); self.0.commissions{lock}.insert(*commission, kept.expect(\"a row\")); Ok(true)"
+            )),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "Mutex::lock(&self.0.commissions).expect(\"poisoned\").clear(); Ok(true)".to_owned(),
+            ),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "let mut spent = false; let mut view = crate::commission::MemCommissionWrites(self.0.clone(), &mut spent); CommissionWrites::set_archived(&mut view, commission, None).await"
+                    .to_owned(),
+            ),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "use crate::commission::StoredCommission as Row; let row: Row = Row { node_id, owner_id }; Ok(true)"
+                    .to_owned(),
+            ),
+        ),
+        (
+            "workflow.rs",
+            "    async fn set_commissions(&mut self, column: &Column) -> anyhow::Result<()> {",
+            "wipe(Arc::clone(&self.0.commissions));".to_owned(),
+        ),
+        (
+            COMMISSION_FILE,
+            store,
+            format!(
+                "    async fn retire_card(&self, id: &CommissionId) -> anyhow::Result<bool> {{ Ok(self.0.commissions{lock}.get_mut(id).is_some()) }}"
+            ),
+        ),
+        (
+            COMMISSION_FILE,
+            reads,
+            format!(
+                "    async fn retire_card(&mut self, id: &CommissionId) -> anyhow::Result<bool> {{ let mut commissions = self.0.commissions{lock}; Ok(commissions.remove(id).is_some()) }}"
+            ),
+        ),
+        (
+            COMMISSION_FILE,
+            backend,
+            "    fn forge(&self, node_id: NodeId, owner_id: UserId) -> StoredCommission { StoredCommission { node_id, owner_id, lifecycle_step: LifecycleStep::Active, deadline: None, maturity: None, direction_status: None, deadline_status: None, linked_channel: None, archived_at: None, created_at: chrono::Utc::now() } }".to_owned(),
+        ),
+        (
+            MEM_LIB_FILE,
+            backend,
+            format!(
+                "    fn reset(&self, base: &MemBackend) {{ merge_map(&mut self.commissions{lock}, &HashMap::new(), &base.commissions{lock}); }}"
+            ),
+        ),
+        (
+            MEM_LIB_FILE,
+            backend,
+            "    fn spend(&self) -> MemCommissionWrites<'static> { MemCommissionWrites(self.clone(), Box::leak(Box::new(false))) }".to_owned(),
+        ),
+    ];
+    for (file, anchor, addition) in &refused {
+        let planted = planted_after(&files, file, anchor, addition);
+
+        let found = mem_pin_findings(&planted);
+
+        assert!(!found.is_empty(), "{file}: {addition}");
+        let shown = format!("adapter-mem/src/{file}: ");
+        assert!(
+            found.iter().all(|finding| finding.starts_with(&shown)),
+            "{addition}: {found:?}"
+        );
+    }
+    let kept = [
+        (
+            COMMISSION_FILE,
+            store,
+            format!(
+                "    async fn probe(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {{ Ok(self.0.commissions{lock}.get(id).map(|stored| stored.rebuild(*id))) }}"
+            ),
+        ),
+        (
+            COMMISSION_FILE,
+            store,
+            format!(
+                "    async fn probe(&self) -> anyhow::Result<usize> {{ let commissions = self.0.commissions{lock}; Ok(commissions.iter().filter(|(_, stored)| stored.archived_at.is_none()).count()) }}"
+            ),
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            "    async fn probe(&mut self, stored: &StoredColumn, id: &CommissionId) -> anyhow::Result<bool> { Ok(stored.commissions.contains(id) && !stored.commissions.is_empty()) }".to_owned(),
+        ),
+    ];
+    for (file, anchor, addition) in &kept {
+        let planted = planted_after(&files, file, anchor, addition);
+
+        let found = mem_pin_findings(&planted);
+
+        assert_eq!(found, Vec::<String>::new(), "{file}: {addition}");
     }
 }
 

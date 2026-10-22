@@ -215,30 +215,31 @@ pub(crate) fn insert_commission(
 /// The fields of a [`Commission`] we keep behind the lock; a read rebuilds the
 /// aggregate, which is not `Clone`. `Clone` lets a unit stage the map,
 /// `PartialEq` lets [`crate::merge_map`] tell an untouched row from a written one.
-/// Its name and level live on its node, in the node map.
+/// Its name and level live on its node, in the node map. Its fields are private to this
+/// module, so no other module of the adapter can write them.
 #[derive(Clone, PartialEq)]
 pub(crate) struct StoredCommission {
     /// The commission's own node: a top-level `commission` node whose segment is its id.
-    pub(crate) node_id: NodeId,
+    node_id: NodeId,
     /// The User who created it — the permanent owner.
-    pub(crate) owner_id: UserId,
+    owner_id: UserId,
     /// Its single [`LifecycleStep`]; a freshly created commission is at [`CommissionStart`]'s.
-    pub(crate) lifecycle_step: LifecycleStep,
+    lifecycle_step: LifecycleStep,
     /// The nullable-but-fixed deadline envelope field.
-    pub(crate) deadline: Option<domain::datetime::DateTimeUtc>,
+    deadline: Option<domain::datetime::DateTimeUtc>,
     /// The maturity posture, or `None` while unrated; one field, so pg's
     /// both-or-neither CHECK holds by construction.
-    pub(crate) maturity: Option<Maturity>,
+    maturity: Option<Maturity>,
     /// The direction-axis Status, or `None`; one cell, so a set replaces.
-    pub(crate) direction_status: Option<DirectionStatus>,
+    direction_status: Option<DirectionStatus>,
     /// The deadline-axis Status, or `None`; the same one-cell shape.
-    pub(crate) deadline_status: Option<DeadlineStatus>,
+    deadline_status: Option<DeadlineStatus>,
     /// The external linked-channel pointer, or `None` while none is declared.
-    pub(crate) linked_channel: Option<ChannelPointer>,
+    linked_channel: Option<ChannelPointer>,
     /// When the commission was archived, or `None` while active.
-    pub(crate) archived_at: Option<domain::datetime::DateTimeUtc>,
+    archived_at: Option<domain::datetime::DateTimeUtc>,
     /// When the commission was created.
-    pub(crate) created_at: domain::datetime::DateTimeUtc,
+    created_at: domain::datetime::DateTimeUtc,
 }
 
 /// The listing's slim projection of commission `id`: its node's name and level, and whether
