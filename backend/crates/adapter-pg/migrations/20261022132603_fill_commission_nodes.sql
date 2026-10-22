@@ -1,9 +1,11 @@
 -- Every commission gets its node: a commission made since the node table came
 -- gets one, with its six entries, and every node's name is re-synced to its
 -- commission's title. From here on a commission node has its commission, a new
--- or updated commission row has a node, and a node's name and level are copied
--- back onto its commission's title and visibility. Why the file is shaped this
--- way: this crate's NODE.json notes, under this file.
+-- or updated commission row has a node, and a node's name is copied back onto
+-- its commission's title. Its level is not copied, so a level edited before the
+-- commission's own columns go differs from its visibility, and the drop's check
+-- stops on it. Why the file is shaped this way: this crate's NODE.inf.json
+-- notes, under this file.
 
 -- No commission or node is written while the checks and the fill run.
 LOCK TABLE commission, node IN SHARE ROW EXCLUSIVE MODE;
@@ -30,20 +32,22 @@ CREATE CONSTRAINT TRIGGER node_has_its_thing
     WHEN (NEW.type = 'commission')
     EXECUTE FUNCTION node_has_its_thing();
 
--- Until the commission's own title and visibility columns go, a commission
--- node's name and level are copied onto them, where they differ.
+-- Until the commission's own title column goes, a commission node's name is
+-- copied onto it, where they differ. Its level is not copied onto the
+-- visibility column: a level edited before that column goes then differs from
+-- it, and the drop's check stops on it.
 CREATE FUNCTION commission_columns_follow_their_node() RETURNS trigger AS $$
 BEGIN
     UPDATE commission c
-    SET title = NEW.name, visibility = NEW.level
+    SET title = NEW.name
     WHERE c.node_id = NEW.id
-      AND (c.title IS DISTINCT FROM NEW.name OR c.visibility IS DISTINCT FROM NEW.level);
+      AND c.title IS DISTINCT FROM NEW.name;
     RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER commission_columns_follow_their_node
-    AFTER UPDATE OF name, level ON node
+    AFTER UPDATE OF name ON node
     FOR EACH ROW
     WHEN (NEW.type = 'commission')
     EXECUTE FUNCTION commission_columns_follow_their_node();

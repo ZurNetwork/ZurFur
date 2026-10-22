@@ -5,7 +5,8 @@
 //! leaves alone, its refusals (each naming an id alone, the fill unrecorded and
 //! every node-less commission still without a node), and the guards it adds: a
 //! node-less commission row is refused, and a node's rename reaches its
-//! commission's title. Requires a container runtime socket (DOCKER_HOST honored).
+//! commission's title while its level never reaches the visibility. Requires a
+//! container runtime socket (DOCKER_HOST honored).
 
 use adapter_pg::PgPool;
 use sqlx::migrate::MigrateError;
@@ -359,7 +360,7 @@ async fn a_node_less_commission_insert_is_refused_after_the_fill() {
 }
 
 #[tokio::test]
-async fn a_node_rename_keeps_the_old_title_in_step() {
+async fn a_node_rename_reaches_the_title_and_a_widening_leaves_the_visibility() {
     let (pool, _container) = through_den_1().await;
     let commission = seed_commission(&pool, "Before", "private").await;
     run_migrations_through(&pool, FILL_VERSION).await;
@@ -379,8 +380,8 @@ async fn a_node_rename_keeps_the_old_title_in_step() {
             .expect("read the commission's own columns");
     assert_eq!(title, "After", "the title follows the node's name");
     assert_eq!(
-        visibility, "listed",
-        "the visibility follows the node's level"
+        visibility, "private",
+        "the visibility keeps its value: no trigger copies the node's level"
     );
 }
 

@@ -883,24 +883,33 @@ impl CommissionStore for PgCommissionStore {
         to_commission(*id, row.into()).map(Some)
     }
 
-    /// Reads only the node's name and level and whether it is archived; the level through
+    /// One statement that always answers one row and probes the node index for an absent id
+    /// too. Reads only the node's name and level and whether it is archived; the level through
     /// [`stored_level`], the name as stored. `None` if absent or without a node.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>> {
         let rows = sql::find_summary(&self.pool, uuid::Uuid::from(*id)).await?;
-        // Both joins are on a key: at most one row.
-        let summary = rows.into_iter().next().map(|row| CommissionSummary {
+        let [row] = <[sql::FindSummaryRow; 1]>::try_from(rows).map_err(|rows| {
+            anyhow::anyhow!("the summary probe answered {} rows, not one", rows.len())
+        })?;
+        if !row.found.unwrap_or(false) {
+            return Ok(None);
+        }
+        let (Some(name), Some(level)) = (row.name, row.level) else {
+            return Ok(None);
+        };
+        let summary = CommissionSummary {
             id: *id,
-            title: StoredText::from(row.name),
-            visibility: stored_level(&row.level),
+            title: StoredText::from(name),
+            visibility: stored_level(&level),
             archived: archived_flag(row.archived),
-        });
-        Ok(summary)
+        };
+        Ok(Some(summary))
     }
 
-    /// One statement that always answers one row: the probe left-joined to `commission`,
-    /// with the participant probe run whether or not the commission exists. `found`
-    /// false answers `None`; every other column is read leniently.
+    /// One statement that always answers one row: the probe left-joined to `commission` and
+    /// `node`, with the node index and participant probes run whether or not the commission
+    /// exists. `found` false answers `None`; every other column is read leniently.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn standing(
         &self,

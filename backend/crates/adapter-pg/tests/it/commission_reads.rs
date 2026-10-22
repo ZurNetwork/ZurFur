@@ -5,7 +5,8 @@
 //! are its node's: the summary, the listing and the standing read them there, never the
 //! commission's own columns, and a commission with no node reads as absent. A node level no
 //! parser reads counts as Private on every read of it. Names load as stored text, never
-//! re-checked, so a row written under an older rule still reads. One named test per read.
+//! re-checked, so a row written under an older rule still reads. The summary's statement
+//! probes the node index for a made-up id as for a real commission. One named test per read.
 //! Requires a container runtime socket.
 
 use crate::migration_steps::{bare_pool, run_migrations_through};
@@ -33,6 +34,9 @@ use domain::{
     },
     ports::{CommissionStore, Database, FileStore, WorkflowStore},
 };
+
+/// The shipped summary statement, as the generated reader sends it.
+const FIND_SUMMARY_SQL: &str = include_str!("../../queries/commission/find_summary.sql");
 
 /// A fresh, fully migrated private database — a clone of the shared template
 /// (see `test_support::pg`). The second element keeps the shared container
@@ -71,7 +75,7 @@ async fn archive(pool: &PgPool, commission: CommissionId) {
 }
 
 /// Store `token` as the level of the node `commission` points at, a test-only update; the
-/// node's trigger copies it onto the commission's own column.
+/// commission's own visibility column keeps its value, since no trigger copies a level.
 pub(crate) async fn store_node_level(pool: &PgPool, commission: CommissionId, token: &str) {
     let updated = sqlx::query(
         "UPDATE node SET level = $1 FROM commission c WHERE c.id = $2 AND node.id = c.node_id",
@@ -104,6 +108,23 @@ pub(crate) async fn allow_any_node_level(pool: &PgPool) {
         .execute(pool)
         .await
         .expect("drop node_level_known in the test database");
+}
+
+/// Asserts that `plan`, the lines of one statement's `EXPLAIN ANALYZE`, reads the `node` table
+/// and runs every step it plans: no line says `never executed`. The plan is shown on failure.
+#[track_caller]
+pub(crate) fn assert_the_node_probe_runs(label: &str, plan: &[String]) {
+    let shown = plan.join("\n");
+    let reads_node = plan.iter().any(|line| {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        words.windows(2).any(|pair| pair == ["on", "node"])
+    });
+    assert!(
+        reads_node,
+        "{label}: the plan reads no node table:\n{shown}"
+    );
+    let skipped = plan.iter().any(|line| line.contains("never executed"));
+    assert!(!skipped, "{label}: a step of the plan never ran:\n{shown}");
 }
 
 /// Add `member` as a Participant by a direct insert: no route admits a second
@@ -400,6 +421,27 @@ async fn the_summary_of_a_missing_commission_is_none() {
     let summary = store.find_summary(&missing).await.expect("find_summary");
 
     assert_eq!(summary, None);
+}
+
+// The shipped summary statement probes the node index for a made-up id as for a real
+// commission: neither plan reads `node` conditionally, so the two answer in the same steps.
+#[tokio::test]
+async fn a_made_up_id_and_a_real_commission_both_probe_the_node_index_for_a_summary() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:summaryplanowner").await;
+    let real = seed_commission(&pool, &owner, "Untitled").await;
+    let made_up = CommissionId::from(uuid::Uuid::now_v7());
+    let explain = format!("EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF) {FIND_SUMMARY_SQL}");
+
+    let cases = [("a made-up id", made_up), ("a real commission", real)];
+    for (label, target) in cases {
+        let plan: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(explain.clone()))
+            .bind(uuid::Uuid::from(target))
+            .fetch_all(&pool)
+            .await
+            .expect("explain the summary statement");
+        assert_the_node_probe_runs(label, &plan);
+    }
 }
 
 // The summary read answers the title as stored, the visibility and whether it

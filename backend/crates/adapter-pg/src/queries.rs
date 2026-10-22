@@ -1161,8 +1161,9 @@ pub mod commission {
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
     pub struct FindSummaryRow {
-        pub name: String,
-        pub level: String,
+        pub found: Option<bool>,
+        pub name: Option<String>,
+        pub level: Option<String>,
         pub archived: Option<bool>,
     }
 
@@ -1625,16 +1626,20 @@ pub mod commission {
 
     /// `queries/commission/find_summary.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// One commission's summary: its node's name and level, and whether it is
-    /// archived, and nothing else of the row. The node is the one the commission
-    /// points at; a commission with no node reads as absent. The archive time itself
-    /// is never decoded. Archived commissions are found.
+    /// One commission's summary, always as exactly one row: a one-row probe
+    /// left-joined to `commission` and then to `node`, so an absent id and a present
+    /// one probe the node index once each. An absent id, or a commission with no
+    /// node, probes it with the nil uuid, which no node is minted with. `found` is
+    /// true only when the commission exists and the joined node is the one it points
+    /// at; then the row holds that node's name and level and whether the commission
+    /// is archived, and nothing else of the row. The archive time itself is never
+    /// decoded. Archived commissions are found.
     pub async fn find_summary(
         conn: impl sqlx::PgExecutor<'_>,
-        id: uuid::Uuid,
+        commission_id: uuid::Uuid,
     ) -> sqlx::Result<Vec<FindSummaryRow>> {
         sqlx::query_as(include_str!("../queries/commission/find_summary.sql"))
-            .bind(id)
+            .bind(commission_id)
             .fetch_all(conn)
             .await
     }
@@ -2068,10 +2073,12 @@ pub mod commission {
     /// `queries/commission/standing.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// One viewer's standing on one commission, always as exactly one row: a one-row
-    /// probe left-joined to `commission` and then to the node it points at, so an
-    /// absent id and a stranger run the same statement, get the same row shape and
-    /// run the same participant probe. `found` is false for an absent id; `level` is
-    /// NULL for a commission with no node. Reads no name and no whole row, and never
+    /// probe left-joined to `commission` and then to `node`, so an absent id and a
+    /// stranger run the same statement, get the same row shape, run the same
+    /// participant probe and probe the node index once each. An absent id, or a
+    /// commission with no node, probes it with the nil uuid, which no node is minted
+    /// with. `found` is false for an absent id; `level` is the commission's own
+    /// node's, NULL when there is none. Reads no name and no whole row, and never
     /// decodes the archive time, only whether there is one.
     pub async fn standing(
         conn: impl sqlx::PgExecutor<'_>,

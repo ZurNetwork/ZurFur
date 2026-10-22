@@ -1,7 +1,8 @@
 //! The commission standing reads over PostgreSQL: the shared suite
 //! (`test_support::commission_standing_contract`), an unreadable visibility read as Private,
-//! the pool read's one statement for a stranger and a made-up id, and the locked read holding
-//! the commission row until its unit ends. Requires a container runtime socket.
+//! the pool read's one statement for a stranger and a made-up id, that statement's node probe
+//! running for both, and the locked read holding the commission row until its unit ends.
+//! Requires a container runtime socket.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,8 +21,11 @@ use test_support::commission_standing_contract::ParticipantRows;
 use test_support::pg_app::{StatementLog, pg_runtime_recording};
 use test_support::seeder::{self, CommissionSeeder};
 
-use crate::commission_reads::{allow_any_node_level, store_node_level};
+use crate::commission_reads::{allow_any_node_level, assert_the_node_probe_runs, store_node_level};
 use crate::seed::MintingSeeder;
+
+/// The shipped pool standing statement, as the generated reader sends it.
+const STANDING_SQL: &str = include_str!("../../queries/commission/standing.sql");
 
 /// The participant table, written by direct statements: no port writes a non-owner row yet.
 struct PgParticipantRows(PgPool);
@@ -209,6 +213,30 @@ async fn a_stranger_and_a_made_up_id_run_the_same_one_statement() {
         .await
         .expect("the pool's standing read");
     assert_eq!(answered, None, "a made-up id answers not found");
+}
+
+// The shipped standing statement probes the node index for a made-up id as for a stranger's
+// real commission: neither plan reads `node` conditionally, so the two answer in the same steps.
+#[tokio::test]
+async fn a_stranger_and_a_made_up_id_both_probe_the_node_index() {
+    let (pool, _kept) = test_support::pg::fresh_pool().await;
+    let database = PgDatabase::new(pool.clone());
+    let owner = provision(&database, "did:plc:planowner").await;
+    let stranger = provision(&database, "did:plc:planstranger").await;
+    let commission = committed_commission(&database, &owner).await;
+    let made_up = CommissionId::from(uuid::Uuid::now_v7());
+    let explain = format!("EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF) {STANDING_SQL}");
+
+    let cases = [("a made-up id", made_up), ("a stranger", commission)];
+    for (label, target) in cases {
+        let plan: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(explain.clone()))
+            .bind(uuid::Uuid::from(target))
+            .bind(stranger.as_ref())
+            .fetch_all(&pool)
+            .await
+            .expect("explain the standing statement");
+        assert_the_node_probe_runs(label, &plan);
+    }
 }
 
 // A unit that ran `standing_for_update` holds the commission row: a second connection can't

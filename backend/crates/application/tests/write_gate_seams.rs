@@ -1,10 +1,11 @@
 //! The den's write gate is the only way to write a commission's node or fields. These scans
 //! hold its seams: the write capability's surface, its one issuer across the workspace and the
-//! issuer's callers in the den, the lent view's surface and its latch, no compiled source the
-//! scans can't read, the write host and the gate named once each, the write use case kept
-//! inside the crate, nothing of it (and no raw SQL or bound seeder) in a driver, no lint
-//! silencer in the den or in commission's acts, and the commission field writes not yet gated,
-//! frozen.
+//! issuer's callers in the den, the lent view's surface and its latch, nothing else in the gate
+//! file reaching the lent view's fields, no compiled source the scans can't read, the write
+//! host and the gate named once each, the write use case kept inside the crate, nothing of it
+//! (and no raw SQL or in-memory seeder) in a driver, no lint silencer in the den, in
+//! commission's acts or on the modules above them, and the commission field writes not yet
+//! gated, frozen.
 
 mod seams;
 
@@ -934,14 +935,37 @@ fn lent_role(implementation: &syn::ItemImpl) -> String {
     }
 }
 
-/// Every method the lent view defines in `file`, with the role its impl is for, and what
-/// else breaks its pinned surface there: a visible field, a derive, a trait impl, an inherent
-/// item other than a method.
+/// Every item in `items` and in each inline module among them, at any depth.
+fn every_item(items: &[Item]) -> Vec<&Item> {
+    items
+        .iter()
+        .flat_map(|item| {
+            let mut found = vec![item];
+            if let Item::Mod(module) = item
+                && let Some((_, content)) = &module.content
+            {
+                found.extend(every_item(content));
+            }
+            found
+        })
+        .collect()
+}
+
+/// `seeds`, and every name `file` binds to one of them, through any chain of aliases.
+fn aliases_in_file(seeds: &[&str], file: &syn::File) -> BTreeSet<String> {
+    let source = file.to_token_stream().to_string();
+    with_aliases(seeds, &[source])
+}
+
+/// Every method the lent view defines in `file`, inline modules included, with the role its
+/// impl is for, and what else breaks its pinned surface there: a visible field, a derive, a
+/// trait impl, an inherent item other than a method. An alias of the view counts as the view.
 fn lent_surface(file: &syn::File) -> (Vec<(String, String)>, Vec<String>) {
+    let lents = aliases_in_file(&[LENT], file);
     let mut methods = Vec::new();
     let mut out = Vec::new();
     let mut defined = 0;
-    for item in &file.items {
+    for item in every_item(&file.items) {
         match item {
             Item::Struct(structure) if structure.ident == LENT => {
                 defined += 1;
@@ -958,7 +982,7 @@ fn lent_surface(file: &syn::File) -> (Vec<(String, String)>, Vec<String>) {
                     }
                 }
             }
-            Item::Impl(implementation) if type_name(&implementation.self_ty) == LENT => {
+            Item::Impl(implementation) if lents.contains(&type_name(&implementation.self_ty)) => {
                 if let Some((_, trait_path, _)) = &implementation.trait_ {
                     out.push(format!("a trait impl: {}", trait_path.to_token_stream()));
                     continue;
@@ -1042,6 +1066,7 @@ fn the_lent_view_s_surface_is_create_and_lent() {
     assert_eq!(elsewhere, Vec::<String>::new());
     let source =
         std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
+    let widened = format!("{WIDENED_MODULE}{AFTER_THE_LENT_VIEW}");
     let broken = [
         (
             "impl<R: RoleTable> Lent<'_, R> {",
@@ -1063,6 +1088,15 @@ fn the_lent_view_s_surface_is_create_and_lent() {
         (
             "impl Lent<'_, Creator> {",
             "impl Lent<'_, AsOwner> {\n    pub(crate) async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {\n        self.latch.pass(self.view.create(commission).await)\n    }\n}\n\nimpl Lent<'_, Creator> {",
+        ),
+        (AFTER_THE_LENT_VIEW, widened.as_str()),
+        (
+            AFTER_THE_LENT_VIEW,
+            "mod outer {\n    mod inner {\n        impl super::super::Lent<'_, AsOwner> {\n            pub(crate) async fn grant(&mut self) -> anyhow::Result<()> {\n                self.latch.pass(self.view.grant().await)\n            }\n        }\n    }\n}\n\n/// What a lent handler answered",
+        ),
+        (
+            AFTER_THE_LENT_VIEW,
+            "type Owned<'a> = Lent<'a, AsOwner>;\n\nimpl Owned<'_> {\n    pub(crate) async fn grant(&mut self) -> anyhow::Result<()> {\n        self.latch.pass(self.view.grant().await)\n    }\n}\n\n/// What a lent handler answered",
         ),
     ];
     for (from, to) in broken {
@@ -1107,14 +1141,15 @@ fn passes_its_call_through_the_latch(method: &syn::ImplItemFn) -> bool {
         && inner.method == method.sig.ident
 }
 
-/// Each method of the lent view in `file` whose body doesn't pass its own inner call through
-/// the latch.
+/// Each method of the lent view in `file`, inline modules and aliases included, whose body
+/// doesn't pass its own inner call through the latch.
 fn unlatched_methods(file: &syn::File) -> Vec<String> {
-    file.items
-        .iter()
+    let lents = aliases_in_file(&[LENT], file);
+    every_item(&file.items)
+        .into_iter()
         .filter_map(|item| match item {
             Item::Impl(implementation)
-                if type_name(&implementation.self_ty) == LENT
+                if lents.contains(&type_name(&implementation.self_ty))
                     && implementation.trait_.is_none() =>
             {
                 Some(implementation)
@@ -1142,7 +1177,9 @@ fn every_lent_method_goes_through_the_latch() {
     assert_eq!(methods.len(), 2, "the scan reads both lent methods");
     let source =
         std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
+    let widened = format!("{WIDENED_MODULE}{AFTER_THE_LENT_VIEW}");
     let broken = [
+        (AFTER_THE_LENT_VIEW, widened.as_str()),
         (
             "        self.latch.pass(self.view.lent().await)",
             "        self.view.lent().await",
@@ -1180,6 +1217,194 @@ fn every_lent_method_goes_through_the_latch() {
         let unlatched = unlatched_methods(&file);
 
         assert!(!unlatched.is_empty(), "{to}");
+    }
+}
+
+/// The lent view's inner view: only [`LENT`]'s methods and [`LEND_AS`] reach it.
+const VIEW_TYPE: &str = "View";
+
+/// The inner view's field holding the commission repo.
+const REPO: &str = "repo";
+
+/// The struct literals and patterns of the views [`LEND_AS`] holds: it builds the inner view
+/// and the lent view, then takes the lent view apart.
+const LENDER_STRUCTS: [(&str, &str, usize); 2] = [(LEND_AS, VIEW_TYPE, 1), (LEND_AS, LENT, 2)];
+
+/// The anchor in the gate file a planted item goes before: the item after the lent view.
+const AFTER_THE_LENT_VIEW: &str = "/// What a lent handler answered";
+
+/// A nested module in the gate file that widens an owner's lent view: a module there sees the
+/// private fields of `Lent` and `View`.
+const WIDENED_MODULE: &str = "mod widened {\n    use super::*;\n    use domain::elements::commission::GrantLevel;\n\n    impl Lent<'_, AsOwner> {\n        pub(crate) async fn grant_view_to(&mut self, user: &UserId) -> anyhow::Result<()> {\n            let commission = *self.view.capability.thing();\n            self.latch.pass(\n                self.view\n                    .repo\n                    .grant_view(&commission, user, GrantLevel::Total)\n                    .await,\n            )\n        }\n    }\n}\n\n";
+
+/// Whether `piece` sits in an impl of a view in `views` at the file's top level.
+fn held_by_a_view(piece: &Piece, views: &BTreeSet<String>) -> bool {
+    piece.impl_of.as_ref().is_some_and(|name| {
+        let in_the_impl = piece.context == format!("impl {name}")
+            || piece.context.starts_with(&format!("{name}::"));
+        views.contains(name) && in_the_impl
+    })
+}
+
+/// Whether the identifier at `at` is the `mod` keyword, a raw `r#mod` aside.
+fn module_keyword_at(level: &[TokenTree], at: usize) -> bool {
+    matches!(level.get(at), Some(TokenTree::Ident(ident)) if *ident == "mod")
+}
+
+/// Whether a `.view` or `.repo` field access (or a method of either name) starts at `at`.
+fn view_field_at(level: &[TokenTree], at: usize) -> bool {
+    let field = ident_at(level, at + 1);
+    let named = matches!(field.as_deref(), Some(name) if name == VIEW || name == REPO);
+    punct_at(level, at, '.') && !punct_at(level, at.wrapping_sub(1), '.') && named
+}
+
+/// Whether the identifier at `at`, a view in `views` (or `Self` in a view's impl), opens a
+/// struct literal or pattern: a brace group next, or after a turbofish.
+fn view_struct_at(
+    level: &[TokenTree],
+    at: usize,
+    views: &BTreeSet<String>,
+    held: bool,
+) -> Option<String> {
+    let name = ident_at(level, at)?;
+    let a_view = views.contains(&name) || (held && name == "Self");
+    let defines = matches!(
+        ident_at(level, at.wrapping_sub(1)).as_deref(),
+        Some("struct" | "enum" | "union" | "impl")
+    );
+    let returned =
+        punct_at(level, at.wrapping_sub(1), '>') && punct_at(level, at.wrapping_sub(2), '-');
+    let braces_at = if path_separator_at(level, at + 1) && punct_at(level, at + 3, '<') {
+        past_generics(level, at + 3)
+    } else {
+        at + 1
+    };
+    let braced = matches!(level.get(braces_at), Some(TokenTree::Group(group)) if group.delimiter() == Delimiter::Brace);
+    (a_view && braced && !defines && !returned).then_some(name)
+}
+
+/// Each view of `views` a struct literal or pattern in `piece` names, in order.
+fn view_structs(piece: &Piece, views: &BTreeSet<String>) -> Vec<String> {
+    let held = held_by_a_view(piece, views);
+    levels(piece.tokens.clone())
+        .iter()
+        .flat_map(|level| (0..level.len()).filter_map(|at| view_struct_at(level, at, views, held)))
+        .collect()
+}
+
+/// What reaches the private fields of the lent view or its inner view in the gate file
+/// `file`, besides their own methods: any module but the unit tests' (a module there sees
+/// both views' fields), a `.view` or `.repo` outside an impl of either view at the file's top
+/// level, and a struct literal or pattern of either past [`LENDER_STRUCTS`]. Macro bodies and
+/// function bodies included.
+fn lent_reach_findings(file: &syn::File) -> Vec<String> {
+    let views = aliases_in_file(&[LENT, VIEW_TYPE], file);
+    let mut out = Vec::new();
+    for item in &file.items {
+        let Item::Mod(_) = item else {
+            let nested = levels(item.to_token_stream())
+                .iter()
+                .any(|level| (0..level.len()).any(|at| module_keyword_at(level, at)));
+            if nested {
+                out.push(format!("a module inside {}", item_name(item)));
+            }
+            continue;
+        };
+        if !declares_under_cfg_test(std::slice::from_ref(item), "tests") {
+            out.push(format!(
+                "a module other than the unit tests: {}",
+                item_name(item)
+            ));
+        }
+    }
+    let mut left: BTreeMap<(String, String), usize> = LENDER_STRUCTS
+        .iter()
+        .map(|(context, name, count)| (((*context).to_owned(), (*name).to_owned()), *count))
+        .collect();
+    for piece in pieces(file) {
+        let reached = !held_by_a_view(&piece, &views)
+            && levels(piece.tokens.clone())
+                .iter()
+                .any(|level| (0..level.len()).any(|at| view_field_at(level, at)));
+        if reached {
+            out.push(format!("a view field reached in {}", piece.context));
+        }
+        for name in view_structs(&piece, &views) {
+            let key = (piece.context.clone(), name.clone());
+            if let Some(count) = left.get_mut(&key)
+                && *count > 0
+            {
+                *count -= 1;
+                continue;
+            }
+            out.push(format!(
+                "a `{name}` struct literal or pattern in {}",
+                piece.context
+            ));
+        }
+    }
+    out
+}
+
+#[test]
+fn nothing_else_in_the_gate_file_reaches_the_lent_view_s_fields() {
+    let gate = parse(&application_src().join(GATE_FILE));
+
+    let findings = lent_reach_findings(&gate);
+
+    assert_eq!(findings, Vec::<String>::new());
+    let views = aliases_in_file(&[LENT, VIEW_TYPE], &gate);
+    let in_the_lender: Vec<String> = pieces(&gate)
+        .iter()
+        .filter(|piece| piece.context == LEND_AS)
+        .flat_map(|piece| view_structs(piece, &views))
+        .collect();
+    assert_eq!(
+        in_the_lender,
+        [VIEW_TYPE, LENT, LENT],
+        "the scan reads the view structs {LEND_AS} holds"
+    );
+    let source =
+        std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
+    let free_function = "pub(crate) async fn grant_view_to(lent: &mut Lent<'_, AsOwner>, user: &UserId) -> anyhow::Result<()> {\n    let commission = *lent.view.capability.thing();\n    lent.view.repo.grant_view(&commission, user, GrantLevel::Total).await\n}\n\n";
+    let destructured = "pub(crate) async fn grant_view_to(lent: &mut Lent<'_, AsOwner>, user: &UserId) -> anyhow::Result<()> {\n    let Lent { view, .. } = lent;\n    let View { repo, capability, .. } = view;\n    repo.grant_view(capability.thing(), user, GrantLevel::Total).await\n}\n\n";
+    let planted_items = [
+        WIDENED_MODULE,
+        free_function,
+        destructured,
+        "mod widened;\n\n",
+        "#[cfg(test)]\nmod tests_too;\n\n",
+        "fn widen() {\n    mod inner {}\n}\n\n",
+        "macro_rules! widen {\n    ($lent:expr) => {\n        $lent.view.repo\n    };\n}\n\n",
+        "fn widen(view: &mut View<'_, AsOwner>) -> &mut Box<dyn CommissionRepo + '_> {\n    &mut view.repo\n}\n\n",
+        "fn widen<'a>(lent: Lent<'a, AsOwner>) -> View<'a, AsOwner> {\n    let Lent::<'a, AsOwner> { view, .. } = lent;\n    view\n}\n\n",
+        "type Bare<'a> = View<'a, AsOwner>;\n\nfn widen(view: Bare<'_>) {\n    let Bare { repo, .. } = view;\n}\n\n",
+        "impl View<'_, AsOwner> {\n    fn widen(self) -> Box<dyn CommissionRepo> {\n        let Self { repo, .. } = self;\n        repo\n    }\n}\n\n",
+        "fn widen(lent: &mut Lent<'_, AsOwner>) {\n    let reach = || lent.view.capability.thing();\n}\n\n",
+    ];
+    let lender_taken_apart = (
+        "    drop(view);\n",
+        "    let View { repo, .. } = view;\n    drop(repo);\n",
+    );
+    assert!(source.contains(AFTER_THE_LENT_VIEW));
+    let mut planted: Vec<String> = planted_items
+        .iter()
+        .map(|item| {
+            source.replacen(
+                AFTER_THE_LENT_VIEW,
+                &format!("{item}{AFTER_THE_LENT_VIEW}"),
+                1,
+            )
+        })
+        .collect();
+    assert!(source.contains(lender_taken_apart.0));
+    planted.push(source.replacen(lender_taken_apart.0, lender_taken_apart.1, 1));
+    for planted_gate in planted {
+        let file = syn::parse_file(&planted_gate).expect("the planted gate parses");
+
+        let findings = lent_reach_findings(&file);
+
+        assert!(!findings.is_empty(), "{planted_gate}");
     }
 }
 
@@ -1559,17 +1784,26 @@ fn the_write_use_case_stays_crate_private() {
 
 // Nothing in the drivers.
 
-/// The in-memory seeder that writes a commission beneath the gate; the dev profile reaches it
-/// only through the fixture.
-const SEED_BOUND_COMMISSION: &str = "seed_bound_commission";
+/// The in-memory adapter's commission seeders, each a write beneath the gate: a bound
+/// commission, a stored title past the name rule, a lifecycle step, a tab row, and standing
+/// given or taken. The dev profile reaches them only through the fixture.
+const IN_MEMORY_SEEDERS: [&str; 6] = [
+    "seed_bound_commission",
+    "seed_stored_title",
+    "seed_lifecycle_step",
+    "seed_tab",
+    "seed_participant",
+    "remove_participant",
+];
 
-/// What a driver may not name: the node port, the issuer, the capability, the bound seeder,
-/// and raw SQL.
+/// What a driver may not name: the node port, the issuer, the capability, the in-memory
+/// seeders, and raw SQL.
 fn driver_forbidden(sources: &[String]) -> BTreeSet<String> {
     let seeds: Vec<&str> = NODE_PORT
         .iter()
         .copied()
-        .chain([GATE_ISSUED, WRITE_CAPABILITY, SEED_BOUND_COMMISSION])
+        .chain([GATE_ISSUED, WRITE_CAPABILITY])
+        .chain(IN_MEMORY_SEEDERS)
         .chain(RAW_SQL)
         .collect();
     with_aliases(&seeds, sources)
@@ -1863,6 +2097,11 @@ fn the_driver_scan_refuses_each_planted_route() {
         "async fn seed(backend: MemBackend) { let store = backend.node_store(); }",
         "async fn seed(backend: MemBackend, seed: CommissionSeed) { backend.seed_bound_commission(&seed).await; }",
         "use adapter_mem::MemBackend;\nfn seeder() -> fn(&MemBackend) { MemBackend::seed_bound_commission }",
+        "fn seed(backend: &MemBackend) { backend.seed_stored_title(adapter_mem::fixture::untitled(), \"a/name\"); }",
+        "fn seed(backend: &MemBackend) { adapter_mem::MemBackend::seed_lifecycle_step(backend, untitled(), LifecycleStep::Active); }",
+        "use adapter_mem::MemBackend;\nfn seed(backend: &MemBackend, user: UserId) { backend.seed_participant(untitled(), user, now()); }",
+        "fn seeder() -> fn(&MemBackend, CommissionId, &UserId) { MemBackend::remove_participant }",
+        "fn seed(backend: &MemBackend, tab: TabName) { let tab_id = backend.seed_tab(untitled(), tab); }",
         "async fn rename(state: AppState) { adapter_pg::queries::node::set_name(&state.pool, &id, &name).await; }",
         "use adapter_pg::queries as q;",
         "use adapter_pg::queries::commission::add_participant;",
@@ -2051,7 +2290,7 @@ fn the_scan_reads_every_crate_that_depends_on_composition() {
     );
 }
 
-// No lint silencer in the den or in commission's acts.
+// No lint silencer in the den, in commission's acts or on the modules above them.
 
 /// The lints nothing in the den's production files or commission's act files may silence:
 /// an item no real act reaches is removed, never silenced. `warnings` silences them all.
@@ -2171,6 +2410,61 @@ fn silencer_findings(file: &str, source: &str) -> Vec<String> {
         .collect()
 }
 
+/// The files above the `guarded` ones (paths relative to the use-case layer's sources) that
+/// aren't guarded themselves, each with the modules it declares on the way down to a guarded
+/// file: `lib.rs` declares a top module, `a.rs` declares `a/b.rs`'s `b`.
+fn ancestor_modules(guarded: &[&str]) -> BTreeMap<String, BTreeSet<String>> {
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for file in guarded {
+        let modules: Vec<&str> = file.trim_end_matches(".rs").split('/').collect();
+        for (depth, module) in modules.iter().enumerate() {
+            let parent = match depth {
+                0 => "lib.rs".to_owned(),
+                _ => format!("{}.rs", modules[..depth].join("/")),
+            };
+            if !guarded.contains(&parent.as_str()) {
+                out.entry(parent).or_default().insert((*module).to_owned());
+            }
+        }
+    }
+    out
+}
+
+/// Each silencer in the ancestor module file `file` that reaches a guarded file: an inner one,
+/// which silences the whole file and its modules, or an outer one on the `mod` item declaring
+/// a module in `declared`.
+fn ancestor_silencer_findings(
+    file: &str,
+    source: &str,
+    declared: &BTreeSet<String>,
+) -> Vec<String> {
+    let parsed = syn::parse_file(source).expect("the source parses");
+    let inner: TokenStream = parsed
+        .attrs
+        .iter()
+        .map(|attribute| attribute.to_token_stream())
+        .collect();
+    let mut found = silencers(inner);
+    for item in &parsed.items {
+        let Item::Mod(module) = item else {
+            continue;
+        };
+        if !declared.contains(&unraw(&module.ident)) {
+            continue;
+        }
+        let outer: TokenStream = module
+            .attrs
+            .iter()
+            .map(|attribute| attribute.to_token_stream())
+            .collect();
+        found.extend(silencers(outer));
+    }
+    found
+        .into_iter()
+        .map(|silencer| format!("{file}: {silencer}"))
+        .collect()
+}
+
 #[test]
 fn den_and_commission_hold_no_lint_silencer() {
     let src = application_src();
@@ -2205,6 +2499,29 @@ fn den_and_commission_hold_no_lint_silencer() {
     {
         assert!(read.contains(&file), "the scan reads {file}: {read:?}");
     }
+    let ancestors = ancestor_modules(&read);
+    let ancestor_offenders: Vec<String> = ancestors
+        .iter()
+        .flat_map(|(file, declared)| {
+            let source = std::fs::read_to_string(src.join(file)).expect("a readable source");
+            ancestor_silencer_findings(file, &source, declared)
+        })
+        .collect();
+    assert_eq!(ancestor_offenders, Vec::<String>::new());
+    let named = |modules: &[&str]| -> BTreeSet<String> {
+        modules.iter().map(|module| (*module).to_owned()).collect()
+    };
+    let expected_ancestors = BTreeMap::from([
+        (
+            "commission.rs".to_owned(),
+            named(&["act", "create", "den", "rename"]),
+        ),
+        ("lib.rs".to_owned(), named(&["commission", "den"])),
+    ]);
+    assert_eq!(
+        ancestors, expected_ancestors,
+        "the scan reads lib.rs and commission.rs"
+    );
     let refused = [
         "#[allow(dead_code)]\nfn grant_fits() {}",
         "#[expect(dead_code, reason = \"only a test builds it\")]\nenum Anchor { Thing }",
@@ -2241,6 +2558,105 @@ fn den_and_commission_hold_no_lint_silencer() {
 
         assert_eq!(found, Vec::<String>::new(), "{source}");
     }
+}
+
+#[test]
+fn the_modules_above_the_guarded_files_silence_none_of_them() {
+    let library = BTreeSet::from(["commission".to_owned(), "den".to_owned()]);
+    let commission = ["act", "create", "den", "rename"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<String>>();
+    let refused = [
+        ("lib.rs", &library, "#[allow(dead_code)]\npub mod den;"),
+        ("lib.rs", &library, "#![allow(dead_code)]\npub mod den;"),
+        (
+            "lib.rs",
+            &library,
+            "#[expect(unused, reason = \"later\")]\npub mod commission;",
+        ),
+        (
+            "lib.rs",
+            &library,
+            "#![cfg_attr(not(test), allow(warnings))]\npub mod account;",
+        ),
+        (
+            "commission.rs",
+            &commission,
+            "#[cfg_attr(not(test), allow(dead_code))]\npub(crate) mod act;",
+        ),
+        (
+            "commission.rs",
+            &commission,
+            "#[expect(unused)]\npub mod rename;",
+        ),
+        (
+            "commission.rs",
+            &commission,
+            "#[allow(dead_code)]\npub mod create;",
+        ),
+        (
+            "commission.rs",
+            &commission,
+            "#[allow(Dead_Code)]\npub(crate) mod r#den;",
+        ),
+        (
+            "commission.rs",
+            &commission,
+            "#![expect(unused_variables, reason = \"later\")]\npub mod archive;",
+        ),
+    ];
+    for (file, declared, source) in refused {
+        let found = ancestor_silencer_findings(file, source, declared);
+
+        assert_eq!(found.len(), 1, "{file}: {source}: {found:?}");
+    }
+    let sweep = "#[allow(\n    clippy::disallowed_methods,\n    reason = \"the sweep is a system job, not a use-case method\"\n)]\npub async fn sweep_deadlines() {}";
+    let kept = [
+        ("commission.rs", &commission, sweep),
+        (
+            "commission.rs",
+            &commission,
+            "#[allow(dead_code)]\nmod values;",
+        ),
+        ("lib.rs", &library, "#[cfg(test)]\nmod test_world;"),
+        (
+            "lib.rs",
+            &library,
+            "#[cfg_attr(test, derive(Debug))]\npub mod den;",
+        ),
+        (
+            "lib.rs",
+            &library,
+            "//! Never `#![allow(dead_code)]` here.\n\npub mod den;",
+        ),
+    ];
+    for (file, declared, source) in kept {
+        let found = ancestor_silencer_findings(file, source, declared);
+
+        assert_eq!(found, Vec::<String>::new(), "{file}: {source}");
+    }
+    let guarded = [
+        "den.rs",
+        "den/gate.rs",
+        "den/read/walk.rs",
+        "commission/act.rs",
+    ];
+    let expected = BTreeMap::from([
+        (
+            "commission.rs".to_owned(),
+            BTreeSet::from(["act".to_owned()]),
+        ),
+        (
+            "lib.rs".to_owned(),
+            BTreeSet::from(["commission".to_owned(), "den".to_owned()]),
+        ),
+        (
+            "den/read.rs".to_owned(),
+            BTreeSet::from(["walk".to_owned()]),
+        ),
+    ]);
+    assert_eq!(ancestor_modules(&guarded), expected);
 }
 
 // The interim guard: the frozen list.
