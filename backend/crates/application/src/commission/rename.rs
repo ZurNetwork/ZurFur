@@ -2,7 +2,7 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{AsOwner, CommissionId, CommissionTitle, NewChangelogEntry},
+        commission::{AsOwner, CommissionId, CommissionTitle},
         user::UserId,
     },
 };
@@ -13,7 +13,7 @@ use crate::{
     },
     den::{
         Den, DenType, Handler, Lent, Place,
-        act::{ActShape, ActSpec, Anchor, DenAct, EntryRule, Handled, HandlerError},
+        act::{ActShape, ActSpec, Anchor, DenAct, EntryRule, GatedEntry, Handled, HandlerError},
         needs, write,
     },
 };
@@ -54,7 +54,7 @@ impl Act {
 impl Handler for Act {
     type Role = AsOwner;
 
-    const ENTRY: EntryRule = EntryRule::OnChange(NewChangelogEntry::renamed);
+    const ENTRY: EntryRule = EntryRule::OnChange(GatedEntry::RENAMED);
 
     /// Answers the renamed commission as the unit holds it; the gate wrote its node's name.
     async fn handle(&self, lent: &mut Lent<'_, AsOwner>) -> Result<Handled, HandlerError> {

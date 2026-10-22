@@ -1,6 +1,8 @@
 //! The den's write gate is the only way to write a commission's node or fields. These scans
 //! hold its seams: the write capability's surface, its one definition and its one issuer across
-//! the workspace and the issuer's callers in the den, the lent view's surface and its latch,
+//! the workspace and the issuer's callers in the den, every act's entry rule naming one gated
+//! entry written out and no two the same, the gated entries built only in the act file, each
+//! with a kind and a constructor of its own, the lent view's surface and its latch,
 //! nothing else in the gate file reaching the lent view's fields, no compiled source the scans
 //! can't read, the write host and the gate named once each, the write use case kept inside the
 //! crate, nothing of it (and no raw SQL or in-memory seeder) in a driver, no lint silencer in
@@ -1179,6 +1181,463 @@ fn issue_is_called_only_by_the_lenders_and_the_role_table_stays_in_the_gate() {
     let den_act = syn::parse_file(den_act).expect("the planted act parses");
     let commission_act = syn::parse_file(commission_act).expect("the planted act parses");
     assert_eq!(production_leaf_acts(&den_act, &commission_act), 2);
+}
+
+// The act's entry rule.
+
+/// A gated kind's entry: built only in [`ACT_FILE`], and named by an act only through one of
+/// its associated consts.
+const GATED_ENTRY: &str = "GatedEntry";
+
+/// The den's act file, relative to the use-case layer's sources: the one file that builds a
+/// [`GATED_ENTRY`].
+const ACT_FILE: &str = "den/act.rs";
+
+/// The rule a handler's [`ENTRY`] is.
+const ENTRY_RULE: &str = "EntryRule";
+
+/// A handler's entry rule.
+const ENTRY: &str = "ENTRY";
+
+/// The entry rule's variants, each carrying one gated entry.
+const ENTRY_RULE_VARIANTS: [&str; 2] = ["Always", "OnChange"];
+
+/// The handler trait, which declares [`ENTRY`] once, in [`GATE_FILE`], with no default.
+const HANDLER_TRAIT: &str = "trait Handler";
+
+/// The gated entries today's acts name, each by its file.
+const NAMED_GATED_ENTRIES: [(&str, &str); 2] = [
+    ("commission/create.rs", "CREATED"),
+    ("commission/rename.rs", "RENAMED"),
+];
+
+/// The use-case layer's production sources, each with its path relative to its `src`.
+fn application_sources() -> Vec<(String, String)> {
+    sources_under(&application_src(), &[])
+}
+
+fn is_brace_group(tree: &TokenTree) -> bool {
+    matches!(tree, TokenTree::Group(group) if group.delimiter() == Delimiter::Brace)
+}
+
+/// Whether `tokens` hold, at any depth, an impl whose header names one of `names`.
+fn impls_one_of(tokens: TokenStream, names: &BTreeSet<String>) -> bool {
+    levels(tokens).iter().any(|level| {
+        (0..level.len())
+            .filter(|at| ident_at(level, *at).as_deref() == Some("impl"))
+            .any(|at| {
+                level[at + 1..]
+                    .iter()
+                    .take_while(|tree| !is_brace_group(tree))
+                    .any(|tree| {
+                        identifiers(TokenStream::from(tree.clone()))
+                            .iter()
+                            .any(|ident| names.contains(ident))
+                    })
+            })
+    })
+}
+
+/// Each [`GATED_ENTRY`] struct literal or pattern in `files` (each by its path relative to the
+/// use-case layer's sources) outside [`ACT_FILE`]: under any alias, or `Self` in an impl of
+/// one, at any depth, function and macro bodies included.
+fn gated_literal_findings(files: &[(String, String)]) -> Vec<String> {
+    let sources: Vec<String> = files.iter().map(|(_, source)| source.clone()).collect();
+    let names = token_aliases(&[GATED_ENTRY], &sources);
+    let mut out = Vec::new();
+    for (file, source) in files {
+        if file == ACT_FILE {
+            continue;
+        }
+        let parsed = syn::parse_file(source).expect("the source parses");
+        for piece in pieces(&parsed) {
+            let in_an_impl_of_one = piece
+                .impl_of
+                .as_ref()
+                .is_some_and(|name| names.contains(name))
+                || impls_one_of(piece.tokens.clone(), &names);
+            let literals: usize = levels(piece.tokens.clone())
+                .iter()
+                .map(|level| struct_literals(level, &names, in_an_impl_of_one).len())
+                .sum();
+            if literals > 0 {
+                out.push(format!(
+                    "{file}: a `{GATED_ENTRY}` literal in {}",
+                    piece.context
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// The tokens of the item that starts at `at` in `level`, up to and including its `;`.
+fn item_to_semicolon(level: &[TokenTree], at: usize) -> &[TokenTree] {
+    let end = (at..level.len())
+        .find(|index| punct_at(level, *index, ';'))
+        .map_or(level.len(), |index| index + 1);
+    &level[at..end]
+}
+
+/// The gated entry `value` names when it is exactly `EntryRule::Always(GatedEntry::NAME)` or
+/// `EntryRule::OnChange(GatedEntry::NAME)`, as written; `None` for anything else.
+fn named_gated_entry(value: &[TokenTree]) -> Option<String> {
+    let variant = ident_at(value, 3)?;
+    let rule_written_out = value.len() == 5
+        && ident_at(value, 0).as_deref() == Some(ENTRY_RULE)
+        && path_separator_at(value, 1)
+        && ENTRY_RULE_VARIANTS.contains(&variant.as_str());
+    let Some(TokenTree::Group(group)) = value.get(4) else {
+        return None;
+    };
+    if !rule_written_out || group.delimiter() != Delimiter::Parenthesis {
+        return None;
+    }
+    let inner: Vec<TokenTree> = group.stream().into_iter().collect();
+    let gated_written_out = inner.len() == 4
+        && ident_at(&inner, 0).as_deref() == Some(GATED_ENTRY)
+        && path_separator_at(&inner, 1);
+    gated_written_out.then(|| ident_at(&inner, 3)).flatten()
+}
+
+/// What one `const ENTRY` item is: the bare declaration, or the gated entry its value names
+/// when written out; `Err` with the item as written otherwise.
+enum EntryItem {
+    Declared,
+    Names(String),
+}
+
+fn entry_item(item: &[TokenTree]) -> Result<EntryItem, String> {
+    let shown = || item.iter().cloned().collect::<TokenStream>().to_string();
+    let typed = punct_at(item, 2, ':') && ident_at(item, 3).as_deref() == Some(ENTRY_RULE);
+    let ends = item
+        .last()
+        .is_some_and(|tree| matches!(tree, TokenTree::Punct(punct) if punct.as_char() == ';'));
+    if !typed || !ends {
+        return Err(shown());
+    }
+    if item.len() == 5 {
+        return Ok(EntryItem::Declared);
+    }
+    if !punct_at(item, 4, '=') {
+        return Err(shown());
+    }
+    named_gated_entry(&item[5..item.len() - 1])
+        .map(EntryItem::Names)
+        .ok_or_else(shown)
+}
+
+/// Every gated entry a production `const ENTRY` in `files` names, by file and piece, and what
+/// breaks the entry rule's pin: a `const ENTRY` at any depth (macro bodies included) not
+/// written out as `EntryRule::Always(GatedEntry::NAME)` or `EntryRule::OnChange(GatedEntry::NAME)`,
+/// a bare declaration anywhere but once in [`HANDLER_TRAIT`] in [`GATE_FILE`], and a gated
+/// entry two items name.
+fn entry_rule_scan(files: &[(String, String)]) -> (Vec<(String, String)>, Vec<String>) {
+    let mut named: Vec<(String, String)> = Vec::new();
+    let mut by_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut declarations = 0usize;
+    let mut out = Vec::new();
+    for (file, source) in files {
+        let parsed = syn::parse_file(source).expect("the source parses");
+        for piece in pieces(&parsed) {
+            for level in levels(piece.tokens.clone()) {
+                for at in 0..level.len() {
+                    let starts = ident_at(&level, at).as_deref() == Some("const")
+                        && ident_at(&level, at + 1).as_deref() == Some(ENTRY);
+                    if !starts {
+                        continue;
+                    }
+                    let place = format!("{file}: {}", piece.context);
+                    match entry_item(item_to_semicolon(&level, at)) {
+                        Ok(EntryItem::Declared) => {
+                            declarations += 1;
+                            let in_the_trait = file == GATE_FILE && piece.context == HANDLER_TRAIT;
+                            if !in_the_trait || declarations > 1 {
+                                out.push(format!("{place}: a bare `{ENTRY}` declaration"));
+                            }
+                        }
+                        Ok(EntryItem::Names(name)) => {
+                            named.push((file.clone(), name.clone()));
+                            by_name.entry(name).or_default().push(place);
+                        }
+                        Err(written) => {
+                            out.push(format!(
+                                "{place}: `{written}` is no gated entry written out"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for (name, places) in by_name {
+        if places.len() > 1 {
+            out.push(format!("`{GATED_ENTRY}::{name}` is named by {places:?}"));
+        }
+    }
+    if declarations == 0 {
+        out.push(format!(
+            "no `{ENTRY}` declaration in {GATE_FILE}'s {HANDLER_TRAIT}"
+        ));
+    }
+    (named, out)
+}
+
+/// What breaks the gated entries' definitions in [`ACT_FILE`]: an associated const of an
+/// inherent impl of [`GATED_ENTRY`] not written out as `Self { kind: ChangelogEntryKind::K,
+/// constructor: NewChangelogEntry::c }`, and two consts sharing a kind or a constructor.
+fn gated_definition_findings(act: &syn::File) -> Vec<String> {
+    let mut kinds: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut constructors: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut out = Vec::new();
+    for item in every_item(&act.items) {
+        let Item::Impl(implementation) = item else {
+            continue;
+        };
+        if implementation.trait_.is_some() || type_name(&implementation.self_ty) != GATED_ENTRY {
+            continue;
+        }
+        for impl_item in &implementation.items {
+            let ImplItem::Const(constant) = impl_item else {
+                continue;
+            };
+            let name = constant.ident.to_string();
+            let Some((kind, constructor)) = gated_fields(&constant.expr) else {
+                out.push(format!("`{GATED_ENTRY}::{name}` is not written out"));
+                continue;
+            };
+            kinds.entry(kind).or_default().push(name.clone());
+            constructors.entry(constructor).or_default().push(name);
+        }
+    }
+    for (what, shared) in [("kind", kinds), ("constructor", constructors)] {
+        for (value, names) in shared {
+            if names.len() > 1 {
+                out.push(format!("the {what} `{value}` is shared by {names:?}"));
+            }
+        }
+    }
+    out
+}
+
+/// The variant of `prefix` that `expr` names when it is exactly `prefix::name`.
+fn two_segment_path(expr: &syn::Expr, prefix: &str) -> Option<String> {
+    let syn::Expr::Path(path) = expr else {
+        return None;
+    };
+    let segments: Vec<String> = path
+        .path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect();
+    let plain = path.qself.is_none()
+        && path.path.leading_colon.is_none()
+        && path
+            .path
+            .segments
+            .iter()
+            .all(|segment| segment.arguments.is_none());
+    match segments.as_slice() {
+        [first, name] if plain && first == prefix => Some(name.clone()),
+        _ => None,
+    }
+}
+
+/// The kind and the constructor a gated entry's const is written out with:
+/// `Self { kind: ChangelogEntryKind::K, constructor: NewChangelogEntry::c }`, nothing else.
+fn gated_fields(expr: &syn::Expr) -> Option<(String, String)> {
+    let syn::Expr::Struct(literal) = expr else {
+        return None;
+    };
+    let fields: Vec<(String, &syn::Expr)> = literal
+        .fields
+        .iter()
+        .filter_map(|field| match &field.member {
+            syn::Member::Named(ident) => Some((ident.to_string(), &field.expr)),
+            syn::Member::Unnamed(_) => None,
+        })
+        .collect();
+    let plain = literal.path.is_ident("Self")
+        && literal.rest.is_none()
+        && literal.dot2_token.is_none()
+        && fields.len() == 2
+        && literal.fields.len() == 2;
+    let [(kind_field, kind), (constructor_field, constructor)] = fields.as_slice() else {
+        return None;
+    };
+    let named = kind_field == "kind" && constructor_field == "constructor";
+    if !plain || !named {
+        return None;
+    }
+    let kind = two_segment_path(kind, "ChangelogEntryKind")?;
+    let constructor = two_segment_path(constructor, "NewChangelogEntry")?;
+    Some((kind, constructor))
+}
+
+#[test]
+fn an_act_names_a_gated_entry_and_only_the_act_file_builds_one() {
+    let files = application_sources();
+
+    let literals = gated_literal_findings(&files);
+    let (named, findings) = entry_rule_scan(&files);
+    let definitions = gated_definition_findings(&parse(&application_src().join(ACT_FILE)));
+
+    assert_eq!(literals, Vec::<String>::new());
+    assert_eq!(findings, Vec::<String>::new());
+    assert_eq!(definitions, Vec::<String>::new());
+    let expected: Vec<(String, String)> = NAMED_GATED_ENTRIES
+        .iter()
+        .map(|(file, name)| ((*file).to_owned(), (*name).to_owned()))
+        .collect();
+    assert_eq!(named, expected, "the scan reads today's two acts");
+}
+
+/// A fixture act file: a handler of `act` whose entry rule is `entry`.
+fn act_with_entry(act: &str, entry: &str) -> String {
+    format!(
+        "impl Handler for {act} {{\n    type Role = AsOwner;\n\n    const ENTRY: EntryRule = {entry};\n\n    async fn handle(&self, lent: &mut Lent<'_, AsOwner>) -> Result<Handled, HandlerError> {{\n        let answer = lent.lent().await?;\n        Ok(Handled {{ answer }})\n    }}\n}}"
+    )
+}
+
+/// A `GatedEntry` literal building an archive's entry under kind `Renamed`.
+const LEAKY_LITERAL: &str = "GatedEntry { kind: ChangelogEntryKind::Renamed, constructor: |c, a, t| NewChangelogEntry::event(c, ChangelogEntryKind::Archived, a, serde_json::json!({\"title\": \"A secret sketch\"}), t) }";
+
+#[test]
+fn the_entry_rule_scans_refuse_each_planted_shape() {
+    let files = application_sources();
+    let rename = "commission/rename.rs";
+    let closure = act_with_entry(
+        "Act",
+        "EntryRule::OnChange(|c, a, t| NewChangelogEntry::renamed(c, a, t).with_note(\"chosen by the act\".to_owned()))",
+    );
+    let local_fn = format!(
+        "fn leak(c: CommissionId, a: UserId, t: DateTimeUtc) -> NewChangelogEntry {{ NewChangelogEntry::renamed(c, a, t) }}\n{}",
+        act_with_entry("Act", "EntryRule::OnChange(leak)")
+    );
+    let literal_entry = act_with_entry("Act", &format!("EntryRule::OnChange({LEAKY_LITERAL})"));
+    let aliased = format!(
+        "use crate::den::act::GatedEntry as Gated;\n{}",
+        act_with_entry("Act", "EntryRule::OnChange(Gated::RENAMED)")
+    );
+    let shared = act_with_entry("Act", "EntryRule::OnChange(GatedEntry::CREATED)");
+    let borrowed = act_with_entry("Act", "<rename::Act as Handler>::ENTRY");
+    let another_const = format!(
+        "const LEAK: EntryRule = EntryRule::OnChange(GatedEntry::RENAMED);\n{}",
+        act_with_entry("Act", "LEAK")
+    );
+    let qualified = act_with_entry(
+        "Act",
+        "crate::den::act::EntryRule::OnChange(GatedEntry::RENAMED)",
+    );
+    let stamped = "macro_rules! act {\n    ($entry:expr) => {\n        impl Handler for Act {\n            type Role = AsOwner;\n            const ENTRY: EntryRule = $entry;\n        }\n    };\n}\nact!(EntryRule::OnChange(GatedEntry::RENAMED));";
+    let stamped_name = "macro_rules! act {\n    ($name:ident) => {\n        impl Handler for Act {\n            const ENTRY: EntryRule = EntryRule::OnChange(GatedEntry::$name);\n        }\n    };\n}\nact!(RENAMED);";
+    let second_trait = "pub(crate) trait Other {\n    const ENTRY: EntryRule;\n}";
+    let defaulted = "pub(crate) trait Handler {\n    const ENTRY: EntryRule = EntryRule::Always(GatedEntry::CREATED);\n}";
+    let entry_plants: Vec<Vec<(String, String)>> = vec![
+        with_file(&files, rename, &closure),
+        with_file(&files, rename, &local_fn),
+        with_file(&files, "commission/archive.rs", &literal_entry),
+        with_file(&files, rename, &aliased),
+        with_file(&files, rename, &shared),
+        with_file(&files, "commission/archive.rs", &borrowed),
+        with_file(&files, rename, &another_const),
+        with_file(&files, rename, &qualified),
+        with_file(&files, rename, stamped),
+        with_file(&files, rename, stamped_name),
+        with_file(&files, "den/write.rs", second_trait),
+        with_file(&files, "den/write.rs", defaulted),
+    ];
+    for planted in &entry_plants {
+        let (_, findings) = entry_rule_scan(planted);
+
+        assert!(!findings.is_empty(), "{:?}", planted.last());
+    }
+    let (_, shared_findings) = entry_rule_scan(&with_file(&files, rename, &shared));
+    assert!(
+        shared_findings
+            .iter()
+            .any(|finding| finding.contains("GatedEntry::CREATED")),
+        "{shared_findings:?}"
+    );
+
+    let in_a_fn = format!("fn leak() -> GatedEntry {{ {LEAKY_LITERAL} }}");
+    let in_a_const = format!("const LEAK: GatedEntry = {LEAKY_LITERAL};");
+    let through_an_alias = format!(
+        "use crate::den::act::GatedEntry as Gated;\nfn leak() -> Gated {{ {} }}",
+        LEAKY_LITERAL.replacen(GATED_ENTRY, "Gated", 1)
+    );
+    let through_a_type = format!(
+        "type Gated = GatedEntry;\nfn leak() -> Gated {{ {} }}",
+        LEAKY_LITERAL.replacen(GATED_ENTRY, "Gated", 1)
+    );
+    let as_self = format!(
+        "impl GatedEntry {{\n    const LEAK: Self = {};\n}}",
+        LEAKY_LITERAL.replacen(GATED_ENTRY, "Self", 1)
+    );
+    let nested_impl = format!(
+        "fn hide() {{\n    impl GatedEntry {{\n        const LEAK: Self = {};\n    }}\n}}",
+        LEAKY_LITERAL.replacen(GATED_ENTRY, "Self", 1)
+    );
+    let in_a_macro = "macro_rules! gated {\n    ($constructor:expr) => {\n        $crate::den::act::GatedEntry { kind: ChangelogEntryKind::Renamed, constructor: $constructor }\n    };\n}";
+    let in_a_pattern = "fn take(rule: EntryRule) { let EntryRule::Always(GatedEntry { kind, .. }) = rule else { return; }; }";
+    let literal_plants: Vec<Vec<(String, String)>> = vec![
+        with_file(&files, "commission/archive.rs", &in_a_const),
+        with_file(&files, "den/write.rs", &in_a_fn),
+        with_file(&files, "den/write.rs", &through_an_alias),
+        with_file(&files, "den/write.rs", &through_a_type),
+        with_file(&files, "den/write.rs", &as_self),
+        with_file(&files, "den/write.rs", &nested_impl),
+        with_file(&files, "den/write.rs", in_a_macro),
+        with_file(&files, "den/write.rs", in_a_pattern),
+    ];
+    for planted in &literal_plants {
+        let findings = gated_literal_findings(planted);
+
+        assert!(!findings.is_empty(), "{:?}", planted.last());
+    }
+    let kept_self = "impl Command {\n    fn fresh(actor: UserId, act: DenAct) -> Self {\n        Self { actor, act }\n    }\n}";
+    let kept = with_file(&files, "den/write.rs", kept_self);
+    assert_eq!(gated_literal_findings(&kept), Vec::<String>::new());
+    let named_in_write = with_file(
+        &files,
+        "den/write.rs",
+        "fn rule() -> EntryRule { EntryRule::Always(GatedEntry::CREATED) }",
+    );
+    assert_eq!(
+        gated_literal_findings(&named_in_write),
+        Vec::<String>::new()
+    );
+
+    let act_source =
+        std::fs::read_to_string(application_src().join(ACT_FILE)).expect("the act file reads");
+    let definition_plants = [
+        (
+            "        constructor: NewChangelogEntry::renamed,",
+            "        constructor: NewChangelogEntry::created,",
+        ),
+        (
+            "        kind: ChangelogEntryKind::Renamed,",
+            "        kind: ChangelogEntryKind::Created,",
+        ),
+        (
+            "    pub(crate) const RENAMED: Self = Self {",
+            "    pub(crate) const ALSO_CREATED: Self = Self::CREATED;\n\n    pub(crate) const RENAMED: Self = Self {",
+        ),
+        (
+            "        constructor: NewChangelogEntry::renamed,",
+            "        constructor: |c, a, t| NewChangelogEntry::renamed(c, a, t),",
+        ),
+    ];
+    for (from, to) in definition_plants {
+        assert!(act_source.contains(from), "{from}");
+        let planted = act_source.replacen(from, to, 1);
+        let act = syn::parse_file(&planted).expect("the planted act file parses");
+
+        let findings = gated_definition_findings(&act);
+
+        assert!(!findings.is_empty(), "{to}");
+    }
 }
 
 // The lent view.
