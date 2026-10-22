@@ -2005,16 +2005,17 @@ fn view_field_at(level: &[TokenTree], at: usize) -> bool {
     punct_at(level, at, '.') && !punct_at(level, at.wrapping_sub(1), '.') && named
 }
 
-/// Whether the identifier at `at`, a view in `views` (or `Self` in a view's impl), opens a
-/// struct literal or pattern: a brace group next, or after a turbofish.
-fn view_struct_at(
+/// The name and brace contents of the struct literal or pattern the identifier at `at` opens,
+/// when it is one of `names` (or `Self`, when `self_named`): a brace group next, or after a
+/// turbofish. A definition (`struct`, `enum`, `union`, `impl`) and a return type are none.
+fn struct_literal_at(
     level: &[TokenTree],
     at: usize,
-    views: &BTreeSet<String>,
-    held: bool,
-) -> Option<String> {
+    names: &BTreeSet<String>,
+    self_named: bool,
+) -> Option<(String, TokenStream)> {
     let name = ident_at(level, at)?;
-    let a_view = views.contains(&name) || (held && name == "Self");
+    let named = names.contains(&name) || (self_named && name == "Self");
     let defines = matches!(
         ident_at(level, at.wrapping_sub(1)).as_deref(),
         Some("struct" | "enum" | "union" | "impl")
@@ -2026,8 +2027,11 @@ fn view_struct_at(
     } else {
         at + 1
     };
-    let braced = matches!(level.get(braces_at), Some(TokenTree::Group(group)) if group.delimiter() == Delimiter::Brace);
-    (a_view && braced && !defines && !returned).then_some(name)
+    let Some(TokenTree::Group(braces)) = level.get(braces_at) else {
+        return None;
+    };
+    let braced = braces.delimiter() == Delimiter::Brace;
+    (named && braced && !defines && !returned).then(|| (name, braces.stream()))
 }
 
 /// Each view of `views` a struct literal or pattern in `piece` names, in order.
@@ -2035,7 +2039,10 @@ fn view_structs(piece: &Piece, views: &BTreeSet<String>) -> Vec<String> {
     let held = held_by_a_view(piece, views);
     levels(piece.tokens.clone())
         .iter()
-        .flat_map(|level| (0..level.len()).filter_map(|at| view_struct_at(level, at, views, held)))
+        .flat_map(|level| {
+            (0..level.len()).filter_map(|at| struct_literal_at(level, at, views, held))
+        })
+        .map(|(name, _)| name)
         .collect()
 }
 
@@ -4935,36 +4942,17 @@ fn pg_write_helpers(
     }
 }
 
-/// Each struct literal or pattern of one of `names` (or `Self`, when `self_named`) in
-/// `level`, a struct definition and a return type aside: a name followed by a brace group,
-/// directly or past `::<…>`. Each comes with its brace group's contents.
+/// The brace contents of each struct literal or pattern of one of `names` (or `Self`, when
+/// `self_named`) in `level`, as [`struct_literal_at`] finds them.
 fn struct_literals(
     level: &[TokenTree],
     names: &BTreeSet<String>,
     self_named: bool,
 ) -> Vec<TokenStream> {
-    let mut out = Vec::new();
-    for at in 0..level.len() {
-        let Some(ident) = ident_at(level, at) else {
-            continue;
-        };
-        let named = names.contains(&ident) || (self_named && ident == "Self");
-        let defined = at >= 1 && ident_at(level, at - 1).as_deref() == Some("struct");
-        let returned = at >= 2 && punct_at(level, at - 1, '>') && punct_at(level, at - 2, '-');
-        if !named || defined || returned {
-            continue;
-        }
-        let mut next = at + 1;
-        if path_separator_at(level, next) && punct_at(level, next + 2, '<') {
-            next = past_generics(level, next + 2);
-        }
-        if let Some(TokenTree::Group(group)) = level.get(next)
-            && group.delimiter() == Delimiter::Brace
-        {
-            out.push(group.stream());
-        }
-    }
-    out
+    (0..level.len())
+        .filter_map(|at| struct_literal_at(level, at, names, self_named))
+        .map(|(_, contents)| contents)
+        .collect()
 }
 
 /// The commission write view's methods, by name, from the port file.
