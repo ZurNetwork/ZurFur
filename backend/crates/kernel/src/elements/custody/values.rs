@@ -8,7 +8,7 @@ use super::Purpose;
 const MAX_KEY_ID_BYTES: usize = 255;
 
 /// The version byte that starts a sealed envelope this crate can read the header of.
-const ENVELOPE_VERSION: u8 = 0x01;
+pub const ENVELOPE_VERSION: u8 = 0x01;
 
 /// The length of a MAC tag, in bytes.
 const MAC_TAG_BYTES: usize = 32;

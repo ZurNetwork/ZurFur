@@ -82,6 +82,18 @@
       "governs": "dev-deps proptest (PLC signing determinism), wiremock (directory/PDS/guarded-client mocks) and tokio-rustls (an untrusted-certificate TLS server for the guarded client); hickory-resolver 0.26 as the guarded client's DNS client (supplies DNS, dictates nothing); jacquard with default features off (no hickory 0.24)"
     }
   ],
+  "backend/crates/adapter-hkdf": [
+    {
+      "page": 26804226,
+      "title": "did:plc Identity Custody, Minting & Credible Exit",
+      "governs": "src/custodian.rs, src/derivation.rs, src/envelope.rs: the dev custodian of the did:plc custody keys and sign-in secrets — one HKDF-derived key per purpose, the v1 envelope binding purpose, key id and subject; golden/: the format's frozen constants"
+    },
+    {
+      "page": 2026093001,
+      "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
+      "governs": "src/mac.rs: the Den MAC key (HMAC-SHA256 over a use label and the message), held under the same custody as the did:plc keys"
+    }
+  ],
   "backend/crates/adapter-mem": [
     {
       "page": 2162692,

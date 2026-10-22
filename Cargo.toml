@@ -135,6 +135,17 @@ base64 = "0.22"
 chacha20poly1305 = "0.10"
 # Wipe secret key material from memory on drop.
 zeroize = { version = "1", features = ["derive"] }
+# --- The dev key custodian (adapter-hkdf): one key per purpose, the Den MAC ---
+# HKDF-SHA256 (RFC 5869): Extract, then Expand, one key per custody purpose.
+hkdf = "0.13.0"
+# HMAC-SHA256 under the Den key; `zeroize` wipes the keyed state's buffer on drop.
+hmac = { version = "0.13.0", features = ["zeroize"] }
+# sha2 on the digest 0.11 line hkdf and hmac 0.13 build on, beside the 0.10 entry
+# above; `zeroize` wipes the hash state on drop. Default features off: `oid`
+# would bring const-oid 0.10 into the lock, and nothing here names an OID.
+sha2-0-11 = { package = "sha2", version = "0.11.0", default-features = false, features = [
+  "zeroize",
+] }
 # --- The guarded web client: identity fetches to hosts a visitor names ---
 # The DNS stub resolver on the system configuration, behind the address filter.
 # 0.26 on purpose: 0.24 carries RUSTSEC-2026-0119.

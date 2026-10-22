@@ -15,6 +15,6 @@ pub use purpose::{
 };
 pub use purpose_marker::{ForDidCustody, ForSigninSecrets, SealPurposeMarker};
 pub use values::{
-    CustodySubject, KeyId, KeyIdError, MacMessage, MacTag, MacTagError, OpenedSecret, PartsError,
-    SealedEnvelope,
+    CustodySubject, ENVELOPE_VERSION, KeyId, KeyIdError, MacMessage, MacTag, MacTagError,
+    OpenedSecret, PartsError, SealedEnvelope,
 };

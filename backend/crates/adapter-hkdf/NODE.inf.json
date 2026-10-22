@@ -1,0 +1,72 @@
+{
+  "path": "backend/crates/adapter-hkdf",
+  "charted": "2026-10-22",
+  "short": "The dev key custodian: HKDF-derived keys, the v1 envelope, the Den MAC",
+  "is": "The dev implementation of the KeyCustodian port: one key per purpose, derived at construction with HKDF-SHA256 from a 32-byte root that is then dropped; secrets are sealed in the v1 envelope (XChaCha20-Poly1305, with the version, purpose, key id and subject bound as associated data) and Den records are tagged with HMAC-SHA256 under the Den key. A key-custody adapter, not a data boundary; only composition, and test-support for tests, are to link it.",
+  "type": "code",
+  "tags": [
+    "category:source",
+    "category:tests"
+  ],
+  "conventions": [
+    "One key per purpose: `HkdfKeyCustodian::derive` derives each requested purpose's key and key id at once and keeps only those entries (a `Zeroizing` key per seal purpose, one pre-keyed `Hmac<Sha256>` for the Den), never the root, the PRK or an `Hkdf`; a purpose it was not built with is `PurposeNotHeld`, never derived on a miss.",
+    "The envelope format is a one-way door: its constants (version, salt, info and fingerprint labels, MAC labels, lengths) and its byte layout live in `golden/`, computed by the committed standard-library script; a golden test that goes red means the format changed, and the fix is never to rewrite the golden file from Rust.",
+    "Never logged: the root, the PRK, any purpose key, plaintexts, opened buffers, envelopes, ciphertexts and MAC tags (lengths only), subjects, and key ids above debug (a key id is a public 64-bit verifier of the root); no `{:?}` of a secret-bearing value, no `#[instrument]` without `skip_all`, no tracing `?field` sigils.",
+    "Opening reads in a fixed order and never panics: the purpose must be held, then the version (`UnknownVersion`), the key-id length, alphabet, nonce and a body at least the AEAD tag long (`Malformed`), the purpose's own key id (`UnknownKeyId`), then decryption (`Unauthentic`).",
+    "`verify` is the only comparison of a `MacTag`: the Den key only (a seal purpose's key id is `UnknownKeyId`), length-checked, constant time."
+  ],
+  "entry_points": [
+    "src/lib.rs",
+    "src/custodian.rs"
+  ],
+  "fs": [
+    {
+      "name": "Cargo.toml",
+      "role": "domain (the port, through the façade) + async-trait, hkdf 0.13 / hmac 0.13 / sha2 0.11 (zeroize, default features off) / chacha20poly1305 0.10 / zeroize; dev: serde_json (the golden file), tokio, proptest, strum (VARIANTS), base64 (the never-logged test)",
+      "node": false
+    },
+    {
+      "name": "golden/custody-v1.json",
+      "role": "the v1 format's golden values in lowercase hex: every constant, the test root (0x00..=0x1f), each purpose's key and key id, the door subjects' and MAC messages' encodings, each envelope's associated data and header, each MAC tag (all from the script) and each envelope's ciphertext (Rust's, `provenance.rust_only`); the tests read it with include_str!",
+      "node": false
+    },
+    {
+      "name": "golden/custody_v1.py",
+      "role": "the independent computation of the golden file, standard library only (HKDF from RFC 5869 over hmac+hashlib, self-checked on test case 1); re-run with `python3 -I backend/crates/adapter-hkdf/golden/custody_v1.py --check` (exit 1 on any difference), `--write` to rewrite its fields and keep the ciphertexts",
+      "node": false
+    },
+    {
+      "name": "src/custodian.rs",
+      "role": "HkdfKeyCustodian: the one constructor `derive(root, purposes)`, the KeyCustodian impl (seal, open in its reading order, mac, verify within the Den purpose only) and a Debug that prints the held purposes only; tests in src/custodian/tests.rs (golden envelopes open, the constants, purpose/subject/key-id binding, tampering, truncation, legacy blobs, version downgrade, fresh nonces, purposes not held, Debug)",
+      "node": false
+    },
+    {
+      "name": "src/derivation.rs",
+      "role": "derive(salt, ikm, info, out): HKDF-SHA256 Extract, the PRK wiped, then Expand; each purpose's key (`zurfur/custody/v1/key/<purpose>`, L = 32) and key id (`hkdf:<purpose>:<16 lowercase hex>` from `zurfur/custody/v1/key-id/<purpose>`, L = 8) under the salt `zurfur/custody/v1`; tests in src/derivation/tests.rs (RFC 5869 A.1, the golden keys, pairwise distinct)",
+      "node": false
+    },
+    {
+      "name": "src/envelope.rs",
+      "role": "the v1 envelope: `0x01 ‖ key-id length (u8) ‖ key id ‖ 24-byte nonce ‖ ciphertext and 16-byte tag`, associated data `0x01 ‖ lp(purpose) ‖ lp(key id) ‖ lp(subject)` with u32 big-endian lengths; EnvelopeParts reads the header without panicking; the fixed-nonce seal is private; tests in src/envelope/tests.rs (golden associated data and headers, the ciphertexts reproduced, injective AD), property tests in src/envelope/proptests.rs",
+      "node": false
+    },
+    {
+      "name": "src/golden.rs",
+      "role": "test-only: reads golden/custody-v1.json (hex, the test root, the golden subjects and MAC messages built by kernel)",
+      "node": false
+    },
+    {
+      "name": "src/lib.rs",
+      "role": "the façade: re-exports HkdfKeyCustodian",
+      "node": false
+    },
+    {
+      "name": "src/mac.rs",
+      "role": "DenMacKey: one pre-keyed Hmac<Sha256> cloned per tag, over lp(`zurfur/mac/v1/<use>`) then the MacMessage encoding; verify checks the key id, then verify_slice (length, then constant time); tests in src/mac/tests.rs",
+      "node": false
+    }
+  ],
+  "notes": [
+    "HKDF's Extract concentrates the root's entropy but cannot add to it (RFC 5869 §4): under a public root, every derived key is public. Nothing builds a custodian outside this crate's tests yet; a KMS adapter is to sit beside this one."
+  ]
+}
