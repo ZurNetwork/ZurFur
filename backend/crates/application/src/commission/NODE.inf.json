@@ -29,7 +29,7 @@
     },
     {
       "name": "create.rs + create/tests.rs",
-      "role": "the create act (create::Act: the title and NewCommission; its spec anchors /commission, makes the node Private with its six entries, and reads its needed role, none, from the Creator marker; its Handler creates through the lent view and answers the lent commission, the gate writing the `created` entry) and the use case, a pure #[use_case] delegation to Den::write with no unit: NotFound is the commission's not-found, Forbidden InsufficientPermissions, Refused and Store Infrastructure; it answers CommissionValues from the write's answer, named and levelled as the gate wrote the node",
+      "role": "the create act (create::Act: the title and NewCommission; its spec anchors /commission, makes the node Private with its six entries, and reads its needed role, none, from the Creator marker; its Handler creates through the lent view and answers the lent commission, its ENTRY `EntryRule::Always(GatedEntry::CREATED)`, the gate writing the `created` entry) and the use case, a pure #[use_case] delegation to Den::write with no unit: NotFound is the commission's not-found, Forbidden InsufficientPermissions, Refused and Store Infrastructure; it answers CommissionValues from the write's answer, named and levelled as the gate wrote the node",
       "node": false
     },
     {
@@ -74,7 +74,7 @@
     },
     {
       "name": "rename.rs + rename/tests.rs",
-      "role": "the rename act (rename::Act: the commission it is anchored on and its new title; its spec anchors the commission's place and reads its needed role, the Owner, from the AsOwner marker; its Handler answers the lent commission, the gate writing the node's name, or nothing when the name is already stored, and a `renamed` entry only on a real change) and the use case, a pure #[use_case] delegation to Den::write with no unit, mapped as create's: a stranger and a made-up id the same not-found, a non-owner Participant InsufficientPermissions; it answers CommissionValues from the write's answer, named and levelled as the gate left the node; rename/tests.rs pins that a refused rename opens no unit, a same-title rename records nothing, and that a refused title is never a title",
+      "role": "the rename act (rename::Act: the commission it is anchored on and its new title; its spec anchors the commission's place and reads its needed role, the Owner, from the AsOwner marker; its Handler answers the lent commission, the gate writing the node's name, or nothing when the name is already stored, and a `renamed` entry only on a real change, by its ENTRY `EntryRule::OnChange(GatedEntry::RENAMED)`) and the use case, a pure #[use_case] delegation to Den::write with no unit, mapped as create's: a stranger and a made-up id the same not-found, a non-owner Participant InsufficientPermissions; it answers CommissionValues from the write's answer, named and levelled as the gate left the node; rename/tests.rs pins that a refused rename opens no unit, a same-title rename records nothing, and that a refused title is never a title",
       "node": false
     },
     {

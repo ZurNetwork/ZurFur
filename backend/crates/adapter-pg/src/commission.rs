@@ -10,12 +10,12 @@ use domain::{
         commission::{
             Band, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
             CommissionFile, CommissionId, CommissionMarkup, CommissionRole, CommissionStanding,
-            CommissionSummary, DeadlineStatus, DirectionStatus, ElementId, ElementPayload,
-            ElementRow, ElementType, FileKey, FileSummary, GrantLevel, LapsedDeadline,
-            LifecycleStep, LockedStanding, Markup, MarkupKey, NewCommission, NewElement, NewSeat,
-            NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
-            SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
-            declares_surface, derive_deadline_status,
+            CommissionStart, CommissionSummary, DeadlineStatus, DirectionStatus, ElementId,
+            ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel,
+            LapsedDeadline, LifecycleStep, LockedStanding, Markup, MarkupKey, NewCommission,
+            NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind,
+            SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow,
+            VisibilityMode, declared_tabs, declares_surface, derive_deadline_status,
         },
         did::Did,
         invitation::InvitationState,
@@ -160,11 +160,12 @@ impl PgCommissionWrites<'_> {
 
 #[async_trait::async_trait]
 impl CommissionWrites for PgCommissionWrites<'_> {
-    /// Inserts the commission row bound to `birth`'s node, one `commission_tab` row per
-    /// [`declared_tabs`], and the owner's `commission_participant` row, all in one
-    /// transaction. The row takes its title and visibility from the node; unless that node
-    /// is the commission's own, the create errs and ends the unit. Every tab is minted
-    /// [`VisibilityMode::Total`].
+    /// Inserts the commission row bound to `birth`'s node at [`CommissionStart`]'s lifecycle
+    /// step, one `commission_tab` row per [`declared_tabs`], and the owner's
+    /// `commission_participant` row, all in one transaction. The row takes its title and
+    /// visibility from the node; unless that node is the commission's own, or if the start
+    /// sets a field the insert leaves NULL, the create errs and ends the unit. Every tab is
+    /// minted [`VisibilityMode::Total`].
     #[tracing::instrument(level = "debug", skip_all)]
     async fn create(
         &mut self,
@@ -172,13 +173,29 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         birth: &CommissionBirth,
         commission: &NewCommission,
     ) -> anyhow::Result<()> {
+        // No `..`: a field the start gains fails to compile here until it is stored.
+        let CommissionStart {
+            lifecycle_step,
+            direction_status: None,
+            deadline_status: None,
+            linked_channel: None,
+            archived_at: None,
+        } = CommissionStart::default()
+        else {
+            // The insert leaves these at NULL, so a start that sets one is refused, not dropped.
+            *self.failed = true;
+            anyhow::bail!(
+                "the starting state sets a status, a linked channel or an archive time, \
+                 which the insert can't store: no commission was stored"
+            );
+        };
         let id = *capability.thing().as_ref();
         let inserted = sql::create_commission(
             &mut *self.conn,
             uuid::Uuid::from(id),
             uuid::Uuid::from(birth.node),
             birth.owner_id.as_ref(),
-            <&'static str>::from(&LifecycleStep::Draft),
+            <&'static str>::from(&lifecycle_step),
             commission.deadline,
             commission.maturity.map(|m| <&'static str>::from(m.rating)),
             commission.maturity.map(|m| m.graphic),

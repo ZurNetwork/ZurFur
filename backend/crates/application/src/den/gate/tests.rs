@@ -26,6 +26,7 @@ use crate::{
     Ports,
     den::{
         Den, DenThing,
+        act::{EntryConstructor, GatedEntry},
         authority::{GrantKind, MINT_AS},
         test_acts::{
             commission_path, create_act, hand_built_create, hand_built_rename, rename_act,
@@ -240,7 +241,7 @@ enum Swallowing {
 impl Handler for Swallowing {
     type Role = Creator;
 
-    const ENTRY: EntryRule = EntryRule::Always(ChangelogEntryKind::Created);
+    const ENTRY: EntryRule = EntryRule::Always(GatedEntry::CREATED);
 
     async fn handle(&self, lent: &mut Lent<'_, Creator>) -> Result<Handled, HandlerError> {
         let chosen = NewCommission {
@@ -489,6 +490,127 @@ async fn the_gate_s_entries_carry_an_empty_payload_and_no_note_on_postgres() {
     let actor = provision(&*ports.database, "did:plc:gate-entry").await;
 
     the_entry_is_the_gate_s(&ports, &actor).await;
+}
+
+/// A constructor that builds a create's entry on another commission than it was given.
+fn on_another_commission(_: CommissionId, actor: UserId, at: DateTimeUtc) -> NewChangelogEntry {
+    NewChangelogEntry::created(old_sketch(), actor, at)
+}
+
+/// A constructor that builds a create's entry by another actor than it was given.
+fn by_another_actor(commission: CommissionId, _: UserId, at: DateTimeUtc) -> NewChangelogEntry {
+    NewChangelogEntry::created(commission, bob(), at)
+}
+
+/// A constructor that builds a create's entry at another time than it was given.
+fn at_another_time(commission: CommissionId, actor: UserId, at: DateTimeUtc) -> NewChangelogEntry {
+    let earlier = at - chrono::TimeDelta::seconds(1);
+    NewChangelogEntry::created(commission, actor, earlier)
+}
+
+/// What the gate wrote for an act that changed its node on "Untitled".
+fn changed_untitled() -> Written {
+    Written {
+        node: NodeId::mint(),
+        commission: untitled(),
+        name: None,
+        level: atta::Level::Private,
+        changed: true,
+    }
+}
+
+// A gated entry's constructor building off the grant's commission, actor or time is a broken
+// rule, and the gate appends nothing.
+#[test]
+fn an_entry_built_off_the_grant_is_a_broken_rule() {
+    let now = Utc::now();
+    let written = changed_untitled();
+    let misbuilt: [EntryConstructor; 3] =
+        [on_another_commission, by_another_actor, at_another_time];
+
+    for constructor in misbuilt {
+        let gated = GatedEntry::for_test(ChangelogEntryKind::Created, constructor);
+        let built = built_entry(EntryRule::Always(gated), &written, &alice(), now);
+        assert!(built.is_err(), "{built:?}");
+    }
+    let built = built_entry(
+        EntryRule::Always(GatedEntry::CREATED),
+        &written,
+        &alice(),
+        now,
+    )
+    .expect("the domain's constructor builds as granted");
+    assert!(built.is_some());
+}
+
+/// A constructor that builds an archive's entry carrying a title and a note, whatever kind its
+/// gated entry names.
+fn leaky(commission: CommissionId, actor: UserId, at: DateTimeUtc) -> NewChangelogEntry {
+    let payload = serde_json::json!({ "title": "A secret sketch" });
+    NewChangelogEntry::event(commission, ChangelogEntryKind::Archived, actor, payload, at)
+        .with_note("free text the act chose".to_owned())
+}
+
+// A gated entry whose constructor builds another kind than its own is a broken rule.
+#[test]
+fn an_entry_of_another_kind_than_its_gated_entry_s_is_a_broken_rule() {
+    let gated = GatedEntry::for_test(ChangelogEntryKind::Renamed, leaky);
+
+    let built = built_entry(
+        EntryRule::OnChange(gated),
+        &changed_untitled(),
+        &alice(),
+        Utc::now(),
+    );
+
+    assert!(built.is_err(), "{built:?}");
+}
+
+/// The leaky constructor under kind `Renamed`, appended through the gate's own append on a unit
+/// of `ports` that commits whatever the append answers: refused as a broken rule, and the
+/// commission's changelog is as it was.
+async fn another_kind_appends_nothing(ports: &Ports, actor: &UserId, commission: CommissionId) {
+    let before = entries(ports, commission).await.len();
+    let gated = GatedEntry::for_test(ChangelogEntryKind::Renamed, leaky);
+    let written = Written {
+        commission,
+        ..changed_untitled()
+    };
+    let mut unit = ports.database.begin().await.expect("begin");
+
+    let appended = append_entry(
+        &mut *unit,
+        EntryRule::OnChange(gated),
+        &written,
+        actor,
+        Utc::now(),
+    )
+    .await;
+    unit.commit().await.expect("the unit commits what it holds");
+
+    assert!(appended.is_err(), "{appended:?}");
+    assert_eq!(entries(ports, commission).await.len(), before);
+}
+
+// The leaky constructor's archive entry, with a title in its payload and a note, is refused
+// under kind `Renamed`, and nothing is appended.
+#[tokio::test]
+async fn an_entry_of_another_kind_than_its_gated_entry_s_appends_nothing() {
+    let world = test_world::world().await;
+
+    another_kind_appends_nothing(&world.ports, &alice(), untitled()).await;
+}
+
+#[tokio::test]
+async fn an_entry_of_another_kind_than_its_gated_entry_s_appends_nothing_on_postgres() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let actor = provision(&*ports.database, "did:plc:gate-another-kind").await;
+    let written = write_at(&ports, &actor, create_act(TITLE), Utc::now())
+        .await
+        .expect("the create lands");
+
+    another_kind_appends_nothing(&ports, &actor, made(&written)).await;
 }
 
 // The entry's append fails after the node rows and the commission are written: the unit

@@ -14,8 +14,8 @@ pub struct Commission {
     pub id: CommissionId,
     /// The User who created the commission and owns it.
     pub owner_id: UserId,
-    /// The single lifecycle state the commission is in; a fresh one is
-    /// [`LifecycleStep::Draft`].
+    /// The single lifecycle state the commission is in; a fresh one is at
+    /// [`CommissionStart`](super::CommissionStart)'s.
     pub lifecycle_step: LifecycleStep,
     /// The deadline, or `None` when the commission carries none.
     pub deadline: Option<DateTimeUtc>,

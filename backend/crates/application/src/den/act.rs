@@ -3,10 +3,16 @@
 
 use std::fmt;
 
-use domain::elements::{
-    commission::{ChangelogEntryKind, Commission, CommissionRole},
-    level::Level,
-    name::NodeName,
+use domain::{
+    datetime::DateTimeUtc,
+    elements::{
+        commission::{
+            ChangelogEntryKind, Commission, CommissionId, CommissionRole, NewChangelogEntry,
+        },
+        level::Level,
+        name::NodeName,
+        user::UserId,
+    },
 };
 
 use crate::{
@@ -98,22 +104,73 @@ impl fmt::Debug for DenAct {
     }
 }
 
-/// Which changelog entry the gate writes once an act lands: one of a kind on every landing,
-/// or one only when the act changed its node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A gated kind's domain constructor: its entry on a commission, by an actor, at a time.
+pub(in crate::den) type EntryConstructor =
+    fn(CommissionId, UserId, DateTimeUtc) -> NewChangelogEntry;
+
+/// A kind the gate writes, paired with its own domain constructor. Its fields are private, so
+/// an act names one of its associated consts and never builds one.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GatedEntry {
+    kind: ChangelogEntryKind,
+    constructor: EntryConstructor,
+}
+
+impl GatedEntry {
+    /// A create's entry: kind `Created`, by `NewChangelogEntry::created`.
+    pub(crate) const CREATED: Self = Self {
+        kind: ChangelogEntryKind::Created,
+        constructor: NewChangelogEntry::created,
+    };
+
+    /// A rename's entry: kind `Renamed`, by `NewChangelogEntry::renamed`.
+    pub(crate) const RENAMED: Self = Self {
+        kind: ChangelogEntryKind::Renamed,
+        constructor: NewChangelogEntry::renamed,
+    };
+
+    /// A gated entry of `kind` built by `constructor`, for the tests that hand the gate a
+    /// misbuilt one.
+    #[cfg(test)]
+    pub(in crate::den) fn for_test(
+        kind: ChangelogEntryKind,
+        constructor: EntryConstructor,
+    ) -> Self {
+        Self { kind, constructor }
+    }
+
+    /// The kind its entry must carry.
+    pub(in crate::den) fn kind(self) -> ChangelogEntryKind {
+        self.kind
+    }
+
+    /// Its entry on `commission`, by `actor`, at `at`, as its domain constructor builds it.
+    pub(in crate::den) fn construct(
+        self,
+        commission: CommissionId,
+        actor: UserId,
+        at: DateTimeUtc,
+    ) -> NewChangelogEntry {
+        (self.constructor)(commission, actor, at)
+    }
+}
+
+/// Which gated entry the gate writes once an act lands: one on every landing, or one only when
+/// the act changed its node.
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum EntryRule {
-    /// One entry of this kind, whatever the act changed.
-    Always(ChangelogEntryKind),
-    /// One entry of this kind when the act changed its node; none when it changed nothing.
-    OnChange(ChangelogEntryKind),
+    /// One entry, whatever the act changed.
+    Always(GatedEntry),
+    /// One entry when the act changed its node; none when it changed nothing.
+    OnChange(GatedEntry),
 }
 
 impl EntryRule {
-    /// The kind of the one entry an act that `changed` its node writes, or `None`.
-    pub(crate) fn entry(self, changed: bool) -> Option<ChangelogEntryKind> {
+    /// The gated entry an act that `changed` its node writes, or `None`.
+    pub(crate) fn entry(self, changed: bool) -> Option<GatedEntry> {
         match self {
-            Self::Always(kind) => Some(kind),
-            Self::OnChange(kind) => changed.then_some(kind),
+            Self::Always(gated) => Some(gated),
+            Self::OnChange(gated) => changed.then_some(gated),
         }
     }
 }
@@ -149,3 +206,6 @@ pub(crate) enum HandlerError {
     #[error("a store under the handler failed")]
     Store(#[from] anyhow::Error),
 }
+
+#[cfg(test)]
+mod tests;
