@@ -1,13 +1,17 @@
 //! The commission column drop: every test seeds made-up rows with raw SQL on a
 //! database migrated through the node table's migration (some before it), runs
 //! the fill, plants at most one difference, then runs the drop and nothing after
-//! it. Checks that a title or level that differs from the commission's node, or a
-//! commission with no node, stops the drop (naming an id alone, the drop
-//! unrecorded and both columns still there); that a title renamed before the fill
-//! and a node renamed after it both pass; and what the drop leaves: no title or
-//! visibility column, `node_id` NOT NULL, the fill's transitional check, trigger
-//! and function gone, and each commission's name and level on its node. Requires a
-//! container runtime socket (DOCKER_HOST honored).
+//! it. Checks that each of these stops the drop, naming an id alone, the drop
+//! unrecorded and both columns still there: a title or level that differs from the
+//! commission's node; a commission with no node of its own (none, a node deleted by
+//! hand, or a node that isn't its own); and a level edit committed while the drop
+//! waits for its lock. Checks that a title renamed before the fill and a node
+//! renamed after it both pass; and what the drop leaves: no title or visibility
+//! column, `node_id` NOT NULL, the fill's transitional check, trigger and function
+//! gone, and each commission's name and level on its node. Requires a container
+//! runtime socket (DOCKER_HOST honored).
+
+use std::time::Duration;
 
 use adapter_pg::PgPool;
 use sqlx::migrate::MigrateError;
@@ -28,6 +32,16 @@ const CANARY_TITLE: &str = "A distinctive commission title";
 
 /// The title the title plant of the refusal-text test sets apart from the node's name.
 const CANARY_APART: &str = "A distinctive title set apart";
+
+/// Sets the level of the node commission `$1` points at to Listed.
+const WIDEN_NODE_TO_LISTED: &str =
+    "UPDATE node SET level = 'listed' FROM commission c WHERE c.id = $1 AND node.id = c.node_id";
+
+/// How many times the lock test polls for the drop to wait.
+const LOCK_WAIT_POLLS: u32 = 500;
+
+/// How long the lock test sleeps between two polls.
+const LOCK_WAIT_INTERVAL: Duration = Duration::from_millis(20);
 
 /// Whether `commission` has the column `column`.
 async fn commission_has_column(pool: &PgPool, column: &str) -> bool {
@@ -99,13 +113,11 @@ async fn set_title_apart(pool: &PgPool, commission: Uuid, title: &str) {
 /// Set the level of `commission`'s node to Listed, a test-only update after the fill; no
 /// trigger copies a level.
 async fn widen_node_to_listed(pool: &PgPool, commission: Uuid) {
-    let updated = sqlx::query(
-        "UPDATE node SET level = 'listed' FROM commission c WHERE c.id = $1 AND node.id = c.node_id",
-    )
-    .bind(commission)
-    .execute(pool)
-    .await
-    .expect("widen the commission's node");
+    let updated = sqlx::query(WIDEN_NODE_TO_LISTED)
+        .bind(commission)
+        .execute(pool)
+        .await
+        .expect("widen the commission's node");
     assert_eq!(updated.rows_affected(), 1, "one node is updated");
 }
 
@@ -126,19 +138,101 @@ async fn rename_node(pool: &PgPool, commission: Uuid, name: &str) {
 /// `commission_has_its_node` is dropped for the insert, then added back exactly as the fill
 /// added it, so the schema is the fill's and only the row differs.
 async fn plant_node_less(pool: &PgPool, title: &str) -> Uuid {
-    sqlx::query("ALTER TABLE commission DROP CONSTRAINT commission_has_its_node")
-        .execute(pool)
-        .await
-        .expect("drop commission_has_its_node in the test's database");
+    execute_alone(
+        pool,
+        "ALTER TABLE commission DROP CONSTRAINT commission_has_its_node",
+    )
+    .await;
     let node_less = seed_commission(pool, title, "private").await;
-    sqlx::query(
+    execute_alone(
+        pool,
         "ALTER TABLE commission ADD CONSTRAINT commission_has_its_node \
          CHECK (node_id IS NOT NULL) NOT VALID",
     )
+    .await;
+    node_less
+}
+
+/// Run `statement` on its own, outside any transaction, in this test's own database.
+async fn execute_alone(pool: &PgPool, statement: &'static str) {
+    sqlx::query(statement)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|error| panic!("{statement}: {error}"));
+}
+
+/// Delete `commission`'s node by hand after the fill, in this test's own database only:
+/// `commission_node_id_fkey` is dropped for the delete, then added back NOT VALID, since the
+/// commission still points at the deleted id. Answers that id.
+async fn plant_deleted_node(pool: &PgPool, commission: Uuid) -> Uuid {
+    let node = node_id_of(pool, commission)
+        .await
+        .expect("the fill bound the commission to a node");
+    execute_alone(
+        pool,
+        "ALTER TABLE commission DROP CONSTRAINT commission_node_id_fkey",
+    )
+    .await;
+    let deleted = sqlx::query("DELETE FROM node WHERE id = $1")
+        .bind(node)
+        .execute(pool)
+        .await
+        .expect("delete the commission's node");
+    assert_eq!(deleted.rows_affected(), 1, "one node is deleted");
+    execute_alone(
+        pool,
+        "ALTER TABLE commission ADD CONSTRAINT commission_node_id_fkey \
+         FOREIGN KEY (node_id) REFERENCES node (id) DEFERRABLE INITIALLY DEFERRED NOT VALID",
+    )
+    .await;
+    node
+}
+
+/// Re-segment `commission`'s node to a fresh id after the fill, in this test's own database
+/// only: `node_keeps_its_place` is disabled for the update and enabled again, so the node keeps
+/// the commission's title and level but is no longer its own.
+async fn plant_foreign_node(pool: &PgPool, commission: Uuid) {
+    execute_alone(
+        pool,
+        "ALTER TABLE node DISABLE TRIGGER node_keeps_its_place",
+    )
+    .await;
+    let updated = sqlx::query(
+        "UPDATE node SET segment = $2 FROM commission c WHERE c.id = $1 AND node.id = c.node_id",
+    )
+    .bind(commission)
+    .bind(Uuid::now_v7().to_string())
     .execute(pool)
     .await
-    .expect("add commission_has_its_node back as the fill did");
-    node_less
+    .expect("re-segment the commission's node");
+    assert_eq!(updated.rows_affected(), 1, "one node is re-segmented");
+    execute_alone(pool, "ALTER TABLE node ENABLE TRIGGER node_keeps_its_place").await;
+}
+
+/// Whether a statement in this test's own database waits for a lock on `commission` or `node`.
+async fn a_lock_on_commission_or_node_waits(pool: &PgPool) -> bool {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_locks l
+                        WHERE NOT l.granted
+                          AND l.database = (SELECT oid FROM pg_database
+                                            WHERE datname = current_database())
+                          AND l.relation IN ('commission'::regclass, 'node'::regclass))",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("read pg_locks")
+}
+
+/// Polls until a statement in this test's own database waits for a lock on `commission` or
+/// `node`, and fails the test if none does within `LOCK_WAIT_POLLS` polls (about ten seconds).
+async fn wait_until_a_lock_waits(pool: &PgPool) {
+    for _ in 0..LOCK_WAIT_POLLS {
+        if a_lock_on_commission_or_node_waits(pool).await {
+            return;
+        }
+        tokio::time::sleep(LOCK_WAIT_INTERVAL).await;
+    }
+    panic!("the drop never waited for a lock on commission or node while the editor held one");
 }
 
 /// Asserts the drop stopped naming `named`, left no ledger row, and left both columns.
@@ -329,6 +423,72 @@ async fn a_commission_without_a_node_stops_the_drop() {
 }
 
 #[tokio::test]
+async fn a_commission_whose_node_was_deleted_by_hand_stops_the_drop() {
+    let (pool, _container) = through_den_1().await;
+    seed_commission(&pool, "A kept commission", "private").await;
+    let dangling = seed_commission(&pool, "A commission whose node goes", "private").await;
+    run_migrations_through(&pool, FILL_VERSION).await;
+    let deleted_node = plant_deleted_node(&pool, dangling).await;
+
+    let stopped = try_run_migrations_through(&pool, DROP_VERSION)
+        .await
+        .expect_err("the drop stops");
+
+    assert_stopped_naming(&pool, &stopped, dangling).await;
+    assert_eq!(
+        node_id_of(&pool, dangling).await,
+        Some(deleted_node),
+        "the commission still points at the deleted node"
+    );
+}
+
+#[tokio::test]
+async fn a_commission_bound_to_a_node_that_is_not_its_own_stops_the_drop() {
+    let (pool, _container) = through_den_1().await;
+    seed_commission(&pool, "A commission", "private").await;
+    let foreign = seed_commission(&pool, "A commission", "private").await;
+    run_migrations_through(&pool, FILL_VERSION).await;
+    plant_foreign_node(&pool, foreign).await;
+
+    let stopped = try_run_migrations_through(&pool, DROP_VERSION)
+        .await
+        .expect_err("the drop stops");
+
+    assert_stopped_naming(&pool, &stopped, foreign).await;
+}
+
+#[tokio::test]
+async fn a_level_edit_committed_while_the_drop_waits_stops_the_drop() {
+    let (pool, _container) = through_den_1().await;
+    let edited = seed_commission(&pool, "A commission edited mid-drop", "private").await;
+    run_migrations_through(&pool, FILL_VERSION).await;
+    let mut editor = pool.begin().await.expect("begin the editor");
+    let widened = sqlx::query(WIDEN_NODE_TO_LISTED)
+        .bind(edited)
+        .execute(&mut *editor)
+        .await
+        .expect("widen the node, uncommitted");
+    assert_eq!(widened.rows_affected(), 1, "one node is widened");
+    let drop_pool = pool.clone();
+    let drop =
+        tokio::spawn(async move { try_run_migrations_through(&drop_pool, DROP_VERSION).await });
+
+    wait_until_a_lock_waits(&pool).await;
+    editor.commit().await.expect("commit the level edit");
+    let stopped = drop
+        .await
+        .expect("join the drop")
+        .expect_err("the drop stops");
+
+    assert_stopped_naming(&pool, &stopped, edited).await;
+    assert_eq!(
+        commission_node(&pool, edited).await.level,
+        "listed",
+        "no level is re-synced"
+    );
+}
+
+#[tokio::test]
 async fn the_refusal_names_the_id_only_and_title_still_exists() {
     let title_apart = {
         let (pool, container) = through_den_1().await;
@@ -350,11 +510,19 @@ async fn the_refusal_names_the_id_only_and_title_still_exists() {
         plant_node_less(&pool, CANARY_TITLE).await;
         (pool, container)
     };
+    let node_deleted = {
+        let (pool, container) = through_den_1().await;
+        let commission = seed_commission(&pool, CANARY_TITLE, "private").await;
+        run_migrations_through(&pool, FILL_VERSION).await;
+        plant_deleted_node(&pool, commission).await;
+        (pool, container)
+    };
 
     for (label, (pool, _container)) in [
         ("a title that differs", title_apart),
         ("a level that differs", level_apart),
         ("a commission without a node", node_less),
+        ("a commission whose node was deleted", node_deleted),
     ] {
         let stopped = try_run_migrations_through(&pool, DROP_VERSION)
             .await
