@@ -1,8 +1,8 @@
 {
   "path": "backend/crates/domain",
-  "charted": "2026-10-17",
+  "charted": "2026-10-22",
   "short": "The domain façade",
-  "is": "The one path consumers use into Zurfur's domain: it re-exports kernel, identity and workflow so every `domain::…` path resolves, and owns only the unit of work, which vends the write ports of both identity and workflow.",
+  "is": "The one path consumers use into Zurfur's domain: it re-exports kernel, identity and workflow so every `domain::…` path resolves, and owns only the unit of work, which vends the write ports of kernel, identity and workflow.",
   "type": "code",
   "tags": [
     "category:source"

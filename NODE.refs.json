@@ -248,7 +248,7 @@
     {
       "page": 2026093001,
       "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
-      "governs": "migrations/20261022052438_create_node.sql: the node table holds each node's key, real parent, segment, type, level and name (D24); a node is never moved or retyped; tests/it/node.rs and tests/it/node_backfill.rs"
+      "governs": "migrations/20261022052438_create_node.sql: the node table holds each node's key, real parent, segment, type, level and name (D24); a node is never moved or retyped; src/node.rs and queries/node/: the node port over that table; tests/it/node.rs and tests/it/node_backfill.rs"
     },
     {
       "page": 2026100701,
@@ -884,6 +884,11 @@
       "governs": "src/elements/maturity.rs"
     },
     {
+      "page": 34013187,
+      "title": "Identities — the Actor Super-Table, Kind-Checked References & the Polymorphism Ban",
+      "governs": "src/elements/node.rs: a NodeId is no actor id; nodes are keyed by segment under their parent"
+    },
+    {
       "page": 57081857,
       "title": "Actor Addressing",
       "governs": "src/elements/did.rs"
@@ -894,9 +899,14 @@
       "governs": "newtype derive rules: path-qualified derives, thiserror owns errors, Deref dropped, FromStr/From derived only where the inner type carries the rule, IdError retired; strum allowed here exact-pinned with token tests; dev-dep proptest — StringBuilder properties beside their leaf (x/proptests.rs)"
     },
     {
+      "page": 2026093001,
+      "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
+      "governs": "src/elements/node.rs and src/ports/node.rs: node data (D23–D25) — a node's key, real parent, segment, type, level and name; no move, no retype"
+    },
+    {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "src/elements/name.rs: D19 names are validated (amended 2026-10-15: the rule lives in the domain, the checked value every name type wraps) — ShowableName and NodeName"
+      "governs": "src/elements/name.rs: D19 names are validated (amended 2026-10-15: the rule lives in the domain, the checked value every name type wraps) — ShowableName and NodeName; src/elements/node.rs: D2 keys are path segments — NodeSegment, the segment rule shared through contract/golden/segments.json"
     }
   ],
   "backend/crates/shared": [

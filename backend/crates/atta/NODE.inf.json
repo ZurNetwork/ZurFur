@@ -10,7 +10,7 @@
   ],
   "conventions": [
     "Never depends on another workspace crate and never names a Zurfur type — host-agnostic by construction, so it can be split out unchanged.",
-    "One exception: the test src/ordinal/tests.rs reads the shared case file contract/golden/name-ordinals.json from outside the crate; when Atta is split out, that test moves with the file.",
+    "One exception: two tests read shared case files from outside the crate — src/ordinal/tests.rs reads contract/golden/name-ordinals.json and src/segment/tests.rs reads contract/golden/segments.json; when Atta is split out, those tests move with the files.",
     "Used by application only; the API never imports it.",
     "Its role is fixed: resolve, enforce structure, route changes, render. How it does that grows only as real needs appear, never ahead of them.",
     "Nothing reads a node except through Atta; a payload is served only after its hash verifies, and until that check exists no payload is served at all.",
@@ -82,7 +82,7 @@
     },
     {
       "name": "src/segment.rs",
-      "role": "Segment, a node key: the ASCII allowlist, 1 to 2048 bytes, never . or ..",
+      "role": "Segment, a node key: the ASCII allowlist, 1 to 2048 bytes, never . or ..; segment/tests.rs also checks every case in contract/golden/segments.json, the file kernel's NodeSegment and the store's node_segment_shape check answer to",
       "node": false
     },
     {

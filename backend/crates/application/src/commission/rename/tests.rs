@@ -12,7 +12,7 @@ use domain::elements::{
 };
 use domain::ports::{
     AccountRepo, ActorIdentityWrites, BugReportWrites, ChangelogWrites, CharacterWrites,
-    ColumnWrites, CommissionRepo, Database, UnitOfWork, UserWrites, WorkflowWrites,
+    ColumnWrites, CommissionRepo, Database, NodeRepo, UnitOfWork, UserWrites, WorkflowWrites,
 };
 
 use super::*;
@@ -191,6 +191,10 @@ impl UnitOfWork for RefusingChangelogUnit {
 
     fn bug_reports(&mut self) -> Box<dyn BugReportWrites + '_> {
         self.0.bug_reports()
+    }
+
+    fn nodes(&mut self) -> Box<dyn NodeRepo + '_> {
+        self.0.nodes()
     }
 
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {

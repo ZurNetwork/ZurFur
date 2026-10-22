@@ -260,6 +260,10 @@ impl UnitOfWork for FactBearingUow {
         self.0.bug_reports()
     }
 
+    fn nodes(&mut self) -> Box<dyn domain::ports::NodeRepo + '_> {
+        self.0.nodes()
+    }
+
     fn actor_identities(&mut self) -> Box<dyn ActorIdentityWrites + '_> {
         self.0.actor_identities()
     }

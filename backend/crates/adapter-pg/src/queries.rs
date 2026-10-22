@@ -2181,6 +2181,117 @@ pub mod key_store {
     }
 }
 
+pub mod node {
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct NodeRow {
+        pub id: uuid::Uuid,
+        pub parent: Option<uuid::Uuid>,
+        pub segment: String,
+        pub r#type: String,
+        pub level: String,
+        pub name: String,
+    }
+
+    /// `queries/node/at_top.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The top-level node of one type holding one segment, if any. The type is
+    /// matched too, so a top-level node of another type is never taken for it.
+    pub async fn at_top(
+        conn: impl sqlx::PgExecutor<'_>,
+        r#type: &str,
+        segment: &str,
+    ) -> sqlx::Result<Vec<NodeRow>> {
+        sqlx::query_as(include_str!("../queries/node/at_top.sql"))
+            .bind(r#type)
+            .bind(segment)
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/node/child.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The node under one parent holding one segment, if any.
+    pub async fn child(
+        conn: impl sqlx::PgExecutor<'_>,
+        parent: uuid::Uuid,
+        segment: &str,
+    ) -> sqlx::Result<Option<NodeRow>> {
+        sqlx::query_as(include_str!("../queries/node/child.sql"))
+            .bind(parent)
+            .bind(segment)
+            .fetch_optional(conn)
+            .await
+    }
+
+    /// `queries/node/children.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every node directly under one parent, by segment bytewise (the column is
+    /// COLLATE "C").
+    pub async fn children(
+        conn: impl sqlx::PgExecutor<'_>,
+        parent: uuid::Uuid,
+    ) -> sqlx::Result<Vec<NodeRow>> {
+        sqlx::query_as(include_str!("../queries/node/children.sql"))
+            .bind(parent)
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/node/create.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Store one node. The node table's checks and triggers refuse a node that
+    /// breaks its shape or doesn't fit its parent.
+    pub async fn create(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        parent: Option<uuid::Uuid>,
+        segment: &str,
+        r#type: &str,
+        level: &str,
+        name: &str,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/node/create.sql"))
+            .bind(id)
+            .bind(parent)
+            .bind(segment)
+            .bind(r#type)
+            .bind(level)
+            .bind(name)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/node/delete.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Delete one node; the parent key's cascade takes every node under it. A
+    /// fixed entry is refused while its commission node lives.
+    pub async fn delete(conn: impl sqlx::PgExecutor<'_>, id: uuid::Uuid) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/node/delete.sql"))
+            .bind(id)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/node/set_name.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Replace one node's name; no row when there is no such node.
+    pub async fn set_name(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        name: &str,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/node/set_name.sql"))
+            .bind(id)
+            .bind(name)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+}
+
 pub mod plc {
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
@@ -2626,6 +2737,9 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "file::delete",
     "file::put",
     "key_store::put",
+    "node::create",
+    "node::delete",
+    "node::set_name",
     "plc::append",
     "profile::put",
     "session::create",

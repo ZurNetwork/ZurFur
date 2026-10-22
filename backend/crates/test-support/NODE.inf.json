@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/test-support",
-  "charted": "2026-10-17",
+  "charted": "2026-10-22",
   "short": "Shared test rig: throwaway PDS, stub PLC, Postgres harness, the PostgreSQL app setup",
   "is": "The shared test rig: a hermetic throwaway PDS with an in-process stub PLC directory, a one-container/template-clone Postgres harness, the app served on PostgreSQL behind an in-process sign-in (`pg_app`) with the den world seeded on it (`pg_app::den_world`), and the cross-adapter PublicRecords conformance suite.",
   "type": "code",
@@ -21,7 +21,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers, base64 for pg_app's dev-profile root key, application for pg_app::den_world's Workflows (made through the create use case), reqwest multipart for its uploads, strum for pg_app::ProfileCacheState",
+      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers, base64 for pg_app's dev-profile root key, application for pg_app::den_world's Workflows (made through the create use case), reqwest multipart for its uploads, strum for pg_app::ProfileCacheState and node_contract's NodeType::VARIANTS",
       "node": false
     },
     {
@@ -80,6 +80,11 @@
       "node": false
     },
     {
+      "name": "src/node_contract.rs",
+      "role": "the shared node conformance suite: one pub async fn per case over (&dyn Database, &dyn NodeStore), building 0.2's tree (a commission node, its six entries, Slots under slots), and node_contract_tests!(setup), which writes one #[tokio::test] per case; a refusal ends the unit",
+      "node": false
+    },
+    {
       "name": "src/pds.rs",
       "role": "ThrowawayPds::boot — container lifecycle, teardown on drop",
       "node": false
@@ -131,7 +136,7 @@
     },
     {
       "name": "src/recording.rs",
-      "role": "CallLog + recording wrappers over Database/UnitOfWork, DidMinter, FileStore, CommissionStore, ChangelogStore (entries) and WorkflowStore (its find logged as find_workflow) — tests read the order of begin/commit/rollback, external calls and store reads; SubjectLog + recording wrappers over the identity reads (AccountStore, UserStore, CharacterStore, ProfileCache, ProfileSource) — tests read which reads ran and whose data each asked for",
+      "role": "CallLog + recording wrappers over Database/UnitOfWork (nodes() delegates unrecorded), DidMinter, FileStore, CommissionStore, ChangelogStore (entries) and WorkflowStore (its find logged as find_workflow) — tests read the order of begin/commit/rollback, external calls and store reads; SubjectLog + recording wrappers over the identity reads (AccountStore, UserStore, CharacterStore, ProfileCache, ProfileSource) — tests read which reads ran and whose data each asked for",
       "node": false
     },
     {

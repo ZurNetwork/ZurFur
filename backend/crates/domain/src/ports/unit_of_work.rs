@@ -4,6 +4,7 @@ use async_trait::async_trait;
 
 use super::AccountRepo;
 use super::BugReportWrites;
+use super::NodeRepo;
 use super::UserWrites;
 use super::actor_identity::ActorIdentityWrites;
 use super::changelog::ChangelogWrites;
@@ -59,6 +60,11 @@ pub trait UnitOfWork: Send {
 
     /// The bug-report write surface over this transaction: filing a report.
     fn bug_reports(&mut self) -> Box<dyn BugReportWrites + '_>;
+
+    /// The Den node repo over this transaction, reads and writes ([`NodeRepo`]). A
+    /// refused node call ends the unit: every later node call fails, and
+    /// [`commit`](UnitOfWork::commit) returns an error and keeps nothing.
+    fn nodes(&mut self) -> Box<dyn NodeRepo + '_>;
 
     /// Commit the unit, consuming the handle; every write lands atomically.
     /// Dropping the handle instead rolls the whole unit back.

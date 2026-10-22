@@ -134,6 +134,10 @@ impl UnitOfWork for RecordingUnit {
         self.inner.bug_reports()
     }
 
+    fn nodes(&mut self) -> Box<dyn domain::ports::NodeRepo + '_> {
+        self.inner.nodes()
+    }
+
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
         self.log.record("commit");
         self.inner.commit().await

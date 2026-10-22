@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/adapter-mem",
-  "charted": "2026-10-17",
+  "charted": "2026-10-22",
   "short": "In-process fakes of every port",
   "is": "In-process fakes of every domain port (private + public store) so core development and most tests need neither a database nor a PDS, reproducing each contract — including transactional rollback — without the operational reality.",
   "type": "code",
@@ -67,7 +67,12 @@
     },
     {
       "name": "src/lib.rs",
-      "role": "shared MemBackend (incl. markups map, the staged bug_reports log, bug_report_store(), and the shared bug_report_filing lock a MemUnitOfWork holds until it ends) + MemDatabase/MemUnitOfWork; blob_count() inspect helper; MemUserStore/Writes, seed helpers (create_character, seed_tombstoned_character, put_profile), MemAccountStore/Writes, MemAuthenticator, MemProfileSource (incl. an unreachable one; answer_after / never_answer latency), MemProfileCache, MemDidMinter, MemKeyStore, MemPlcOperationLog",
+      "role": "shared MemBackend (incl. markups map, the staged nodes map and node_store(), the staged bug_reports log, bug_report_store(), and the shared bug_report_filing lock a MemUnitOfWork holds until it ends) + MemDatabase/MemUnitOfWork; blob_count() inspect helper; MemUserStore/Writes, seed helpers (create_character, seed_tombstoned_character, put_profile), MemAccountStore/Writes, MemAuthenticator, MemProfileSource (incl. an unreachable one; answer_after / never_answer latency), MemProfileCache, MemDidMinter, MemKeyStore, MemPlcOperationLog",
+      "node": false
+    },
+    {
+      "name": "src/node.rs",
+      "role": "MemNodeStore/MemNodeWrites over the staged nodes map: uniqueness under a parent and at the top (SegmentTaken), parent existence, the shape rules (an entry only under a commission with its word as segment, a slot only under commission.slots, a commission only at the top), no empty name, the fixed-entry delete refusal, the cascade, bytewise children; a refused call spends the unit",
       "node": false
     },
     {
@@ -91,6 +96,11 @@
       "node": false
     },
     {
+      "name": "tests/node.rs",
+      "role": "the shared node conformance suite (test-support::node_contract) run against the mem fakes, one fresh backend per case",
+      "node": false
+    },
+    {
       "name": "tests/public_records.rs",
       "role": "shared PublicRecords conformance suite (test-support::contract) run against MemPublicRecords",
       "node": false
@@ -103,6 +113,7 @@
     "Placement lives only in `workflow.rs`: a card on a column IS a commission's placement, and the commission side never learns of it (DD 29130754).",
     "Rows that are never removed anywhere: `actor_identities`; changelog entries, `participants` and `markups` go only with their commission's delete.",
     "See also: memory `project_transaction_unit_of_work`.",
-    "The commission fixture (`src/fixture/commission.rs`) fixes every id the Den reads and takes each row's time from its UUIDv7 id, so seeding twice gives the same listings, files, Slots, changelog and Workflows. The skeleton tab ids are the exception: the write port mints them, they differ per seed, and the Den never shows them."
+    "The commission fixture (`src/fixture/commission.rs`) fixes every id the Den reads and takes each row's time from its UUIDv7 id, so seeding twice gives the same listings, files, Slots, changelog and Workflows. The skeleton tab ids are the exception: the write port mints them, they differ per seed, and the Den never shows them.",
+    "A refused node call spends the unit (`MemUnitOfWork.node_spent`): every later node call fails and `commit` returns an error, merging nothing, as a failed PostgreSQL unit does. Divergence: the unit's other ports still answer from the staged copy until then, where PostgreSQL refuses every statement."
   ]
 }

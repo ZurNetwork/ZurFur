@@ -770,3 +770,126 @@ async fn a_commission_created_and_deleted_in_one_unit_commits() {
     assert!(committed.is_ok(), "the unit commits: {committed:?}");
     assert_eq!(node_count(&pool).await, 0, "its nodes went with it");
 }
+
+// ─── The shared segment cases ──────────────────────────────────────────────
+
+/// The case file the store's check, Atta's rule and kernel's all answer to, from this
+/// crate's manifest directory.
+const SHARED_SEGMENT_CASES: &str = "../../../contract/golden/segments.json";
+
+/// One shared case: what it shows, and its segment text.
+struct SegmentCase {
+    description: String,
+    segment: String,
+}
+
+/// A shared case read from its JSON object; a `repeat` case is its text `times` times over.
+fn segment_case(value: &serde_json::Value) -> SegmentCase {
+    let description = value["description"].as_str().expect("a case's description");
+    let segment = match value["segment"].as_str() {
+        Some(segment) => segment.to_owned(),
+        None => {
+            let text = value["repeat"].as_str().expect("a segment or a repeat");
+            let times = value["times"].as_u64().expect("a repeat's times");
+            let times = usize::try_from(times).expect("the times fit a usize");
+            text.repeat(times)
+        }
+    };
+    SegmentCase {
+        description: description.to_owned(),
+        segment,
+    }
+}
+
+/// The accepted and the refused cases of the shared case file.
+fn segment_cases() -> (Vec<SegmentCase>, Vec<SegmentCase>) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(SHARED_SEGMENT_CASES);
+    let text = std::fs::read_to_string(&path).expect("reads the shared case file");
+    let document: serde_json::Value = serde_json::from_str(&text).expect("the case file is JSON");
+    let read = |list: &str| -> Vec<SegmentCase> {
+        document[list]
+            .as_array()
+            .expect("a list of cases")
+            .iter()
+            .map(segment_case)
+            .collect()
+    };
+    (read("accepted"), read("refused"))
+}
+
+#[tokio::test]
+async fn segments_follow_the_shared_cases() {
+    let (pool, _container) = migrated().await;
+    let (accepted, refused) = segment_cases();
+    let holds =
+        |cases: &[SegmentCase], segment: &str| cases.iter().any(|case| case.segment == segment);
+    assert!(holds(&accepted, "a_b"), "the underscore case is present");
+    assert!(
+        holds(&accepted, &"a".repeat(2048)),
+        "the 2048-byte case is present"
+    );
+    assert!(holds(&refused, "\u{e9}"), "the accent case is present");
+    assert!(holds(&refused, ".."), "the dot-dot case is present");
+    assert!(
+        holds(&refused, &"a".repeat(2049)),
+        "the 2049-byte case is present"
+    );
+
+    for case in &accepted {
+        let inserted = NewNode::commission(&case.segment).insert(&pool).await;
+        assert!(inserted.is_ok(), "{}: {inserted:?}", case.description);
+    }
+    for case in &refused {
+        let inserted = NewNode::commission(&case.segment).insert(&pool).await;
+        let refusing = inserted
+            .as_ref()
+            .err()
+            .and_then(|error| error.as_database_error())
+            .and_then(|database_error| database_error.constraint());
+        assert_eq!(refusing, Some("node_segment_shape"), "{}", case.description);
+    }
+}
+
+// ─── The closed type vocabulary ────────────────────────────────────────────
+
+#[tokio::test]
+async fn the_type_check_lists_exactly_node_type_s_words() {
+    use strum::VariantArray;
+
+    let (pool, _container) = migrated().await;
+    let definition: String = sqlx::query_scalar(
+        "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'node_type_known'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("the node_type_known check");
+
+    let mut checked: Vec<&str> = definition.split('\'').skip(1).step_by(2).collect();
+    checked.sort_unstable();
+    let mut kernel_words: Vec<&'static str> = domain::elements::node::NodeType::VARIANTS
+        .iter()
+        .map(|node_type| <&'static str>::from(*node_type))
+        .collect();
+    kernel_words.sort_unstable();
+    assert_eq!(checked, kernel_words, "{definition}");
+}
+
+// ─── The node port: the shared conformance suite ───────────────────────────
+
+/// The node port over the PostgreSQL adapter, on one fresh database per case.
+mod contract {
+    use std::sync::Arc;
+
+    use adapter_pg::{PgDatabase, PgNodeStore};
+    use domain::ports::{Database, NodeStore};
+
+    /// A fresh migrated database's unit factory and node store, and the database kept alive.
+    async fn fresh() -> (Arc<dyn Database>, Arc<dyn NodeStore>, impl Sized) {
+        let (pool, db) = test_support::pg::fresh_pool().await;
+        let database: Arc<dyn Database> = Arc::new(PgDatabase::new(pool.clone()));
+        let store: Arc<dyn NodeStore> = Arc::new(PgNodeStore::new(pool));
+        (database, store, db)
+    }
+
+    test_support::node_contract_tests!(fresh);
+}
