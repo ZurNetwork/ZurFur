@@ -162,9 +162,8 @@ impl PgCommissionWrites<'_> {
 impl CommissionWrites for PgCommissionWrites<'_> {
     /// Inserts the commission row bound to `birth`'s node, one `commission_tab` row per
     /// [`declared_tabs`], and the owner's `commission_participant` row, all in one
-    /// transaction. The row takes its title and visibility from the node; unless that node
-    /// is the commission's own, the create errs and ends the unit. Every tab is minted
-    /// [`VisibilityMode::Total`].
+    /// transaction. Unless that node is the commission's own, the create errs and ends the
+    /// unit. Every tab is minted [`VisibilityMode::Total`].
     #[tracing::instrument(level = "debug", skip_all)]
     async fn create(
         &mut self,

@@ -20,7 +20,7 @@ use crate::node_backfill::{
 };
 
 /// The commission node fill's migration, as sqlx numbers it.
-const FILL_VERSION: i64 = 20261022132603;
+pub(crate) const FILL_VERSION: i64 = 20261022132603;
 
 /// The six fixed entry words, as the node table sorts them.
 const ENTRY_WORDS: [&str; 6] = [

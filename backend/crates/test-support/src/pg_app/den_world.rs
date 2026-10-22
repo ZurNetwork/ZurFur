@@ -342,26 +342,17 @@ impl DenWorld {
             .id
     }
 
-    /// Writes `token` as the level of the node `commission` points at and as the commission's
-    /// own visibility column, keeping the two equal: no trigger copies a level.
+    /// Writes `token` as the level of the node `commission` points at.
     async fn store_level(&self, commission: CommissionId, token: &str) {
-        let pool = &self.served.runtime.pool;
         let leveled = sqlx::query(
             "UPDATE node SET level = $1 FROM commission c WHERE c.id = $2 AND node.id = c.node_id",
         )
         .bind(token)
         .bind(Uuid::from(commission))
-        .execute(pool)
+        .execute(&self.served.runtime.pool)
         .await
         .expect("update the commission node's level");
         assert_eq!(leveled.rows_affected(), 1, "one node is updated");
-        let mirrored = sqlx::query("UPDATE commission SET visibility = $1 WHERE id = $2")
-            .bind(token)
-            .bind(Uuid::from(commission))
-            .execute(pool)
-            .await
-            .expect("update the commission's own visibility column");
-        assert_eq!(mirrored.rows_affected(), 1, "one commission row is updated");
     }
 }
 
