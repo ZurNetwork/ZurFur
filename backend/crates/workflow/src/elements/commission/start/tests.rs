@@ -7,7 +7,7 @@ fn a_new_commission_starts_draft_unstatused_unlinked_and_live() {
     let draft_unstatused_unlinked_live = CommissionStart {
         lifecycle_step: LifecycleStep::Draft,
         direction_status: None,
-        deadline_status: None,
+        delayed_flag: None,
         linked_channel: None,
         archived_at: None,
     };

@@ -270,7 +270,7 @@ async fn a_created_commission_is_stored_in_the_domain_s_starting_state() {
     let stored_start = CommissionStart {
         lifecycle_step: found.lifecycle_step.clone(),
         direction_status: found.direction_status,
-        deadline_status: found.deadline_status,
+        delayed_flag: found.delayed_flag,
         linked_channel: found.linked_channel.clone(),
         archived_at: found.archived_at,
     };

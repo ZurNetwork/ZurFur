@@ -15,7 +15,7 @@ use domain::{
             LapsedDeadline, LifecycleStep, LockedStanding, Markup, MarkupKey, NewCommission,
             NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind,
             SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow,
-            VisibilityMode, declared_tabs, declares_surface, derive_deadline_status,
+            VisibilityMode, declared_tabs, declares_surface,
         },
         did::Did,
         invitation::InvitationState,
@@ -177,7 +177,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         let CommissionStart {
             lifecycle_step,
             direction_status: None,
-            deadline_status: None,
+            delayed_flag: None,
             linked_channel: None,
             archived_at: None,
         } = CommissionStart::default()
@@ -771,9 +771,9 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
     };
     let lifecycle_step = LifecycleStep::try_from(fields.lifecycle.as_str())
         .map_err(|_| anyhow::anyhow!("unknown lifecycle token {:?}", fields.lifecycle))?;
-    // The stored value is the manual `Delayed` flag only; derive the effective
-    // status fresh here from the deadline, matching the sweep's math.
-    let stored_deadline_status = fields
+    // The stored value is the manual `Delayed` flag only; Late is derived by whoever asks,
+    // at the time they ask.
+    let delayed_flag = fields
         .deadline_status
         .as_deref()
         .map(|token| {
@@ -781,12 +781,6 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
                 .map_err(|_| anyhow::anyhow!("unknown deadline_status token {token:?}"))
         })
         .transpose()?;
-    let deadline_status = derive_deadline_status(
-        fields.deadline,
-        &lifecycle_step,
-        stored_deadline_status,
-        chrono::Utc::now(),
-    );
     let commission = Commission {
         id,
         owner_id: UserId::from(Did::from(fields.owner_id)),
@@ -801,7 +795,7 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
                     .map_err(|_| anyhow::anyhow!("unknown direction_status token {token:?}"))
             })
             .transpose()?,
-        deadline_status,
+        delayed_flag,
         linked_channel: fields
             .linked_channel
             .map(ChannelPointer::try_from)

@@ -100,3 +100,46 @@ pub enum ChangelogEntryKind {
     /// the new one.
     Renamed,
 }
+
+/// The kinds still recorded outside the den's write gate, each with a payload its caller
+/// builds. [`NewChangelogEntry::event`](super::NewChangelogEntry::event) takes only these, so
+/// a gated kind is built only by its own domain constructor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+pub enum OpenKind {
+    /// A seat was declared on the commission.
+    SeatDeclared,
+    /// A view grant was issued.
+    ViewGrantIssued,
+    /// A view grant was revoked.
+    ViewGrantRevoked,
+    /// A file entered the commission record.
+    FileAdded,
+    /// Markup was added over a file entry.
+    MarkupAdded,
+    /// The owner archived the commission.
+    Archived,
+    /// The owner un-archived the commission.
+    Unarchived,
+    /// The external linked channel was declared or replaced.
+    ChannelLinked,
+    /// The external linked channel was cleared.
+    ChannelUnlinked,
+}
+
+impl From<OpenKind> for ChangelogEntryKind {
+    /// The stored kind an open kind records as.
+    fn from(open: OpenKind) -> Self {
+        match open {
+            OpenKind::SeatDeclared => Self::SeatDeclared,
+            OpenKind::ViewGrantIssued => Self::ViewGrantIssued,
+            OpenKind::ViewGrantRevoked => Self::ViewGrantRevoked,
+            OpenKind::FileAdded => Self::FileAdded,
+            OpenKind::MarkupAdded => Self::MarkupAdded,
+            OpenKind::Archived => Self::Archived,
+            OpenKind::Unarchived => Self::Unarchived,
+            OpenKind::ChannelLinked => Self::ChannelLinked,
+            OpenKind::ChannelUnlinked => Self::ChannelUnlinked,
+        }
+    }
+}

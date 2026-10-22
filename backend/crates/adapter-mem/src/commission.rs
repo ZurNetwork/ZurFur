@@ -17,7 +17,7 @@ use domain::elements::{
         GrantLevel, LapsedDeadline, LifecycleStep, LockedStanding, NewChangelogEntry,
         NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId,
         SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow,
-        VisibilityMode, declared_tabs, declares_surface, derive_deadline_status,
+        VisibilityMode, declared_tabs, declares_surface,
     },
     did::Did,
     invitation::InvitationState,
@@ -171,7 +171,7 @@ pub(crate) fn insert_commission(
         let CommissionStart {
             lifecycle_step,
             direction_status,
-            deadline_status,
+            delayed_flag,
             linked_channel,
             archived_at,
         } = CommissionStart::default();
@@ -182,7 +182,7 @@ pub(crate) fn insert_commission(
             deadline: commission.deadline,
             maturity: commission.maturity,
             direction_status,
-            deadline_status,
+            delayed_flag,
             linked_channel,
             archived_at,
             created_at: birth.created_at,
@@ -232,8 +232,9 @@ pub(crate) struct StoredCommission {
     maturity: Option<Maturity>,
     /// The direction-axis Status, or `None`; one cell, so a set replaces.
     direction_status: Option<DirectionStatus>,
-    /// The deadline-axis Status, or `None`; the same one-cell shape.
-    deadline_status: Option<DeadlineStatus>,
+    /// The stored manual Delayed flag, or `None`; the same one-cell shape. Late is never
+    /// stored.
+    delayed_flag: Option<DeadlineStatus>,
     /// The external linked-channel pointer, or `None` while none is declared.
     linked_channel: Option<ChannelPointer>,
     /// When the commission was archived, or `None` while active.
@@ -256,14 +257,6 @@ fn summarize(id: CommissionId, archived: bool, node: &NodeRow) -> CommissionSumm
 impl StoredCommission {
     /// Rebuild the aggregate from its stored parts.
     fn rebuild(&self, id: CommissionId) -> Commission {
-        // Late is derived fresh at lookup, never persisted; the stored
-        // `deadline_status` is the manual `Delayed` flag only.
-        let deadline_status = derive_deadline_status(
-            self.deadline,
-            &self.lifecycle_step,
-            self.deadline_status,
-            chrono::Utc::now(),
-        );
         Commission {
             id,
             owner_id: self.owner_id.clone(),
@@ -271,7 +264,7 @@ impl StoredCommission {
             deadline: self.deadline,
             maturity: self.maturity,
             direction_status: self.direction_status,
-            deadline_status,
+            delayed_flag: self.delayed_flag,
             linked_channel: self.linked_channel.clone(),
             archived_at: self.archived_at,
             created_at: self.created_at,
@@ -973,10 +966,10 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         let Some(stored) = commissions.get_mut(&id) else {
             return Ok(false);
         };
-        if stored.deadline_status == status {
+        if stored.delayed_flag == status {
             return Ok(false);
         }
-        stored.deadline_status = status;
+        stored.delayed_flag = status;
         Ok(true)
     }
 
@@ -1035,7 +1028,7 @@ impl CommissionWrites for MemCommissionWrites<'_> {
                 Some(LapsedDeadline {
                     id: *id,
                     deadline,
-                    status: stored.deadline_status,
+                    status: stored.delayed_flag,
                 })
             })
             .collect();
@@ -1061,12 +1054,12 @@ impl ChangelogWrites for MemChangelogWrites {
         let seq = changelog.last().map(|e| e.seq + 1).unwrap_or(1);
         changelog.push(StoredChangelogEntry {
             seq,
-            commission_id: entry.commission_id,
-            kind: entry.kind,
-            actor_id: entry.actor_id.clone(),
-            payload: entry.payload.clone(),
-            note: entry.note.clone(),
-            created_at: entry.created_at,
+            commission_id: entry.commission_id(),
+            kind: entry.kind(),
+            actor_id: entry.actor_id().cloned(),
+            payload: entry.payload().clone(),
+            note: entry.note_text().map(str::to_owned),
+            created_at: entry.created_at(),
         });
         Ok(())
     }
@@ -1836,6 +1829,36 @@ impl MemBackend {
             .get_mut(&commission)
             .expect("seed_lifecycle_step: no such commission")
             .lifecycle_step = step;
+    }
+
+    /// Store one changelog entry exactly as given, beneath every rule a
+    /// [`NewChangelogEntry`] carries (seed helper): for a legacy row no constructor builds.
+    /// The log assigns its `seq`; it carries no note. Answers the stored entry.
+    pub fn seed_changelog_entry(
+        &self,
+        commission: CommissionId,
+        kind: ChangelogEntryKind,
+        actor: Option<UserId>,
+        payload: Value,
+        at: domain::datetime::DateTimeUtc,
+    ) -> ChangelogEntry {
+        let mut changelog = self
+            .changelog
+            .lock()
+            .expect("MemBackend changelog mutex poisoned");
+        let seq = changelog.last().map(|e| e.seq + 1).unwrap_or(1);
+        let stored = StoredChangelogEntry {
+            seq,
+            commission_id: commission,
+            kind,
+            actor_id: actor,
+            payload,
+            note: None,
+            created_at: at,
+        };
+        let seeded = stored.rebuild();
+        changelog.push(stored);
+        seeded
     }
 
     /// The commission's tabs, in declared order (inspect helper) — how a test

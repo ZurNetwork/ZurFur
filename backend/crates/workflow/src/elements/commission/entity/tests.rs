@@ -13,7 +13,7 @@ fn stored_commission() -> Commission {
         deadline: None,
         maturity: None,
         direction_status: None,
-        deadline_status: None,
+        delayed_flag: None,
         linked_channel: None,
         archived_at: None,
         created_at: chrono::Utc::now(),

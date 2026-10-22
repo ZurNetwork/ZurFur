@@ -3,7 +3,7 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{ChangelogEntryKind, CommissionId, NewChangelogEntry},
+        commission::{CommissionId, NewChangelogEntry, OpenKind},
         user::UserId,
     },
 };
@@ -51,16 +51,17 @@ impl View<'_> {
         let uow = uow.open().await?;
         let target_user = uow.users().provision(target_user_id.did()).await?;
 
-        let entry = NewChangelogEntry::event(
+        let entry: NewChangelogEntry = NewChangelogEntry::event(
             commission.id,
-            ChangelogEntryKind::ViewGrantRevoked,
+            OpenKind::ViewGrantRevoked,
             actor_id,
             json!({
                 "target_id": target_user.id,
 
             }),
             now,
-        );
+        )
+        .into();
 
         // Keyed on a real revocation: revoking a grant nobody holds records
         // nothing.

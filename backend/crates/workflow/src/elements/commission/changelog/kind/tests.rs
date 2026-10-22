@@ -77,3 +77,31 @@ fn kind_tokens_are_pinned_literally() {
 
     assert_eq!(tokens, expected_tokens);
 }
+
+// The open kinds, pinned literally: each records as the stored kind of its own token, and none
+// is a kind the den's write gate builds.
+#[test]
+fn the_open_kinds_are_pinned_literally_and_record_as_their_own_token() {
+    let expected_open = [
+        "seat_declared",
+        "view_grant_issued",
+        "view_grant_revoked",
+        "file_added",
+        "markup_added",
+        "archived",
+        "unarchived",
+        "channel_linked",
+        "channel_unlinked",
+    ];
+
+    let open: Vec<&'static str> = OpenKind::VARIANTS
+        .iter()
+        .map(<&'static str>::from)
+        .collect();
+    assert_eq!(open, expected_open);
+
+    for kind in OpenKind::VARIANTS {
+        let stored = ChangelogEntryKind::from(*kind);
+        assert_eq!(<&'static str>::from(stored), <&'static str>::from(kind));
+    }
+}

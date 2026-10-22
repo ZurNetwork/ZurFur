@@ -87,7 +87,7 @@ impl Commissions<'_> {
             act: DenAct::Commission(CommissionAct::Rename(act)),
         };
         let written = Den::from(self.ports()).write(command, now).await?;
-        let values = CommissionValues::try_from(written)?;
+        let values = CommissionValues::answered(written, now)?;
         Ok(values)
     }
 }

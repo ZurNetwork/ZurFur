@@ -4,8 +4,8 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            ChangelogEntryKind, CommissionId, NewChangelogEntry, NewSeat, SeatKind, SeatLink,
-            SeatPrompt, SurfaceAddress, element::SeatId,
+            CommissionId, NewChangelogEntry, NewSeat, OpenKind, SeatKind, SeatLink, SeatPrompt,
+            SurfaceAddress, element::SeatId,
         },
         user::UserId,
     },
@@ -59,16 +59,17 @@ impl Seats<'_> {
         );
         let seat_id = seat.id;
 
-        let entry = NewChangelogEntry::event(
+        let entry: NewChangelogEntry = NewChangelogEntry::event(
             commission.id,
-            ChangelogEntryKind::SeatDeclared,
+            OpenKind::SeatDeclared,
             actor_id,
             json!({
                 "kind": seat.kind.as_str(),
                 "seat": seat_id.to_string()
             }),
             now,
-        );
+        )
+        .into();
 
         let uow = uow.open().await?;
         #[expect(

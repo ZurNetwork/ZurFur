@@ -12,7 +12,7 @@ use atta::{WriteCaps, WriteError, Writer};
 use chrono::Utc;
 use domain::{
     elements::{
-        commission::{ChangelogEntry, ChangelogEntryKind},
+        commission::{ChangelogEntry, ChangelogEntryKind, OpenKind},
         did::Did,
         level::Level,
         user::UserId,
@@ -547,8 +547,8 @@ fn an_entry_built_off_the_grant_is_a_broken_rule() {
 /// gated entry names.
 fn leaky(commission: CommissionId, actor: UserId, at: DateTimeUtc) -> NewChangelogEntry {
     let payload = serde_json::json!({ "title": "A secret sketch" });
-    NewChangelogEntry::event(commission, ChangelogEntryKind::Archived, actor, payload, at)
-        .with_note("free text the act chose".to_owned())
+    let open = NewChangelogEntry::event(commission, OpenKind::Archived, actor, payload, at);
+    NewChangelogEntry::from(open.with_note("free text the act chose".to_owned()))
 }
 
 // A gated entry whose constructor builds another kind than its own is a broken rule.

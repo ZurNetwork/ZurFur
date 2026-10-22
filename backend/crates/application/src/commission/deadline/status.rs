@@ -2,24 +2,23 @@ use crate::ports::WithPorts;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{ChangelogEntryKind, CommissionId, DeadlineStatus, NewChangelogEntry},
+        commission::{
+            CommissionId, CommissionState, DeadlineStatus, DelayedChange, NewChangelogEntry,
+            clear_delayed, set_delayed,
+        },
         user::UserId,
     },
 };
-use serde_json::json;
 
 use crate::LazyUnit;
-use crate::commission::{
-    CommissionError, CommissionResult, deadline::Deadline, deadline::DeadlineSetEventPayload,
-    require_participant,
-};
+use crate::commission::{CommissionResult, deadline::Deadline, require_participant};
 
 pub mod clear;
 pub mod set;
 
-/// Move the deadline-axis status to `to` (`None` clears it) — the body
-/// [`set`](set) and [`clear`](clear) share. Participant-gated; a standing
-/// `Late` refuses both directions; a status may only be set on a commission
+/// Raise the Delayed flag (`to` is `Some`) or take it down (`None`) — the body
+/// [`set`](set) and [`clear`](clear) share. Participant-gated; a `Late` derived at
+/// `now` refuses both directions; the flag may only be raised on a commission
 /// that has a deadline. Keyed on a real transition, so a no-op records nothing.
 async fn apply(
     ports: &crate::Ports,
@@ -31,33 +30,29 @@ async fn apply(
 ) -> CommissionResult<()> {
     let commission = require_participant(ports, commission_id, &actor_id).await?;
 
-    if commission.deadline_status == Some(DeadlineStatus::Late) {
-        return Err(CommissionError::CommissionLate);
-    }
-    if to.is_some() && commission.deadline.is_none() {
-        return Err(CommissionError::NoDeadline);
-    }
-
-    let payload = DeadlineSetEventPayload {
-        from: commission.deadline_status.map(|s| s.to_string()),
-        to: to.map(|s| s.to_string()),
-        deadline: commission.deadline,
+    let state = CommissionState::from(&commission);
+    let (entry, change) = match to {
+        Some(_) => {
+            let Some(set) = set_delayed(&state, now)? else {
+                return Ok(());
+            };
+            let entry = NewChangelogEntry::delayed_set(commission.id, actor_id, &set, now);
+            (entry, DelayedChange::from(set))
+        }
+        None => {
+            let Some(cleared) = clear_delayed(&state, now)? else {
+                return Ok(());
+            };
+            let entry = NewChangelogEntry::delayed_cleared(commission.id, actor_id, &cleared, now);
+            (entry, DelayedChange::from(cleared))
+        }
     };
-    let entry = NewChangelogEntry::event(
-        commission.id,
-        ChangelogEntryKind::Delayed,
-        actor_id,
-        json!({
-            "from": payload.from,
-            "to": payload.to,
-            "deadline": payload.deadline,
-        }),
-        now,
-    );
 
     let uow = uow.open().await?;
     let mut commissions = uow.commissions();
-    let moved = commissions.set_deadline_status(&commission.id, to).await?;
+    let moved = commissions
+        .set_deadline_status(&commission.id, change.after())
+        .await?;
     drop(commissions);
     if moved {
         uow.changelog().append(&entry).await?;

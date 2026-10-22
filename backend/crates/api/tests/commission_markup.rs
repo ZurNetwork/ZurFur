@@ -425,7 +425,10 @@ async fn adding_markup_changes_no_status() {
         before.direction_status,
         Some(DirectionStatus::WaitingForInput)
     );
-    assert_eq!(before.deadline_status, Some(DeadlineStatus::Late));
+    assert_eq!(
+        before.deadline_status_at(Utc::now()),
+        Some(DeadlineStatus::Late)
+    );
     let log_before = read_changelog(&client, &base, id).await.len();
 
     let markup = json!({
@@ -452,7 +455,7 @@ async fn adding_markup_changes_no_status() {
         "markup never moves the direction axis"
     );
     assert_eq!(
-        after.deadline_status,
+        after.deadline_status_at(Utc::now()),
         Some(DeadlineStatus::Late),
         "markup never moves the deadline axis"
     );

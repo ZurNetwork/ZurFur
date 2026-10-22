@@ -85,7 +85,7 @@
     },
     {
       "name": "src/commission.rs",
-      "role": "commission module root — the `Commissions` root namespace, CommissionError (From<DenWriteError>: the Den's not-found is the commission's, Forbidden InsufficientPermissions, a refusal or store failure Infrastructure), require_participant/require_owner, sweep_deadlines",
+      "role": "commission module root — the `Commissions` root namespace, CommissionError (From<DenWriteError>: the Den's not-found is the commission's, Forbidden InsufficientPermissions, a refusal or store failure Infrastructure; From<CommissionRefusal>: a domain rule's refusal as today's answers), require_participant/require_owner, sweep_deadlines (each lapsed commission's `late` entry through the domain's owes_late)",
       "node": false
     },
     {

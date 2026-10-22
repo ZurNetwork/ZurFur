@@ -10,8 +10,8 @@ pub struct CommissionStart {
     pub lifecycle_step: LifecycleStep,
     /// The direction-axis Status it starts with.
     pub direction_status: Option<DirectionStatus>,
-    /// The deadline-axis Status it starts with.
-    pub deadline_status: Option<DeadlineStatus>,
+    /// The stored Delayed flag it starts with.
+    pub delayed_flag: Option<DeadlineStatus>,
     /// The linked-channel pointer it starts with.
     pub linked_channel: Option<ChannelPointer>,
     /// The archive time it starts with.
@@ -19,12 +19,12 @@ pub struct CommissionStart {
 }
 
 impl Default for CommissionStart {
-    /// A new commission starts Draft, with no statuses, no linked channel, and live.
+    /// A new commission starts Draft, with no statuses (no Delayed flag), no linked channel, and live.
     fn default() -> Self {
         Self {
             lifecycle_step: LifecycleStep::Draft,
             direction_status: None,
-            deadline_status: None,
+            delayed_flag: None,
             linked_channel: None,
             archived_at: None,
         }

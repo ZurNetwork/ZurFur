@@ -3,7 +3,7 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{ChangelogEntryKind, CommissionId, GrantLevel, NewChangelogEntry},
+        commission::{CommissionId, GrantLevel, NewChangelogEntry, OpenKind},
         user::UserId,
     },
 };
@@ -54,9 +54,9 @@ impl View<'_> {
         let uow = uow.open().await?;
         let target_user = uow.users().provision(target_user_id.did()).await?;
 
-        let entry = NewChangelogEntry::event(
+        let entry: NewChangelogEntry = NewChangelogEntry::event(
             commission.id,
-            ChangelogEntryKind::ViewGrantIssued,
+            OpenKind::ViewGrantIssued,
             actor_id,
             json!({
                 "commission_id": commission.id,
@@ -64,7 +64,8 @@ impl View<'_> {
                 "level": level.to_string()
             }),
             now,
-        );
+        )
+        .into();
 
         #[expect(
             clippy::disallowed_methods,

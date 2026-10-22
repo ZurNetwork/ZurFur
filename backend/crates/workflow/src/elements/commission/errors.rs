@@ -16,3 +16,30 @@ pub enum DeadlineStatusError {
     #[error("Invalid value")]
     InvalidValue,
 }
+
+/// Why a commission rule refused an act. Each variant is one fixed answer; its token, from
+/// [`IntoStaticStr`](strum::IntoStaticStr), is the word a log or a driver keys on.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr, strum::VariantArray,
+)]
+#[strum(serialize_all = "snake_case")]
+pub enum CommissionRefusal {
+    /// The lifecycle move goes somewhere no move may go.
+    #[error("the lifecycle move is refused")]
+    LifecycleMoveRefused,
+    /// The commission is Disputed, which holds what the act would change.
+    #[error("the commission is disputed")]
+    CommissionDisputed,
+    /// A deadline-axis act on a commission with no deadline.
+    #[error("the commission has no deadline")]
+    NoDeadline,
+    /// The commission stands Late, the system's word, which no hand moves.
+    #[error("the commission is late")]
+    CommissionLate,
+    /// The system owes no `late` entry: a skip, never shown to a user.
+    #[error("no late entry is owed")]
+    NothingOwed,
+}
+
+#[cfg(test)]
+mod tests;

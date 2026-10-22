@@ -3,11 +3,12 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{ChangelogEntryKind, CommissionId, NewChangelogEntry},
+        commission::{
+            CommissionId, CommissionState, DeadlineChange, NewChangelogEntry, schedule_deadline,
+        },
         user::UserId,
     },
 };
-use serde_json::json;
 
 use crate::{
     Ports,
@@ -23,8 +24,9 @@ pub struct Output;
 
 impl Deadline<'_> {
     /// Set — or move — the commission's deadline, as a Participant. Re-setting
-    /// the deadline already held is a no-op. A later deadline than the one held
-    /// records as `DeadlineExtended`, anything else as `DeadlineSet`.
+    /// the deadline already held is a no-op, and a Disputed commission's is refused. A
+    /// later deadline than the one held records as `DeadlineExtended`, anything else as
+    /// `DeadlineSet`.
     #[use_case]
     pub async fn set(
         &self,
@@ -42,27 +44,17 @@ impl Deadline<'_> {
 
         // The no-op is "the stored deadline already IS the requested one" —
         // never a comparison against `now`.
-        if commission.deadline == Some(deadline) {
+        let state = CommissionState::from(&commission);
+        let Some(set) = schedule_deadline(&state, deadline)? else {
             return Ok(Output);
-        }
-
-        let kind = match commission.deadline {
-            Some(old) if deadline > old => ChangelogEntryKind::DeadlineExtended,
-            _ => ChangelogEntryKind::DeadlineSet,
         };
-
-        let entry = NewChangelogEntry::event(
-            commission.id,
-            kind,
-            actor_id,
-            json!({ "from": commission.deadline, "to": deadline }),
-            now,
-        );
+        let entry = NewChangelogEntry::deadline_set(commission.id, actor_id, &set, now);
+        let change = DeadlineChange::from(set);
 
         let uow = uow.open().await?;
         let mut commissions = uow.commissions();
         let moved = commissions
-            .set_deadline(&commission.id, Some(deadline))
+            .set_deadline(&commission.id, change.after())
             .await?;
         drop(commissions);
         if moved {

@@ -13,7 +13,8 @@ use chrono::{DateTime, Utc};
 use domain::{
     elements::{
         commission::{
-            ChangelogEntryKind, Commission, DeadlineStatus, LifecycleStep, NewChangelogEntry,
+            Commission, CommissionState, DeadlineStatus, LateFacts, LifecycleStep,
+            NewChangelogEntry, owes_late,
         },
         did::Did,
         user::User,
@@ -88,7 +89,7 @@ async fn deadline_and_status_round_trip_through_the_unit() {
 
     let found = store.find(&id).await.expect("find").expect("exists");
     assert_eq!(found.deadline, Some(deadline));
-    assert_eq!(found.deadline_status, Some(DeadlineStatus::Delayed));
+    assert_eq!(found.delayed_flag, Some(DeadlineStatus::Delayed));
 
     // Late is derived, never persisted: a passed deadline reads Late on lookup,
     // superseding the stored Delayed (and the column's CHECK forbids a persisted
@@ -101,9 +102,14 @@ async fn deadline_and_status_round_trip_through_the_unit() {
     uow.commit().await.expect("commit");
     let found = store.find(&id).await.expect("find").expect("exists");
     assert_eq!(
-        found.deadline_status,
+        found.deadline_status_at(Utc::now()),
         Some(DeadlineStatus::Late),
         "a passed deadline derives Late, superseding the stored Delayed"
+    );
+    assert_eq!(
+        found.delayed_flag,
+        Some(DeadlineStatus::Delayed),
+        "Late is never stored"
     );
 
     let mut uow = db.begin().await.expect("begin");
@@ -128,7 +134,7 @@ async fn deadline_and_status_round_trip_through_the_unit() {
     uow.commit().await.expect("commit");
     let found = store.find(&id).await.expect("find").expect("exists");
     assert_eq!(found.deadline, None);
-    assert_eq!(found.deadline_status, None);
+    assert_eq!(found.delayed_flag, None);
 
     // A dropped (uncommitted) unit discards its staged deadline write.
     {
@@ -228,13 +234,13 @@ async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
             .expect("flag delayed");
         // Late is deduped on the changelog (no persisted Late), staged on the
         // SAME unit: a commission already logged Late is skipped by the scan.
+        let already_late_facts = LateFacts {
+            state: CommissionState::from(&already_late),
+            owed: true,
+        };
+        let mark = owes_late(&already_late_facts, now).expect("a late entry is owed");
         uow.changelog()
-            .append(&NewChangelogEntry::system(
-                already_late.id,
-                ChangelogEntryKind::Late,
-                serde_json::json!({}),
-                now,
-            ))
+            .append(&NewChangelogEntry::late(already_late.id, &mark, now))
             .await
             .expect("log late");
 

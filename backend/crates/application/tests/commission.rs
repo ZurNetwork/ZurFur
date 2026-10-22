@@ -77,7 +77,7 @@ async fn flag(database: &dyn Database, id: CommissionId, status: DeadlineStatus)
     .expect("flag the deadline axis");
 }
 
-/// The persisted (well: derived-on-lookup) deadline status of `id`, as its
+/// The deadline status of `id` now (Late derived, else the stored flag), as its
 /// stable wire token.
 async fn stored_deadline_status(
     commissions: &dyn CommissionStore,
@@ -88,7 +88,7 @@ async fn stored_deadline_status(
         .await
         .expect("find commission")
         .expect("commission exists")
-        .deadline_status
+        .deadline_status_at(Utc::now())
         .map(<&'static str>::from)
 }
 
@@ -228,8 +228,6 @@ async fn a_standing_delayed_upgrades_to_late() {
 
 // Ruling E12 scope — the sweeper skips terminal lifecycles (Completed and
 // Cancelled): a closed commission's missed deadline is history, not lateness.
-// A Disputed commission is NOT terminal and is still swept (the dispute
-// freeze — "deadlines freeze, Late pauses" — is the future Disputes epic).
 #[tokio::test]
 async fn the_sweeper_skips_terminal_lifecycles() {
     let fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
@@ -252,19 +250,11 @@ async fn the_sweeper_skips_terminal_lifecycles() {
         LifecycleStep::Cancelled,
     )
     .await;
-    let disputed = seed(
-        &fixture,
-        owner,
-        "Staged",
-        Some(past()),
-        LifecycleStep::Disputed,
-    )
-    .await;
 
     assert_eq!(
         sweep(database, after_past()).await.marked_late,
-        1,
-        "only the disputed (non-terminal) commission is marked"
+        0,
+        "no closed commission is marked"
     );
     assert_eq!(
         stored_deadline_status(&*runtime.commissions, completed).await,
@@ -274,12 +264,51 @@ async fn the_sweeper_skips_terminal_lifecycles() {
         stored_deadline_status(&*runtime.commissions, cancelled).await,
         None
     );
-    assert_eq!(
-        stored_deadline_status(&*runtime.commissions, disputed).await,
-        Some("late")
-    );
     assert!(
         entries(&*runtime.changelog, completed).await.is_empty(),
         "nothing was appended to the closed commission's stream"
     );
+    assert!(
+        entries(&*runtime.changelog, cancelled).await.is_empty(),
+        "nothing was appended to the cancelled commission's stream"
+    );
+}
+
+// The Late rule skips a Disputed commission: it is not terminal, yet its missed
+// deadline records no `late` entry, while a working one beside it is marked.
+#[tokio::test]
+async fn a_disputed_commission_is_not_swept() {
+    let fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
+    let runtime = &fixture.runtime;
+    let database = &*runtime.database;
+    let owner = "did:plc:dispute-owner";
+    let disputed = seed(
+        &fixture,
+        owner,
+        "Staged",
+        Some(past()),
+        LifecycleStep::Disputed,
+    )
+    .await;
+    let active = seed(
+        &fixture,
+        owner,
+        "Staged",
+        Some(past()),
+        LifecycleStep::Active,
+    )
+    .await;
+
+    assert_eq!(
+        sweep(database, after_past()).await.marked_late,
+        1,
+        "only the working commission is marked"
+    );
+    assert!(
+        entries(&*runtime.changelog, disputed).await.is_empty(),
+        "nothing was appended to the disputed commission's stream"
+    );
+    let marked = entries(&*runtime.changelog, active).await;
+    assert_eq!(marked.len(), 1, "the working commission's Late entry");
+    assert_eq!(<&'static str>::from(marked[0].kind), "late");
 }

@@ -19,12 +19,12 @@ fn each_gated_entry_builds_its_own_kind_with_an_empty_payload_and_no_note() {
         let built = entry.construct(untitled(), alice(), now);
 
         assert_eq!(entry.kind(), kind);
-        assert_eq!(built.kind, kind);
-        assert_eq!(built.commission_id, untitled(), "{kind}");
-        assert_eq!(built.actor_id, Some(alice()), "{kind}");
-        assert_eq!(built.created_at, now, "{kind}");
-        assert_eq!(built.payload, empty_payload, "{kind}");
-        assert_eq!(built.note, None, "{kind}");
+        assert_eq!(built.kind(), kind);
+        assert_eq!(built.commission_id(), untitled(), "{kind}");
+        assert_eq!(built.actor_id(), Some(&alice()), "{kind}");
+        assert_eq!(built.created_at(), now, "{kind}");
+        assert_eq!(built.payload(), &empty_payload, "{kind}");
+        assert_eq!(built.note_text(), None, "{kind}");
     }
 }
 

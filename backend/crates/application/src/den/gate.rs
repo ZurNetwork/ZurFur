@@ -631,14 +631,14 @@ fn built_entry(
         return Ok(None);
     };
     let entry = gated.construct(written.commission, actor.clone(), now);
-    if entry.kind != gated.kind() {
+    if entry.kind() != gated.kind() {
         return Err(facts_lied(
             "an entry's constructor built another kind than its gated entry's",
         ));
     }
-    let as_granted = entry.commission_id == written.commission
-        && entry.actor_id.as_ref() == Some(actor)
-        && entry.created_at == now;
+    let as_granted = entry.commission_id() == written.commission
+        && entry.actor_id() == Some(actor)
+        && entry.created_at() == now;
     if !as_granted {
         return Err(facts_lied(
             "an entry's constructor built it off the grant's commission, actor or time",

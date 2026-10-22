@@ -3,11 +3,13 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{ChangelogEntryKind, CommissionId, DirectionStatus, NewChangelogEntry},
+        commission::{
+            CommissionId, CommissionState, DirectionChange, DirectionStatus, NewChangelogEntry,
+            clear_direction, set_direction,
+        },
         user::UserId,
     },
 };
-use serde_json::json;
 
 use crate::{
     Ports,
@@ -39,25 +41,29 @@ impl Direction<'_> {
         // outsider a different reply than the closed door — an existence oracle.
         let commission = require_participant(ports, &commission_id, &user_id).await?;
 
-        if commission.direction_status == direction {
-            return Ok(Output);
-        }
-
-        let entry = NewChangelogEntry::event(
-            commission.id,
-            ChangelogEntryKind::StatusChanged,
-            user_id,
-            json!({
-                "from": commission.direction_status.map(|s| s.to_string()),
-                "to": direction.map(|s| s.to_string())
-            }),
-            now,
-        );
+        let state = CommissionState::from(&commission);
+        let (entry, change) = match direction {
+            Some(to) => {
+                let Some(set) = set_direction(&state, to) else {
+                    return Ok(Output);
+                };
+                let entry = NewChangelogEntry::direction_set(commission.id, user_id, &set, now);
+                (entry, DirectionChange::from(set))
+            }
+            None => {
+                let Some(cleared) = clear_direction(&state) else {
+                    return Ok(Output);
+                };
+                let entry =
+                    NewChangelogEntry::direction_cleared(commission.id, user_id, &cleared, now);
+                (entry, DirectionChange::from(cleared))
+            }
+        };
 
         let uow = uow.open().await?;
         let mut commissions = uow.commissions();
         let moved = commissions
-            .set_direction_status(&commission.id, direction)
+            .set_direction_status(&commission.id, change.after())
             .await?;
         drop(commissions);
         if moved {

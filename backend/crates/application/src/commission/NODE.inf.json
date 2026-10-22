@@ -94,7 +94,7 @@
     },
     {
       "name": "values.rs",
-      "role": "CommissionValues: the flat values create and rename answer; TryFrom<WriteResult> builds them from the write's answer, its id the thing written and its title and visibility the name and level the gate wrote, through from_parts",
+      "role": "CommissionValues: the flat values create and rename answer; `answered(written, now)` builds them from the write's answer, its id the thing written, its title and visibility the name and level the gate wrote, and its deadline status derived at the act's time, through from_parts",
       "node": false
     },
     {
@@ -108,7 +108,7 @@
     "**Ordering rule.** Authorize before anything observable or written: before a byte of an upload is read, before a no-op is noticed (`status/direction/set`), and before `provision` (`view/grant`, `view/revoke`, `invitations/issue`).",
     "**Atomicity.** A state write and the changelog entry recording it share one unit of work, and entries are keyed on a REAL transition — an idempotent no-op writes nothing and appends nothing. Blob bytes cannot ride a Postgres transaction, so `files/upload` writes the blob first and deletes the orphan before refusing.",
     "`seq` on a changelog entry is the STORE's ordering key (a `bigserial` in pg): monotonic per stream but not gapless, and never renumbered off a page position.",
-    "`sweep_deadlines` is the only system actor here. It can only scan `lapsed_deadlines` and append a system `Late` entry; it holds no handle that could move a lifecycle or a direction status. `Late` is derived on read, never persisted.",
+    "`sweep_deadlines` is the only system actor here. It can only scan `lapsed_deadlines`, read each lapsed commission in the same unit, and append the system `Late` entry the domain's `owes_late` says is owed (a Disputed commission is owed none); it holds no handle that could move a lifecycle or a direction status. `Late` is derived on read, never persisted. The ungated deadline, Delayed and direction use cases build their entries and their writes from the domain's rules and typed constructors; `From<CommissionRefusal>` maps a refusal to today's answers (a Disputed commission's deadline, for now, `InvalidStateRequested`).",
     "The streaming seam is `tokio::io::AsyncRead` in both directions — never a buffered `Vec<u8>` or a driver type.",
     "See also: ZMVP-88 (file entries streaming seam).",
     "See also: ZMVP-86 (deadline sweep)."

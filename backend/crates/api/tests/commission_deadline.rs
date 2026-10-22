@@ -73,11 +73,12 @@ async fn stored(backend: &MemBackend, id: uuid::Uuid) -> Commission {
         .expect("commission exists")
 }
 
-/// The persisted deadline status of `id`, as its stable wire token.
+/// The deadline status of `id` now (Late derived, else the stored flag), as its stable wire
+/// token.
 async fn stored_deadline_status(backend: &MemBackend, id: uuid::Uuid) -> Option<&'static str> {
     stored(backend, id)
         .await
-        .deadline_status
+        .deadline_status_at(Utc::now())
         .map(<&'static str>::from)
 }
 
@@ -281,7 +282,8 @@ async fn clearing_the_deadline_wipes_the_axis() {
     let commission = stored(&backend, id).await;
     assert_eq!(commission.deadline, None, "the envelope field cleared");
     assert_eq!(
-        commission.deadline_status, None,
+        commission.deadline_status_at(Utc::now()),
+        None,
         "no deadline ⇒ no deadline-axis status (AC4)"
     );
 
@@ -758,7 +760,9 @@ async fn the_axes_compose_freely() {
         Some("waiting_for_approval")
     );
     assert_eq!(
-        commission.deadline_status.map(<&'static str>::from),
+        commission
+            .deadline_status_at(Utc::now())
+            .map(<&'static str>::from),
         Some("late"),
         "the two axes hold values simultaneously — the passed deadline derives \
          Late on the deadline axis"
@@ -774,7 +778,9 @@ async fn the_axes_compose_freely() {
         "the sweep never moves the direction axis"
     );
     assert_eq!(
-        commission.deadline_status.map(<&'static str>::from),
+        commission
+            .deadline_status_at(Utc::now())
+            .map(<&'static str>::from),
         Some("late")
     );
     assert!(
@@ -791,7 +797,9 @@ async fn the_axes_compose_freely() {
     assert_eq!(res.status(), 204);
     let commission = stored(&backend, id).await;
     assert_eq!(
-        commission.deadline_status.map(<&'static str>::from),
+        commission
+            .deadline_status_at(Utc::now())
+            .map(<&'static str>::from),
         Some("late"),
         "clearing the direction axis leaves the deadline axis alone"
     );
@@ -853,7 +861,9 @@ async fn a_non_participant_gets_the_same_404_as_a_missing_commission() {
         "the deadline never moved"
     );
     assert_eq!(
-        commission.deadline_status.map(<&'static str>::from),
+        commission
+            .deadline_status_at(Utc::now())
+            .map(<&'static str>::from),
         Some("late"),
         "the axis derives Late from the seeded past deadline — the non-participant \
          changed nothing (its stream below stays empty)"

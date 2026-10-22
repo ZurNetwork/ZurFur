@@ -15,8 +15,7 @@ use chrono::{SubsecRound, Utc};
 use domain::{
     elements::{
         commission::{
-            ChangelogEntryKind, CommissionBirth, CommissionId, CommissionStart, NewChangelogEntry,
-            NewCommission,
+            CommissionBirth, CommissionId, CommissionStart, NewChangelogEntry, NewCommission,
         },
         did::Did,
         level::Level,
@@ -133,13 +132,7 @@ async fn hard_delete_reaps_the_row_and_cascades_the_changelog() {
     )
     .await;
     uow.changelog()
-        .append(&NewChangelogEntry::event(
-            id,
-            ChangelogEntryKind::Created,
-            owner.id,
-            serde_json::json!({ "title": "Doomed" }),
-            Utc::now(),
-        ))
+        .append(&NewChangelogEntry::created(id, owner.id, Utc::now()))
         .await
         .expect("append genesis entry");
     uow.commit().await.expect("commit");
@@ -501,7 +494,7 @@ async fn a_created_commission_is_stored_in_the_domain_s_starting_state() {
     let stored_start = CommissionStart {
         lifecycle_step: found.lifecycle_step.clone(),
         direction_status: found.direction_status,
-        deadline_status: found.deadline_status,
+        delayed_flag: found.delayed_flag,
         linked_channel: found.linked_channel.clone(),
         archived_at: found.archived_at,
     };

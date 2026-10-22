@@ -9,8 +9,8 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            ChangelogEntryKind, Commission, CommissionId, FileNameError, MarkupError,
-            NewChangelogEntry,
+            Commission, CommissionId, CommissionRefusal, CommissionState, FileNameError, LateFacts,
+            MarkupError, NewChangelogEntry, owes_late,
         },
         user::UserId,
     },
@@ -18,7 +18,6 @@ use domain::{
         Database, DidBelongsToAnotherActor, ElementNotFound, UnitOfWork, UnknownSurface, UnknownTab,
     },
 };
-use serde_json::json;
 
 use crate::{
     common_error::{CommonError, NotFoundEntity},
@@ -145,6 +144,24 @@ pub enum CommissionError {
     InvalidName(#[source] DenNameError),
 }
 
+impl From<CommissionRefusal> for CommissionError {
+    /// A commission rule's refusal as a commission answer. A refused lifecycle move and a
+    /// Disputed commission answer as an invalid state for now; nothing owed is the system's
+    /// skip, which no user act reaches, so reaching one is a store failure.
+    fn from(refusal: CommissionRefusal) -> Self {
+        match refusal {
+            CommissionRefusal::NoDeadline => Self::NoDeadline,
+            CommissionRefusal::CommissionLate => Self::CommissionLate,
+            CommissionRefusal::LifecycleMoveRefused | CommissionRefusal::CommissionDisputed => {
+                Self::InvalidStateRequested
+            }
+            CommissionRefusal::NothingOwed => {
+                CommonError::Infrastructure(anyhow::Error::new(refusal)).into()
+            }
+        }
+    }
+}
+
 impl From<anyhow::Error> for CommissionError {
     fn from(err: anyhow::Error) -> Self {
         if err.downcast_ref::<DidBelongsToAnotherActor>().is_some() {
@@ -247,9 +264,9 @@ pub struct SweepResult {
 }
 
 /// Run one deadline sweep as of the injected `now`: scan the lapsed deadlines
-/// and append a system `Late` changelog entry for each, the whole pass in one
-/// unit of work. A commission already Late is never re-marked; one without a
-/// deadline is never returned by the scan.
+/// and append a system `Late` changelog entry for each one the Late rule says is
+/// owed, the whole pass in one unit of work. A commission already Late is never
+/// re-marked, and a Disputed one is skipped.
 #[allow(
     clippy::disallowed_methods,
     reason = "the sweep is a system job, not a use-case method"
@@ -260,20 +277,26 @@ pub async fn sweep_deadlines(
 ) -> Result<SweepResult, CommissionError> {
     let marked_late = transaction(database, async move |uow: &mut dyn UnitOfWork| {
         let lapsed = uow.commissions().lapsed_deadlines(now).await?;
+        let mut marked = 0;
         for lapse in &lapsed {
+            let commission = uow.commissions().find(&lapse.id).await?.ok_or_else(|| {
+                anyhow::anyhow!("a lapsed commission is missing from the sweep's own unit")
+            })?;
+            // The scan answers only commissions with no `late` entry since their deadline
+            // last changed, so each one it returns is owed one.
+            let facts = LateFacts {
+                state: CommissionState::from(&commission),
+                owed: true,
+            };
             // Log-only: `Late` is derived on lookup and never persisted.
-            let entry = NewChangelogEntry::system(
-                lapse.id,
-                ChangelogEntryKind::Late,
-                json!({
-                    "deadline": lapse.deadline,
-                    "from": lapse.status.map(<&'static str>::from),
-                }),
-                now,
-            );
+            let Ok(mark) = owes_late(&facts, now) else {
+                continue;
+            };
+            let entry = NewChangelogEntry::late(lapse.id, &mark, now);
             uow.changelog().append(&entry).await?;
+            marked += 1;
         }
-        Ok(lapsed.len())
+        Ok(marked)
     })
     .await
     .map_err(CommonError::Infrastructure)?;

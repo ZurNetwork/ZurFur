@@ -115,7 +115,10 @@ async fn the_upload_endpoint_never_mutates_any_status() {
         before.direction_status,
         Some(DirectionStatus::WaitingForInput)
     );
-    assert_eq!(before.deadline_status, Some(DeadlineStatus::Late));
+    assert_eq!(
+        before.deadline_status_at(Utc::now()),
+        Some(DeadlineStatus::Late)
+    );
     let log_before = entries(&backend, id).await.len();
 
     // The upload smuggles a status two ways: a multipart field ahead of the
@@ -151,7 +154,7 @@ async fn the_upload_endpoint_never_mutates_any_status() {
         "an upload never moves the direction axis — not even a smuggled status"
     );
     assert_eq!(
-        after.deadline_status,
+        after.deadline_status_at(Utc::now()),
         Some(DeadlineStatus::Late),
         "an upload never moves the deadline axis"
     );
