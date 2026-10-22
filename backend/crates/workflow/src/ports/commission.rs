@@ -159,8 +159,8 @@ pub trait CommissionWrites: Send {
     /// Persist a new commission under the id `capability` was issued for, at `birth`'s
     /// node, owner and time, with what `commission` chose, in the starting state
     /// [`CommissionStart::default`](crate::elements::commission::CommissionStart::default)
-    /// names. Its skeleton tab rows and its owner's
-    /// participant row are written with it, so a tabless or owner-less one can't exist.
+    /// names. Its skeleton tab rows and its owner's participant row are written with it, so a
+    /// tabless or owner-less one can't exist.
     async fn create(
         &mut self,
         capability: &WriteCapability<New<CommissionId>, Creator>,

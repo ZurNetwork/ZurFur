@@ -62,7 +62,7 @@ const API: &str = "api";
 const COMMISSION_REPOS: [&str; 2] = ["commissions", "changelog"];
 
 /// The commission repo's field writes the gate doesn't hold yet, by name. Each leaves when its
-/// method takes a write capability; the list is empty by M3.
+/// method takes a write capability, until the list is empty.
 const FIELD_WRITES: [&str; 6] = [
     "set_archived",
     "set_maturity",
@@ -3045,19 +3045,9 @@ fn supertraits(tr: &syn::ItemTrait) -> Vec<String> {
         .collect()
 }
 
-/// What breaks one trait's pin: not exactly one trait `name` in `file`, generics or a where
-/// clause, supertraits other than `bounds`, or items other than `items`, each named.
-fn pinned_trait_findings(
-    file: &syn::File,
-    name: &str,
-    bounds: &[&str],
-    items: &[&str],
-) -> Vec<String> {
-    let found = traits_named(file, name);
-    let [tr] = found.as_slice() else {
-        let count = found.len();
-        return vec![format!("{count} `trait {name}` found, not one")];
-    };
+/// What breaks trait `name`'s shape in `tr`: generics or a where clause, or supertraits other
+/// than `bounds`.
+fn trait_shape_findings(tr: &syn::ItemTrait, name: &str, bounds: &[&str]) -> Vec<String> {
     let mut findings = Vec::new();
     if !tr.generics.params.is_empty() || tr.generics.where_clause.is_some() {
         let generics = tr.generics.to_token_stream();
@@ -3072,6 +3062,23 @@ fn pinned_trait_findings(
             "trait {name}: supertraits {held:?}, not {bounds:?}"
         ));
     }
+    findings
+}
+
+/// What breaks one trait's pin: not exactly one trait `name` in `file`, generics or a where
+/// clause, supertraits other than `bounds`, or items other than `items`, each named.
+fn pinned_trait_findings(
+    file: &syn::File,
+    name: &str,
+    bounds: &[&str],
+    items: &[&str],
+) -> Vec<String> {
+    let found = traits_named(file, name);
+    let [tr] = found.as_slice() else {
+        let count = found.len();
+        return vec![format!("{count} `trait {name}` found, not one")];
+    };
+    let mut findings = trait_shape_findings(tr, name, bounds);
     let sorted = authority(tr);
     let pinned: BTreeSet<String> = items.iter().map(|item| (*item).to_owned()).collect();
     let all: BTreeSet<String> = sorted.capped.union(&sorted.uncapped).cloned().collect();
@@ -3098,26 +3105,11 @@ fn side_door_findings(file: &syn::File) -> Vec<String> {
         &[],
     );
     let reads = pinned_trait_findings(file, COMMISSION_READS, &["Send"], &UNIT_READS);
-    let writes = traits_named(file, COMMISSION_WRITES);
-    let write_bounds: Vec<String> = writes
-        .iter()
-        .flat_map(|tr| {
-            let mut found = Vec::new();
-            let held = supertraits(tr);
-            if held != ["Send"] {
-                found.push(format!(
-                    "trait {COMMISSION_WRITES}: supertraits {held:?}, not [\"Send\"]"
-                ));
-            }
-            if !tr.generics.params.is_empty() || tr.generics.where_clause.is_some() {
-                found.push(format!(
-                    "trait {COMMISSION_WRITES}: generics or a where clause"
-                ));
-            }
-            found
-        })
+    let write_shape: Vec<String> = traits_named(file, COMMISSION_WRITES)
+        .into_iter()
+        .flat_map(|tr| trait_shape_findings(tr, COMMISSION_WRITES, &["Send"]))
         .collect();
-    repo.into_iter().chain(reads).chain(write_bounds).collect()
+    repo.into_iter().chain(reads).chain(write_shape).collect()
 }
 
 #[test]
