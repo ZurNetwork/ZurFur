@@ -1,8 +1,8 @@
 {
   "path": "backend/crates/application/src/den",
   "charted": "2026-10-22",
-  "short": "The Den read: the den Query and Zurfur's one Atta host",
-  "is": "The den module: the `Den` namespace's two Query use cases (`root`, `node`) that turn a driver's path pieces into Atta segments and call Atta's resolver; Zurfur's type enum (`DenType`) with its per-type kind and content-not-shown facts; `DenThing`, the Account or commission an open node stands for; and `DenHost`, the one implementation of `atta::Host`, which records every node it answers for, admits from that record alone, and dispatches each folder through one exhaustive match to the arm of the team that owns it (den's own top level and posts here; identity's and commission's arms in their own modules' `den.rs`). Atta's types are imported only here; every public signature uses the application's own values.",
+  "short": "The Den read and write: the den Queries, the write use case and its gate, and Zurfur's two Atta hosts",
+  "is": "The den module: the `Den` namespace's two Query use cases (`root`, `node`) that turn a driver's path pieces into Atta segments and call Atta's resolver; Zurfur's type enum (`DenType`) with its per-type kind and content-not-shown facts; `DenThing`, the Account or commission an open node stands for; `DenHost`, the read implementation of `atta::Host`, which records every node it answers for, admits from that record alone, and dispatches each folder through one exhaustive match to the arm of the team that owns it (den's own top level and posts here; identity's and commission's arms in their own modules' `den.rs`). The write: `Den::write` (crate-private), every typed write's one door, which checks the pool's verdict, opens one unit, makes the grant from the locked standing and builds Atta's act from it; and `DenWriteHost`, the second `atta::Host`, which serves no read and applies each checked act through the gate. Atta's types are imported only here; every public signature uses the application's own values.",
   "type": "code",
   "tags": [
     "category:source"
@@ -15,7 +15,10 @@
     "`admit` answers from the request's record alone: no store call, no failure.",
     "The host keeps an arm's answer only when its place is a child of the folder's recorded place (`Place::is_child_of`) and, for `child`, its key is the key asked for; anything else is dropped unrecorded.",
     "A place whose type doesn't show its content is closed: `child`, `children` and `mounts` below it answer nothing, so a listing and a typed path can't disagree. `/` and the top-level directories are traverse-only and list nothing. `/user/<did>` is looked up only for the session's own DID.",
-    "An open node's thing comes from the host's record for its real path, the recorded `Place` (`Place::thing`), in the same lookup as its soft-deleted word: no path segment is parsed for it, a mount carries its target's, and a card carries none."
+    "An open node's thing comes from the host's record for its real path, the recorded `Place` (`Place::thing`), in the same lookup as its soft-deleted word: no path segment is parsed for it, a mount carries its target's, and a card carries none.",
+    "The gate (`gate.rs`) is the only writer of node rows and the only issuer of a write capability: its free fn `gate` holds the crate's one `UnitOfWork::nodes()` call and `issue` the workspace's one `WriteCapability::gate_issued` call, each on its own `let` under its own `#[expect(clippy::disallowed_methods)]`. `DenWriteHost::new` is named only in `write.rs`'s `written`, and `gate` only in `DenWriteHost::apply`. `tests/node_and_name_seams.rs` and `tests/write_gate_seams.rs` hold each of these.",
+    "A write is one unit: the node rows, the handler's write through its lent capability and its changelog entry land together or not at all. A refusal of any kind (Atta's, the gate's `DenRefusal`, a handler's) rides typed inside `Applied` and comes back as an `Err`, so the unit rolls back; a store failure is a `HostError`.",
+    "`Den::write`, its `Command` and `DenAct` stay crate-private (`write_gate_seams.rs` holds it): a driver reaches a write only through a typed use case that hands its act over and holds no unit."
   ],
   "entry_points": [
     "../den.rs",

@@ -55,11 +55,19 @@ pub(super) async fn link_channel(
     );
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "ARC-4 moves this into a use case"
+            )]
             let changed = uow
                 .commissions()
                 .set_linked_channel(&commission_id, Some(&pointer))
                 .await?;
             if changed {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "ARC-4 moves this into a use case"
+                )]
                 uow.changelog().append(&entry).await?;
             }
             Ok(())
@@ -92,11 +100,19 @@ pub(super) async fn clear_channel(
     );
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "ARC-4 moves this into a use case"
+            )]
             let changed = uow
                 .commissions()
                 .set_linked_channel(&commission_id, None)
                 .await?;
             if changed {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "ARC-4 moves this into a use case"
+                )]
                 uow.changelog().append(&entry).await?;
             }
             Ok(())

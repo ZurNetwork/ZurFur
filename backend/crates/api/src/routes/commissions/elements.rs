@@ -84,7 +84,12 @@ pub(super) async fn add_element(
 
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
-            uow.commissions().add_element(&element).await
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "ARC-4 moves this into a use case"
+            )]
+            let mut commissions = uow.commissions();
+            commissions.add_element(&element).await
         })
         .await
         .map_err(to_problem)?;
@@ -108,9 +113,12 @@ pub(super) async fn remove_element(
 
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
-            uow.commissions()
-                .remove_element(&commission_id, &element)
-                .await
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "ARC-4 moves this into a use case"
+            )]
+            let mut commissions = uow.commissions();
+            commissions.remove_element(&commission_id, &element).await
         })
         .await
         .map_err(to_problem)?;

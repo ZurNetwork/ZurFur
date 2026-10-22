@@ -30,3 +30,6 @@ proptest = { workspace = true }
 serde_json = { workspace = true }
 # Compile-fail tests: the write capability can't be forged, cloned or kept.
 trybuild = { workspace = true }
+
+[lints]
+workspace = true

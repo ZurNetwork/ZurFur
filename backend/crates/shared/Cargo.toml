@@ -10,3 +10,6 @@ edition = "2024"
 # `composition::Config`, not this crate. (Engineer ruling 2026-08-26.)
 [dependencies]
 chrono = { workspace = true }
+
+[lints]
+workspace = true

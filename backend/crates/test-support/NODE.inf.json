@@ -12,7 +12,8 @@
     "Zero requests to the public atproto network — minting lands at the local stub only.",
     "`DOCKER_HOST` is honored for the container socket; every rig needs a Tokio runtime (`#[tokio::test]`).",
     "The default PDS image literal must equal `.env.example`'s `ZURFUR_PDS_IMAGE`.",
-    "Container reuse is an escape hatch, not the default."
+    "Container reuse is an escape hatch, not the default.",
+    "A test-only crate: every workspace crate takes it as a dev-dependency, never a normal one (application/tests/write_gate_seams.rs holds it). That is why the driver scans pass it by, though it depends on composition."
   ],
   "entry_points": [
     "src/lib.rs (the usage recipe is in notes)",

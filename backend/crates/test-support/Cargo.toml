@@ -60,3 +60,6 @@ atrium-crypto = { workspace = true }
 url = { workspace = true }
 # `pg_app::ProfileCacheState`: its names and its VARIANTS.
 strum = { workspace = true }
+
+[lints]
+workspace = true

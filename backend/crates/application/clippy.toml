@@ -4,6 +4,6 @@ disallowed-methods = [
     { path = "domain::ports::UnitOfWork::rollback", reason = "only a `#[use_case]` wrapper, `LazyUnit` or `application::transaction()` settles units of work. To rollback, return `Err` from the use case" },
     { path = "application::transaction", reason = "a use case never opens its own unit; `transaction()` is for `sweep_deadlines` and test seeding, with an `#[allow]` and a reason" },
     { path = "domain::ports::UnitOfWork::nodes", reason = "only the den's write gate reaches the Den's node port; a unit-of-work double that delegates, or a test that seeds or reads node rows, carries an `#[allow]` or `#[expect]` and a reason" },
-    { path = "atta::DisplayName::host_checked", reason = "a name enters the engine only in `DenHost::found`, from a name the Den's rule passed; a test double carries an `#[allow]` and a reason" },
+    { path = "atta::DisplayName::host_checked", reason = "a name enters the engine only in `names::display_name`, from a name the Den's rule passed; a test double carries an `#[allow]` and a reason" },
     { path = "domain::ports::WriteCapability::gate_issued", reason = "only the den's write gate issues a write capability; a test double carries an `#[allow]` and a reason" },
 ]

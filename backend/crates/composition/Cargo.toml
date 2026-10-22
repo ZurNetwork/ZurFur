@@ -33,3 +33,6 @@ derive_more = { workspace = true }
 [dev-dependencies]
 # `figment::Jail` — the config-precedence test.
 figment = { workspace = true, features = ["test"] }
+
+[lints]
+workspace = true

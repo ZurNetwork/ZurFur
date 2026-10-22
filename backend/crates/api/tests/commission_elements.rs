@@ -612,6 +612,10 @@ async fn removing_an_unknown_or_foreign_element_is_element_not_found() {
         let element_id = uuid::Uuid::from(element.id);
         let database = backend.database();
         let mut uow = database.begin().await.expect("begin");
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the test seeds an element on a commission the caller doesn't own"
+        )]
         UnitOfWork::commissions(&mut *uow)
             .add_element(&element)
             .await

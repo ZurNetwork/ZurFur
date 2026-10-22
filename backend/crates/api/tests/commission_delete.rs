@@ -240,10 +240,18 @@ impl UnitOfWork for FactBearingUow {
         self.0.accounts()
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a unit-of-work double wraps the commission repo of the unit it wraps"
+    )]
     fn commissions(&mut self) -> Box<dyn CommissionRepo + '_> {
         Box::new(FactBearingCommissions(self.0.commissions()))
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a unit-of-work double hands out the changelog of the unit it wraps"
+    )]
     fn changelog(&mut self) -> Box<dyn ChangelogWrites + '_> {
         self.0.changelog()
     }

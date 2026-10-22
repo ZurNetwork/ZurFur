@@ -21,7 +21,9 @@
     "Only `lib.rs` and `ports.rs` name the macros crate: `crate::use_case` and `crate::ports::WithPorts` are what the rest of the crate imports.",
     "A unit never opens inside another use case's unit, nor after a use case it called opened and settled its own (pure delegation stays legal); debug builds assert it (`lazy_unit.rs`).",
     "A Query use case never writes: the macro rejects a `Query`-typed parameter beside `#[unit]`/`#[lazy_unit]`. `application::transaction` is disallowed in this package's clippy.toml; only `sweep_deadlines` and test seeding allow it, each with a reason.",
-    "Nothing here, nor in api, cli or composition, reaches the Den's node port yet: clippy.toml bans `UnitOfWork::nodes` here and in api, and `tests/node_and_name_seams.rs` refuses any production identifier that names the port, with no exemption. So no production identifier is named `nodes`, a local list of a folder's nodes included (`children`, `candidates`)."
+    "Nothing here, nor in any driver crate, reaches the Den's node port but the den's write gate: clippy.toml bans `UnitOfWork::nodes` here and in api, and `tests/node_and_name_seams.rs` refuses any production identifier that names the port, its one exemption the gate's single `nodes()` call in `den/gate.rs`. So no other production identifier is named `nodes`, a local list of a folder's nodes included (`children`, `candidates`).",
+    "The interim guard on commission field writes: the ungated writes on the commission repo (`create`, `delete`, `set_title`, `set_archived`, `set_maturity`, `set_direction_status`, `set_deadline`, `set_deadline_status`, `declare_slots`) are frozen by `tests/write_gate_seams.rs` as a literal list of eleven sites (file, function, method) in the commission use cases; a new site fails the gate. Each method leaves the list in the slice that moves it behind the den's write gate, and the list is empty at M3.",
+    "`unsafe` is forbidden in every crate: the root manifest's `[workspace.lints.rust] unsafe_code = \"forbid\"`, which each crate takes with `[lints] workspace = true` (`write_gate_seams.rs` checks every member does)."
   ],
   "entry_points": [
     "src/lib.rs",
@@ -188,7 +190,12 @@
     },
     {
       "name": "tests/node_and_name_seams.rs",
-      "role": "the scan that no production source of application, api, cli or composition reaches the node port (nodes, NodeRepo, NodeStore, NodeReads, NodeWrites, PgNodeStore, PgNodeWrites, node_store, MemNodeStore, MemNodeWrites) or names atta::DisplayName::host_checked outside names::display_name; the one exemption: den/gate.rs may name NodeRepo, NodeReads and NodeWrites, and `nodes` once, inside its free fn `gate` (the_gate_names_the_node_port_once); every identifier, macro bodies included, and every alias made anywhere in the workspace; tests.rs and proptests.rs skipped only when their parent declares them under #[cfg(test)]; fixture sources and trees for each evasion",
+      "role": "the scan that no production source of application or of any driver crate (composition and every crate with a normal dependency on it, by cargo metadata, test-support aside) reaches the node port (nodes, NodeRepo, NodeStore, NodeReads, NodeWrites, PgNodeStore, PgNodeWrites, node_store, MemNodeStore, MemNodeWrites) or names atta::DisplayName::host_checked outside names::display_name; the one exemption: den/gate.rs may name NodeRepo, NodeReads and NodeWrites, and `nodes` once, inside its free fn `gate` (the_gate_names_the_node_port_once); every identifier, macro bodies included, and every alias made anywhere in the workspace; a module is skipped only when its parent declares it under #[cfg(test)] (with its own children), and a tests.rs or proptests.rs no parent declares so is read and refused; fixture sources and trees for each evasion",
+      "node": false
+    },
+    {
+      "name": "tests/seams/",
+      "role": "the scans' shared walker (the one tests/<dir>/mod.rs): which files are production (a module its parent declares under #[cfg(test)] is not, nor its children), identifiers token by token, the aliases the workspace binds to a name, the driver crates by cargo metadata, fixture trees",
       "node": false
     },
     {
@@ -214,6 +221,11 @@
     {
       "name": "tests/workflow.rs",
       "role": "integration tests for the account board use cases (boards, columns, card placement)",
+      "node": false
+    },
+    {
+      "name": "tests/write_gate_seams.rs",
+      "role": "the write gate's guards: the capability's surface (gate_issued and thing, Debug only, no derive, private fields); gate_issued named only at its definition and in den/gate.rs's issue, across every crate's production sources; DenWriteHost::new only in write.rs's written and gate only in DenWriteHost::apply; Den::write, Command and DenAct not pub; no driver names the node port, gate_issued, WriteCapability, queries or sqlx (aliases included; api/src/sweep.rs's sweep_pass_as_leader may name sqlx once until ARC-3) or holds a string literal naming the node table after FROM/INTO/UPDATE/JOIN/TABLE/TRUNCATE/COPY/LOCK/USING/MERGE or a comma (comments stripped, ONLY, quoted and schema-qualified forms) or a .sql path, and no driver but api calls a unit's commissions() or changelog(); the driver set from cargo metadata; the frozen list of ungated commission field writes; every crate takes the workspace lints",
       "node": false
     }
   ],

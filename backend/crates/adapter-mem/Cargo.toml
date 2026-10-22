@@ -35,3 +35,6 @@ tokio = { workspace = true }
 test-support = { path = "../test-support" }
 # strum: VARIANTS over the domain vocabularies
 strum = { workspace = true }
+
+[lints]
+workspace = true

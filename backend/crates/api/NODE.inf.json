@@ -14,7 +14,8 @@
     "A namespace boundary is a policy boundary: cookie-surface routers sit under the first-party-Origin CSRF layer; `/health`, `/.well-known` and a future bearer `/plugin/v1` mount outside it by construction, and a path no route matches gets a bare 404 from the outer router's own fallback, outside it too.",
     "Session→identity resolution is one axum extractor, `extract::CallingUser`, never a per-module helper.",
     "Parity tests (`create_account_parity.rs`, `delete_account_parity.rs`, `whoami_parity.rs`) pin this driver's projections identical to the CLI's until the contract moves to a leaf crate.",
-    "The `dev-profile` Cargo feature alone chooses the dev profile (never config or `.env`). Two locks: `main` refuses unless `ZURFUR_ENV` is set and names dev, and `dev_profile::app` refuses a resolved environment other than `DEV`, both before anything starts; `Config::load` before them refuses a DEV listening, or served, beyond loopback. `just gate`, gate-light and CI lint and test the feature in `target/dev-profile` (so `target/debug/api` is never the profile), pinned by `scripts/dev-profile-pins.test.sh`."
+    "The `dev-profile` Cargo feature alone chooses the dev profile (never config or `.env`). Two locks: `main` refuses unless `ZURFUR_ENV` is set and names dev, and `dev_profile::app` refuses a resolved environment other than `DEV`, both before anything starts; `Config::load` before them refuses a DEV listening, or served, beyond loopback. `just gate`, gate-light and CI lint and test the feature in `target/dev-profile` (so `target/debug/api` is never the profile), pinned by `scripts/dev-profile-pins.test.sh`.",
+    "A driver: it never names the node port, `WriteCapability` or its issuer, `adapter_pg::queries` or `sqlx`, nor holds a string literal naming the `node` table (application/tests/write_gate_seams.rs, over every crate cargo metadata finds depending on composition). The one exemption is `sweep.rs`'s `sweep_pass_as_leader`, whose advisory lock may name `sqlx` once, until ARC-3 moves it. Its calls on a unit's `commissions()` and `changelog()` are held by clippy.toml instead, each with its own `#[expect]`."
   ],
   "entry_points": [
     "src/main.rs",
@@ -28,7 +29,7 @@
     },
     {
       "name": "clippy.toml",
-      "role": "large-error-threshold 192 (Problem with field errors); disallowed-methods: tower_sessions::SessionManagerLayer::new (sessions mount only through http_cookies::session_layer), axum::serve (serving only through http_stack::serve) and UnitOfWork::nodes (no driver reaches the Den's node port; the delegating double in tests/commission_delete.rs carries an `#[expect]`)",
+      "role": "large-error-threshold 192 (Problem with field errors); disallowed-methods: tower_sessions::SessionManagerLayer::new (sessions mount only through http_cookies::session_layer), axum::serve (serving only through http_stack::serve), UnitOfWork::nodes (no driver reaches the Den's node port; the delegating double in tests/commission_delete.rs carries an `#[expect]`), WriteCapability::gate_issued (only the den's write gate issues one), and, the interim guard until ARC-4, UnitOfWork::commissions and UnitOfWork::changelog (the six calls left in routes/commissions/channel.rs and elements.rs each carry an `#[expect]` on its statement, as do the doubles and seeders in tests/commission_delete.rs, commission_positioning.rs and commission_elements.rs)",
       "node": false
     },
     {

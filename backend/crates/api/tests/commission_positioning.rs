@@ -358,6 +358,10 @@ async fn a_granted_accounts_member_gains_no_in_commission_authority() {
     {
         let db = backend.database();
         let mut uow = db.begin().await.unwrap();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the test seeds a view grant no route writes"
+        )]
         uow.commissions()
             .grant_view(&cid, &member.id, GrantLevel::Total)
             .await
