@@ -4,8 +4,9 @@
 //! file reaching the lent view's fields, no compiled source the scans can't read, the write
 //! host and the gate named once each, the write use case kept inside the crate, nothing of it
 //! (and no raw SQL or in-memory seeder) in a driver, no lint silencer in the den, in
-//! commission's acts or on the modules above them, and the commission field writes not yet
-//! gated, frozen.
+//! commission's acts (derived: every file implementing the gate's handler) or on the modules
+//! above them, every method of the commission write view taking a capability or named, and
+//! the commission field writes not yet gated, frozen.
 
 mod seams;
 
@@ -60,7 +61,8 @@ const API: &str = "api";
 /// The unit of work's commission repo and changelog: no driver but [`API`] calls either.
 const COMMISSION_REPOS: [&str; 2] = ["commissions", "changelog"];
 
-/// The commission repo's field writes the gate doesn't hold yet, by name.
+/// The commission repo's field writes the gate doesn't hold yet, by name. Each leaves when its
+/// method takes a write capability; the list is empty by M3.
 const FIELD_WRITES: [&str; 6] = [
     "set_archived",
     "set_maturity",
@@ -2308,13 +2310,72 @@ const SILENCERS: [&str; 2] = ["allow", "expect"];
 /// The attribute that applies others under a condition.
 const CFG_ATTR: &str = "cfg_attr";
 
-/// Commission's act and handler files, relative to the use-case layer's sources.
-const COMMISSION_ACT_FILES: [&str; 4] = [
-    "commission/act.rs",
-    "commission/create.rs",
-    "commission/rename.rs",
-    "commission/den.rs",
-];
+/// The gate's handler trait: a file implementing it holds one of the den's acts.
+const HANDLER: &str = "Handler";
+
+/// Commission's files guarded by name though they implement no handler: the act enum's file
+/// and commission's Den arm, relative to the use-case layer's sources.
+const COMMISSION_ACT_FLOOR: [&str; 2] = ["commission/act.rs", "commission/den.rs"];
+
+/// Whether `tokens`, at any depth, hold one of `handlers` followed by `for`, through any generic
+/// arguments: an impl of the gate's handler, under a path or in a macro body alike.
+fn implements_a_handler(tokens: TokenStream, handlers: &BTreeSet<String>) -> bool {
+    levels(tokens).iter().any(|level| {
+        (0..level.len()).any(|at| {
+            let Some(ident) = ident_at(level, at) else {
+                return false;
+            };
+            let after = if punct_at(level, at + 1, '<') {
+                past_generics(level, at + 1)
+            } else {
+                at + 1
+            };
+            handlers.contains(&ident) && ident_at(level, after).as_deref() == Some("for")
+        })
+    })
+}
+
+/// Every production file under `src` that implements the gate's handler, relative to `src`:
+/// [`HANDLER`], or a name the sources bind to it, followed by `for`.
+fn handler_files(src: &Path) -> BTreeSet<String> {
+    let sources: Vec<(String, String)> = walk(src)
+        .production
+        .iter()
+        .map(|path| {
+            let source = std::fs::read_to_string(path).expect("a readable source");
+            (relative(path, src), source)
+        })
+        .collect();
+    let texts: Vec<String> = sources.iter().map(|(_, source)| source.clone()).collect();
+    let handlers = with_aliases(&[HANDLER], &texts);
+    sources
+        .into_iter()
+        .filter(|(_, source)| {
+            let tokens: TokenStream = source.parse().expect("the source lexes");
+            implements_a_handler(tokens, &handlers)
+        })
+        .map(|(file, _)| file)
+        .collect()
+}
+
+/// Commission's act files under `src`: every file implementing the gate's handler, and
+/// [`COMMISSION_ACT_FLOOR`].
+fn act_files(src: &Path) -> BTreeSet<String> {
+    let mut files = handler_files(src);
+    files.extend(COMMISSION_ACT_FLOOR.map(str::to_owned));
+    files
+}
+
+/// Each silencer in the files `files` names, relative to `src`.
+fn silencer_offenders(src: &Path, files: &[&str]) -> Vec<String> {
+    files
+        .iter()
+        .flat_map(|file| {
+            let source = std::fs::read_to_string(src.join(file)).expect("a readable source");
+            silencer_findings(file, &source)
+        })
+        .collect()
+}
 
 /// An identifier's text, a raw identifier's `r#` dropped.
 fn unraw(ident: &proc_macro2::Ident) -> String {
@@ -2468,35 +2529,27 @@ fn ancestor_silencer_findings(
 #[test]
 fn den_and_commission_hold_no_lint_silencer() {
     let src = application_src();
-    let commission_files: Vec<(String, PathBuf)> = COMMISSION_ACT_FILES
-        .iter()
-        .map(|file| ((*file).to_owned(), src.join(file)))
-        .collect();
-    let files: Vec<(String, PathBuf)> = den_production()
+    let guarded: BTreeSet<String> = den_production()
         .into_iter()
-        .chain(commission_files)
+        .map(|(file, _)| file)
+        .chain(act_files(&src))
         .collect();
+    let read: Vec<&str> = guarded.iter().map(String::as_str).collect();
 
-    let offenders: Vec<String> = files
-        .iter()
-        .flat_map(|(file, path)| {
-            let source = std::fs::read_to_string(path).expect("a readable source");
-            silencer_findings(file, &source)
-        })
-        .collect();
+    let offenders = silencer_offenders(&src, &read);
 
     assert_eq!(offenders, Vec::<String>::new());
-    let read: Vec<&str> = files.iter().map(|(file, _)| file.as_str()).collect();
     for file in [
         "den.rs",
         GATE_FILE,
         "den/act.rs",
         "den/write.rs",
         "den/authority.rs",
-    ]
-    .into_iter()
-    .chain(COMMISSION_ACT_FILES)
-    {
+        "commission/act.rs",
+        "commission/create.rs",
+        "commission/rename.rs",
+        "commission/den.rs",
+    ] {
         assert!(read.contains(&file), "the scan reads {file}: {read:?}");
     }
     let ancestors = ancestor_modules(&read);
@@ -2557,6 +2610,57 @@ fn den_and_commission_hold_no_lint_silencer() {
         let found = silencer_findings("den/gate.rs", source);
 
         assert_eq!(found, Vec::<String>::new(), "{source}");
+    }
+}
+
+#[test]
+fn the_act_files_are_every_handler_impl_and_the_floor() {
+    let archive = "pub(crate) struct PlantedArchive;\n\n#[allow(dead_code)]\nfn later() {}\n\nimpl crate::den::Handler for PlantedArchive {}\n";
+    let aliased = "use crate::den::Handler as Act;\n\nstruct Planted;\n\nimpl Act for Planted {}\n";
+    let expanded = "macro_rules! act {\n    ($act:ident) => {\n        impl crate::den::Handler for $act {}\n    };\n}\n\nstruct Planted;\n\nact!(Planted);\n";
+    let generic = "struct Planted<T>(T);\n\nimpl<T> crate::den::Handler<T> for Planted<T> {}\n";
+    let commented = "// impl Handler for Planted {}\n/// impl Handler for Planted {}\nstruct Planted;\n\nconst NOTE: &str = \"impl Handler for Planted {}\";\n";
+    let named = "fn takes(handler: &dyn crate::den::Handler) {}\n";
+    let src = fixture_tree(
+        "act_files",
+        &[
+            ("lib.rs", "mod commission;\nmod den;\n"),
+            ("den.rs", "pub(crate) trait Handler {}\n"),
+            (
+                "commission.rs",
+                "mod aliased;\nmod archive;\nmod commented;\nmod expanded;\nmod generic;\nmod named;\n",
+            ),
+            ("commission/archive.rs", archive),
+            ("commission/aliased.rs", aliased),
+            ("commission/expanded.rs", expanded),
+            ("commission/generic.rs", generic),
+            ("commission/commented.rs", commented),
+            ("commission/named.rs", named),
+        ],
+    );
+
+    let found = handler_files(&src);
+    let read: Vec<&str> = found.iter().map(String::as_str).collect();
+    let offenders = silencer_offenders(&src, &read);
+
+    let expected: BTreeSet<String> = [
+        "commission/aliased.rs",
+        "commission/archive.rs",
+        "commission/expanded.rs",
+        "commission/generic.rs",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    assert_eq!(found, expected);
+    assert_eq!(offenders, ["commission/archive.rs: allow(dead_code)"]);
+    let with_floor = act_files(&src);
+    for file in [
+        "commission/archive.rs",
+        "commission/act.rs",
+        "commission/den.rs",
+    ] {
+        assert!(with_floor.contains(file), "{file}: {with_floor:?}");
     }
 }
 
@@ -2784,6 +2888,400 @@ fn the_ungated_field_writes_are_exactly_these() {
         let writes = field_writes("commission/other.rs", &file);
 
         assert_eq!(writes, Vec::<(String, String, String)>::new(), "{source}");
+    }
+}
+
+// The interim guard: every method of the commission write view takes a capability or is named.
+
+/// The commission write view's hard delete: it takes no write capability, and clippy's ban on
+/// `CommissionWrites::delete` holds its one call. It leaves when its method takes one.
+const BANNED_WRITES: [&str; 1] = ["delete"];
+
+/// The commission write view's other methods that take no write capability yet: seats,
+/// elements, files, markups, the linked channel, view grants, and two reads on the write view.
+/// Each leaves when its method takes one.
+const OTHER_UNCAPPED: [&str; 12] = [
+    "declare_seat",
+    "create_seat_invitation",
+    "revoke_seat_invitation",
+    "add_element",
+    "remove_element",
+    "add_file",
+    "add_markup",
+    "set_linked_channel",
+    "grant_view",
+    "revoke_view",
+    "commission_has_facts",
+    "lapsed_deadlines",
+];
+
+/// The write view of a commission unit.
+const COMMISSION_WRITES: &str = "CommissionWrites";
+
+/// The read view of a commission unit.
+const COMMISSION_READS: &str = "CommissionReads";
+
+/// What a unit's `commissions()` vends: the read view and the write view, nothing else.
+const COMMISSION_REPO: &str = "CommissionRepo";
+
+/// The read view's methods: lookups and row locks, never a write.
+const UNIT_READS: [&str; 5] = [
+    "find",
+    "find_for_update",
+    "standing_for_update",
+    "is_participant",
+    "tab_for_update",
+];
+
+/// The port file holding the commission unit's views.
+fn commission_port_file() -> PathBuf {
+    crates().join("workflow/src/ports/commission.rs")
+}
+
+/// Every name the three lists of uncapped methods hold.
+fn listed_uncapped() -> BTreeSet<String> {
+    FIELD_WRITES
+        .into_iter()
+        .chain(BANNED_WRITES)
+        .chain(OTHER_UNCAPPED)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Every trait named `name` in `file`, inline modules at any depth included.
+fn traits_named<'a>(file: &'a syn::File, name: &str) -> Vec<&'a syn::ItemTrait> {
+    every_item(&file.items)
+        .into_iter()
+        .filter_map(|item| match item {
+            Item::Trait(tr) if tr.ident == name => Some(tr),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether `ty` is a reference to a path whose last name is [`WRITE_CAPABILITY`]: an alias, a
+/// generic and a capability by value are not.
+fn is_capability_reference(ty: &Type) -> bool {
+    let Type::Reference(reference) = ty else {
+        return false;
+    };
+    let Type::Path(path) = reference.elem.as_ref() else {
+        return false;
+    };
+    let last = path.path.segments.last();
+    path.qself.is_none() && last.is_some_and(|segment| segment.ident == WRITE_CAPABILITY)
+}
+
+/// Whether one of `signature`'s parameters is a write capability by reference.
+fn takes_a_capability(signature: &syn::Signature) -> bool {
+    signature.inputs.iter().any(
+        |input| matches!(input, syn::FnArg::Typed(typed) if is_capability_reference(&typed.ty)),
+    )
+}
+
+/// The name a finding gives a trait item: a method's name, an associated item's kind and name,
+/// or anything else as written.
+fn trait_item_name(item: &TraitItem) -> String {
+    match item {
+        TraitItem::Fn(method) => unraw(&method.sig.ident),
+        TraitItem::Const(constant) => format!("const {}", unraw(&constant.ident)),
+        TraitItem::Type(alias) => format!("type {}", unraw(&alias.ident)),
+        other => other.to_token_stream().to_string(),
+    }
+}
+
+/// A trait's items sorted by authority: each method with a write capability by reference, and
+/// everything else, an item that isn't a method included.
+#[derive(Debug, Default)]
+struct Authority {
+    capped: BTreeSet<String>,
+    uncapped: BTreeSet<String>,
+}
+
+/// `tr`'s items, sorted by authority.
+fn authority(tr: &syn::ItemTrait) -> Authority {
+    let mut sorted = Authority::default();
+    for item in &tr.items {
+        let capped = matches!(item, TraitItem::Fn(method) if takes_a_capability(&method.sig));
+        let name = trait_item_name(item);
+        if capped {
+            sorted.capped.insert(name);
+        } else {
+            sorted.uncapped.insert(name);
+        }
+    }
+    sorted
+}
+
+/// The port scan's findings in `file`: anything but one [`COMMISSION_WRITES`], each of its
+/// uncapped items `listed` lacks, and each name in `listed` that isn't an uncapped item.
+fn port_findings(file: &syn::File, listed: &BTreeSet<String>) -> Vec<String> {
+    let found = traits_named(file, COMMISSION_WRITES);
+    let [writes] = found.as_slice() else {
+        let count = found.len();
+        return vec![format!(
+            "{count} `trait {COMMISSION_WRITES}` found, not one"
+        )];
+    };
+    let sorted = authority(writes);
+    let unlisted = sorted.uncapped.difference(listed).map(|name| {
+        format!("{COMMISSION_WRITES}::{name} takes no write capability and is on no list")
+    });
+    let stale = listed.difference(&sorted.uncapped).map(|name| {
+        if sorted.capped.contains(name) {
+            format!("{COMMISSION_WRITES}::{name} takes a write capability: it leaves its list")
+        } else {
+            format!("{COMMISSION_WRITES}::{name} is listed but gone from the trait")
+        }
+    });
+    unlisted.chain(stale).collect()
+}
+
+/// Each bound in `tr`'s supertraits, as written.
+fn supertraits(tr: &syn::ItemTrait) -> Vec<String> {
+    tr.supertraits
+        .iter()
+        .map(|bound| bound.to_token_stream().to_string())
+        .collect()
+}
+
+/// What breaks one trait's pin: not exactly one trait `name` in `file`, generics or a where
+/// clause, supertraits other than `bounds`, or items other than `items`, each named.
+fn pinned_trait_findings(
+    file: &syn::File,
+    name: &str,
+    bounds: &[&str],
+    items: &[&str],
+) -> Vec<String> {
+    let found = traits_named(file, name);
+    let [tr] = found.as_slice() else {
+        let count = found.len();
+        return vec![format!("{count} `trait {name}` found, not one")];
+    };
+    let mut findings = Vec::new();
+    if !tr.generics.params.is_empty() || tr.generics.where_clause.is_some() {
+        let generics = tr.generics.to_token_stream();
+        let where_clause = tr.generics.where_clause.to_token_stream();
+        findings.push(format!(
+            "trait {name}: generics `{generics} {where_clause}`"
+        ));
+    }
+    let held = supertraits(tr);
+    if held != bounds {
+        findings.push(format!(
+            "trait {name}: supertraits {held:?}, not {bounds:?}"
+        ));
+    }
+    let sorted = authority(tr);
+    let pinned: BTreeSet<String> = items.iter().map(|item| (*item).to_owned()).collect();
+    let all: BTreeSet<String> = sorted.capped.union(&sorted.uncapped).cloned().collect();
+    findings.extend(
+        all.difference(&pinned)
+            .map(|item| format!("{name}::{item} is not one of its pinned items")),
+    );
+    findings.extend(
+        pinned
+            .difference(&all)
+            .map(|item| format!("{name}::{item} is pinned but gone from the trait")),
+    );
+    findings
+}
+
+/// The side doors around the write view in `file`: the repo a unit vends is exactly the read
+/// view and the write view with nothing of its own, the read view holds only its reads, and
+/// neither view gains a supertrait or a where clause.
+fn side_door_findings(file: &syn::File) -> Vec<String> {
+    let repo = pinned_trait_findings(
+        file,
+        COMMISSION_REPO,
+        &[COMMISSION_READS, COMMISSION_WRITES],
+        &[],
+    );
+    let reads = pinned_trait_findings(file, COMMISSION_READS, &["Send"], &UNIT_READS);
+    let writes = traits_named(file, COMMISSION_WRITES);
+    let write_bounds: Vec<String> = writes
+        .iter()
+        .flat_map(|tr| {
+            let mut found = Vec::new();
+            let held = supertraits(tr);
+            if held != ["Send"] {
+                found.push(format!(
+                    "trait {COMMISSION_WRITES}: supertraits {held:?}, not [\"Send\"]"
+                ));
+            }
+            if !tr.generics.params.is_empty() || tr.generics.where_clause.is_some() {
+                found.push(format!(
+                    "trait {COMMISSION_WRITES}: generics or a where clause"
+                ));
+            }
+            found
+        })
+        .collect();
+    repo.into_iter().chain(reads).chain(write_bounds).collect()
+}
+
+#[test]
+fn every_commission_write_takes_a_capability_or_is_named() {
+    let file = parse(&commission_port_file());
+    let listed = listed_uncapped();
+
+    let findings = port_findings(&file, &listed);
+    let side_doors = side_door_findings(&file);
+
+    assert_eq!(findings, Vec::<String>::new());
+    assert_eq!(side_doors, Vec::<String>::new());
+    let writes = traits_named(&file, COMMISSION_WRITES);
+    assert_eq!(writes.len(), 1, "the scan finds trait {COMMISSION_WRITES}");
+    let sorted = authority(writes[0]);
+    assert!(
+        sorted.capped.contains("create"),
+        "create takes the gate's create capability: {sorted:?}"
+    );
+    let list_lengths = FIELD_WRITES.len() + BANNED_WRITES.len() + OTHER_UNCAPPED.len();
+    assert_eq!(listed.len(), list_lengths, "no name sits on two lists");
+}
+
+#[test]
+fn the_port_scan_names_each_planted_write() {
+    let source =
+        std::fs::read_to_string(commission_port_file()).expect("the port file is readable");
+    let listed = listed_uncapped();
+    let writes_header = "pub trait CommissionWrites: Send {";
+    let reads_header = "pub trait CommissionReads: Send {";
+    let repo_header = "pub trait CommissionRepo: CommissionReads + CommissionWrites {}";
+    for header in [writes_header, reads_header, repo_header] {
+        assert!(source.contains(header), "the port file holds `{header}`");
+    }
+    let set_lifecycle = "\n    async fn set_lifecycle(&mut self, id: &CommissionId, step: LifecycleStep) -> anyhow::Result<bool>;\n";
+    let lifecycle_planted =
+        source.replacen(writes_header, &format!("{writes_header}{set_lifecycle}"), 1);
+    let lifecycle_file = syn::parse_file(&lifecycle_planted).expect("the planted port parses");
+
+    let lifecycle_findings = port_findings(&lifecycle_file, &listed);
+
+    assert_eq!(
+        lifecycle_findings,
+        ["CommissionWrites::set_lifecycle takes no write capability and is on no list"]
+    );
+    let none = BTreeSet::new();
+    let capped = [
+        "trait CommissionWrites: Send { async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, step: LifecycleStep) -> anyhow::Result<bool>; }",
+        "trait CommissionWrites: Send { async fn set_lifecycle(&mut self, step: LifecycleStep, capability: &kernel::ports::WriteCapability<CommissionId, AsOwner>); }",
+    ];
+    for planted in capped {
+        let file = syn::parse_file(planted).expect("the planted trait parses");
+
+        let findings = port_findings(&file, &none);
+
+        assert_eq!(findings, Vec::<String>::new(), "{planted}");
+        let sorted = authority(traits_named(&file, COMMISSION_WRITES)[0]);
+        assert!(
+            sorted.capped.contains("set_lifecycle"),
+            "{planted}: {sorted:?}"
+        );
+    }
+    let uncapped = [
+        "trait CommissionWrites: Send { async fn set_lifecycle(&mut self, capability: WriteCapability<CommissionId, AsOwner>); }",
+        "type Cap = WriteCapability<CommissionId, AsOwner>;\ntrait CommissionWrites: Send { async fn set_lifecycle(&mut self, capability: &Cap); }",
+        "trait CommissionWrites: Send { async fn set_lifecycle<C>(&mut self, capability: &C); }",
+        "trait CommissionWrites: Send { async fn set_lifecycle(&mut self, capability: &impl AsRef<WriteCapability<CommissionId, AsOwner>>); }",
+        "trait CommissionWrites: Send { async fn set_lifecycle(&mut self, capability: &<Gate as Issue>::WriteCapability); }",
+        "trait CommissionWrites: Send { async fn set_lifecycle(&mut self, id: &CommissionId) { let _ = WriteCapability::thing; } }",
+    ];
+    for planted in uncapped {
+        let file = syn::parse_file(planted).expect("the planted trait parses");
+
+        let findings = port_findings(&file, &none);
+
+        assert_eq!(
+            findings,
+            ["CommissionWrites::set_lifecycle takes no write capability and is on no list"],
+            "{planted}"
+        );
+    }
+    let set_archived: BTreeSet<String> = BTreeSet::from(["set_archived".to_owned()]);
+    let named_findings = [
+        (
+            "trait CommissionWrites: Send { writes!(); }",
+            &none,
+            vec!["CommissionWrites::writes ! () ; takes no write capability and is on no list"],
+        ),
+        (
+            "trait CommissionWrites: Send { const LIFECYCLE: bool; }",
+            &none,
+            vec!["CommissionWrites::const LIFECYCLE takes no write capability and is on no list"],
+        ),
+        (
+            "trait CommissionWrites: Send {}",
+            &set_archived,
+            vec!["CommissionWrites::set_archived is listed but gone from the trait"],
+        ),
+        (
+            "trait CommissionWrites: Send { async fn set_archived(&mut self, capability: &WriteCapability<CommissionId, AsOwner>); }",
+            &set_archived,
+            vec!["CommissionWrites::set_archived takes a write capability: it leaves its list"],
+        ),
+        (
+            "trait CommissionReads: Send {}",
+            &none,
+            vec!["0 `trait CommissionWrites` found, not one"],
+        ),
+        (
+            "trait CommissionWrites: Send {}\nmod hidden { trait CommissionWrites: Send {} }",
+            &none,
+            vec!["2 `trait CommissionWrites` found, not one"],
+        ),
+    ];
+    for (planted, listed, expected) in named_findings {
+        let file = syn::parse_file(planted).expect("the planted trait parses");
+
+        let findings = port_findings(&file, listed);
+
+        assert_eq!(findings, expected, "{planted}");
+    }
+    let side_doors = [
+        (
+            repo_header,
+            "pub trait CommissionRepo: CommissionReads + CommissionWrites + CommissionFields {}",
+            "trait CommissionRepo: supertraits",
+        ),
+        (
+            repo_header,
+            "pub trait CommissionRepo: CommissionReads + CommissionWrites { async fn set_lifecycle(&mut self); }",
+            "CommissionRepo::set_lifecycle is not one of its pinned items",
+        ),
+        (
+            repo_header,
+            "pub trait CommissionRepo: CommissionReads + CommissionWrites where Self: CommissionFields {}",
+            "trait CommissionRepo: generics",
+        ),
+        (
+            reads_header,
+            "pub trait CommissionReads: Send {\n    async fn set_lifecycle(&mut self, id: &CommissionId) -> anyhow::Result<bool>;\n",
+            "CommissionReads::set_lifecycle is not one of its pinned items",
+        ),
+        (
+            reads_header,
+            "pub trait CommissionReads: Send + CommissionFields {",
+            "trait CommissionReads: supertraits",
+        ),
+        (
+            writes_header,
+            "pub trait CommissionWrites: Send + CommissionFields {",
+            "trait CommissionWrites: supertraits",
+        ),
+    ];
+    for (header, replacement, expected) in side_doors {
+        let planted = source.replacen(header, replacement, 1);
+        let file = syn::parse_file(&planted).expect("the planted port parses");
+
+        let findings = side_door_findings(&file);
+
+        assert_eq!(findings.len(), 1, "{replacement}: {findings:?}");
+        assert!(
+            findings[0].starts_with(expected),
+            "{replacement}: {findings:?}"
+        );
     }
 }
 
