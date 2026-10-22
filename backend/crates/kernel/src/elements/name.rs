@@ -5,6 +5,8 @@ use std::{ops::RangeInclusive, str::FromStr};
 
 use combining_marks::is_combining_mark;
 
+use crate::string_builder::{is_default_ignorable, is_format};
+
 mod combining_marks;
 
 /// The most bytes a name may hold.
@@ -28,29 +30,6 @@ const ARABIC_NONCHARACTERS: RangeInclusive<char> = '\u{FDD0}'..='\u{FDEF}';
 
 /// U+2029 PARAGRAPH SEPARATOR, refused anywhere in a name.
 const PARAGRAPH_SEPARATOR: char = '\u{2029}';
-
-/// The code points with Unicode's `Default_Ignorable_Code_Point` property, as inclusive ranges,
-/// from the Unicode Character Database 16.0.0 (`DerivedCoreProperties.txt`). They render as
-/// nothing on their own.
-const DEFAULT_IGNORABLE: &[(u32, u32)] = &[
-    (0x00AD, 0x00AD),
-    (0x034F, 0x034F),
-    (0x061C, 0x061C),
-    (0x115F, 0x1160),
-    (0x17B4, 0x17B5),
-    (0x180B, 0x180F),
-    (0x200B, 0x200F),
-    (0x202A, 0x202E),
-    (0x2060, 0x206F),
-    (0x3164, 0x3164),
-    (0xFE00, 0xFE0F),
-    (0xFEFF, 0xFEFF),
-    (0xFFA0, 0xFFA0),
-    (0xFFF0, 0xFFF8),
-    (0x1BCA0, 0x1BCA3),
-    (0x1D173, 0x1D17A),
-    (0xE0000, 0xE0FFF),
-];
 
 /// The Hangul fillers. They are default-ignorable, and stripped wherever they stand.
 const HANGUL_FILLERS: &[char] = &['\u{115F}', '\u{1160}', '\u{3164}', '\u{FFA0}'];
@@ -119,32 +98,6 @@ const MONGOLIAN_LETTERS: &[(u32, u32)] = &[
     (0x1880, 0x1884),
     (0x1887, 0x18A8),
     (0x18AA, 0x18AA),
-];
-
-/// The code points of Unicode's general category Cf (format), as inclusive ranges, from the
-/// Unicode Character Database 16.0.0.
-const FORMAT_CHARACTERS: &[(u32, u32)] = &[
-    (0x00AD, 0x00AD),
-    (0x0600, 0x0605),
-    (0x061C, 0x061C),
-    (0x06DD, 0x06DD),
-    (0x070F, 0x070F),
-    (0x0890, 0x0891),
-    (0x08E2, 0x08E2),
-    (0x180E, 0x180E),
-    (0x200B, 0x200F),
-    (0x202A, 0x202E),
-    (0x2060, 0x2064),
-    (0x2066, 0x206F),
-    (0xFEFF, 0xFEFF),
-    (0xFFF9, 0xFFFB),
-    (0x110BD, 0x110BD),
-    (0x110CD, 0x110CD),
-    (0x13430, 0x1343F),
-    (0x1BCA0, 0x1BCA3),
-    (0x1D173, 0x1D17A),
-    (0xE0001, 0xE0001),
-    (0xE0020, 0xE007F),
 ];
 
 /// A name safe to show: text with nothing in it that hides, fakes or reorders what a reader
@@ -226,22 +179,6 @@ impl From<ShowableNameError> for NodeNameError {
             ShowableNameError::Reserved => Self::Reserved,
         }
     }
-}
-
-/// Whether `character` is in Unicode's general category Cf.
-pub fn is_format(character: char) -> bool {
-    let code = u32::from(character);
-    FORMAT_CHARACTERS
-        .iter()
-        .any(|&(first, last)| (first..=last).contains(&code))
-}
-
-/// Whether `character` has Unicode's `Default_Ignorable_Code_Point` property.
-pub fn is_default_ignorable(character: char) -> bool {
-    let code = u32::from(character);
-    DEFAULT_IGNORABLE
-        .iter()
-        .any(|&(first, last)| (first..=last).contains(&code))
 }
 
 /// Whether `character` shows nothing a reader could tell apart: white space, a default-ignorable

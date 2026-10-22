@@ -68,7 +68,7 @@
     },
     {
       "name": "src/elements/name.rs",
-      "role": "ShowableName, a name safe to show: input at most 2048 bytes, no line or paragraph separator; stripped (blank ends; fillers and zero-width spaces inside), then not empty, no Cc, no unassigned default-ignorable, no Cf but the joiners, subdivision-flag tags and a Mongolian vowel separator inside a Mongolian word. NodeName is a ShowableName with no / (the / clause outranks every rule but the length). It still holds its own copy of the Cf and default-ignorable tables, public as is_format and is_default_ignorable, pinned equal to string_builder/unicode.rs's over every char by application/tests/den_names.rs",
+      "role": "ShowableName, a name safe to show: input at most 2048 bytes, no line or paragraph separator; stripped (blank ends; fillers and zero-width spaces inside), then not empty, no Cc, no unassigned default-ignorable, no Cf but the joiners, subdivision-flag tags and a Mongolian vowel separator inside a Mongolian word. NodeName is a ShowableName with no / (the / clause outranks every rule but the length). Its Cf and default-ignorable tests are string_builder/unicode.rs's is_format and is_default_ignorable",
       "node": false
     },
     {
@@ -103,7 +103,7 @@
     },
     {
       "name": "src/string_builder/unicode.rs",
-      "role": "the public print-safety tables: FORMAT_CHARACTERS (Cf) and DEFAULT_IGNORABLE from UCD 16.0.0, pinned equal over every char to the name rule's own copy (src/elements/name.rs) by application/tests/den_names.rs; is_format, is_default_ignorable, is_bidi_control (the nine explicit bidi formatting characters, U+202A–U+202E and U+2066–U+2069; StringBuilder::no_bidi_control reports them as ControlCharacter, as StringBuilder::no_line_separator does U+2028 and U+2029) and is_unsafe_to_print (Cc ∪ Cf ∪ Default_Ignorable ∪ U+2028 ∪ U+2029), for a printer that escapes stored text",
+      "role": "the public print-safety tables: FORMAT_CHARACTERS (Cf) and DEFAULT_IGNORABLE from UCD 16.0.0, the one copy: the name rule (src/elements/name.rs) reads them too; is_format, is_default_ignorable, is_bidi_control (the nine explicit bidi formatting characters, U+202A–U+202E and U+2066–U+2069; StringBuilder::no_bidi_control reports them as ControlCharacter, as StringBuilder::no_line_separator does U+2028 and U+2029) and is_unsafe_to_print (Cc ∪ Cf ∪ Default_Ignorable ∪ U+2028 ∪ U+2029), for a printer that escapes stored text",
       "node": false
     }
   ],
