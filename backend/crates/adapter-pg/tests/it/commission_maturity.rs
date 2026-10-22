@@ -6,12 +6,11 @@
 //! both-or-neither CHECK makes a half-set posture unrepresentable. Requires a
 //! container runtime socket (DOCKER_HOST honored).
 
+use crate::seed;
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
-use chrono::Utc;
-use domain::elements::commission::NewCommission;
 use domain::{
     elements::{
-        commission::{Commission, CommissionTitle},
+        commission::Commission,
         did::Did,
         maturity::{Maturity, MaturityRating},
         user::User,
@@ -42,24 +41,13 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 }
 
 /// Create and commit a commission owned by `owner_did`, returning it.
-async fn seed_commission(pool: &PgPool, owner_did: &str) -> NewCommission {
+async fn seed_commission(pool: &PgPool, owner_did: &str) -> Commission {
     let owner = provision(pool, owner_did).await;
-    let title = "A ref sheet"
-        .parse::<CommissionTitle>()
-        .expect("valid title");
-    let commission = Commission::create(title, owner.id, Utc::now(), None);
-    let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .create(&commission)
-        .await
-        .expect("create commission");
-    uow.commit().await.expect("commit");
-    commission
+    seed::seed_stored(pool, &owner.id, "A ref sheet").await
 }
 
 /// Sets the posture in its own committed unit of work.
-async fn set_maturity(pool: &PgPool, commission: &NewCommission, maturity: Maturity) {
+async fn set_maturity(pool: &PgPool, commission: &Commission, maturity: Maturity) {
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
     uow.commissions()

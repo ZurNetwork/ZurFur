@@ -154,10 +154,23 @@ async fn give_it_its_nodes(pool: &PgPool, commission: Uuid) -> BoundCommission {
     }
 }
 
-/// A new commission row bound to its own nodes, committed.
+/// A new commission row inserted with its own nodes in one statement, committed.
 async fn bound_commission(pool: &PgPool) -> BoundCommission {
-    let commission = seed_commission(pool, "A commission", "private").await;
-    give_it_its_nodes(pool, commission).await
+    let id = Uuid::now_v7();
+    let mut tx = pool.begin().await.expect("begin");
+    let nodes = bare_commission_node(&mut tx, &id.to_string()).await;
+    sqlx::query(
+        "INSERT INTO commission (id, title, owner_id, lifecycle, visibility, created_at, node_id)
+         VALUES ($1, 'A commission', $2, 'draft', 'private', now(), $3)",
+    )
+    .bind(id)
+    .bind(crate::node_backfill::OWNER_DID)
+    .bind(nodes.node)
+    .execute(&mut *tx)
+    .await
+    .expect("insert the commission bound to its node");
+    tx.commit().await.expect("the bound commission commits");
+    BoundCommission { id, nodes }
 }
 
 /// A Slot row and the node it points at.

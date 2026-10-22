@@ -7,14 +7,13 @@
 //! same same-transaction posture as `commission_has_facts`). Requires a container
 //! runtime socket (DOCKER_HOST honored).
 
+use crate::seed;
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use chrono::{DateTime, Utc};
-use domain::elements::commission::NewCommission;
 use domain::{
     elements::{
         commission::{
-            ChangelogEntryKind, Commission, CommissionTitle, DeadlineStatus, LifecycleStep,
-            NewChangelogEntry,
+            ChangelogEntryKind, Commission, DeadlineStatus, LifecycleStep, NewChangelogEntry,
         },
         did::Did,
         user::User,
@@ -51,24 +50,8 @@ async fn seed(
     title: &str,
     deadline: Option<DateTime<Utc>>,
     step: Option<LifecycleStep>,
-) -> NewCommission {
-    let mut commission = Commission::create(
-        title.parse::<CommissionTitle>().expect("valid title"),
-        owner.id.clone(),
-        Utc::now(),
-        deadline,
-    );
-    if let Some(step) = step {
-        commission.lifecycle_step = step;
-    }
-    let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .create(&commission)
-        .await
-        .expect("create commission");
-    uow.commit().await.expect("commit");
-    commission
+) -> Commission {
+    seed::seed_chosen(pool, &owner.id, title, deadline, step).await
 }
 
 fn ts(s: &str) -> DateTime<Utc> {

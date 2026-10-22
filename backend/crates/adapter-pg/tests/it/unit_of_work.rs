@@ -7,12 +7,16 @@ use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use chrono::Utc;
 use domain::{
     elements::{
-        commission::{Commission, CommissionTitle},
+        commission::{CommissionBirth, CommissionId, CommissionTitle, NewCommission},
         did::Did,
+        level::Level,
         user::{User, UserId},
     },
     ports::{CommissionStore, Database},
 };
+use test_support::seeder::commission_node;
+
+use crate::seed;
 
 /// A fresh, fully migrated private database — a clone of the shared template
 /// (see `test_support::pg`). The second element keeps the shared container
@@ -40,21 +44,28 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 async fn a_swallowed_statement_failure_fails_the_commit_and_keeps_nothing() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:swallow-owner").await;
-    let original_title = "Before".parse::<CommissionTitle>().expect("valid title");
-    let commission = Commission::create(original_title, owner.id, Utc::now(), None);
-    let id = commission.id;
-
+    let id = seed::seed_titled(&pool, &owner.id, "Before").await;
     let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin seeding unit");
-    uow.commissions().create(&commission).await.expect("create");
-    uow.commit().await.expect("commit seeding unit");
 
     let renamed_title = "After".parse::<CommissionTitle>().expect("valid title");
     let stranger = UserId::from(Did::from("did:plc:never-provisioned".to_string()));
-    let orphan_title = "Orphan".parse::<CommissionTitle>().expect("valid title");
-    let orphan = Commission::create(orphan_title, stranger, Utc::now(), None);
+    let orphan_id = CommissionId::mint();
+    let orphan_node = commission_node(orphan_id, Level::Private, "Orphan");
+    let orphan_birth = CommissionBirth {
+        node: orphan_node.id,
+        owner_id: stranger,
+        created_at: Utc::now(),
+    };
+    let unrated = NewCommission {
+        maturity: None,
+        deadline: None,
+    };
 
     let mut uow = db.begin().await.expect("begin");
+    uow.nodes()
+        .create(&orphan_node)
+        .await
+        .expect("store the orphan's node");
     {
         let mut commissions = uow.commissions();
         let changed = commissions
@@ -62,12 +73,12 @@ async fn a_swallowed_statement_failure_fails_the_commit_and_keeps_nothing() {
             .await
             .expect("the rename itself succeeds");
         assert!(changed, "the rename changed the stored title in the unit");
-        let orphan_created = commissions.create(&orphan).await;
-        assert!(
-            orphan_created.is_err(),
-            "the owner's foreign key refuses the orphan"
-        );
     }
+    let orphan_created = seed::create(&mut *uow, orphan_id, &orphan_birth, &unrated).await;
+    assert!(
+        orphan_created.is_err(),
+        "the owner's foreign key refuses the orphan"
+    );
     let committed = uow.commit().await;
     assert!(
         committed.is_err(),

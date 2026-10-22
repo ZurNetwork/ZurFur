@@ -3,10 +3,9 @@
 //! code and fixed detail; the path's id wins over the body's; and the route sits behind the
 //! cross-site guard. The rename's log is checked in `commission_rename_log.rs`.
 
-use adapter_mem::MemBackend;
-use chrono::Utc;
+use adapter_mem::{CommissionSeed, MemBackend};
 use domain::elements::{
-    commission::{Commission, CommissionId, CommissionTitle},
+    commission::{CommissionId, CommissionTitle},
     did::Did,
     profile::Profile,
 };
@@ -100,12 +99,12 @@ async fn seed_foreign_commission(backend: &MemBackend) -> CommissionId {
     let title = "Not yours"
         .parse::<CommissionTitle>()
         .expect("a valid title");
-    let commission = Commission::create(title, owner.id, Utc::now(), None);
+    let seed = CommissionSeed::private(title, owner.id);
     backend
-        .create_commission(&commission)
+        .seed_bound_commission(&seed)
         .await
         .expect("seed the foreign commission");
-    commission.id
+    seed.id
 }
 
 /// A title the name rule refuses, the code it answers and that code's fixed detail.

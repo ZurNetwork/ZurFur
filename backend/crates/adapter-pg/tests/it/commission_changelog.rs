@@ -7,14 +7,13 @@
 //! [`CommissionStore::is_participant`] predicate is born here. Requires a
 //! container runtime socket (`DOCKER_HOST` honored).
 
+use crate::seed;
 use adapter_pg::{PgChangelogStore, PgCommissionStore, PgDatabase, PgPool};
 use chrono::Utc;
-use domain::elements::commission::NewCommission;
 use domain::{
     elements::{
         commission::{
-            ChangelogEntryKind, ChannelPointer, Commission, CommissionId, CommissionTitle,
-            NewChangelogEntry,
+            ChangelogEntryKind, ChannelPointer, Commission, CommissionId, NewChangelogEntry,
         },
         did::Did,
         user::User,
@@ -45,20 +44,9 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 }
 
 /// Create and commit a commission owned by `owner_did`, returning it.
-async fn seed_commission(pool: &PgPool, owner_did: &str) -> NewCommission {
+async fn seed_commission(pool: &PgPool, owner_did: &str) -> Commission {
     let owner = provision(pool, owner_did).await;
-    let title = "A ref sheet"
-        .parse::<CommissionTitle>()
-        .expect("valid title");
-    let commission = Commission::create(title, owner.id, Utc::now(), None);
-    let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .create(&commission)
-        .await
-        .expect("create commission");
-    uow.commit().await.expect("commit");
-    commission
+    seed::seed_stored(pool, &owner.id, "A ref sheet").await
 }
 
 // DD D4 — an appended entry commits atomically with the unit of work: visible

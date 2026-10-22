@@ -6,14 +6,15 @@
 //! row written under an older rule still reads. One named test per read.
 //! Requires a container runtime socket.
 
+use crate::seed;
 use adapter_pg::{PgCommissionStore, PgDatabase, PgFileStore, PgPool, PgWorkflowStore};
 use chrono::{SubsecRound, Utc};
 use domain::{
     elements::{
         account::{Account, AccountId, AccountName},
         commission::{
-            Commission, CommissionFile, CommissionId, CommissionSummary, CommissionTitle, FileKey,
-            FileName, NewSlot, SlotTitle, SurfaceAddress, SurfaceName,
+            CommissionFile, CommissionId, CommissionSummary, CommissionTitle, FileKey, FileName,
+            NewSlot, SlotTitle, SurfaceAddress, SurfaceName,
         },
         did::Did,
         handle::Handle,
@@ -47,18 +48,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 
 /// Create and commit a commission titled `title`, owned by `owner`.
 async fn seed_commission(pool: &PgPool, owner: &User, title: &str) -> CommissionId {
-    let commission = Commission::create(
-        title.parse::<CommissionTitle>().expect("title"),
-        owner.id.clone(),
-        Utc::now(),
-        None,
-    );
-    let id = commission.id;
-    let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions().create(&commission).await.expect("create");
-    uow.commit().await.expect("commit");
-    id
+    seed::seed_titled(pool, &owner.id, title).await
 }
 
 /// Archive `commission`, committed.
