@@ -83,8 +83,8 @@ pub(crate) enum RefusalClass {
     TypeRefused,
 }
 
-/// Atta's refusal under the den's word for it. A function, not `From`: a trait impl is a
-/// public item, and no public item may name Atta.
+/// Atta's refusal under the den's word for it. A function, not `From`: the Atta-exposure
+/// guard counts every trait impl that names Atta as public, whatever its type's visibility.
 #[cfg_attr(
     not(test),
     expect(

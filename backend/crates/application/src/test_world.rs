@@ -210,6 +210,10 @@ pub(crate) async fn seed_alice_s(
     world
         .runtime
         .transaction(async move |uow: &mut dyn UnitOfWork| {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "test seeding creates the commission directly, beneath the den's write gate"
+            )]
             uow.commissions().create(&commission).await?;
             if let Some(archived_at) = archived_at {
                 uow.commissions()
@@ -290,6 +294,10 @@ pub(crate) async fn seed_titled_at(
     world
         .runtime
         .transaction(async move |uow: &mut dyn UnitOfWork| {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "test seeding creates the commission directly, beneath the den's write gate"
+            )]
             uow.commissions().create(&commission).await?;
             if let Some(archived_at) = archived_at {
                 uow.commissions()

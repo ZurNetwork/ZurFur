@@ -50,6 +50,10 @@ impl Commissions<'_> {
             now,
         );
 
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the ungated create site, frozen until its slice routes it through the den's write gate"
+        )]
         uow.commissions().create(&commission).await?;
         uow.changelog().append(&entry).await?;
 

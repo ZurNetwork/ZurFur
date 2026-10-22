@@ -35,7 +35,7 @@ pub const NODE_PORT: [&str; 10] = [
 /// The names of unit-test and property-test files, which must be declared under `#[cfg(test)]`.
 pub const TEST_FILES: [&str; 2] = ["tests.rs", "proptests.rs"];
 
-/// The composition root: it and every crate with a normal dependency on it is a driver.
+/// The composition root: it and every crate with a normal dependency on a driver is a driver.
 pub const COMPOSITION: &str = "composition";
 
 /// The test rig. It has a normal dependency on the composition root but is never built into
@@ -72,24 +72,29 @@ pub fn is_test_file(path: &Path) -> bool {
         .is_some_and(|name| TEST_FILES.contains(&name))
 }
 
+/// Whether `attributes` hold `#[cfg(test)]`.
+pub fn under_cfg_test(attributes: &[syn::Attribute]) -> bool {
+    attributes.iter().any(|attribute| {
+        attribute.path().is_ident("cfg")
+            && attribute
+                .meta
+                .require_list()
+                .is_ok_and(|list| list.tokens.to_string() == "test")
+    })
+}
+
 /// Whether `items` declare the out-of-line module `name` under `#[cfg(test)]`, at its own path.
 pub fn declares_under_cfg_test(items: &[Item], name: &str) -> bool {
     items.iter().any(|item| {
         let Item::Mod(module) = item else {
             return false;
         };
-        let under_cfg_test = module.attrs.iter().any(|attribute| {
-            attribute.path().is_ident("cfg")
-                && attribute
-                    .meta
-                    .require_list()
-                    .is_ok_and(|list| list.tokens.to_string() == "test")
-        });
+        let for_tests = under_cfg_test(&module.attrs);
         let moved = module
             .attrs
             .iter()
             .any(|attribute| attribute.path().is_ident("path"));
-        module.ident == name && module.content.is_none() && under_cfg_test && !moved
+        module.ident == name && module.content.is_none() && for_tests && !moved
     })
 }
 
@@ -398,12 +403,28 @@ pub fn members_of(metadata: &serde_json::Value) -> Vec<Member> {
 }
 
 /// The drivers among `members`: the composition root and every crate with a normal
-/// dependency on it, the test rig aside.
+/// dependency on a driver, through any chain, the test rig aside; in `members`' order.
 pub fn drivers_of(members: &[Member]) -> Vec<Member> {
+    let mut names: BTreeSet<&str> = BTreeSet::from([COMPOSITION]);
+    loop {
+        let reached: Vec<&str> = members
+            .iter()
+            .filter(|member| member.name != TEST_SUPPORT && !names.contains(member.name.as_str()))
+            .filter(|member| {
+                names
+                    .iter()
+                    .any(|driver| member.depends_normally_on(driver))
+            })
+            .map(|member| member.name.as_str())
+            .collect();
+        if reached.is_empty() {
+            break;
+        }
+        names.extend(reached);
+    }
     members
         .iter()
-        .filter(|member| member.name == COMPOSITION || member.depends_normally_on(COMPOSITION))
-        .filter(|member| member.name != TEST_SUPPORT)
+        .filter(|member| names.contains(member.name.as_str()))
         .cloned()
         .collect()
 }

@@ -19,6 +19,7 @@ use crate::bug_report::PgBugReportWrites;
 use crate::character::PgCharacterWrites;
 use crate::commission_changelog::PgChangelogWrites;
 use crate::node::PgNodeWrites;
+use crate::queries;
 use crate::user::PgUserWrites;
 use crate::workflow::{PgColumnWrites, PgWorkflowWrites};
 
@@ -55,8 +56,8 @@ impl Database for PgDatabase {
 pub struct PgUnitOfWork {
     /// The open transaction (boxable — borrows nothing from the pool beyond a pooled connection).
     tx: Transaction<'static, Postgres>,
-    /// Set once a node statement fails. PostgreSQL answers COMMIT in a failed
-    /// transaction with a rollback and no error, and sqlx passes that on as success.
+    /// Set once a node statement fails, so the node view refuses later calls and
+    /// [`commit`](UnitOfWork::commit) refuses the unit.
     failed: bool,
 }
 
@@ -120,13 +121,20 @@ impl UnitOfWork for PgUnitOfWork {
         })
     }
 
-    /// Commits the unit, consuming the handle so it can't be reused. A unit a node
-    /// statement ended rolls back instead and returns an error.
+    /// Commits the unit, consuming the handle so it can't be reused. Runs one
+    /// statement first, because PostgreSQL answers COMMIT in an aborted transaction
+    /// with a silent rollback: a unit a node statement ended, or whose transaction a
+    /// failed statement aborted, rolls back instead and returns an error.
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn commit(self: Box<Self>) -> anyhow::Result<()> {
+    async fn commit(mut self: Box<Self>) -> anyhow::Result<()> {
         if self.failed {
             self.tx.rollback().await?;
             anyhow::bail!("a refused node statement ended this unit of work; nothing was kept");
+        }
+        let aborted = queries::health::is_reachable(&mut *self.tx).await.is_err();
+        if aborted {
+            self.tx.rollback().await?;
+            anyhow::bail!("a failed statement aborted this unit of work; nothing was kept");
         }
         self.tx.commit().await?;
         Ok(())

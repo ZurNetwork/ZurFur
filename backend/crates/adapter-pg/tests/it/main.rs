@@ -37,3 +37,4 @@ mod profile_cache;
 mod schema_status;
 mod session_store;
 mod single_binary_guard;
+mod unit_of_work;

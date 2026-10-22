@@ -9,7 +9,7 @@ use crate::{DisplayName, Level, RealPath, Segment, Type};
 #[as_ref(str)]
 pub struct ActName(String);
 
-/// A node an act touches, as the den found it.
+/// A node an act touches, as the host found it.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Placed {
     /// Where it really lives.

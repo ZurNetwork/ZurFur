@@ -57,7 +57,8 @@ impl<B> Checked<B> {
         born.into_iter().zip(self.settled.iter().copied())
     }
 
-    /// The act, for the host to apply.
+    /// The act, for the host to apply. A method, not `From`: it takes the proof apart, the
+    /// owned twin of [`Checked::act`], as std's `into_inner` methods do.
     pub fn into_act(self) -> Act<B> {
         self.act
     }

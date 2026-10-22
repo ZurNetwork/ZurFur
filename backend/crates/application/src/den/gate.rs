@@ -243,7 +243,8 @@ impl RoleTable for Creator {
 }
 
 /// The write capability in role `R` that `grant` leaves, or `None`; the one issuer in the
-/// workspace.
+/// workspace. A function, not `TryFrom<&Grant>`: the seam scan refuses any impl on the
+/// capability outside its own file, and allows the one `gate_issued` call only in `issue`.
 #[cfg_attr(
     not(test),
     expect(

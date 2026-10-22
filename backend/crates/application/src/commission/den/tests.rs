@@ -262,6 +262,10 @@ async fn a_stored_title_the_name_rule_refuses_shows_unnamed() {
         .expect("the title rule of its day accepted it");
     let legacy = Commission::create(legacy_title, alice.clone(), chrono::Utc::now(), None);
     let legacy_id = legacy.id;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "test seeding creates the commission directly, beneath the den's write gate"
+    )]
     runtime
         .transaction(async move |uow: &mut dyn UnitOfWork| uow.commissions().create(&legacy).await)
         .await

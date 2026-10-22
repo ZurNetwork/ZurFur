@@ -1,7 +1,8 @@
 //! The den's write gate is the only way to write a commission's node or fields. These scans
-//! hold its seams: the write capability's surface, its one issuer across the workspace, the
-//! write host and the gate named once each, the write use case kept inside the crate, nothing
-//! of it (and no raw SQL) in a driver, and the commission field writes not yet gated, frozen.
+//! hold its seams: the write capability's surface, its one issuer across the workspace and the
+//! issuer's callers in the den, no compiled source the scans can't read, the write host and the
+//! gate named once each, the write use case kept inside the crate, nothing of it (and no raw
+//! SQL) in a driver, and the commission field writes not yet gated, frozen.
 
 mod seams;
 
@@ -14,7 +15,8 @@ use proc_macro2::{Delimiter, Spacing, TokenStream, TokenTree};
 use quote::ToTokens;
 use seams::{
     NODE_PORT, crates, declares_under_cfg_test, drivers, drivers_of, fixture_tree, identifiers,
-    item_name, members_of, metadata, walk, with_aliases, workspace_production, workspace_sources,
+    item_name, members_of, metadata, under_cfg_test, walk, with_aliases, workspace_production,
+    workspace_sources,
 };
 use syn::{ImplItem, Item, TraitItem, Type, Visibility, ext::IdentExt};
 
@@ -67,12 +69,17 @@ const FIELD_WRITES: [&str; 7] = [
 ];
 
 /// The commission repo's writes counted only on a commission repo: their names are common.
+/// Through any other receiver in `application`, clippy's ban on `CommissionWrites` holds them.
 const REPO_WRITES: [&str; 2] = ["create", "delete"];
 
 /// The SQL words a table name follows.
-const SQL_KEYWORDS: [&str; 10] = [
-    "FROM", "INTO", "UPDATE", "JOIN", "TABLE", "TRUNCATE", "COPY", "LOCK", "USING", "MERGE",
+const SQL_KEYWORDS: [&str; 11] = [
+    "FROM", "INTO", "UPDATE", "JOIN", "TABLE", "TRUNCATE", "COPY", "LOCK", "USING", "MERGE", "ON",
 ];
+
+/// The opening of PostgreSQL's Unicode-escaped quoted identifier, compared without case: the
+/// escapes can spell any name, the node table's included.
+const UNICODE_IDENTIFIER: &str = "u&\"";
 
 /// The den's node table.
 const NODE_TABLE: &str = "node";
@@ -627,6 +634,374 @@ fn gate_issued_is_defined_once_and_called_only_in_issue() {
     }
 }
 
+// The issuer's callers, inside the den.
+
+/// The gate's role table: named, and so implemented, only in [`GATE_FILE`].
+const ROLE_TABLE: &str = "RoleTable";
+
+/// The gate file, relative to the use-case layer's sources.
+const GATE_FILE: &str = "den/gate.rs";
+
+/// The gate's lender: one [`ISSUE`] call per act arm a driver can reach.
+const LEND: &str = "lend";
+
+/// The gate's test-only lender of the probe's capability: one [`ISSUE`] call.
+const LEND_PROBE: &str = "lend_probe";
+
+/// The den's acts, one lender arm each.
+const DEN_ACT: &str = "DenAct";
+
+/// The den module's production files: `den.rs` and those under `den/`, each with its path
+/// relative to the use-case layer's sources.
+fn den_production() -> Vec<(String, PathBuf)> {
+    let src = application_src();
+    walk(&src)
+        .production
+        .into_iter()
+        .map(|path| (relative(&path, &src), path))
+        .filter(|(file, _)| file == "den.rs" || file.starts_with("den/"))
+        .collect()
+}
+
+/// The act arms a driver can reach: `DenAct`'s variants not under `#[cfg(test)]`.
+fn production_act_arms(act: &syn::File) -> usize {
+    let den_acts: Vec<&syn::ItemEnum> = act
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Enum(enumeration) if enumeration.ident == DEN_ACT => Some(enumeration),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(den_acts.len(), 1, "one `{DEN_ACT}` in den/act.rs");
+    den_acts[0]
+        .variants
+        .iter()
+        .filter(|variant| !under_cfg_test(&variant.attrs))
+        .count()
+}
+
+/// The allowance the issuer-caller scan gives `file`: in [`GATE_FILE`], `issue`'s definition,
+/// one call in [`LEND_PROBE`] and `arms` calls in [`LEND`].
+fn issue_allowance(file: &str, arms: usize) -> Vec<(&'static str, &'static str, usize)> {
+    if file != GATE_FILE {
+        return Vec::new();
+    }
+    vec![
+        (ISSUE, ISSUE, 1),
+        (LEND_PROBE, ISSUE, 1),
+        (LEND, ISSUE, arms),
+    ]
+}
+
+/// Each naming in den file `file` of the issuer (`issues`) past its allowance, and of the role
+/// table (`roles`) outside [`GATE_FILE`].
+fn issue_caller_findings(
+    file: &str,
+    source: &str,
+    issues: &BTreeSet<String>,
+    roles: &BTreeSet<String>,
+    arms: usize,
+) -> Vec<String> {
+    let parsed = syn::parse_file(source).expect("the source parses");
+    let names: BTreeSet<String> = if file == GATE_FILE {
+        issues.clone()
+    } else {
+        issues.union(roles).cloned().collect()
+    };
+    let found = named_past(file, &pieces(&parsed), &names, &issue_allowance(file, arms));
+    show(&found)
+}
+
+#[test]
+fn issue_is_called_only_by_the_lenders_and_the_role_table_stays_in_the_gate() {
+    let files = den_production();
+    let sources: Vec<String> = files
+        .iter()
+        .map(|(_, path)| std::fs::read_to_string(path).expect("a readable source"))
+        .collect();
+    let issues = with_aliases(&[ISSUE], &sources);
+    let roles = with_aliases(&[ROLE_TABLE], &sources);
+    let arms = production_act_arms(&parse(&application_src().join("den/act.rs")));
+
+    let offenders: Vec<String> = files
+        .iter()
+        .zip(&sources)
+        .flat_map(|((file, _), source)| issue_caller_findings(file, source, &issues, &roles, arms))
+        .collect();
+
+    assert_eq!(offenders, Vec::<String>::new());
+    let read: Vec<&str> = files.iter().map(|(file, _)| file.as_str()).collect();
+    for file in ["den.rs", GATE_FILE, "den/write.rs", "den/act.rs"] {
+        assert!(read.contains(&file), "the scan reads {file}: {read:?}");
+    }
+    let gate = parse(&application_src().join(GATE_FILE));
+    let gate_pieces = pieces(&gate);
+    for context in [ISSUE, LEND_PROBE, LEND] {
+        let held = gate_pieces.iter().any(|piece| piece.context == context);
+        assert!(held, "{GATE_FILE} holds {context}");
+    }
+    let lender = "fn issue<R: RoleTable>(grant: &Grant) -> Option<WriteCapability<R::Thing, R>> { let thing = R::granted(grant)?; Some(WriteCapability::gate_issued(thing)) }\n#[cfg(test)]\nasync fn lend_probe<R: RoleTable>(grant: &Grant) { let Some(capability) = issue::<R>(grant) else { return; }; }\nasync fn lend(act: DenAct, grant: &Grant) { match act { DenAct::Rename(_) => { issue::<AsOwner>(grant); } DenAct::Create(_) => { issue::<Creator>(grant); } } }\nimpl RoleTable for AsOwner { type Thing = CommissionId; }";
+    let allowed = issue_caller_findings(GATE_FILE, lender, &issues, &roles, 2);
+    assert_eq!(allowed, Vec::<String>::new());
+    let refused = [
+        (
+            "den/write.rs",
+            "pub(in crate::den) async fn written(unit: Unit<'_>, grant: Grant) { let _early = crate::den::gate::issue::<AsOwner>(&grant); }",
+            0,
+        ),
+        (
+            "den/write.rs",
+            "use crate::den::gate::issue as mint;\nasync fn written(grant: Grant) { let _early = mint::<AsOwner>(&grant); }",
+            0,
+        ),
+        (
+            "den/write.rs",
+            "fn early(grant: &Grant) { let forge = crate::den::gate::issue::<Creator>; forge(grant); }",
+            0,
+        ),
+        ("den/write.rs", "fn issue() {}", 0),
+        ("den.rs", "pub(crate) use gate::issue;", 0),
+        (
+            GATE_FILE,
+            "async fn lend(act: DenAct, grant: &Grant) { issue::<AsOwner>(grant); }",
+            0,
+        ),
+        (
+            GATE_FILE,
+            "async fn lend(act: DenAct, grant: &Grant) { match act { DenAct::Rename(_) => { issue::<AsOwner>(grant); issue::<Creator>(grant); } } }",
+            1,
+        ),
+        (
+            GATE_FILE,
+            "#[cfg(test)]\nasync fn lend_probe<R: RoleTable>(grant: &Grant) { issue::<R>(grant); issue::<AsOwner>(grant); }",
+            0,
+        ),
+        (
+            GATE_FILE,
+            "async fn walk(grant: &Grant) { let early = issue::<AsOwner>(grant); }",
+            0,
+        ),
+        (
+            GATE_FILE,
+            "mod inner { async fn lend(grant: &Grant) { issue::<AsOwner>(grant); } }",
+            1,
+        ),
+        (
+            GATE_FILE,
+            "impl DenWriteHost<'_> { fn lend(grant: &Grant) { issue::<AsOwner>(grant); } }",
+            1,
+        ),
+        (
+            GATE_FILE,
+            "macro_rules! early { ($grant:expr) => { issue::<AsOwner>($grant) }; }",
+            0,
+        ),
+        (
+            "den/act.rs",
+            "impl RoleTable for Forged { type Thing = CommissionId; fn granted(grant: &Grant) -> Option<CommissionId> { None } }",
+            0,
+        ),
+        (
+            "den/act.rs",
+            "use crate::den::gate::RoleTable as Table;\nimpl Table for Forged {}",
+            0,
+        ),
+        (
+            "den/write.rs",
+            "fn lend<R: crate::den::gate::RoleTable>(grant: &Grant) {}",
+            0,
+        ),
+    ];
+    for (file, source, fixture_arms) in refused {
+        let fixture_sources = [source.to_owned()];
+        let fixture_issues = with_aliases(&[ISSUE], &fixture_sources);
+        let fixture_roles = with_aliases(&[ROLE_TABLE], &fixture_sources);
+
+        let found =
+            issue_caller_findings(file, source, &fixture_issues, &fixture_roles, fixture_arms);
+
+        assert!(!found.is_empty(), "{file}: {source}");
+    }
+    let one_arm =
+        "pub(crate) enum DenAct {\n    #[cfg(test)]\n    Probe(Probe),\n    Rename(Rename),\n}";
+    let act = syn::parse_file(one_arm).expect("the planted act parses");
+    assert_eq!(production_act_arms(&act), 1);
+}
+
+// Every compiled source is a file the walker reads.
+
+/// The macro that compiles another file's text in place.
+const INCLUDE: &str = "include";
+
+/// The `include!` calls allowed, each in its generated-code file (relative to the crates
+/// folder), by count: the embedded migrations and the contract's two generated files.
+const ALLOWED_INCLUDES: [(&str, usize); 2] = [
+    ("adapter-pg/src/lib.rs", 1),
+    ("api/src/generated/mod.rs", 2),
+];
+
+/// Whether the attribute tokens `meta` (inside `#[…]`) move a module: `path = …` itself, or
+/// inside a `cfg_attr`, nested ones included.
+fn moves_a_module(meta: &[TokenTree]) -> bool {
+    match ident_at(meta, 0).as_deref() {
+        Some("path") => punct_at(meta, 1, '='),
+        Some("cfg_attr") => {
+            let Some(TokenTree::Group(group)) = meta.get(1) else {
+                return false;
+            };
+            let inner: Vec<TokenTree> = group.stream().into_iter().collect();
+            inner
+                .split(|tree| matches!(tree, TokenTree::Punct(punct) if punct.as_char() == ','))
+                .skip(1)
+                .any(moves_a_module)
+        }
+        _ => false,
+    }
+}
+
+/// Whether the bracketed group at `at` is an attribute: after `#` or `#!`.
+fn attribute_at(level: &[TokenTree], at: usize) -> bool {
+    let bracketed = matches!(level.get(at), Some(TokenTree::Group(group)) if group.delimiter() == Delimiter::Bracket);
+    let after_hash = punct_at(level, at.wrapping_sub(1), '#')
+        || (punct_at(level, at.wrapping_sub(1), '!') && punct_at(level, at.wrapping_sub(2), '#'));
+    bracketed && after_hash
+}
+
+/// Each module move (`#[path]`) and each call of an `include!` name (`includes`) in `tokens`,
+/// macro bodies and function bodies included.
+fn inclusions(tokens: TokenStream, includes: &BTreeSet<String>) -> Vec<String> {
+    levels(tokens)
+        .iter()
+        .flat_map(|level| {
+            (0..level.len()).filter_map(move |at| {
+                if attribute_at(level, at)
+                    && let Some(TokenTree::Group(group)) = level.get(at)
+                {
+                    let meta: Vec<TokenTree> = group.stream().into_iter().collect();
+                    return moves_a_module(&meta).then(|| "#[path]".to_owned());
+                }
+                let ident = ident_at(level, at)?;
+                let called = includes.contains(&ident)
+                    && punct_at(level, at + 1, '!')
+                    && matches!(level.get(at + 2), Some(TokenTree::Group(_)));
+                called.then(|| format!("{ident}!"))
+            })
+        })
+        .collect()
+}
+
+/// Each module move and `include!` call in `source`, the file `file` (relative to the crates
+/// folder), past the [`ALLOWED_INCLUDES`] it holds.
+fn inclusion_findings(file: &str, source: &str, includes: &BTreeSet<String>) -> Vec<String> {
+    let tokens: TokenStream = source.parse().expect("the source tokenizes");
+    let mut left = ALLOWED_INCLUDES
+        .iter()
+        .find(|(allowed, _)| *allowed == file)
+        .map_or(0, |(_, count)| *count);
+    let include_call = format!("{INCLUDE}!");
+    inclusions(tokens, includes)
+        .into_iter()
+        .filter(|found| {
+            let allowed = *found == include_call && left > 0;
+            if allowed {
+                left -= 1;
+            }
+            !allowed
+        })
+        .map(|found| format!("{file}: {found}"))
+        .collect()
+}
+
+#[test]
+fn no_production_source_moves_a_module_or_includes_one() {
+    let includes = with_aliases(&[INCLUDE], &workspace_sources());
+    let files: Vec<(String, String)> = workspace_production()
+        .iter()
+        .map(|path| {
+            let source = std::fs::read_to_string(path).expect("a readable source");
+            (relative(path, &crates()), source)
+        })
+        .collect();
+
+    let offenders: Vec<String> = files
+        .iter()
+        .flat_map(|(file, source)| inclusion_findings(file, source, &includes))
+        .collect();
+
+    assert_eq!(offenders, Vec::<String>::new());
+    for (allowed, count) in ALLOWED_INCLUDES {
+        let (_, source) = files
+            .iter()
+            .find(|(file, _)| file == allowed)
+            .unwrap_or_else(|| panic!("the scan reads {allowed}"));
+        let tokens: TokenStream = source.parse().expect("the source tokenizes");
+        assert_eq!(inclusions(tokens, &includes).len(), count, "{allowed}");
+    }
+    let ports = "kernel/src/ports.rs";
+    let refused = [
+        (
+            ports,
+            "#[path = \"ports/capability/tests.rs\"]\npub mod forge;",
+        ),
+        (
+            ports,
+            "#[cfg_attr(not(test), path = \"ports/capability/tests.rs\")]\npub mod forge;",
+        ),
+        (
+            ports,
+            "#[cfg_attr(all(), allow(dead_code), cfg_attr(not(test), path = \"forge.rs\"))]\nmod forge;",
+        ),
+        (
+            ports,
+            "mod outer {\n    #[path = \"forge.rs\"]\n    mod forge;\n}",
+        ),
+        (
+            ports,
+            "fn forge() {\n    #[path = \"forge.rs\"]\n    mod forge;\n}",
+        ),
+        (
+            ports,
+            "macro_rules! forge { () => { #[path = \"forge.rs\"] mod forge; }; }",
+        ),
+        (ports, "include!(\"ports/capability/tests.rs\");"),
+        (
+            ports,
+            "include!(concat!(env!(\"OUT_DIR\"), \"/forge.rs\"));",
+        ),
+        (ports, "fn forge() { std::include!(\"forge.rs\"); }"),
+        (ports, "use std::include as grab;\ngrab!(\"forge.rs\");"),
+        (
+            "adapter-pg/src/lib.rs",
+            "include!(concat!(env!(\"OUT_DIR\"), \"/embedded_migrations.rs\"));\ninclude!(concat!(env!(\"OUT_DIR\"), \"/forge.rs\"));",
+        ),
+        (
+            "api/src/routes/commissions/rename.rs",
+            "mod v1 { include!(\"zurfur.api.v1.rs\"); }",
+        ),
+    ];
+    for (file, source) in refused {
+        let fixture_includes = with_aliases(&[INCLUDE], &[source.to_owned()]);
+
+        let found = inclusion_findings(file, source, &fixture_includes);
+
+        assert!(!found.is_empty(), "{file}: {source}");
+    }
+    let allowed = [
+        "const LIB: &str = \"mod v1 { include!(\\\"zurfur.api.v1.rs\\\"); }\";",
+        "const SQL: &str = include_str!(\"x.sql\");\nconst BYTES: &[u8] = include_bytes!(\"x.bin\");",
+        "/// Set `#[path = \"x.rs\"]` nowhere.\nfn path(&self) -> &Path { &self.path }",
+        "#[serde(rename = \"path\")]\nstruct Moved { path: String }",
+        "#[cfg_attr(path = \"x\", allow(dead_code))]\nfn moved() {}",
+        "fn kept(include: bool, other: bool) -> bool { include != other }",
+    ];
+    for source in allowed {
+        let found = inclusion_findings(ports, source, &BTreeSet::from([INCLUDE.to_owned()]));
+
+        assert_eq!(found, Vec::<String>::new(), "{source}");
+    }
+}
+
 // The write host and the gate.
 
 /// Each place `file` names the write host's constructor (`hosts`) or the gate (`gates`).
@@ -1035,11 +1410,23 @@ fn names_the_node_table(sql: &str) -> bool {
     })
 }
 
-/// Each string literal in `tokens` that names the node table or a `.sql` file.
+/// Whether `sql`, its comments stripped, holds a Unicode-escaped quoted identifier.
+fn holds_a_unicode_identifier(sql: &str) -> bool {
+    without_sql_comments(sql)
+        .to_ascii_lowercase()
+        .contains(UNICODE_IDENTIFIER)
+}
+
+/// Each string literal in `tokens` that names the node table or a `.sql` file, or holds a
+/// Unicode-escaped identifier.
 fn sql_findings(tokens: TokenStream) -> Vec<String> {
     string_literals(tokens)
         .into_iter()
-        .filter(|text| names_the_node_table(text) || text.to_ascii_lowercase().ends_with(".sql"))
+        .filter(|text| {
+            names_the_node_table(text)
+                || holds_a_unicode_identifier(text)
+                || text.to_ascii_lowercase().ends_with(".sql")
+        })
         .collect()
 }
 
@@ -1135,6 +1522,9 @@ fn the_driver_scan_refuses_each_planted_route() {
         "const RENAME: &str = concat!(\"UPDATE \", \"node SET name = $1\");",
         "const RENAME: &[u8] = b\"INSERT INTO node VALUES ($1)\";",
         "const RENAME: &str = r#\"MERGE INTO \"node\" USING x ON true\"#;",
+        "const RENAME: &str = \"UPDATE U&\\\"\\\\006Eode\\\" SET name = $1\";",
+        "const RENAME: &str = \"update u&\\\"!006Eode\\\" uescape '!' set name = $1\";",
+        "const RENAME: &str = \"CREATE TRIGGER rename BEFORE INSERT ON node FOR EACH ROW EXECUTE FUNCTION f()\";",
     ];
     for source in planted {
         let found = driver_findings(API, route, source, &forbidden);
@@ -1169,6 +1559,9 @@ fn the_driver_scan_refuses_each_planted_route() {
         "const READ: &str = \"SELECT id FROM commission JOIN node_closure c ON true\";",
         "const READ: &str = \"the node's name\";",
         "const READ: &str = \"UPDATE \\\"Node\\\" SET x = 1\";",
+        "const READ: &str = \"SELECT U&'d\\\\0061ta' FROM commission\";",
+        "const READ: &str = \"SELECT 1 FROM commission -- not U&\\\"node\\\"\";",
+        "const READ: &str = \"CREATE INDEX ON commission (account)\";",
         "struct Ports { commissions: Arc<dyn CommissionStore>, changelog: Arc<dyn ChangelogStore> }",
         "fn ports(runtime: &Runtime) { let store = runtime.ports.commissions.clone(); }",
     ];
@@ -1215,22 +1608,31 @@ fn the_scan_reads_every_crate_that_depends_on_composition() {
     let scanned: BTreeSet<String> = drivers().into_iter().map(|member| member.name).collect();
 
     let packages = raw["packages"].as_array().expect("a package list");
-    let depends_on_composition = |package: &&serde_json::Value| {
+    let depends_on_any = |package: &serde_json::Value, drivers: &BTreeSet<String>| {
         let dependencies = package["dependencies"]
             .as_array()
             .expect("a dependency list");
         dependencies.iter().any(|dependency| {
-            dependency["name"] == seams::COMPOSITION && dependency["kind"].is_null()
+            let on_a_driver = dependency["name"]
+                .as_str()
+                .is_some_and(|name| drivers.contains(name));
+            on_a_driver && dependency["kind"].is_null()
         })
     };
-    let expected: BTreeSet<String> = packages
-        .iter()
-        .filter(depends_on_composition)
-        .filter_map(|package| package["name"].as_str())
-        .filter(|name| *name != seams::TEST_SUPPORT)
-        .chain([seams::COMPOSITION])
-        .map(str::to_owned)
-        .collect();
+    let mut expected: BTreeSet<String> = BTreeSet::from([seams::COMPOSITION.to_owned()]);
+    loop {
+        let reached: Vec<String> = packages
+            .iter()
+            .filter(|package| depends_on_any(package, &expected))
+            .filter_map(|package| package["name"].as_str())
+            .filter(|name| *name != seams::TEST_SUPPORT && !expected.contains(*name))
+            .map(str::to_owned)
+            .collect();
+        if reached.is_empty() {
+            break;
+        }
+        expected.extend(reached);
+    }
     for driver in ["api", "cli", "composition"] {
         assert!(scanned.contains(driver), "{driver} is scanned: {scanned:?}");
     }
@@ -1267,13 +1669,25 @@ fn the_scan_reads_every_crate_that_depends_on_composition() {
         ] },
         { "name": "test-support", "manifest_path": "/w/test-support/Cargo.toml", "dependencies": [
             { "name": "composition", "kind": null }
+        ] },
+        { "name": "jobs", "manifest_path": "/w/jobs/Cargo.toml", "dependencies": [
+            { "name": "api", "kind": null }
+        ] },
+        { "name": "api", "manifest_path": "/w/api/Cargo.toml", "dependencies": [
+            { "name": "composition", "kind": null }
+        ] },
+        { "name": "docs", "manifest_path": "/w/docs/Cargo.toml", "dependencies": [
+            { "name": "jobs", "kind": "dev" }
         ] }
     ] });
     let synthetic_drivers: Vec<String> = drivers_of(&members_of(&synthetic))
         .into_iter()
         .map(|member| member.name)
         .collect();
-    assert_eq!(synthetic_drivers, ["composition", "worker", "builder"]);
+    assert_eq!(
+        synthetic_drivers,
+        ["composition", "worker", "builder", "jobs", "api"]
+    );
 }
 
 // The interim guard: the frozen list.
