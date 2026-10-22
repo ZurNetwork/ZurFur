@@ -2208,11 +2208,61 @@ pub mod health {
 }
 
 pub mod key_store {
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct LegacyProbeRow {
+        pub did: String,
+        pub wrapped_keys: Vec<u8>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct LegacyUnsealedRow {
+        pub did: String,
+        pub wrapped_keys: Vec<u8>,
+    }
+
+    /// `queries/key_store/count_unsealed.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// How many rows have no sealed envelope yet.
+    pub async fn count_unsealed(conn: impl sqlx::PgExecutor<'_>) -> sqlx::Result<i64> {
+        sqlx::query_scalar(include_str!("../queries/key_store/count_unsealed.sql"))
+            .fetch_one(conn)
+            .await
+    }
+
     /// `queries/key_store/get.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn get(conn: impl sqlx::PgExecutor<'_>, did: &str) -> sqlx::Result<Option<Vec<u8>>> {
+    pub async fn get(
+        conn: impl sqlx::PgExecutor<'_>,
+        did: &str,
+    ) -> sqlx::Result<Option<Option<Vec<u8>>>> {
         sqlx::query_scalar(include_str!("../queries/key_store/get.sql"))
             .bind(did)
             .fetch_optional(conn)
+            .await
+    }
+
+    /// `queries/key_store/legacy_probe.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every row still holding a 0.1 ciphertext, by DID. Names only columns the
+    /// table had before the custody envelope, so it also runs on that schema.
+    pub async fn legacy_probe(
+        conn: impl sqlx::PgExecutor<'_>,
+    ) -> sqlx::Result<Vec<LegacyProbeRow>> {
+        sqlx::query_as(include_str!("../queries/key_store/legacy_probe.sql"))
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/key_store/legacy_unsealed.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every row with no sealed envelope yet, by DID, locked until the unit of work
+    /// ends. Such a row always holds its 0.1 ciphertext.
+    pub async fn legacy_unsealed(
+        conn: impl sqlx::PgExecutor<'_>,
+    ) -> sqlx::Result<Vec<LegacyUnsealedRow>> {
+        sqlx::query_as(include_str!("../queries/key_store/legacy_unsealed.sql"))
+            .fetch_all(conn)
             .await
     }
 
@@ -2220,7 +2270,7 @@ pub mod key_store {
     pub async fn put(
         conn: impl sqlx::PgExecutor<'_>,
         did: &str,
-        wrapped_keys: &[u8],
+        wrapped_keys: Option<&[u8]>,
         key_version: i32,
         created_at: chrono::DateTime<chrono::Utc>,
     ) -> sqlx::Result<u64> {
@@ -2232,6 +2282,32 @@ pub mod key_store {
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
+    }
+
+    /// `queries/key_store/store_sealed.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Store a row's sealed envelope, only while it has none: the envelope is
+    /// written once. Changes one row, or none when the row is missing or sealed.
+    pub async fn store_sealed(
+        conn: impl sqlx::PgExecutor<'_>,
+        did: &str,
+        sealed_keys: Option<&[u8]>,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/key_store/store_sealed.sql"))
+            .bind(did)
+            .bind(sealed_keys)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/key_store/table_exists.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Whether the custody table exists, so a read can run before any migration.
+    pub async fn table_exists(conn: impl sqlx::PgExecutor<'_>) -> sqlx::Result<bool> {
+        sqlx::query_scalar(include_str!("../queries/key_store/table_exists.sql"))
+            .fetch_one(conn)
+            .await
     }
 }
 
@@ -2790,6 +2866,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "file::delete",
     "file::put",
     "key_store::put",
+    "key_store::store_sealed",
     "node::create",
     "node::delete",
     "node::set_name",

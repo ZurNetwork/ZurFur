@@ -39,19 +39,26 @@ impl KeyStore for PgKeyStore {
     #[tracing::instrument(level = "debug", skip_all)]
     async fn put(&self, did: &Did, keys: &AccountKeys) -> anyhow::Result<()> {
         let wrapped = self.root.wrap(did.as_ref(), keys)?;
-        sql::put(&self.pool, did.as_ref(), &wrapped, 1i32, Utc::now()).await?;
+        sql::put(
+            &self.pool,
+            did.as_ref(),
+            Some(wrapped.as_slice()),
+            1i32,
+            Utc::now(),
+        )
+        .await?;
         Ok(())
     }
 
     /// Loads the sealed blob for `did` and opens it into [`AccountKeys`], or
-    /// `None` if unknown. Decryption failure is an error, not a `None`.
+    /// `None` if unknown. Decryption failure, or a row with no blob to open, is
+    /// an error, not a `None`.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn get(&self, did: &Did) -> anyhow::Result<Option<AccountKeys>> {
-        let wrapped = sql::get(&self.pool, did.as_ref()).await?;
-
-        match wrapped {
-            Some(wrapped) => Ok(Some(self.root.unwrap(did.as_ref(), &wrapped)?)),
-            None => Ok(None),
-        }
+        let Some(row) = sql::get(&self.pool, did.as_ref()).await? else {
+            return Ok(None);
+        };
+        let wrapped = row.ok_or_else(|| anyhow::anyhow!("custody row holds no wrapped keys"))?;
+        Ok(Some(self.root.unwrap(did.as_ref(), &wrapped)?))
     }
 }
