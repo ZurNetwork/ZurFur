@@ -1,0 +1,9 @@
+error[E0451]: fields `act` and `settled` of struct `Checked` are private
+  --> tests/ui/checked_by_literal.rs:18:9
+   |
+17 |     let _forged = Checked {
+   |                   ------- in this type
+18 |         act,
+   |         ^^^ private field
+19 |         settled: Vec::new(),
+   |         ^^^^^^^ private field

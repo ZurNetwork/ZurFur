@@ -660,12 +660,12 @@
     {
       "page": 2026093001,
       "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
-      "governs": "the whole crate: D4 Atta is the engine for the tree; D23–D25 node data, rigid metadata and the payload hash; D26 attributes; D28 Atta collects the dotfile cascade"
+      "governs": "the whole crate: D4 Atta is the engine for the tree; D23–D25 node data, rigid metadata and the payload hash; D26 attributes; D28 Atta collects the dotfile cascade; write.rs's checks: D9 (ruling 8) never wider than its parent, ruling 31 no generic write, ruling 33 born Private unless the creator picks wider"
     },
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "D1 a library below application, reached through one host trait answered by an exhaustive match; D2 keys are path segments and identity is the real path; D3 standing on the real subtree; D5 entry levels; D21–D24 one not-found, no stored level means Private, the mount guard, opaque page tokens; D23 one folder never shows two entries with the same name: ordinal.rs and list.rs number equal names at read time, per viewer; D24 the listing order; D19 (amended 2026-10-15) Atta takes names its host already checked: metadata.rs's DisplayName holds no rule"
+      "governs": "D1 a library below application, reached through one host trait answered by an exhaustive match (host.rs's apply and its Act/Applied types extend that one trait); D2 keys are path segments and identity is the real path; D3 standing on the real subtree; D5 entry levels; D21–D24 one not-found, no stored level means Private, the mount guard, opaque page tokens; D23 one folder never shows two entries with the same name: ordinal.rs and list.rs number equal names at read time, per viewer; D24 the listing order; D19 (amended 2026-10-15) Atta takes names its host already checked: metadata.rs's DisplayName holds no rule"
     }
   ],
   "backend/crates/cli": [

@@ -120,6 +120,9 @@ impl TreeHost {
 
 #[async_trait::async_trait]
 impl Host for TreeHost {
+    type Act = ();
+    type Applied = ();
+
     async fn child(
         &self,
         _viewer: &Viewer,

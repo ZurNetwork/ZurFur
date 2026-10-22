@@ -22,17 +22,22 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "crate manifest — external crates only, never a workspace crate; tracing (the resolver's debug spans and outcome events) and strum (the outcome names); tracing-subscriber for the log test",
+      "role": "crate manifest — external crates only, never a workspace crate; tracing (the resolver's and the writer's debug spans and outcome events) and strum (the outcome names); tracing-subscriber for the log tests, trybuild for the compile-fail test",
+      "node": false
+    },
+    {
+      "name": "src/act.rs",
+      "role": "the named act in Atta's own vocabulary: ActName (an opaque word, like Type), Placed (a node an act touches, as the den found it), Born (a node an act makes; its key born as written, never decoded), Shape (Create, Rename, Change) and Act<B> (word, type, shape, an opaque body); hand-written Debugs print no path, segment or name",
       "node": false
     },
     {
       "name": "src/fake.rs",
-      "role": "test-only Host over an in-memory tree that records every call",
+      "role": "test-only Host over an in-memory tree that records every call, and every act it applies",
       "node": false
     },
     {
       "name": "src/host.rs",
-      "role": "the one Host trait (child, children, mounts, kind, admit; no payload method) and the values it speaks: Viewer, Lift, Found, Mount, Access, Reach, Admission",
+      "role": "the one Host trait (child, children, mounts, kind, admit; no payload method; associated Act and Applied types and a provided apply that refuses unless the host overrides it) and the values it speaks: Viewer, Lift, Found, Mount, Access, Reach, Admission",
       "node": false
     },
     {
@@ -77,12 +82,17 @@
     },
     {
       "name": "src/resolve.rs",
-      "role": "Resolver::resolve_path: a typed Den path from the viewer root, the level formula, standing along the real path, mounts and the mount guard, admit at each step, one NotFound; it records each step (the folder left, the segment taken) and never lists a folder, so its entries carry no number; Entry (with its NameOrdinal), Resolved, Caps",
+      "role": "Resolver::resolve_path: a typed Den path from the viewer root, the level formula, standing along the real path, mounts and the mount guard, admit at each step, one NotFound; it records each step (the folder left, the segment taken) and never lists a folder, so its entries carry no number; Entry (with its NameOrdinal), Resolved, Caps (with max_depth, the write depth cap: 8 real segments by default); Resolver<'h, A = (), P = ()> names its host as &dyn Host<Act = A, Applied = P>",
       "node": false
     },
     {
       "name": "src/segment.rs",
       "role": "Segment, a node key: the ASCII allowlist, 1 to 2048 bytes, never . or ..; segment/tests.rs also checks every case in contract/golden/segments.json, the file kernel's NodeSegment and the store's node_segment_shape check answer to",
+      "node": false
+    },
+    {
+      "name": "src/write.rs",
+      "role": "Writer::act: the five generic checks (a file holds no entries; born Private unless the creator picks wider; never wider than its parent, entries against their node; the depth cap, Caps::max_depth; no generic write: only a node of the act's own type, entries' keys distinct), then Host::apply; a refusal (the typed Refusal) reaches no host; Checked<B>, private fields, made only here, proves the checks ran and carries each born node's settled level, never authority; WriteError; logs outcome class, act word and depth at debug; Debugs print no viewer, path, segment or name; write/tests.rs names a test per check",
       "node": false
     },
     {
@@ -93,6 +103,21 @@
     {
       "name": "tests/resolve_log.rs",
       "role": "alone in its binary (callsite interest): over its own host, each resolve and list logs its outcome class (open, card, not_found, host_error) and depth at debug, never a path, segment, viewer or host error",
+      "node": false
+    },
+    {
+      "name": "tests/ui.rs",
+      "role": "trybuild harness: each tests/ui/*.rs must fail to compile, with the message in its .stderr",
+      "node": false
+    },
+    {
+      "name": "tests/ui/",
+      "role": "compile-fail cases: checked_by_literal.rs, a Checked built by struct literal outside Atta",
+      "node": false
+    },
+    {
+      "name": "tests/write_log.rs",
+      "role": "alone in its binary (callsite interest): over its own host, each act logs its outcome class (applied, refused with its refusal class, host_error), its word and its depth at debug, never a viewer, path, segment, name or host error",
       "node": false
     }
   ],

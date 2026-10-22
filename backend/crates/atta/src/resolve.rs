@@ -3,21 +3,24 @@ use crate::{
     RealPath, Relationship, Scope, Segment, Type, Via, Viewer,
 };
 
-/// The read caps the host sets for one request.
+/// The caps the host sets for one request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Caps {
     /// The most segments a Den path may hold.
     pub max_den_path: usize,
     /// The most entries one page of a listing holds; at least one is always served.
     pub page_size: usize,
+    /// The deepest a written node may lie, in real segments below `/`.
+    pub max_depth: usize,
 }
 
 impl Default for Caps {
-    /// 16 segments and 50 entries a page.
+    /// 16 segments, 50 entries a page, and writes at most 8 real segments deep.
     fn default() -> Self {
         Self {
             max_den_path: 16,
             page_size: 50,
+            max_depth: 8,
         }
     }
 }
@@ -131,10 +134,11 @@ pub(crate) struct Located {
     pub(crate) below: Vec<Lift>,
 }
 
-/// Reads the tree for one viewer, through the host.
-pub struct Resolver<'h> {
+/// Reads the tree for one viewer, through the host; `A` and `P` are the host's act and applied
+/// types, which a read never uses.
+pub struct Resolver<'h, A = (), P = ()> {
     /// The application Atta asks about nodes.
-    pub host: &'h dyn Host,
+    pub host: &'h dyn Host<Act = A, Applied = P>,
     /// Who is reading.
     pub viewer: Viewer,
     /// The read caps.
@@ -199,7 +203,7 @@ impl From<&Error> for Outcome {
     }
 }
 
-impl Resolver<'_> {
+impl<A: Send, P: Send> Resolver<'_, A, P> {
     /// The node at `den_path` below the viewer's `root`, with its crumbs; any miss is
     /// [`Error::NotFound`]. Logs its outcome class and the path's depth at debug.
     #[tracing::instrument(level = "debug", skip_all)]

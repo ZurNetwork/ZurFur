@@ -286,6 +286,9 @@ impl<'a> DenHost<'a> {
 
 #[async_trait::async_trait]
 impl Host for DenHost<'_> {
+    type Act = ();
+    type Applied = ();
+
     /// Absent for any viewer but the session's, in a folder the host never answered for or
     /// whose content isn't shown, and when the arm answers for another key.
     async fn child(
