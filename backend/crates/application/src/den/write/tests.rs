@@ -216,6 +216,19 @@ fn owner_grant(actor: &UserId, commission: CommissionId) -> Grant {
     Grant::for_test(actor, kind)
 }
 
+// A grant's and an act's `Debug` print neither the actor's DID nor the name the act carries.
+#[test]
+fn a_grant_and_an_act_debug_print_no_did_or_name() {
+    let actor = stranger();
+    let grant = owner_grant(&actor, made_up());
+    let act = DenAct::Probe(owner_s_rename());
+
+    let printed = format!("{grant:?} {act:?}");
+
+    assert!(!printed.contains(STRANGER), "a DID in {printed}");
+    assert!(!printed.contains(NEW_NAME), "a name in {printed}");
+}
+
 // A stranger on a real commission and anyone on a made-up id get the one not-found, and no
 // unit opens for either.
 #[tokio::test]

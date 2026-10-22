@@ -1,6 +1,8 @@
 //! What a den write acts with: the act itself, what it declares about itself, and what its
 //! type's handler hands back.
 
+use std::fmt;
+
 use domain::elements::{
     commission::{ChangelogEntryKind, CommissionRole},
     level::Level,
@@ -12,7 +14,6 @@ use crate::den::{DenType, Place, TopLevel};
 /// Every act the den's write use case carries. A typed call hands over its act and holds no
 /// unit; the den matches over this enum exhaustively, so a new act is a compile error until
 /// every step names it.
-#[derive(Debug)]
 pub(crate) enum DenAct {
     /// The test-only probe, whose every knob a test sets.
     #[cfg(test)]
@@ -121,6 +122,23 @@ impl DenAct {
         match *self {
             #[cfg(test)]
             DenAct::Probe(ref probe) => probe.spec(),
+        }
+    }
+}
+
+impl fmt::Debug for DenAct {
+    /// The act's variant alone; never its body, which may carry a name.
+    #[cfg_attr(
+        not(test),
+        expect(
+            unused_variables,
+            reason = "with no act but the test probe, a den act is uninhabited outside tests"
+        )
+    )]
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            #[cfg(test)]
+            DenAct::Probe(_) => formatter.write_str("Probe"),
         }
     }
 }

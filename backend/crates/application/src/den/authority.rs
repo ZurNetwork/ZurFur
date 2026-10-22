@@ -2,6 +2,8 @@
 //! locked read makes inside the unit. The grant is the write's only authority; nothing else in
 //! the write names a thing to act on.
 
+use std::fmt;
+
 use domain::{
     elements::{
         commission::{CommissionId, CommissionRole},
@@ -51,7 +53,6 @@ pub(in crate::den) enum GrantKind {
 
 /// Leave for one write: who acts and what on. Its fields are private, it is neither `Clone`
 /// nor `Default`, and only this module makes one.
-#[derive(Debug)]
 #[cfg_attr(
     not(test),
     expect(
@@ -114,6 +115,16 @@ impl Grant {
             GrantKind::Create { commission } => Some(commission),
             GrantKind::Existing { .. } => None,
         }
+    }
+}
+
+impl fmt::Debug for Grant {
+    /// Its kind alone; never its actor, whose id is a DID.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Grant")
+            .field("kind", &self.kind)
+            .finish_non_exhaustive()
     }
 }
 
