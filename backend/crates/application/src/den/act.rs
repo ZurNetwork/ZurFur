@@ -7,7 +7,8 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            ChangelogEntryKind, Commission, CommissionId, CommissionRole, NewChangelogEntry,
+            ChangelogEntryKind, Commission, CommissionId, CommissionRole, LifecycleMove,
+            NewChangelogEntry,
         },
         level::Level,
         name::NodeName,
@@ -67,6 +68,8 @@ pub(crate) enum ActShape {
         /// Its new name.
         name: NodeName,
     },
+    /// Changes the anchored thing's fields; its node keeps its rows.
+    Change,
 }
 
 /// What an act declares about itself: its word, the type it acts on or makes, its anchor, the
@@ -104,70 +107,103 @@ impl fmt::Debug for DenAct {
     }
 }
 
-/// A gated kind's domain constructor: its entry on a commission, by an actor, at a time.
-pub(in crate::den) type EntryConstructor =
-    fn(CommissionId, UserId, DateTimeUtc) -> NewChangelogEntry;
-
-/// A kind the gate writes, paired with its own domain constructor. Its fields are private, so
-/// an act names one of its associated consts and never builds one.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct GatedEntry {
-    kind: ChangelogEntryKind,
-    constructor: EntryConstructor,
+/// A gated kind's domain constructor: its entry on a commission, by an actor, at a time, with
+/// no change, or with the act's checked change `C`.
+pub(in crate::den) enum EntryConstructor<C> {
+    /// A constructor that takes no change.
+    Bare(fn(CommissionId, UserId, DateTimeUtc) -> NewChangelogEntry),
+    /// A constructor that takes the act's checked change.
+    Change(fn(CommissionId, UserId, &C, DateTimeUtc) -> NewChangelogEntry),
 }
 
-impl GatedEntry {
-    /// A create's entry: kind `Created`, by `NewChangelogEntry::created`.
+impl<C> fmt::Debug for EntryConstructor<C> {
+    /// Which shape it takes.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Bare(_) => formatter.write_str("Bare"),
+            Self::Change(_) => formatter.write_str("Change"),
+        }
+    }
+}
+
+/// The kinds a gated entry may build, paired with its own domain constructor, over the act's
+/// checked change `C`. Its fields are private, so an act names one of its associated consts
+/// and never builds one.
+#[derive(Debug)]
+pub(crate) struct GatedEntry<C> {
+    kinds: &'static [ChangelogEntryKind],
+    constructor: EntryConstructor<C>,
+}
+
+impl<C> GatedEntry<C> {
+    /// A create's entry: kind `Created`, by `NewChangelogEntry::created`, with no change.
     pub(crate) const CREATED: Self = Self {
-        kind: ChangelogEntryKind::Created,
-        constructor: NewChangelogEntry::created,
+        kinds: &[ChangelogEntryKind::Created],
+        constructor: EntryConstructor::Bare(NewChangelogEntry::created),
     };
 
-    /// A rename's entry: kind `Renamed`, by `NewChangelogEntry::renamed`.
+    /// A rename's entry: kind `Renamed`, by `NewChangelogEntry::renamed`, with no change.
     pub(crate) const RENAMED: Self = Self {
-        kind: ChangelogEntryKind::Renamed,
-        constructor: NewChangelogEntry::renamed,
+        kinds: &[ChangelogEntryKind::Renamed],
+        constructor: EntryConstructor::Bare(NewChangelogEntry::renamed),
     };
 
-    /// A gated entry of `kind` built by `constructor`, for the tests that hand the gate a
+    /// A gated entry of `kinds` built by `constructor`, for the tests that hand the gate a
     /// misbuilt one.
     #[cfg(test)]
     pub(in crate::den) fn for_test(
-        kind: ChangelogEntryKind,
-        constructor: EntryConstructor,
+        kinds: &'static [ChangelogEntryKind],
+        constructor: EntryConstructor<C>,
     ) -> Self {
-        Self { kind, constructor }
+        Self { kinds, constructor }
     }
 
-    /// The kind its entry must carry.
-    pub(in crate::den) fn kind(self) -> ChangelogEntryKind {
-        self.kind
+    /// Whether its entry may carry `kind`.
+    pub(in crate::den) fn builds(&self, kind: ChangelogEntryKind) -> bool {
+        self.kinds.contains(&kind)
     }
 
-    /// Its entry on `commission`, by `actor`, at `at`, as its domain constructor builds it.
+    /// Its entry on `commission`, by `actor`, at `at`, as its domain constructor builds it from
+    /// `change`, the change the act's view recorded; `None` when its constructor takes a change
+    /// and none was recorded.
     pub(in crate::den) fn construct(
-        self,
+        &self,
         commission: CommissionId,
         actor: UserId,
+        change: Option<&C>,
         at: DateTimeUtc,
-    ) -> NewChangelogEntry {
-        (self.constructor)(commission, actor, at)
+    ) -> Option<NewChangelogEntry> {
+        match self.constructor {
+            EntryConstructor::Bare(constructor) => Some(constructor(commission, actor, at)),
+            EntryConstructor::Change(constructor) => {
+                change.map(|change| constructor(commission, actor, change, at))
+            }
+        }
     }
+}
+
+impl GatedEntry<LifecycleMove> {
+    /// A lifecycle move's entry: kind `LifecycleMoved`, by `NewChangelogEntry::lifecycle_moved`,
+    /// from the move the view wrote.
+    pub(crate) const LIFECYCLE_MOVED: Self = Self {
+        kinds: &[ChangelogEntryKind::LifecycleMoved],
+        constructor: EntryConstructor::Change(NewChangelogEntry::lifecycle_moved),
+    };
 }
 
 /// Which gated entry the gate writes once an act lands: one on every landing, or one only when
-/// the act changed its node.
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum EntryRule {
+/// the act changed its node or its view's write landed.
+#[derive(Debug)]
+pub(crate) enum EntryRule<C> {
     /// One entry, whatever the act changed.
-    Always(GatedEntry),
-    /// One entry when the act changed its node; none when it changed nothing.
-    OnChange(GatedEntry),
+    Always(GatedEntry<C>),
+    /// One entry when the act changed something; none when it changed nothing.
+    OnChange(GatedEntry<C>),
 }
 
-impl EntryRule {
-    /// The gated entry an act that `changed` its node writes, or `None`.
-    pub(crate) fn entry(self, changed: bool) -> Option<GatedEntry> {
+impl<C> EntryRule<C> {
+    /// The gated entry an act that `changed` something writes, or `None`.
+    pub(crate) fn entry(self, changed: bool) -> Option<GatedEntry<C>> {
         match self {
             Self::Always(gated) => Some(gated),
             Self::OnChange(gated) => changed.then_some(gated),

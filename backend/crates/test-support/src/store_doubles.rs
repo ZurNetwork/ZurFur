@@ -12,11 +12,11 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     account::{Account, AccountId, AccountMembership, ListingScope},
     commission::{
-        ChannelPointer, Commission, CommissionBirth, CommissionComposition, CommissionFile,
-        CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary, DeadlineStatus,
-        DirectionStatus, ElementId, FileKey, FileSummary, GrantLevel, LapsedDeadline,
-        LockedStanding, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
-        SeatInvitationId, Slot, TabId, TabRow,
+        AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
+        CommissionFile, CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary,
+        DeadlineStatus, DirectionStatus, ElementId, FileKey, FileSummary, GrantLevel,
+        LapsedDeadline, LifecycleMove, LockedStanding, NewCommission, NewElement, NewSeat, NewSlot,
+        Seat, SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
     },
     did::Did,
     handle::Handle,
@@ -637,6 +637,14 @@ impl CommissionWrites for ScriptedStandingRepo<'_> {
         commission: &NewCommission,
     ) -> anyhow::Result<()> {
         self.inner.create(capability, birth, commission).await
+    }
+
+    async fn set_lifecycle(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &LifecycleMove,
+    ) -> anyhow::Result<bool> {
+        self.inner.set_lifecycle(capability, change).await
     }
 
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {

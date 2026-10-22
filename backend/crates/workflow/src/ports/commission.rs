@@ -6,11 +6,11 @@ use async_trait::async_trait;
 
 use crate::elements::{
     commission::{
-        ChannelPointer, Commission, CommissionBirth, CommissionComposition, CommissionFile,
-        CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary, DeadlineStatus,
-        DirectionStatus, ElementId, FileKey, FileSummary, GrantLevel, LapsedDeadline,
-        LockedStanding, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
-        SeatInvitationId, Slot, TabId, TabRow,
+        AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
+        CommissionFile, CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary,
+        DeadlineStatus, DirectionStatus, ElementId, FileKey, FileSummary, GrantLevel,
+        LapsedDeadline, LifecycleMove, LockedStanding, NewCommission, NewElement, NewSeat, NewSlot,
+        Seat, SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
     },
     workflow::{Column, ColumnId, WorkflowId},
 };
@@ -151,7 +151,8 @@ pub trait CommissionStore: Send + Sync {
 
 /// The **write** surface of Zurfur's record of commissions — reachable only on an
 /// open `UnitOfWork` (`uow.commissions()`). A create's authority is the den's write
-/// gate's create [`WriteCapability`], which [`create`](Self::create) takes; every
+/// gate's create [`WriteCapability`], which [`create`](Self::create) takes; a lifecycle
+/// move's is a Participant's, which [`set_lifecycle`](Self::set_lifecycle) takes. Every
 /// other method's authority, and the commission's own existence, are the caller's
 /// checks, settled before it is reached.
 #[async_trait]
@@ -167,6 +168,15 @@ pub trait CommissionWrites: Send {
         birth: &CommissionBirth,
         commission: &NewCommission,
     ) -> anyhow::Result<()>;
+
+    /// Move the commission `capability` was issued for from `change`'s held step to its new
+    /// one, by compare-and-set: the row changes only while it still holds the held step.
+    /// Answers `true` only when exactly one row changed.
+    async fn set_lifecycle(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &LifecycleMove,
+    ) -> anyhow::Result<bool>;
 
     /// Declare a [`NewSeat`] into a declared surface, as one element plus one
     /// satellite row sharing the seat's id. Refuses an absent/foreign tab with

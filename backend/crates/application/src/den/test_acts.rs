@@ -1,15 +1,17 @@
-//! Test-only acts: the real create and rename acts as the den carries them, and Atta's acts
-//! built by hand around a real act's body, for the tests that drive the write host below the
-//! den's builder.
+//! Test-only acts: the real create, rename and lifecycle-move acts as the den carries them, a
+//! commission's stored state at any step, and Atta's acts built by hand around a real act's
+//! body, for the tests that drive the write host below the den's builder.
 
 use atta::{Act, ActName, Born, Placed, RealPath, Shape};
 use domain::elements::{
-    commission::{CommissionId, NewCommission},
+    commission::{Commission, CommissionId, CommissionState, LifecycleStep, NewCommission},
+    did::Did,
     name::NodeName,
+    user::UserId,
 };
 
 use crate::{
-    commission::{act::CommissionAct, create, den::CommissionPlace, rename},
+    commission::{act::CommissionAct, create, den::CommissionPlace, lifecycle::move_to, rename},
     den::{DenType, Place, act::DenAct, host::type_key, names, write::commission_directory},
 };
 
@@ -37,6 +39,29 @@ pub(crate) fn rename_act(commission: CommissionId, text: &str) -> DenAct {
         title: text.parse().expect("a valid test title"),
     };
     DenAct::Commission(CommissionAct::Rename(act))
+}
+
+/// The move of the commission `commission` to `to`.
+pub(crate) fn move_act(commission: CommissionId, to: LifecycleStep) -> DenAct {
+    let act = move_to::Act { commission, to };
+    DenAct::Commission(CommissionAct::MoveLifecycle(act))
+}
+
+/// A stored commission's state at `step`, with no deadline, flag, status or rating.
+pub(crate) fn state_at(step: LifecycleStep) -> CommissionState {
+    let commission = Commission {
+        id: CommissionId::mint(),
+        owner_id: UserId::from(Did::from("did:plc:state-owner".to_owned())),
+        lifecycle_step: step,
+        deadline: None,
+        maturity: None,
+        direction_status: None,
+        delayed_flag: None,
+        linked_channel: None,
+        archived_at: None,
+        created_at: chrono::Utc::now(),
+    };
+    CommissionState::from(&commission)
 }
 
 /// The real path of the commission `commission`.

@@ -2,7 +2,7 @@
   "path": "backend/crates/application/src/commission",
   "charted": "2026-10-22",
   "short": "Commission use cases",
-  "is": "Commission use cases — lifecycle (create/delete/archive/unarchive) and per-facet action trees (deadline, status, files, invitations, view, seats, slots, notes, maturity, markup, changelog), one Command/Query + Output + `#[use_case]` method file per action; the module root `../commission.rs` holds the `Commissions` namespace, `CommissionError` (with `From<DenWriteError>`), `CommissionResult` and the system-actor `sweep_deadlines`; `act.rs` holds the commission's acts through the Den's write.",
+  "is": "Commission use cases — lifecycle (create/delete/archive/unarchive) and per-facet action trees (deadline, status, files, invitations, view, seats, slots, notes, maturity, markup, changelog), one Command/Query + Output + `#[use_case]` method file per action; the module root `../commission.rs` holds the `Commissions` namespace, `CommissionError` (with `From<DenWriteError>`), `CommissionResult` and the system-actor `sweep_deadlines`; `act.rs` holds the commission's acts through the Den's write: create, rename and the lifecycle facet's move.",
   "type": "code",
   "tags": [
     "category:source"
@@ -14,7 +14,7 @@
   "fs": [
     {
       "name": "act.rs + act/tests.rs",
-      "role": "CommissionAct, the commission's acts the Den's write carries (Create, Rename), each body beside its typed use case; spec() and a Debug that prints the variant alone; act/tests.rs: a create needs no role and a rename the Owner, each read from its capability marker, a create's six Private entries named by their words, a rename's shape its new name",
+      "role": "CommissionAct, the commission's acts the Den's write carries (Create, Rename, MoveLifecycle), each body beside its typed use case; spec() and a Debug that prints the variant alone; act/tests.rs: a create needs no role, a rename the Owner and a lifecycle move any Participant, each read from its capability marker, a create's six Private entries named by their words, a rename's shape its new name, a move's a Change",
       "node": false
     },
     {
@@ -29,7 +29,7 @@
     },
     {
       "name": "create.rs + create/tests.rs",
-      "role": "the create act (create::Act: the title and NewCommission; its spec anchors /commission, makes the node Private with its six entries, and reads its needed role, none, from the Creator marker; its Handler creates through the lent view and answers the lent commission, its ENTRY `EntryRule::Always(GatedEntry::CREATED)`, the gate writing the `created` entry) and the use case, a pure #[use_case] delegation to Den::write with no unit: NotFound is the commission's not-found, Forbidden InsufficientPermissions, Refused and Store Infrastructure; it answers CommissionValues from the write's answer, named and levelled as the gate wrote the node",
+      "role": "the create act (create::Act: the title and NewCommission; its spec anchors /commission, makes the node Private with its six entries, and reads its needed role, none, from the Creator marker; its Handler's precondition answers what the create chose (nothing is made, so no rule refuses it; its facts are `Unmade`), its handle creates through its own view's `create`, which writes that choice, and answers the lent commission, its ENTRY `EntryRule::Always(GatedEntry::CREATED)`, the gate writing the `created` entry) and the use case, a pure #[use_case] delegation to Den::write with no unit: NotFound is the commission's not-found, Forbidden InsufficientPermissions, Refused and Store Infrastructure; it answers CommissionValues from the write's answer, named and levelled as the gate wrote the node",
       "node": false
     },
     {
@@ -58,6 +58,11 @@
       "node": false
     },
     {
+      "name": "lifecycle.rs + lifecycle/move_to.rs",
+      "role": "the `Lifecycle` facet under `Commissions` and its one use case, `move_to`: the move act (move_to::Act: the commission it is anchored on and the step it moves to; its spec a Change on the commission's place, needing any Participant from the AsParticipant marker; its Handler's precondition the domain's move_lifecycle on the grant's CommissionState, its handle the view's set_lifecycle then the lent commission, its ENTRY `EntryRule::OnChange(GatedEntry::LIFECYCLE_MOVED)`) and the use case, a pure #[use_case] delegation to Den::write with no unit, answering a unit Output; lifecycle/move_to/tests.rs: a Participant moves Draft to Active (one lifecycle_moved entry, its literal payload), a move back to Draft is lifecycle_move_refused, a Disputed commission's move commission_disputed, a stranger and a made-up id the same not-found with no unit opened",
+      "node": false
+    },
+    {
       "name": "markup.rs",
       "role": "record a review-loop Markup on a file entry; authorize first, numeric bounds validated here",
       "node": false
@@ -74,7 +79,7 @@
     },
     {
       "name": "rename.rs + rename/tests.rs",
-      "role": "the rename act (rename::Act: the commission it is anchored on and its new title; its spec anchors the commission's place and reads its needed role, the Owner, from the AsOwner marker; its Handler answers the lent commission, the gate writing the node's name, or nothing when the name is already stored, and a `renamed` entry only on a real change, by its ENTRY `EntryRule::OnChange(GatedEntry::RENAMED)`) and the use case, a pure #[use_case] delegation to Den::write with no unit, mapped as create's: a stranger and a made-up id the same not-found, a non-owner Participant InsufficientPermissions; it answers CommissionValues from the write's answer, named and levelled as the gate left the node; rename/tests.rs pins that a refused rename opens no unit, a same-title rename records nothing, and that a refused title is never a title",
+      "role": "the rename act (rename::Act: the commission it is anchored on and its new title; its spec anchors the commission's place and reads its needed role, the Owner, from the AsOwner marker; its Handler checks no field change (its Checked is Infallible, its precondition None) and answers the lent commission, the gate writing the node's name, or nothing when the name is already stored, and a `renamed` entry only on a real change, by its ENTRY `EntryRule::OnChange(GatedEntry::RENAMED)`) and the use case, a pure #[use_case] delegation to Den::write with no unit, mapped as create's: a stranger and a made-up id the same not-found, a non-owner Participant InsufficientPermissions; it answers CommissionValues from the write's answer, named and levelled as the gate left the node; rename/tests.rs pins that a refused rename opens no unit, a same-title rename records nothing, and that a refused title is never a title",
       "node": false
     },
     {
@@ -108,7 +113,7 @@
     "**Ordering rule.** Authorize before anything observable or written: before a byte of an upload is read, before a no-op is noticed (`status/direction/set`), and before `provision` (`view/grant`, `view/revoke`, `invitations/issue`).",
     "**Atomicity.** A state write and the changelog entry recording it share one unit of work, and entries are keyed on a REAL transition — an idempotent no-op writes nothing and appends nothing. Blob bytes cannot ride a Postgres transaction, so `files/upload` writes the blob first and deletes the orphan before refusing.",
     "`seq` on a changelog entry is the STORE's ordering key (a `bigserial` in pg): monotonic per stream but not gapless, and never renumbered off a page position.",
-    "`sweep_deadlines` is the only system actor here. It can only scan `lapsed_deadlines`, read each lapsed commission in the same unit, and append the system `Late` entry the domain's `owes_late` says is owed (a Disputed commission is owed none); it holds no handle that could move a lifecycle or a direction status. `Late` is derived on read, never persisted. The ungated deadline, Delayed and direction use cases build their entries and their writes from the domain's rules and typed constructors; `From<CommissionRefusal>` maps a refusal to today's answers (a Disputed commission's deadline, for now, `InvalidStateRequested`).",
+    "`sweep_deadlines` is the only system actor here. It can only scan `lapsed_deadlines`, read each lapsed commission in the same unit, and append the system `Late` entry the domain's `owes_late` says is owed (a Disputed commission is owed none); it holds no handle that could move a lifecycle or a direction status. `Late` is derived on read, never persisted. The ungated deadline, Delayed and direction use cases build their entries and their writes from the domain's rules and typed constructors; `From<CommissionRefusal>` maps each refusal to its own answer (a Disputed commission's deadline or Delayed act, like its lifecycle move, `CommissionDisputed`, a 409; a move into Draft or Disputed `LifecycleMoveRefused`, a 409); the lifecycle move's refusals come through the Den's write as `DenWriteError::Precondition`, the others straight from the rule.",
     "The streaming seam is `tokio::io::AsyncRead` in both directions — never a buffered `Vec<u8>` or a driver type.",
     "See also: ZMVP-88 (file entries streaming seam).",
     "See also: ZMVP-86 (deadline sweep)."

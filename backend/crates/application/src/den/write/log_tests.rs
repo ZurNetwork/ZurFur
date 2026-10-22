@@ -1,12 +1,13 @@
-//! What the Den's write logs on PostgreSQL, at trace, five ways: the owner's rename, a
-//! stranger's, a Participant's (a rename needs the Owner), a create on a taken segment, and a
-//! create whose store failure the gate latches. No DID or handle at info or above, no name
-//! anywhere, and nothing of PostgreSQL's detail.
+//! What the Den's write logs on PostgreSQL, at trace, seven ways: the owner's rename, a
+//! stranger's, a Participant's (a rename needs the Owner), a create on a taken segment, the
+//! owner's lifecycle move and one its rule refuses, and a create whose store failure the gate
+//! latches. No DID or handle at info or above, no name anywhere, and nothing of PostgreSQL's
+//! detail.
 
 use std::sync::Arc;
 
 use domain::elements::{
-    commission::{CommissionRole, CommissionStanding},
+    commission::{CommissionRefusal, CommissionRole, CommissionStanding, LifecycleStep},
     did::Did,
     level::Level,
 };
@@ -20,7 +21,7 @@ use super::tests::{PG_TITLE, node_name, pg_seed, provision, write};
 use super::*;
 use crate::den::{
     authority::MINT_AS,
-    test_acts::{create_act, rename_act},
+    test_acts::{create_act, move_act, rename_act},
 };
 
 /// The owner's DID.
@@ -76,6 +77,8 @@ async fn the_write_path_logs_no_identity_no_name_and_no_store_detail() {
     let taken = MINT_AS
         .scope(commission, write(&ports, &owner, create_act(SECRET_NAME)))
         .await;
+    let moved = write(&ports, &owner, move_act(commission, LifecycleStep::Active)).await;
+    let refused = write(&ports, &owner, move_act(commission, LifecycleStep::Draft)).await;
 
     assert!(renamed.is_ok(), "{renamed:?}");
     assert!(matches!(unseen, Err(DenWriteError::NotFound)), "{unseen:?}");
@@ -89,6 +92,16 @@ async fn the_write_path_logs_no_identity_no_name_and_no_store_detail() {
             Err(DenWriteError::Refused(RefusalClass::SegmentTaken))
         ),
         "{taken:?}"
+    );
+    assert!(moved.is_ok(), "{moved:?}");
+    assert!(
+        matches!(
+            refused,
+            Err(DenWriteError::Precondition(
+                CommissionRefusal::LifecycleMoveRefused
+            ))
+        ),
+        "{refused:?}"
     );
     assert_eq!(node_name(&*ports.database, commission).await, SECRET_NAME);
     let text = log.text();

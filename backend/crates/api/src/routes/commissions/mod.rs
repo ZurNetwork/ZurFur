@@ -76,6 +76,8 @@ impl From<CommissionError> for Problem {
             CommissionError::UnknownSurface => Problem::unknown_surface(),
             CommissionError::NoDeadline => Problem::no_deadline(),
             CommissionError::CommissionLate => Problem::commission_late(),
+            CommissionError::LifecycleMoveRefused => Problem::lifecycle_move_refused(),
+            CommissionError::CommissionDisputed => Problem::commission_disputed(),
             CommissionError::IncorrectContent => {
                 Problem::invalid_request("The submitted content is empty.")
             }

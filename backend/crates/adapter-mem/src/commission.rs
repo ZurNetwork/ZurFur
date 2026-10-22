@@ -10,14 +10,14 @@ use async_trait::async_trait;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
-        Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission, CommissionBirth,
-        CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionRole,
-        CommissionStanding, CommissionStart, CommissionSummary, CommissionTitle, DeadlineStatus,
-        DirectionStatus, ElementId, ElementPayload, ElementRow, ElementType, FileKey, FileSummary,
-        GrantLevel, LapsedDeadline, LifecycleStep, LockedStanding, NewChangelogEntry,
-        NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId,
-        SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow,
-        VisibilityMode, declared_tabs, declares_surface,
+        AsParticipant, Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission,
+        CommissionBirth, CommissionComposition, CommissionFile, CommissionId, CommissionMarkup,
+        CommissionRole, CommissionStanding, CommissionStart, CommissionSummary, CommissionTitle,
+        DeadlineStatus, DirectionStatus, ElementId, ElementPayload, ElementRow, ElementType,
+        FileKey, FileSummary, GrantLevel, LapsedDeadline, LifecycleMove, LifecycleStep,
+        LockedStanding, NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot, Seat,
+        SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress,
+        SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs, declares_surface,
     },
     did::Did,
     invitation::InvitationState,
@@ -451,6 +451,31 @@ impl CommissionWrites for MemCommissionWrites<'_> {
             *self.1 = true;
         }
         inserted
+    }
+
+    /// Move the capability's commission to `change`'s new step, only while it still holds the
+    /// held step: the mem mirror of the pg compare-and-set. An absent commission, or one at
+    /// another step, changes nothing and answers `false`.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn set_lifecycle(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &LifecycleMove,
+    ) -> anyhow::Result<bool> {
+        let id = *capability.thing();
+        let mut commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        let Some(stored) = commissions.get_mut(&id) else {
+            return Ok(false);
+        };
+        if stored.lifecycle_step != *change.before() {
+            return Ok(false);
+        }
+        stored.lifecycle_step = change.after().clone();
+        Ok(true)
     }
 
     /// Contribute one element into a declared surface at `position = max + 1`

@@ -101,3 +101,24 @@ fn an_act_s_debug_prints_no_title() {
 
     assert_eq!(printed, ["Create", "Rename"]);
 }
+
+// A lifecycle move needs any Participant, read from its capability marker, and changes the
+// commission's fields on its own node; its Debug prints the variant alone.
+#[test]
+fn a_lifecycle_move_needs_a_participant_and_is_a_change() {
+    let act = move_to::Act {
+        commission: untitled(),
+        to: domain::elements::commission::LifecycleStep::Active,
+    };
+    let moved = CommissionAct::MoveLifecycle(act);
+
+    let spec = moved.spec();
+
+    let untitled_place = Place::Commission(CommissionPlace::Commission(untitled()));
+    assert_eq!(spec.needs, Some(CommissionRole::Participant));
+    assert_eq!(spec.needs, needs::<move_to::Act>());
+    assert_eq!(spec.anchor, Anchor::Thing(untitled_place));
+    assert_eq!(spec.den_type, DenType::Commission);
+    assert_eq!(spec.shape, ActShape::Change);
+    assert_eq!(format!("{moved:?}"), "MoveLifecycle");
+}

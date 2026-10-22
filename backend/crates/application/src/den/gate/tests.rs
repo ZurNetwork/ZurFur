@@ -12,7 +12,7 @@ use atta::{WriteCaps, WriteError, Writer};
 use chrono::Utc;
 use domain::{
     elements::{
-        commission::{ChangelogEntry, ChangelogEntryKind, OpenKind},
+        commission::{ChangelogEntry, ChangelogEntryKind, LifecycleStep, OpenKind},
         did::Did,
         level::Level,
         user::UserId,
@@ -24,12 +24,14 @@ use test_support::pg_app::{StatementLog, pg_runtime, pg_runtime_recording};
 use super::*;
 use crate::{
     Ports,
+    commission::{Commissions, lifecycle::move_to},
     den::{
         Den, DenThing,
         act::{EntryConstructor, GatedEntry},
         authority::{GrantKind, MINT_AS},
         test_acts::{
-            commission_path, create_act, hand_built_create, hand_built_rename, rename_act,
+            commission_path, create_act, hand_built_create, hand_built_rename, move_act,
+            rename_act, state_at,
         },
         write::{Command, DenWriteError, WriteResult},
     },
@@ -43,15 +45,26 @@ const TITLE: &str = "A gated piece";
 /// The title a rename here gives, which no entry may carry either.
 const NEW_TITLE: &str = "A renamed piece";
 
-/// A grant on "Untitled" to `actor` in `role`, bound to `node`.
-fn existing_on(actor: &UserId, role: CommissionRole, node: NodeId) -> Grant {
+/// A grant on `commission` to `actor` in `role`, bound to `node`, its state at Draft.
+fn existing_at(
+    actor: &UserId,
+    commission: CommissionId,
+    role: CommissionRole,
+    node: NodeId,
+) -> Grant {
     let kind = GrantKind::Existing {
-        commission: untitled(),
+        commission,
         role,
         level: Level::Private,
         node,
+        state: state_at(LifecycleStep::Draft),
     };
     Grant::for_test(actor, kind)
+}
+
+/// A grant on "Untitled" to `actor` in `role`, bound to `node`, its state at Draft.
+fn existing_on(actor: &UserId, role: CommissionRole, node: NodeId) -> Grant {
+    existing_at(actor, untitled(), role, node)
 }
 
 /// A grant on "Untitled" to `actor` in `role`, bound to a node no row holds.
@@ -221,12 +234,59 @@ async fn provision(database: &dyn Database, did: &str) -> UserId {
     .expect("the user is recognized")
 }
 
+/// The owner `owner_did`, recognized, and a Draft commission of theirs titled [`TITLE`], made
+/// by the create use case.
+async fn pg_seed(ports: &Ports, owner_did: &str) -> (UserId, CommissionId) {
+    let owner = provision(&*ports.database, owner_did).await;
+    let command = crate::commission::create::Command {
+        actor_id: owner.clone(),
+        title: TITLE.parse().expect("a title"),
+        maturity: None,
+        deadline: None,
+    };
+    let created = Commissions::new(ports)
+        .create(command, Utc::now())
+        .await
+        .expect("the commission seeds");
+    (owner, created.id)
+}
+
 /// The fixture world, its units spied on by `spy`.
 async fn spied(spy: &Spy) -> test_world::World {
     let mut world = test_world::world().await;
     let database = SpyDatabase::new(world.ports.database.clone(), spy.clone());
     world.ports.database = Arc::new(database);
     world
+}
+
+/// A view of act `H` over `unit`, under `grant`'s capability, holding `change`, built by hand
+/// as [`lend_as`] builds it, for the tests that script what a handler calls through it.
+fn lent_by_hand<'u, H: Handler>(
+    unit: Unit<'u>,
+    grant: &Grant,
+    written: &Written,
+    change: Option<H::Checked>,
+) -> Lent<'u, H> {
+    let capability = issue::<H::Role>(grant).expect("the grant leaves the act's role");
+    let view = View {
+        repo: unit.commissions(),
+        capability,
+        node: written.node,
+        actor: grant.actor().clone(),
+        now: Utc::now(),
+        change,
+        wrote: None,
+    };
+    Lent {
+        view,
+        latch: Latch::default(),
+    }
+}
+
+/// What a handler answers after its scripted calls: the commission its view reads.
+async fn answer_of<H: Handler>(lent: &mut Lent<'_, H>) -> Result<Handled, HandlerError> {
+    let answer = lent.lent().await?;
+    Ok(Handled { answer })
 }
 
 /// A creator that drops a failure it got through its lent view, then answers as if none came.
@@ -238,36 +298,26 @@ enum Swallowing {
     StoreFailure,
 }
 
-impl Handler for Swallowing {
-    type Role = Creator;
-
-    const ENTRY: EntryRule = EntryRule::Always(GatedEntry::CREATED);
-
-    async fn handle(&self, lent: &mut Lent<'_, Creator>) -> Result<Handled, HandlerError> {
-        let chosen = NewCommission {
-            maturity: None,
-            deadline: None,
-        };
-        let answer = match self {
+impl Swallowing {
+    /// Its calls through `lent`, and its answer.
+    async fn run(self, lent: &mut Lent<'_, create::Act>) -> Result<Handled, HandlerError> {
+        match self {
             Self::Miss => {
                 let _dropped = lent.lent().await;
-                lent.create(&chosen).await?;
-                lent.lent().await?
+                lent.create().await?;
             }
             Self::StoreFailure => {
-                lent.create(&chosen).await?;
-                let read = lent.lent().await?;
-                let _dropped = lent.create(&chosen).await;
-                read
+                lent.create().await?;
+                let _dropped = lent.create().await;
             }
-        };
-        Ok(Handled { answer })
+        }
+        answer_of(lent).await
     }
 }
 
-/// Each swallowing creator, lent a create grant through [`lend_as`] on a unit of `database`
-/// holding its commission's node, fails as a store failure; the unit then keeps neither its
-/// node nor its commission.
+/// Each swallowing creator, lent a create grant's view on a unit of `database` holding its
+/// commission's node, fails as the gate settles it; the unit then keeps neither its node nor
+/// its commission.
 async fn each_swallowed_failure_fails_the_act(ports: &Ports, actor: &UserId) {
     let database = &*ports.database;
     for handler in [Swallowing::Miss, Swallowing::StoreFailure] {
@@ -289,16 +339,22 @@ async fn each_swallowed_failure_fails_the_act(ports: &Ports, actor: &UserId) {
             changed: true,
         };
         let grant = creating(actor, planted);
+        let chosen = domain::elements::commission::NewCommission {
+            maturity: None,
+            deadline: None,
+        };
         let mut unit = database.begin().await.expect("begin");
         unit.nodes()
             .create(&node)
             .await
             .expect("the node row is made");
 
-        let landed = lend_as(&handler, &grant, &mut *unit, &written, Utc::now()).await;
+        let mut lent = lent_by_hand::<create::Act>(&mut *unit, &grant, &written, Some(chosen));
+        let handled = handler.run(&mut lent).await;
+        let settled = settle(lent, handled, &written);
         unit.rollback().await.expect("the unit ends");
 
-        assert!(landed.is_err(), "{handler:?} landed");
+        assert!(settled.is_err(), "{handler:?} landed");
         assert!(top_row(database, planted).await.is_none(), "{handler:?}");
         assert!(stored(ports, planted).await.is_none(), "{handler:?}");
     }
@@ -318,6 +374,217 @@ async fn a_swallowed_store_failure_under_a_handler_fails_the_act_on_postgres() {
     let actor = provision(&*ports.database, "did:plc:gate-swallowing").await;
 
     each_swallowed_failure_fails_the_act(&ports, &actor).await;
+}
+
+/// How a scripted move handler uses its view's one write.
+#[derive(Debug, Clone, Copy)]
+enum MoveScript {
+    /// Writes the checked move twice, dropping the second answer.
+    Twice,
+    /// Never writes the checked move.
+    Never,
+}
+
+impl MoveScript {
+    /// Its calls through `lent`, and its answer.
+    async fn run(self, lent: &mut Lent<'_, move_to::Act>) -> Result<Handled, HandlerError> {
+        match self {
+            Self::Twice => {
+                lent.set_lifecycle().await?;
+                let _dropped = lent.set_lifecycle().await;
+            }
+            Self::Never => {}
+        }
+        answer_of(lent).await
+    }
+}
+
+/// `script` run on the real move of `commission`, held at Draft and bound to its node, from
+/// Draft to Active by `actor`, lent by hand on a unit of `ports` spied on by a spy that answers
+/// every lifecycle write as landed; then settled by the gate. The unit is rolled back.
+async fn scripted_move(
+    ports: &Ports,
+    actor: &UserId,
+    commission: CommissionId,
+    script: MoveScript,
+) -> anyhow::Result<()> {
+    let spy = Spy::landing_every_move();
+    let database = SpyDatabase::new(ports.database.clone(), spy);
+    let node = top_row(&*ports.database, commission)
+        .await
+        .expect("the commission has a node")
+        .id;
+    let grant = existing_at(actor, commission, CommissionRole::Owner, node);
+    let act = move_to::Act {
+        commission,
+        to: LifecycleStep::Active,
+    };
+    let Passed { change, .. } = passed(act, &grant, Utc::now()).expect("Draft moves to Active");
+    assert!(change.is_some(), "a real move");
+    let written = Written {
+        node,
+        commission,
+        name: None,
+        level: atta::Level::Private,
+        changed: false,
+    };
+    let mut unit = database.begin().await.expect("begin");
+
+    let mut lent = lent_by_hand::<move_to::Act>(&mut *unit, &grant, &written, change);
+    let handled = script.run(&mut lent).await;
+    let settled = settle(lent, handled, &written).map(|_| ());
+    unit.rollback().await.expect("the unit ends");
+    settled
+}
+
+// A handler that calls its one write twice fails the act, though the store answers the second
+// write as landed: the view keeps its first answer, and a second call is a broken rule.
+#[tokio::test]
+async fn a_handler_that_writes_twice_fails_the_act() {
+    let world = test_world::world().await;
+
+    let settled = scripted_move(&world.ports, &alice(), untitled(), MoveScript::Twice).await;
+
+    assert!(settled.is_err(), "{settled:?}");
+}
+
+#[tokio::test]
+async fn a_handler_that_writes_twice_fails_the_act_on_postgres() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let (actor, commission) = pg_seed(&ports, "did:plc:gate-twice").await;
+
+    let settled = scripted_move(&ports, &actor, commission, MoveScript::Twice).await;
+
+    assert!(settled.is_err(), "{settled:?}");
+}
+
+// A handler whose rule checked a real change and that never calls its write fails the act.
+#[tokio::test]
+async fn a_handler_that_never_writes_a_checked_change_fails_the_act() {
+    let world = test_world::world().await;
+
+    let settled = scripted_move(&world.ports, &alice(), untitled(), MoveScript::Never).await;
+
+    assert!(settled.is_err(), "{settled:?}");
+}
+
+#[tokio::test]
+async fn a_handler_that_never_writes_a_checked_change_fails_the_act_on_postgres() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let (actor, commission) = pg_seed(&ports, "did:plc:gate-never").await;
+
+    let settled = scripted_move(&ports, &actor, commission, MoveScript::Never).await;
+
+    assert!(settled.is_err(), "{settled:?}");
+}
+
+/// The lifecycle step `commission` holds.
+async fn step_of(ports: &Ports, commission: CommissionId) -> LifecycleStep {
+    stored(ports, commission)
+        .await
+        .expect("the commission is stored")
+        .lifecycle_step
+}
+
+/// `actor`'s move of `commission` to `to` through the move use case on `ports`.
+async fn move_through_the_use_case(
+    ports: &Ports,
+    actor: &UserId,
+    commission: CommissionId,
+    to: LifecycleStep,
+) {
+    let command = move_to::Command {
+        actor_id: actor.clone(),
+        commission_id: commission,
+        to,
+    };
+    Commissions::new(ports)
+        .lifecycle()
+        .move_to(command, Utc::now())
+        .await
+        .expect("the move lands");
+}
+
+/// `actor`'s move of `commission`, held at Active, back to Draft, on `ports` spied on: refused
+/// by the rule before any capability is issued or any row written, so the spied unit sees only
+/// the grant's two reads, and the commission keeps its step and its entries.
+async fn a_refused_move_lends_nothing(ports: &mut Ports, actor: &UserId, commission: CommissionId) {
+    let before = entries(ports, commission).await.len();
+    let spy = Spy::default();
+    let units = SpyDatabase::new(ports.database.clone(), spy.clone());
+    ports.database = Arc::new(units);
+
+    let written = write_at(
+        ports,
+        actor,
+        move_act(commission, LifecycleStep::Draft),
+        Utc::now(),
+    )
+    .await;
+
+    assert!(
+        matches!(
+            written,
+            Err(DenWriteError::Precondition(
+                CommissionRefusal::LifecycleMoveRefused
+            ))
+        ),
+        "{written:?}"
+    );
+    assert_eq!(spy.recorded_calls(), ["standing_for_update", "find"]);
+    assert_eq!(step_of(ports, commission).await, LifecycleStep::Active);
+    assert_eq!(entries(ports, commission).await.len(), before);
+}
+
+#[tokio::test]
+async fn a_refused_precondition_writes_no_row_and_lends_nothing() {
+    let mut world = test_world::world().await;
+    world
+        .backend
+        .seed_lifecycle_step(untitled(), LifecycleStep::Active);
+
+    a_refused_move_lends_nothing(&mut world.ports, &bob(), untitled()).await;
+}
+
+#[tokio::test]
+async fn a_refused_precondition_writes_no_row_and_lends_nothing_on_postgres() {
+    let pg = pg_runtime().await;
+    let mut ports = Ports::from(&pg.runtime);
+    let (owner, commission) = pg_seed(&ports, "did:plc:gate-refused-rule").await;
+    move_through_the_use_case(&ports, &owner, commission, LifecycleStep::Active).await;
+
+    a_refused_move_lends_nothing(&mut ports, &owner, commission).await;
+}
+
+// The move's entry is the one the gate built from the move its view wrote: its payload names
+// the step held and the step moved to, and nothing else.
+#[tokio::test]
+async fn the_entry_carries_the_change_the_view_recorded() {
+    let world = test_world::world().await;
+    let now = Utc::now();
+    let before = entries(&world.ports, untitled()).await.len();
+
+    write_at(
+        &world.ports,
+        &bob(),
+        move_act(untitled(), LifecycleStep::Active),
+        now,
+    )
+    .await
+    .expect("bob moves Untitled");
+
+    let stream = entries(&world.ports, untitled()).await;
+    let [entry] = &stream[before..] else {
+        panic!("one entry: {} of them", stream.len() - before);
+    };
+    let payload = serde_json::json!({ "from": "draft", "to": "active" });
+    assert_eq!(entry.kind, ChangelogEntryKind::LifecycleMoved);
+    assert_eq!(entry.payload, payload);
+    assert_eq!(entry.actor_id, Some(bob()));
+    assert_eq!(entry.created_at, now);
+    assert_eq!(entry.note, None);
 }
 
 // The rename's handler reads its commission through the lent view; the read fails, so the act
@@ -525,17 +792,20 @@ fn changed_untitled() -> Written {
 fn an_entry_built_off_the_grant_is_a_broken_rule() {
     let now = Utc::now();
     let written = changed_untitled();
-    let misbuilt: [EntryConstructor; 3] =
-        [on_another_commission, by_another_actor, at_another_time];
+    let misbuilt = [on_another_commission, by_another_actor, at_another_time];
 
     for constructor in misbuilt {
-        let gated = GatedEntry::for_test(ChangelogEntryKind::Created, constructor);
-        let built = built_entry(EntryRule::Always(gated), &written, &alice(), now);
+        let gated = GatedEntry::<()>::for_test(
+            &[ChangelogEntryKind::Created],
+            EntryConstructor::Bare(constructor),
+        );
+        let built = built_entry(EntryRule::Always(gated), &written, None, &alice(), now);
         assert!(built.is_err(), "{built:?}");
     }
     let built = built_entry(
-        EntryRule::Always(GatedEntry::CREATED),
+        EntryRule::<()>::Always(GatedEntry::CREATED),
         &written,
+        None,
         &alice(),
         now,
     )
@@ -551,14 +821,18 @@ fn leaky(commission: CommissionId, actor: UserId, at: DateTimeUtc) -> NewChangel
     NewChangelogEntry::from(open.with_note("free text the act chose".to_owned()))
 }
 
-// A gated entry whose constructor builds another kind than its own is a broken rule.
+// A gated entry whose constructor builds a kind it doesn't name is a broken rule.
 #[test]
 fn an_entry_of_another_kind_than_its_gated_entry_s_is_a_broken_rule() {
-    let gated = GatedEntry::for_test(ChangelogEntryKind::Renamed, leaky);
+    let gated = GatedEntry::<()>::for_test(
+        &[ChangelogEntryKind::Renamed],
+        EntryConstructor::Bare(leaky),
+    );
 
     let built = built_entry(
         EntryRule::OnChange(gated),
         &changed_untitled(),
+        None,
         &alice(),
         Utc::now(),
     );
@@ -566,12 +840,63 @@ fn an_entry_of_another_kind_than_its_gated_entry_s_is_a_broken_rule() {
     assert!(built.is_err(), "{built:?}");
 }
 
+// A gated entry whose constructor builds its own kind but attaches a note is a broken rule.
+#[test]
+fn an_entry_carrying_a_note_is_a_broken_rule() {
+    let gated = GatedEntry::<()>::for_test(
+        &[ChangelogEntryKind::Archived],
+        EntryConstructor::Bare(leaky),
+    );
+
+    let built = built_entry(
+        EntryRule::OnChange(gated),
+        &changed_untitled(),
+        None,
+        &alice(),
+        Utc::now(),
+    );
+
+    assert!(built.is_err(), "{built:?}");
+}
+
+// A constructor that takes a change, with no change recorded by the view, builds nothing: an
+// act whose rule says always is a broken rule, and one whose rule says on change writes none.
+#[test]
+fn a_change_constructor_with_no_recorded_change_builds_no_entry() {
+    let unchanged = Written {
+        changed: false,
+        ..changed_untitled()
+    };
+
+    let always = built_entry(
+        EntryRule::Always(GatedEntry::LIFECYCLE_MOVED),
+        &unchanged,
+        None,
+        &alice(),
+        Utc::now(),
+    );
+    let on_change = built_entry(
+        EntryRule::OnChange(GatedEntry::LIFECYCLE_MOVED),
+        &unchanged,
+        None,
+        &alice(),
+        Utc::now(),
+    )
+    .expect("nothing changed, so nothing is built");
+
+    assert!(always.is_err(), "{always:?}");
+    assert!(on_change.is_none(), "{on_change:?}");
+}
+
 /// The leaky constructor under kind `Renamed`, appended through the gate's own append on a unit
 /// of `ports` that commits whatever the append answers: refused as a broken rule, and the
 /// commission's changelog is as it was.
 async fn another_kind_appends_nothing(ports: &Ports, actor: &UserId, commission: CommissionId) {
     let before = entries(ports, commission).await.len();
-    let gated = GatedEntry::for_test(ChangelogEntryKind::Renamed, leaky);
+    let gated = GatedEntry::<()>::for_test(
+        &[ChangelogEntryKind::Renamed],
+        EntryConstructor::Bare(leaky),
+    );
     let written = Written {
         commission,
         ..changed_untitled()
@@ -582,6 +907,7 @@ async fn another_kind_appends_nothing(ports: &Ports, actor: &UserId, commission:
         &mut *unit,
         EntryRule::OnChange(gated),
         &written,
+        None,
         actor,
         Utc::now(),
     )

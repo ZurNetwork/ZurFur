@@ -337,6 +337,56 @@ async fn a_refused_act_never_calls_apply() {
     }
 }
 
+// The dry run answers each act as `act` would, and leaves the host as it found it: no apply,
+// no call.
+#[tokio::test]
+async fn the_dry_run_refuses_what_act_refuses_and_applies_nothing() {
+    let at = |depth| placed(&path_at_depth(depth), "folder", Level::Public);
+    let acts = || {
+        [
+            create(
+                placed("/user/alice/readme", "note", Level::Public),
+                born("inside", "folder", None),
+                Vec::new(),
+            ),
+            create(
+                at(2),
+                born("works", "folder", Some(Level::Public)),
+                Vec::new(),
+            )
+            .narrowed(),
+            create(at(8), born("ninth", "folder", None), Vec::new()),
+            act_of("folder", Shape::Change { node: at(3) }).retyped("commission"),
+            create(
+                at(2),
+                born("works", "folder", None),
+                vec![born("same", "folder", None), born("same", "folder", None)],
+            ),
+            create(at(2), born("works", "folder", None), Vec::new()),
+            act_of("folder", Shape::Change { node: at(3) }),
+        ]
+    };
+
+    for (dry, real) in acts().into_iter().zip(acts()) {
+        let mut host = host();
+
+        let dry_run = writer().dry_run(&host, &dry);
+
+        assert!(host.applied().is_empty(), "{dry:?}: the dry run applied it");
+        assert!(
+            host.calls().is_empty(),
+            "{dry:?}: the dry run called the host"
+        );
+        let written = writer().act(&mut host, real).await;
+        let acted = match written {
+            Ok(()) => Ok(()),
+            Err(WriteError::Refused(refusal)) => Err(refusal),
+            Err(WriteError::Host(_)) => panic!("{dry:?}: the fake host failed"),
+        };
+        assert_eq!(dry_run, acted, "{dry:?}");
+    }
+}
+
 impl Act<()> {
     /// This act with its parent narrowed to Private.
     fn narrowed(mut self) -> Self {

@@ -33,6 +33,7 @@ pub mod delete;
 pub(crate) mod den;
 pub mod files;
 pub mod invitations;
+pub mod lifecycle;
 pub mod markup;
 pub mod maturity;
 pub mod notes;
@@ -133,6 +134,12 @@ pub enum CommissionError {
     /// The commission stands Late — the system's word, not a participant's.
     #[error("Commission is late")]
     CommissionLate,
+    /// The lifecycle move goes where no move may go: into Draft or Disputed.
+    #[error("Lifecycle move refused")]
+    LifecycleMoveRefused,
+    /// The commission is Disputed, which holds what the act would change.
+    #[error("Commission is disputed")]
+    CommissionDisputed,
     /// The annotation failed [`Markup`](domain::elements::commission::Markup)'s
     /// numeric gate.
     #[error("Invalid markup")]
@@ -145,16 +152,14 @@ pub enum CommissionError {
 }
 
 impl From<CommissionRefusal> for CommissionError {
-    /// A commission rule's refusal as a commission answer. A refused lifecycle move and a
-    /// Disputed commission answer as an invalid state for now; nothing owed is the system's
-    /// skip, which no user act reaches, so reaching one is a store failure.
+    /// A commission rule's refusal as a commission answer, each by its own variant; nothing
+    /// owed is the system's skip, which no user act reaches, so reaching one is a store failure.
     fn from(refusal: CommissionRefusal) -> Self {
         match refusal {
             CommissionRefusal::NoDeadline => Self::NoDeadline,
             CommissionRefusal::CommissionLate => Self::CommissionLate,
-            CommissionRefusal::LifecycleMoveRefused | CommissionRefusal::CommissionDisputed => {
-                Self::InvalidStateRequested
-            }
+            CommissionRefusal::LifecycleMoveRefused => Self::LifecycleMoveRefused,
+            CommissionRefusal::CommissionDisputed => Self::CommissionDisputed,
             CommissionRefusal::NothingOwed => {
                 CommonError::Infrastructure(anyhow::Error::new(refusal)).into()
             }
@@ -234,12 +239,14 @@ pub(crate) async fn require_owner(
 
 impl From<DenWriteError> for CommissionError {
     /// The Den's write refusal as a commission answer: its one not-found is the commission's,
-    /// a role below the act's need is forbidden, and a refusal or a store failure is the
-    /// store's, its cause kept on `source()`.
+    /// a role below the act's need is forbidden, an act's own rule's refusal is that rule's
+    /// answer, and any other refusal or a store failure is the store's, its cause kept on
+    /// `source()`.
     fn from(refusal: DenWriteError) -> Self {
         match refusal {
             DenWriteError::NotFound => CommonError::commission_not_found().into(),
             DenWriteError::Forbidden => Self::InsufficientPermissions,
+            DenWriteError::Precondition(rule) => Self::from(rule),
             failure @ (DenWriteError::Refused(_) | DenWriteError::Store(_)) => {
                 CommonError::Infrastructure(anyhow::Error::new(failure)).into()
             }

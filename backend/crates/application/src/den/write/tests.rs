@@ -13,7 +13,7 @@ use domain::{
     elements::{
         commission::{
             ChangelogEntry, ChangelogEntryKind, CommissionId, CommissionRole, CommissionStanding,
-            LockedStanding,
+            CommissionState, LifecycleStep, LockedStanding,
         },
         did::Did,
         level::Level,
@@ -39,7 +39,7 @@ use crate::{
         gate::{DenApplied, DenRefusal},
         test_acts::{
             commission_path, create_act, hand_built_create, hand_built_create_of,
-            hand_built_rename, hand_built_rename_of, rename_act,
+            hand_built_rename, hand_built_rename_of, move_act, rename_act, state_at,
         },
     },
     test_world, transaction,
@@ -205,15 +205,26 @@ pub(super) async fn through_host(
     outcome
 }
 
-/// An Owner's grant on `commission` to `actor`, bound to `node`.
-fn owner_grant(actor: &UserId, commission: CommissionId, node: NodeId) -> Grant {
+/// An Owner's grant on `commission` to `actor`, bound to `node`, carrying `state`.
+fn owner_grant_with(
+    actor: &UserId,
+    commission: CommissionId,
+    node: NodeId,
+    state: CommissionState,
+) -> Grant {
     let kind = GrantKind::Existing {
         commission,
         role: CommissionRole::Owner,
         level: Level::Private,
         node,
+        state,
     };
     Grant::for_test(actor, kind)
+}
+
+/// An Owner's grant on `commission` to `actor`, bound to `node`, its state at Draft.
+fn owner_grant(actor: &UserId, commission: CommissionId, node: NodeId) -> Grant {
+    owner_grant_with(actor, commission, node, state_at(LifecycleStep::Draft))
 }
 
 /// An Owner's grant on `commission` to `actor`, bound to its stored node.
@@ -905,6 +916,188 @@ async fn an_archived_commission_refuses_nothing_yet() {
     assert_eq!(
         node_name(&*world.ports.database, old_sketch()).await,
         NEW_NAME
+    );
+}
+
+/// The lifecycle step `commission` holds.
+async fn step_of(ports: &Ports, commission: CommissionId) -> LifecycleStep {
+    let stored = ports
+        .commissions
+        .find(&commission)
+        .await
+        .expect("the store reads")
+        .expect("the commission is stored");
+    stored.lifecycle_step
+}
+
+/// `actor`'s move of `commission` to `to` through the Den's write.
+async fn move_by(
+    ports: &Ports,
+    actor: &UserId,
+    commission: CommissionId,
+    to: LifecycleStep,
+) -> Result<WriteResult, DenWriteError> {
+    write(ports, actor, move_act(commission, to)).await
+}
+
+/// `actor`'s move of `commission` to `to` through the move use case, which hands its act to
+/// the Den's write and holds no unit of its own.
+async fn move_through_the_use_case(
+    ports: &Ports,
+    actor: &UserId,
+    commission: CommissionId,
+    to: LifecycleStep,
+) -> Result<(), crate::commission::CommissionError> {
+    let command = crate::commission::lifecycle::move_to::Command {
+        actor_id: actor.clone(),
+        commission_id: commission,
+        to,
+    };
+    Commissions::new(ports)
+        .lifecycle()
+        .move_to(command, Utc::now())
+        .await?;
+    Ok(())
+}
+
+/// `actor`'s move of `commission`, held at Active, to Completed under a grant whose state says
+/// Draft: the rule checks a move from Draft, the compare-and-set matches no row, and the act
+/// fails, leaving the step and the entries as they were.
+async fn a_stale_move_fails(ports: &Ports, actor: &UserId, commission: CommissionId) {
+    let database = &*ports.database;
+    let before = entries(ports, commission).await.len();
+    let node = node_of(database, commission).await;
+    let stale = owner_grant_with(actor, commission, node, state_at(LifecycleStep::Draft));
+    let act = move_act(commission, LifecycleStep::Completed);
+
+    let moved = transaction(database, async move |uow: &mut dyn UnitOfWork| {
+        let result = written(uow, stale, act, Utc::now()).await?;
+        Ok(result)
+    })
+    .await;
+
+    assert!(moved.is_err(), "{moved:?}");
+    assert_eq!(step_of(ports, commission).await, LifecycleStep::Active);
+    assert_eq!(entries(ports, commission).await.len(), before);
+}
+
+// A grant whose state is stale checks a move from a step the row no longer holds: the
+// compare-and-set matches no row, so the act fails and nothing lands.
+#[tokio::test]
+async fn a_stale_from_matches_no_row_and_fails_the_act() {
+    let world = world().await;
+    world
+        .backend
+        .seed_lifecycle_step(untitled(), LifecycleStep::Active);
+
+    a_stale_move_fails(&world.ports, &alice(), untitled()).await;
+}
+
+#[tokio::test]
+async fn a_stale_from_matches_no_row_and_fails_the_act_on_postgres() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let (owner, commission) = pg_seed(&ports, "did:plc:den-write-pg-stale").await;
+    move_by(&ports, &owner, commission, LifecycleStep::Active)
+        .await
+        .expect("the owner moves it to Active");
+
+    a_stale_move_fails(&ports, &owner, commission).await;
+}
+
+/// `actor`'s move of `commission` from Draft to Active through the move use case on `ports`, its
+/// units recorded: one unit, committed, holding the new step and exactly one `lifecycle_moved`
+/// entry.
+async fn one_entry_in_the_move_s_unit(ports: &mut Ports, actor: &UserId, commission: CommissionId) {
+    let before = kinds(ports, commission).await;
+    let log = record_units(ports);
+
+    move_through_the_use_case(ports, actor, commission, LifecycleStep::Active)
+        .await
+        .expect("the move lands");
+
+    let after = kinds(ports, commission).await;
+    let (kept, added) = after.split_at(before.len());
+    assert_eq!(log.events(), ["begin", "commit"]);
+    assert_eq!(kept, before.as_slice());
+    assert_eq!(added, [ChangelogEntryKind::LifecycleMoved]);
+    assert_eq!(step_of(ports, commission).await, LifecycleStep::Active);
+}
+
+// A field act's write and its one entry land in the act's one unit.
+#[tokio::test]
+async fn each_field_act_writes_one_entry_in_its_unit() {
+    let mut world = world().await;
+
+    one_entry_in_the_move_s_unit(&mut world.ports, &bob(), untitled()).await;
+}
+
+#[tokio::test]
+async fn each_field_act_writes_one_entry_in_its_unit_on_postgres() {
+    let pg = pg_runtime().await;
+    let mut ports = Ports::from(&pg.runtime);
+    let (owner, commission) = pg_seed(&ports, "did:plc:den-write-pg-field-entry").await;
+
+    one_entry_in_the_move_s_unit(&mut ports, &owner, commission).await;
+}
+
+// The move's entry can't be appended: the act's unit rolls back whole, so the step isn't moved.
+#[tokio::test]
+async fn a_refused_append_leaves_the_field_unwritten() {
+    let mut world = world().await;
+    let refusing = RefusingChangelogDatabase(world.ports.database.clone());
+    world.ports.database = Arc::new(refusing);
+
+    let moved =
+        move_through_the_use_case(&world.ports, &bob(), untitled(), LifecycleStep::Active).await;
+
+    assert!(moved.is_err(), "{moved:?}");
+    assert_eq!(
+        step_of(&world.ports, untitled()).await,
+        LifecycleStep::Draft
+    );
+}
+
+// A move to the step the commission holds lands, writes nothing and records nothing.
+#[tokio::test]
+async fn an_unchanged_value_writes_no_entry() {
+    let world = world().await;
+    let before = kinds(&world.ports, untitled()).await;
+
+    move_by(&world.ports, &bob(), untitled(), LifecycleStep::Draft)
+        .await
+        .expect("a move to the held step lands");
+
+    assert_eq!(kinds(&world.ports, untitled()).await, before);
+    assert_eq!(
+        step_of(&world.ports, untitled()).await,
+        LifecycleStep::Draft
+    );
+}
+
+// On PostgreSQL, a move to the held step runs no lifecycle write and appends nothing.
+#[tokio::test]
+async fn an_unchanged_value_writes_no_entry_on_postgres() {
+    let statements = StatementLog::default();
+    let pg = pg_runtime_recording(&statements).await;
+    let ports = Ports::from(&pg.runtime);
+    let (owner, commission) = pg_seed(&ports, "did:plc:den-write-pg-held-step").await;
+    let mark = statements.mark();
+
+    move_by(&ports, &owner, commission, LifecycleStep::Draft)
+        .await
+        .expect("a move to the held step lands");
+
+    let written: Vec<&str> = statements
+        .since(mark)
+        .iter()
+        .filter_map(|statement| statement.query_name())
+        .filter(|name| *name == "commission/set_lifecycle" || name.starts_with("changelog/"))
+        .collect();
+    assert_eq!(written, Vec::<&str>::new());
+    assert_eq!(
+        kinds(&ports, commission).await,
+        [ChangelogEntryKind::Created]
     );
 }
 

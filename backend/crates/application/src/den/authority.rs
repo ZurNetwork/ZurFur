@@ -6,7 +6,7 @@ use std::fmt;
 
 use domain::{
     elements::{
-        commission::{CommissionId, CommissionRole},
+        commission::{CommissionId, CommissionRole, CommissionState},
         level::Level,
         node::NodeId,
         user::UserId,
@@ -24,12 +24,12 @@ use crate::{
     },
 };
 
-/// What a grant leaves its actor to write: an existing commission in a role, or a new one
-/// under an id the den minted.
-#[derive(Debug, PartialEq, Eq)]
+/// What a grant leaves its actor to write: an existing commission in a role, with the facts
+/// its rules read, or a new one under an id the den minted.
+#[derive(Debug, PartialEq)]
 pub(in crate::den) enum GrantKind {
     /// An existing commission, held in `role`, at the level the locked read answered, bound
-    /// to the node that read joined.
+    /// to the node that read joined, with its stored state as the unit read it under the lock.
     Existing {
         /// The commission.
         commission: CommissionId,
@@ -39,6 +39,8 @@ pub(in crate::den) enum GrantKind {
         level: Level,
         /// The node it points at, from the locked read: the only node its walk may land on.
         node: NodeId,
+        /// Its stored state, read in the unit after the lock: what each act's rule reads.
+        state: CommissionState,
     },
     /// A commission not made yet, under the id the den minted.
     Create {
@@ -87,6 +89,16 @@ impl Grant {
                 role: held,
                 ..
             } => (held >= role).then_some(commission),
+            GrantKind::Create { .. } => None,
+        }
+    }
+
+    /// The existing commission's stored state, when the actor holds `role` or above on it.
+    pub(in crate::den) fn state_at_least(&self, role: CommissionRole) -> Option<&CommissionState> {
+        match &self.kind {
+            GrantKind::Existing {
+                role: held, state, ..
+            } => (*held >= role).then_some(state),
             GrantKind::Create { .. } => None,
         }
     }
@@ -189,8 +201,9 @@ pub(in crate::den) async fn admit(
 }
 
 /// The grant for `spec`, made inside the unit from the locked standing, under the same rules as
-/// [`admit`]: a standing lost since the pool read answers as the pool would have. A create's
-/// grant names an id minted here, never one from the act.
+/// [`admit`]: a standing lost since the pool read answers as the pool would have. An existing
+/// commission's grant carries its state, read on the unit's connection after the lock, so it
+/// is the locked row's latest. A create's grant names an id minted here, never one from the act.
 pub(in crate::den) async fn grant(
     unit: Unit<'_>,
     spec: &ActSpec,
@@ -216,11 +229,17 @@ pub(in crate::den) async fn grant(
             let Some(locked) = locked else {
                 return Err(broken("a granted standing holds no node"));
             };
+            let stored = unit
+                .commissions()
+                .find(&commission)
+                .await?
+                .ok_or_else(|| broken("a granted commission has no row"))?;
             let kind = GrantKind::Existing {
                 commission,
                 role: facts.role,
                 level: facts.level,
                 node: locked.node,
+                state: CommissionState::from(&stored),
             };
             Ok(Grant::granted(actor, kind))
         }

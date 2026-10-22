@@ -8,14 +8,14 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            Band, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
-            CommissionFile, CommissionId, CommissionMarkup, CommissionRole, CommissionStanding,
-            CommissionStart, CommissionSummary, DeadlineStatus, DirectionStatus, ElementId,
-            ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel,
-            LapsedDeadline, LifecycleStep, LockedStanding, Markup, MarkupKey, NewCommission,
-            NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind,
-            SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow,
-            VisibilityMode, declared_tabs, declares_surface,
+            AsParticipant, Band, ChannelPointer, Commission, CommissionBirth,
+            CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionRole,
+            CommissionStanding, CommissionStart, CommissionSummary, DeadlineStatus,
+            DirectionStatus, ElementId, ElementPayload, ElementRow, ElementType, FileKey,
+            FileSummary, GrantLevel, LapsedDeadline, LifecycleMove, LifecycleStep, LockedStanding,
+            Markup, MarkupKey, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
+            SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName,
+            TabId, TabName, TabRow, VisibilityMode, declared_tabs, declares_surface,
         },
         did::Did,
         invitation::InvitationState,
@@ -227,6 +227,24 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         )
         .await?;
         Ok(())
+    }
+
+    /// Moves `commission.lifecycle` to `change`'s new step only while the row still holds its
+    /// held step; `true` only when exactly one row changed.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn set_lifecycle(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &LifecycleMove,
+    ) -> anyhow::Result<bool> {
+        let affected = sql::set_lifecycle(
+            &mut *self.conn,
+            uuid::Uuid::from(*capability.thing()),
+            <&'static str>::from(change.after()),
+            <&'static str>::from(change.before()),
+        )
+        .await?;
+        Ok(affected == 1)
     }
 
     /// Contributes one element into a declared surface behind

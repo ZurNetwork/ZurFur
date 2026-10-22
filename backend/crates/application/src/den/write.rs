@@ -7,7 +7,7 @@ use std::fmt;
 use atta::{Act, ActName, Born, Placed, RealPath, Shape, WriteCaps, WriteError, Writer};
 use domain::{
     datetime::DateTimeUtc,
-    elements::{level::Level, user::UserId},
+    elements::{commission::CommissionRefusal, level::Level, user::UserId},
     ports::Unit,
 };
 
@@ -93,14 +93,14 @@ fn refusal_class(refusal: atta::Refusal) -> RefusalClass {
     }
 }
 
-impl From<DenRefusal> for RefusalClass {
-    /// The gate's refusal under the den's word for it.
-    fn from(refusal: DenRefusal) -> Self {
-        match refusal {
-            DenRefusal::WrongGrant => Self::WrongGrant,
-            DenRefusal::WiderThanPrivate => Self::WiderThanPrivate,
-            DenRefusal::SegmentTaken => Self::SegmentTaken,
-        }
+/// The gate's refusal as the write's error: an act's own rule's refusal as itself, the gate's
+/// own by the den's word for it. A function, not `From`: one refusal maps to two variants.
+fn gate_refusal(refusal: DenRefusal) -> DenWriteError {
+    match refusal {
+        DenRefusal::WrongGrant => DenWriteError::Refused(RefusalClass::WrongGrant),
+        DenRefusal::WiderThanPrivate => DenWriteError::Refused(RefusalClass::WiderThanPrivate),
+        DenRefusal::SegmentTaken => DenWriteError::Refused(RefusalClass::SegmentTaken),
+        DenRefusal::Precondition(refusal) => DenWriteError::Precondition(refusal),
     }
 }
 
@@ -117,6 +117,9 @@ pub(crate) enum DenWriteError {
     /// Atta or the gate refused the act.
     #[error("the den refused the act")]
     Refused(RefusalClass),
+    /// The act's own domain rule refused it, on the facts its grant read.
+    #[error("the act's rule refused it")]
+    Precondition(CommissionRefusal),
     /// A store behind the Den failed, or the den broke one of its own rules.
     #[error("the den could not be written")]
     Store(#[from] anyhow::Error),
@@ -168,7 +171,8 @@ fn born_entry(entry: BornEntry) -> Result<Born, DenWriteError> {
 }
 
 /// The den's one builder of Atta's act: every path from the grant's typed ids, an existing
-/// node's level from the locked read, a create's key from the id the grant minted.
+/// node's level from the locked read, a create's key from the id the grant minted; a field act
+/// is a change on the granted commission's node.
 fn build(spec: ActSpec, body: DenAct, grant: &Grant) -> Result<Act<DenAct>, DenWriteError> {
     let ActSpec {
         word,
@@ -213,6 +217,9 @@ fn build(spec: ActSpec, body: DenAct, grant: &Grant) -> Result<Act<DenAct>, DenW
         ActShape::Rename { name } => Shape::Rename {
             node: granted_node(grant, den_type)?,
             name: names::display_name(&name),
+        },
+        ActShape::Change => Shape::Change {
+            node: granted_node(grant, den_type)?,
         },
     };
     let act = Act {
@@ -271,7 +278,7 @@ pub(in crate::den) async fn written(
         .act(&mut host, atta_act)
         .await
         .map_err(write_error)?
-        .map_err(|refusal| DenWriteError::Refused(RefusalClass::from(refusal)))?;
+        .map_err(gate_refusal)?;
     answer(applied)
 }
 

@@ -2,7 +2,9 @@
 //! hold its seams: the write capability's surface, its one definition and its one issuer across
 //! the workspace and the issuer's callers in the den, every act's entry rule naming one gated
 //! entry written out and no two the same, the gated entries built only in the act file, each
-//! with a kind and a constructor of its own, the lent view's surface and its latch,
+//! with a constructor of its own (two may build one kind), each act's lent view holding its one
+//! write and every act's only the read, each view write calling its own port method with the
+//! capability and the stored change, the lent view's surface and its latch,
 //! nothing else in the gate file reaching the lent view's fields, no compiled source the scans
 //! can't read, the write host and the gate named once each, the write use case kept inside the
 //! crate, nothing of it (and no raw SQL or in-memory seeder) in a driver, no lint silencer in
@@ -1206,10 +1208,15 @@ const ENTRY_RULE_VARIANTS: [&str; 2] = ["Always", "OnChange"];
 const HANDLER_TRAIT: &str = "trait Handler";
 
 /// The gated entries today's acts name, each by its file.
-const NAMED_GATED_ENTRIES: [(&str, &str); 2] = [
+const NAMED_GATED_ENTRIES: [(&str, &str); 3] = [
     ("commission/create.rs", "CREATED"),
+    ("commission/lifecycle/move_to.rs", "LIFECYCLE_MOVED"),
     ("commission/rename.rs", "RENAMED"),
 ];
+
+/// The variants a gated entry's constructor is written out under: one takes no change, one
+/// the act's checked change.
+const CONSTRUCTOR_VARIANTS: [&str; 2] = ["Bare", "Change"];
 
 /// The use-case layer's production sources, each with its path relative to its `src`.
 fn application_sources() -> Vec<(String, String)> {
@@ -1316,13 +1323,18 @@ fn entry_item(item: &[TokenTree]) -> Result<EntryItem, String> {
     if !typed || !ends {
         return Err(shown());
     }
-    if item.len() == 5 {
+    let past_type = if punct_at(item, 4, '<') {
+        past_generics(item, 4)
+    } else {
+        4
+    };
+    if past_type == item.len() - 1 {
         return Ok(EntryItem::Declared);
     }
-    if !punct_at(item, 4, '=') {
+    if !punct_at(item, past_type, '=') {
         return Err(shown());
     }
-    named_gated_entry(&item[5..item.len() - 1])
+    named_gated_entry(&item[past_type + 1..item.len() - 1])
         .map(EntryItem::Names)
         .ok_or_else(shown)
 }
@@ -1384,10 +1396,10 @@ fn entry_rule_scan(files: &[(String, String)]) -> (Vec<(String, String)>, Vec<St
 }
 
 /// What breaks the gated entries' definitions in [`ACT_FILE`]: an associated const of an
-/// inherent impl of [`GATED_ENTRY`] not written out as `Self { kind: ChangelogEntryKind::K,
-/// constructor: NewChangelogEntry::c }`, and two consts sharing a kind or a constructor.
+/// inherent impl of [`GATED_ENTRY`] not written out as `Self { kinds: &[ChangelogEntryKind::K,
+/// …], constructor: EntryConstructor::Bare(NewChangelogEntry::c) }` (or `::Change(…)`), and
+/// two consts sharing a constructor. Two constructors may build one kind.
 fn gated_definition_findings(act: &syn::File) -> Vec<String> {
-    let mut kinds: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut constructors: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut out = Vec::new();
     for item in every_item(&act.items) {
@@ -1402,19 +1414,18 @@ fn gated_definition_findings(act: &syn::File) -> Vec<String> {
                 continue;
             };
             let name = constant.ident.to_string();
-            let Some((kind, constructor)) = gated_fields(&constant.expr) else {
+            let Some((_, constructor)) = gated_fields(&constant.expr) else {
                 out.push(format!("`{GATED_ENTRY}::{name}` is not written out"));
                 continue;
             };
-            kinds.entry(kind).or_default().push(name.clone());
             constructors.entry(constructor).or_default().push(name);
         }
     }
-    for (what, shared) in [("kind", kinds), ("constructor", constructors)] {
-        for (value, names) in shared {
-            if names.len() > 1 {
-                out.push(format!("the {what} `{value}` is shared by {names:?}"));
-            }
+    for (constructor, names) in constructors {
+        if names.len() > 1 {
+            out.push(format!(
+                "the constructor `{constructor}` is shared by {names:?}"
+            ));
         }
     }
     out
@@ -1444,9 +1455,44 @@ fn two_segment_path(expr: &syn::Expr, prefix: &str) -> Option<String> {
     }
 }
 
-/// The kind and the constructor a gated entry's const is written out with:
-/// `Self { kind: ChangelogEntryKind::K, constructor: NewChangelogEntry::c }`, nothing else.
-fn gated_fields(expr: &syn::Expr) -> Option<(String, String)> {
+/// The kinds a gated entry's const names: `&[ChangelogEntryKind::K, …]`, one or more, each
+/// written out; `None` for anything else.
+fn written_out_kinds(expr: &syn::Expr) -> Option<Vec<String>> {
+    let syn::Expr::Reference(reference) = expr else {
+        return None;
+    };
+    let syn::Expr::Array(array) = &*reference.expr else {
+        return None;
+    };
+    let kinds: Vec<String> = array
+        .elems
+        .iter()
+        .map(|kind| two_segment_path(kind, "ChangelogEntryKind"))
+        .collect::<Option<_>>()?;
+    let plain = reference.mutability.is_none() && !kinds.is_empty();
+    plain.then_some(kinds)
+}
+
+/// The domain constructor a gated entry's const names: `EntryConstructor::Bare(NewChangelogEntry::c)`
+/// or `EntryConstructor::Change(NewChangelogEntry::c)`; `None` for anything else.
+fn written_out_constructor(expr: &syn::Expr) -> Option<String> {
+    let syn::Expr::Call(call) = expr else {
+        return None;
+    };
+    let variant = two_segment_path(&call.func, "EntryConstructor")?;
+    let [argument] = call.args.iter().collect::<Vec<_>>()[..] else {
+        return None;
+    };
+    let named = CONSTRUCTOR_VARIANTS.contains(&variant.as_str());
+    named
+        .then(|| two_segment_path(argument, "NewChangelogEntry"))
+        .flatten()
+}
+
+/// The kinds and the constructor a gated entry's const is written out with:
+/// `Self { kinds: &[ChangelogEntryKind::K, …], constructor: EntryConstructor::Bare(NewChangelogEntry::c) }`
+/// (or `::Change(…)`), nothing else.
+fn gated_fields(expr: &syn::Expr) -> Option<(Vec<String>, String)> {
     let syn::Expr::Struct(literal) = expr else {
         return None;
     };
@@ -1463,20 +1509,20 @@ fn gated_fields(expr: &syn::Expr) -> Option<(String, String)> {
         && literal.dot2_token.is_none()
         && fields.len() == 2
         && literal.fields.len() == 2;
-    let [(kind_field, kind), (constructor_field, constructor)] = fields.as_slice() else {
+    let [(kinds_field, kinds), (constructor_field, constructor)] = fields.as_slice() else {
         return None;
     };
-    let named = kind_field == "kind" && constructor_field == "constructor";
+    let named = kinds_field == "kinds" && constructor_field == "constructor";
     if !plain || !named {
         return None;
     }
-    let kind = two_segment_path(kind, "ChangelogEntryKind")?;
-    let constructor = two_segment_path(constructor, "NewChangelogEntry")?;
-    Some((kind, constructor))
+    let kinds = written_out_kinds(kinds)?;
+    let constructor = written_out_constructor(constructor)?;
+    Some((kinds, constructor))
 }
 
 #[test]
-fn an_act_names_a_gated_entry_and_only_the_act_file_builds_one() {
+fn each_act_names_one_gated_entry_and_constructors_are_unique() {
     let files = application_sources();
 
     let literals = gated_literal_findings(&files);
@@ -1490,7 +1536,36 @@ fn an_act_names_a_gated_entry_and_only_the_act_file_builds_one() {
         .iter()
         .map(|(file, name)| ((*file).to_owned(), (*name).to_owned()))
         .collect();
-    assert_eq!(named, expected, "the scan reads today's two acts");
+    assert_eq!(named, expected, "the scan reads today's three acts");
+    let act_source =
+        std::fs::read_to_string(application_src().join(ACT_FILE)).expect("the act file reads");
+    let shares_a_constructor = act_source.replacen(
+        "        constructor: EntryConstructor::Change(NewChangelogEntry::lifecycle_moved),",
+        "        constructor: EntryConstructor::Bare(NewChangelogEntry::renamed),",
+        1,
+    );
+    assert_ne!(shares_a_constructor, act_source, "the plant takes");
+    let shared = gated_definition_findings(
+        &syn::parse_file(&shares_a_constructor).expect("the planted act file parses"),
+    );
+    assert_eq!(
+        shared,
+        ["the constructor `renamed` is shared by [\"RENAMED\", \"LIFECYCLE_MOVED\"]"]
+    );
+    let shares_a_kind = act_source.replacen(
+        "        kinds: &[ChangelogEntryKind::LifecycleMoved],",
+        "        kinds: &[ChangelogEntryKind::LifecycleMoved, ChangelogEntryKind::Renamed],",
+        1,
+    );
+    assert_ne!(shares_a_kind, act_source, "the plant takes");
+    let kind_shared = gated_definition_findings(
+        &syn::parse_file(&shares_a_kind).expect("the planted act file parses"),
+    );
+    assert_eq!(
+        kind_shared,
+        Vec::<String>::new(),
+        "two constructors may build one kind"
+    );
 }
 
 /// A fixture act file: a handler of `act` whose entry rule is `entry`.
@@ -1613,20 +1688,40 @@ fn the_entry_rule_scans_refuse_each_planted_shape() {
         std::fs::read_to_string(application_src().join(ACT_FILE)).expect("the act file reads");
     let definition_plants = [
         (
-            "        constructor: NewChangelogEntry::renamed,",
-            "        constructor: NewChangelogEntry::created,",
-        ),
-        (
-            "        kind: ChangelogEntryKind::Renamed,",
-            "        kind: ChangelogEntryKind::Created,",
+            "        constructor: EntryConstructor::Bare(NewChangelogEntry::renamed),",
+            "        constructor: EntryConstructor::Bare(NewChangelogEntry::created),",
         ),
         (
             "    pub(crate) const RENAMED: Self = Self {",
             "    pub(crate) const ALSO_CREATED: Self = Self::CREATED;\n\n    pub(crate) const RENAMED: Self = Self {",
         ),
         (
+            "        constructor: EntryConstructor::Bare(NewChangelogEntry::renamed),",
+            "        constructor: EntryConstructor::Bare(|c, a, t| NewChangelogEntry::renamed(c, a, t)),",
+        ),
+        (
+            "        constructor: EntryConstructor::Bare(NewChangelogEntry::renamed),",
+            "        constructor: EntryConstructor::Leaky(NewChangelogEntry::renamed),",
+        ),
+        (
+            "        constructor: EntryConstructor::Bare(NewChangelogEntry::renamed),",
             "        constructor: NewChangelogEntry::renamed,",
-            "        constructor: |c, a, t| NewChangelogEntry::renamed(c, a, t),",
+        ),
+        (
+            "        kinds: &[ChangelogEntryKind::Renamed],",
+            "        kinds: &[],",
+        ),
+        (
+            "        kinds: &[ChangelogEntryKind::Renamed],",
+            "        kinds: RENAMED_KINDS,",
+        ),
+        (
+            "        kinds: &[ChangelogEntryKind::Renamed],",
+            "        kinds: &[ChangelogEntryKind::Renamed, crate::Kind::Created],",
+        ),
+        (
+            "impl GatedEntry<LifecycleMove> {",
+            "impl GatedEntry<LifecycleMove> {\n    pub(crate) const MOVED_AGAIN: Self = Self {\n        kinds: &[ChangelogEntryKind::Renamed],\n        constructor: EntryConstructor::Change(NewChangelogEntry::lifecycle_moved),\n    };\n",
         ),
     ];
     for (from, to) in definition_plants {
@@ -1654,8 +1749,43 @@ const VIEW: &str = "view";
 /// The latch's one method.
 const PASS: &str = "pass";
 
-/// The role an inherent impl on the lent view is for: its self type's role argument, or
-/// "every role" when that argument is the impl's own type parameter.
+/// What a generic impl on the lent view or its inner view is for: every act.
+const EVERY_ACT: &str = "every act";
+
+/// The one method a generic impl on the lent view or its inner view may hold: the read.
+const LENT_READ: &str = "lent";
+
+/// Each act with a write, as the gate file writes its type, and the one write its view holds,
+/// which calls the commission repo's method of the same name and nothing else.
+const ACT_WRITES: [(&str, &str); 2] =
+    [("create::Act", "create"), ("move_to::Act", "set_lifecycle")];
+
+/// The modules the gate file must import each act's module from, so `create::Act` and
+/// `move_to::Act` name the acts they say.
+const ACT_MODULE_HOMES: [(&str, &str); 2] = [
+    ("create", "crate::commission"),
+    ("move_to", "crate::commission::lifecycle"),
+];
+
+/// A type as written, its path's segments joined by `::`, generic arguments left out:
+/// `create::Act` for `create::Act`; the type's tokens for anything but a plain path.
+fn type_path(typ: &Type) -> String {
+    let Type::Path(path) = typ else {
+        return typ.to_token_stream().to_string();
+    };
+    if path.qself.is_some() || path.path.leading_colon.is_some() {
+        return typ.to_token_stream().to_string();
+    }
+    path.path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.unraw().to_string())
+        .collect::<Vec<String>>()
+        .join("::")
+}
+
+/// The act an inherent impl on the lent view (or its inner view) is for: its self type's act
+/// argument as written, or [`EVERY_ACT`] when that argument is the impl's own type parameter.
 fn lent_role(implementation: &syn::ItemImpl) -> String {
     let Type::Path(path) = &*implementation.self_ty else {
         return "an unnamed type".to_owned();
@@ -1664,22 +1794,117 @@ fn lent_role(implementation: &syn::ItemImpl) -> String {
         return "an unnamed type".to_owned();
     };
     let syn::PathArguments::AngleBracketed(arguments) = &last.arguments else {
-        return "no role".to_owned();
+        return "no act".to_owned();
     };
     let parameters: BTreeSet<String> = implementation
         .generics
         .type_params()
         .map(|parameter| parameter.ident.to_string())
         .collect();
-    let role = arguments.args.iter().find_map(|argument| match argument {
-        syn::GenericArgument::Type(role) => Some(type_name(role)),
+    let act = arguments.args.iter().find_map(|argument| match argument {
+        syn::GenericArgument::Type(act) => Some(type_path(act)),
         _ => None,
     });
-    match role {
-        Some(role) if parameters.contains(&role) => "every role".to_owned(),
-        Some(role) => role,
-        None => "no role".to_owned(),
+    match act {
+        Some(act) if parameters.contains(&act) => EVERY_ACT.to_owned(),
+        Some(act) => act,
+        None => "no act".to_owned(),
     }
+}
+
+/// Each method of an inherent impl on one of `views` (the lent view or its inner view, under any
+/// alias) in `file`, inline modules included, with the act its impl is for.
+fn view_methods(file: &syn::File, views: &BTreeSet<String>) -> Vec<(String, String)> {
+    every_item(&file.items)
+        .into_iter()
+        .filter_map(|item| match item {
+            Item::Impl(implementation)
+                if views.contains(&type_name(&implementation.self_ty))
+                    && implementation.trait_.is_none() =>
+            {
+                Some(implementation)
+            }
+            _ => None,
+        })
+        .flat_map(|implementation| {
+            let act = lent_role(implementation);
+            implementation
+                .items
+                .iter()
+                .filter_map(move |impl_item| match impl_item {
+                    ImplItem::Fn(method) => Some((method.sig.ident.to_string(), act.clone())),
+                    _ => None,
+                })
+        })
+        .collect()
+}
+
+/// What breaks the one-write-per-act pin for the methods `methods` (each with the act its impl
+/// is for): a generic impl holding anything but [`LENT_READ`], an act's impl holding anything
+/// but its one write from [`ACT_WRITES`], an impl for an act the table doesn't name, and a
+/// table act whose write is missing or held twice.
+fn one_write_findings(methods: &[(String, String)], view: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut held: BTreeMap<&str, usize> = BTreeMap::new();
+    for (method, act) in methods {
+        if act == EVERY_ACT {
+            if method != LENT_READ {
+                out.push(format!("a generic `{view}` impl holds `{method}`"));
+            }
+            continue;
+        }
+        let Some((table_act, write)) = ACT_WRITES.iter().find(|(table_act, _)| table_act == act)
+        else {
+            out.push(format!(
+                "`{view}` holds `{method}` for an act with no write: {act}"
+            ));
+            continue;
+        };
+        if method != write {
+            out.push(format!(
+                "`{view}<{act}>` holds `{method}`, not its write `{write}`"
+            ));
+            continue;
+        }
+        *held.entry(table_act).or_default() += 1;
+    }
+    for (act, write) in ACT_WRITES {
+        let count = held.get(act).copied().unwrap_or_default();
+        if count != 1 {
+            out.push(format!(
+                "`{view}<{act}>` holds its write `{write}` {count} times"
+            ));
+        }
+    }
+    let reads = methods
+        .iter()
+        .filter(|(method, act)| act == EVERY_ACT && method == LENT_READ)
+        .count();
+    if reads != 1 {
+        out.push(format!(
+            "`{view}` holds `{LENT_READ}` for every act {reads} times"
+        ));
+    }
+    out
+}
+
+/// What breaks the gate file's imports of the acts' modules: each of [`ACT_MODULE_HOMES`] bound
+/// once, by a `use` of its home.
+fn act_module_findings(file: &syn::File) -> Vec<String> {
+    let imported = imports(file);
+    ACT_MODULE_HOMES
+        .iter()
+        .filter_map(|(module, home)| {
+            let from: Vec<&str> = imported
+                .iter()
+                .filter(|(name, _)| name == module)
+                .map(|(_, path)| path.as_str())
+                .collect();
+            (from != [*home]).then(|| {
+                format!("the gate file imports `{module}` from {from:?}, not once from `{home}`")
+            })
+        })
+        .collect()
 }
 
 /// Every item in `items` and in each inline module among them, at any depth.
@@ -1756,17 +1981,13 @@ fn lent_surface(file: &syn::File) -> (Vec<(String, String)>, Vec<String>) {
     (methods, out)
 }
 
-/// What breaks the lent view's pinned surface in `file`: `create` for a creator's view, `lent`
-/// for every role's, and nothing else.
+/// What breaks the lent view's pinned surface in `file`: each act's view holds its one write
+/// from [`ACT_WRITES`], every act's holds `lent`, and nothing else; and the acts' modules are
+/// imported from their homes.
 fn lent_surface_findings(file: &syn::File) -> Vec<String> {
     let (methods, mut out) = lent_surface(file);
-    let pinned = [
-        ("create".to_owned(), "Creator".to_owned()),
-        ("lent".to_owned(), "every role".to_owned()),
-    ];
-    if methods != pinned {
-        out.push(format!("the methods and their roles are {methods:?}"));
-    }
+    out.extend(one_write_findings(&methods, LENT));
+    out.extend(act_module_findings(file));
     out
 }
 
@@ -1803,7 +2024,7 @@ fn lent_impls_elsewhere() -> Vec<String> {
 }
 
 #[test]
-fn the_lent_view_s_surface_is_create_and_lent() {
+fn each_lent_view_holds_its_act_s_one_write() {
     let gate = parse(&application_src().join(GATE_FILE));
 
     let findings = lent_surface_findings(&gate);
@@ -1811,39 +2032,61 @@ fn the_lent_view_s_surface_is_create_and_lent() {
 
     assert_eq!(findings, Vec::<String>::new());
     assert_eq!(elsewhere, Vec::<String>::new());
+    let (methods, _) = lent_surface(&gate);
+    let expected: Vec<(String, String)> = [
+        ("create", "create::Act"),
+        ("set_lifecycle", "move_to::Act"),
+        (LENT_READ, EVERY_ACT),
+    ]
+    .iter()
+    .map(|(method, act)| ((*method).to_owned(), (*act).to_owned()))
+    .collect();
+    assert_eq!(methods, expected, "the scan reads every lent method");
     let source =
         std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
     let widened = format!("{WIDENED_MODULE}{AFTER_THE_LENT_VIEW}");
     let broken = [
         (
-            "impl<R: RoleTable> Lent<'_, R> {",
-            "impl<R: RoleTable> Lent<'_, R> {\n    pub(crate) async fn grant_view(&mut self) -> anyhow::Result<()> {\n        self.latch.pass(self.view.grant_view().await)\n    }\n",
+            "    view: View<'a, H>,",
+            "    pub(crate) view: View<'a, H>,",
         ),
         (
-            "    view: View<'a, R>,",
-            "    pub(crate) view: View<'a, R>,",
+            "pub(crate) struct Lent<'a, H: Handler> {",
+            "#[derive(Default)]\npub(crate) struct Lent<'a, H: Handler> {",
         ),
         (
-            "pub(crate) struct Lent<'a, R: RoleTable> {",
-            "#[derive(Default)]\npub(crate) struct Lent<'a, R: RoleTable> {",
-        ),
-        ("impl Lent<'_, Creator> {", "impl Lent<'_, AsOwner> {"),
-        (
-            "impl Lent<'_, Creator> {",
-            "impl<R: RoleTable> std::ops::Deref for Lent<'_, R> {\n    type Target = Box<dyn CommissionRepo>;\n    fn deref(&self) -> &Self::Target {\n        &self.view.repo\n    }\n}\n\nimpl Lent<'_, Creator> {",
+            "impl Lent<'_, create::Act> {",
+            "impl Lent<'_, rename::Act> {",
         ),
         (
-            "impl Lent<'_, Creator> {",
-            "impl Lent<'_, AsOwner> {\n    pub(crate) async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {\n        self.latch.pass(self.view.create(commission).await)\n    }\n}\n\nimpl Lent<'_, Creator> {",
+            "impl Lent<'_, move_to::Act> {",
+            "impl Lent<'_, create::Act> {",
+        ),
+        (
+            "impl Lent<'_, create::Act> {",
+            "impl<H: Handler> std::ops::Deref for Lent<'_, H> {\n    type Target = Box<dyn CommissionRepo>;\n    fn deref(&self) -> &Self::Target {\n        &self.view.repo\n    }\n}\n\nimpl Lent<'_, create::Act> {",
+        ),
+        (
+            "impl Lent<'_, create::Act> {",
+            "impl Lent<'_, rename::Act> {\n    pub(crate) async fn create(&mut self) -> anyhow::Result<()> {\n        self.latch.pass(self.view.create().await)\n    }\n}\n\nimpl Lent<'_, create::Act> {",
+        ),
+        (
+            "impl Lent<'_, move_to::Act> {",
+            "impl Lent<'_, move_to::Act> {\n    pub(crate) async fn set_deadline(&mut self) -> anyhow::Result<()> {\n        self.latch.pass(self.view.set_deadline().await)\n    }\n",
+        ),
+        ("impl Lent<'_, move_to::Act> {", "impl Lent<'_, Move> {"),
+        (
+            "    commission::{act::CommissionAct, create, lifecycle::move_to, rename},",
+            "    commission::{act::CommissionAct, create as move_to, lifecycle::move_to as create, rename},",
         ),
         (AFTER_THE_LENT_VIEW, widened.as_str()),
         (
             AFTER_THE_LENT_VIEW,
-            "mod outer {\n    mod inner {\n        impl super::super::Lent<'_, AsOwner> {\n            pub(crate) async fn grant(&mut self) -> anyhow::Result<()> {\n                self.latch.pass(self.view.grant().await)\n            }\n        }\n    }\n}\n\n/// What a lent handler answered",
+            "mod outer {\n    mod inner {\n        impl super::super::Lent<'_, rename::Act> {\n            pub(crate) async fn grant(&mut self) -> anyhow::Result<()> {\n                self.latch.pass(self.view.grant().await)\n            }\n        }\n    }\n}\n\n/// What a lent handler answered",
         ),
         (
             AFTER_THE_LENT_VIEW,
-            "type Owned<'a> = Lent<'a, AsOwner>;\n\nimpl Owned<'_> {\n    pub(crate) async fn grant(&mut self) -> anyhow::Result<()> {\n        self.latch.pass(self.view.grant().await)\n    }\n}\n\n/// What a lent handler answered",
+            "type Owned<'a> = Lent<'a, rename::Act>;\n\nimpl Owned<'_> {\n    pub(crate) async fn grant(&mut self) -> anyhow::Result<()> {\n        self.latch.pass(self.view.grant().await)\n    }\n}\n\n/// What a lent handler answered",
         ),
     ];
     for (from, to) in broken {
@@ -1852,6 +2095,239 @@ fn the_lent_view_s_surface_is_create_and_lent() {
         let file = syn::parse_file(&planted).expect("the planted gate parses");
 
         let findings = lent_surface_findings(&file);
+
+        assert!(!findings.is_empty(), "{to}");
+    }
+}
+
+/// A generic impl on the lent view that writes: every act's view would hold the write.
+const GENERIC_LENT_WRITE: &str = "impl<H: Handler> Lent<'_, H> {\n    pub(crate) async fn set_lifecycle(&mut self) -> anyhow::Result<()> {\n        self.latch.pass(self.view.set_lifecycle().await)\n    }\n}\n\n";
+
+/// The same on the inner view.
+const GENERIC_VIEW_WRITE: &str = "impl<H: Handler> View<'_, H> {\n    async fn set_lifecycle(&mut self) -> anyhow::Result<()> {\n        let commission = <H::Role as RoleTable>::commission(self.capability.thing());\n        Ok(())\n    }\n}\n\n";
+
+#[test]
+fn a_generic_lent_impl_holds_lent_only() {
+    let gate = parse(&application_src().join(GATE_FILE));
+    let views = aliases_in_file(&[VIEW_TYPE], &gate);
+    let lents = aliases_in_file(&[LENT], &gate);
+
+    let generic_views: Vec<(String, String)> = view_methods(&gate, &views)
+        .into_iter()
+        .filter(|(_, act)| act == EVERY_ACT)
+        .collect();
+    let generic_lents: Vec<(String, String)> = view_methods(&gate, &lents)
+        .into_iter()
+        .filter(|(_, act)| act == EVERY_ACT)
+        .collect();
+
+    let read = [(LENT_READ.to_owned(), EVERY_ACT.to_owned())];
+    assert_eq!(generic_views, read);
+    assert_eq!(generic_lents, read);
+    let source =
+        std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
+    let planted_items = [
+        GENERIC_LENT_WRITE,
+        GENERIC_VIEW_WRITE,
+        "impl<A: Handler> Lent<'_, A> {\n    pub(crate) async fn lent_again(&mut self) -> anyhow::Result<Commission> {\n        self.latch.pass(self.view.lent_again().await)\n    }\n}\n\n",
+    ];
+    for item in planted_items {
+        let planted = source.replacen(
+            AFTER_THE_LENT_VIEW,
+            &format!("{item}{AFTER_THE_LENT_VIEW}"),
+            1,
+        );
+        let file = syn::parse_file(&planted).expect("the planted gate parses");
+        let views = aliases_in_file(&[VIEW_TYPE], &file);
+        let lents = aliases_in_file(&[LENT], &file);
+
+        let findings: Vec<String> = one_write_findings(&view_methods(&file, &views), VIEW_TYPE)
+            .into_iter()
+            .chain(one_write_findings(&view_methods(&file, &lents), LENT))
+            .collect();
+
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.starts_with("a generic")),
+            "{item}: {findings:?}"
+        );
+    }
+}
+
+/// Each repo method `tokens` call on `self.repo`, with its argument tokens, at any depth.
+fn repo_writes(tokens: TokenStream) -> Vec<(String, TokenStream)> {
+    levels(tokens)
+        .iter()
+        .flat_map(|level| {
+            (0..level.len()).filter_map(move |at| {
+                let on_the_repo = ident_at(level, at).as_deref() == Some("self")
+                    && punct_at(level, at + 1, '.')
+                    && ident_at(level, at + 2).as_deref() == Some(REPO)
+                    && punct_at(level, at + 3, '.');
+                let method = ident_at(level, at + 4).filter(|_| on_the_repo)?;
+                let Some(TokenTree::Group(arguments)) = level.get(at + 5) else {
+                    return None;
+                };
+                (arguments.delimiter() == Delimiter::Parenthesis)
+                    .then(|| (method, arguments.stream()))
+            })
+        })
+        .collect()
+}
+
+/// Whether `tokens`, an argument list, passes `&self.capability` and the change bound from
+/// `self.change`, which the method's body binds as `let Some(name) = &self.change`.
+fn passes_the_capability_and_the_change(arguments: &TokenStream, change: &str) -> bool {
+    let arguments: Vec<Vec<TokenTree>> = comma_separated(arguments.clone());
+    let capability = arguments.first().is_some_and(|first| {
+        punct_at(first, 0, '&')
+            && ident_at(first, 1).as_deref() == Some("self")
+            && punct_at(first, 2, '.')
+            && ident_at(first, 3).as_deref() == Some("capability")
+            && first.len() == 4
+    });
+    let change_passed = arguments
+        .last()
+        .is_some_and(|last| last.len() == 1 && ident_at(last, 0).as_deref() == Some(change));
+    capability && change_passed
+}
+
+/// The name a method binds from its view's checked change: `let Some(name) = &self.change`.
+fn change_binding(tokens: TokenStream) -> Option<String> {
+    levels(tokens).iter().find_map(|level| {
+        (0..level.len()).find_map(|at| {
+            let bound = ident_at(level, at).as_deref() == Some("let")
+                && ident_at(level, at + 1).as_deref() == Some("Some");
+            let Some(TokenTree::Group(group)) = level.get(at + 2) else {
+                return None;
+            };
+            let name: Vec<TokenTree> = group.stream().into_iter().collect();
+            let from_the_change = punct_at(level, at + 3, '=')
+                && punct_at(level, at + 4, '&')
+                && ident_at(level, at + 5).as_deref() == Some("self")
+                && punct_at(level, at + 6, '.')
+                && ident_at(level, at + 7).as_deref() == Some("change");
+            let single = name.len() == 1;
+            (bound && from_the_change && single)
+                .then(|| ident_at(&name, 0))
+                .flatten()
+        })
+    })
+}
+
+/// What breaks each act's view's write in `file`: the inner view's impls hold the same one
+/// write per act as the lent view's ([`ACT_WRITES`]), and each act's write calls exactly the
+/// commission repo's method of its own name, once, with `&self.capability` first and the change
+/// it bound from `self.change` last; the generic read calls `find` alone.
+fn view_write_findings(file: &syn::File) -> Vec<String> {
+    let views = aliases_in_file(&[VIEW_TYPE], file);
+    let mut out = one_write_findings(&view_methods(file, &views), VIEW_TYPE);
+    for item in every_item(&file.items) {
+        let Item::Impl(implementation) = item else {
+            continue;
+        };
+        if !views.contains(&type_name(&implementation.self_ty)) || implementation.trait_.is_some() {
+            continue;
+        }
+        let act = lent_role(implementation);
+        for impl_item in &implementation.items {
+            let ImplItem::Fn(method) = impl_item else {
+                continue;
+            };
+            let name = method.sig.ident.to_string();
+            let body = method.block.to_token_stream();
+            let calls = repo_writes(body.clone());
+            let called: Vec<&str> = calls.iter().map(|(called, _)| called.as_str()).collect();
+            if act == EVERY_ACT {
+                if called != ["find"] {
+                    out.push(format!(
+                        "`{VIEW_TYPE}::{name}` for every act calls {called:?}"
+                    ));
+                }
+                continue;
+            }
+            if called != [name.as_str()] {
+                out.push(format!(
+                    "`{VIEW_TYPE}<{act}>::{name}` calls {called:?}, not `{name}` once"
+                ));
+                continue;
+            }
+            let passes = change_binding(body).is_some_and(|change| {
+                calls
+                    .iter()
+                    .all(|(_, arguments)| passes_the_capability_and_the_change(arguments, &change))
+            });
+            if !passes {
+                out.push(format!(
+                    "`{VIEW_TYPE}<{act}>::{name}` doesn't write the capability and the stored change"
+                ));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn each_view_write_calls_its_own_port_method() {
+    let gate = parse(&application_src().join(GATE_FILE));
+
+    let findings = view_write_findings(&gate);
+
+    assert_eq!(findings, Vec::<String>::new());
+    let views = aliases_in_file(&[VIEW_TYPE], &gate);
+    let writes: Vec<(String, String)> = view_methods(&gate, &views);
+    assert_eq!(
+        writes.len(),
+        3,
+        "the scan reads every view method: {writes:?}"
+    );
+    let source =
+        std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
+    let move_call = "self.repo.set_lifecycle(&self.capability, change)";
+    let create_call = ".create(&self.capability, &birth, commission)";
+    let broken = [
+        (
+            move_call,
+            "self.repo.set_deadline(&self.capability, change)",
+        ),
+        (
+            move_call,
+            "self.repo.set_lifecycle(&self.capability, change).await?;\n        self.repo.set_deadline_status(&self.capability, change)",
+        ),
+        (
+            move_call,
+            "self.repo.set_lifecycle(&self.capability, &other)",
+        ),
+        (move_call, "self.repo.set_lifecycle(&forged, change)"),
+        (
+            "        let Some(change) = &self.change else {\n            self.wrote = Some(Wrote::Nothing);\n            return Ok(());\n        };\n        self.wrote = Some(Wrote::Missed);\n        let landed",
+            "        let change = &forged;\n        self.wrote = Some(Wrote::Missed);\n        let landed",
+        ),
+        (create_call, ".set_lifecycle(&self.capability, commission)"),
+        (
+            "impl View<'_, move_to::Act> {",
+            "impl View<'_, rename::Act> {",
+        ),
+        (
+            "impl View<'_, move_to::Act> {",
+            "impl View<'_, move_to::Act> {\n    async fn set_deadline(&mut self) -> anyhow::Result<()> {\n        Ok(())\n    }\n",
+        ),
+        (
+            "            .find(&commission)",
+            "            .set_lifecycle(&commission)",
+        ),
+        (
+            AFTER_THE_LENT_VIEW,
+            &format!("{GENERIC_VIEW_WRITE}{AFTER_THE_LENT_VIEW}"),
+        ),
+    ];
+    for (from, to) in broken {
+        assert!(source.contains(from), "{from}");
+        let planted = source.replacen(from, to, 1);
+        let file = syn::parse_file(&planted).expect("the planted gate parses");
+
+        let findings = view_write_findings(&file);
 
         assert!(!findings.is_empty(), "{to}");
     }
@@ -1921,7 +2397,7 @@ fn every_lent_method_goes_through_the_latch() {
 
     assert_eq!(unlatched, Vec::<String>::new());
     let (methods, _) = lent_surface(&gate);
-    assert_eq!(methods.len(), 2, "the scan reads both lent methods");
+    assert_eq!(methods.len(), 3, "the scan reads all three lent methods");
     let source =
         std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
     let widened = format!("{WIDENED_MODULE}{AFTER_THE_LENT_VIEW}");
@@ -1932,12 +2408,20 @@ fn every_lent_method_goes_through_the_latch() {
             "        self.view.lent().await",
         ),
         (
-            "        self.latch.pass(self.view.create(commission).await)",
-            "        self.view.create(commission).await",
+            "        self.latch.pass(self.view.create().await)",
+            "        self.view.create().await",
+        ),
+        (
+            "        self.latch.pass(self.view.set_lifecycle().await)",
+            "        self.view.set_lifecycle().await",
         ),
         (
             "        self.latch.pass(self.view.lent().await)",
-            "        self.latch.pass(self.view.create(&NewCommission { maturity: None, deadline: None }).await)",
+            "        self.latch.pass(self.view.create().await)",
+        ),
+        (
+            "        self.latch.pass(self.view.set_lifecycle().await)",
+            "        self.latch.pass(self.view.set_lifecycle().await);\n        self.latch.pass(self.view.set_lifecycle().await)",
         ),
         (
             "        self.latch.pass(self.view.lent().await)",
@@ -1973,9 +2457,18 @@ const VIEW_TYPE: &str = "View";
 /// The inner view's field holding the commission repo.
 const REPO: &str = "repo";
 
-/// The struct literals and patterns of the views [`LEND_AS`] holds: it builds the inner view
-/// and the lent view, then takes the lent view apart.
-const LENDER_STRUCTS: [(&str, &str, usize); 2] = [(LEND_AS, VIEW_TYPE, 1), (LEND_AS, LENT, 2)];
+/// The gate's settling of a lent view after its handler: it takes the lent view and its inner
+/// view apart.
+const SETTLE: &str = "settle";
+
+/// The struct literals and patterns of the views [`LEND_AS`] and [`SETTLE`] hold: the lender
+/// builds the inner view and the lent view, and the settling takes each apart.
+const LENDER_STRUCTS: [(&str, &str, usize); 4] = [
+    (LEND_AS, VIEW_TYPE, 1),
+    (LEND_AS, LENT, 1),
+    (SETTLE, LENT, 1),
+    (SETTLE, VIEW_TYPE, 1),
+];
 
 /// The anchor in the gate file a planted item goes before: the item after the lent view.
 const AFTER_THE_LENT_VIEW: &str = "/// What a lent handler answered";
@@ -2108,15 +2601,22 @@ fn nothing_else_in_the_gate_file_reaches_the_lent_view_s_fields() {
 
     assert_eq!(findings, Vec::<String>::new());
     let views = aliases_in_file(&[LENT, VIEW_TYPE], &gate);
-    let in_the_lender: Vec<String> = pieces(&gate)
-        .iter()
-        .filter(|piece| piece.context == LEND_AS)
-        .flat_map(|piece| view_structs(piece, &views))
-        .collect();
+    let held_by = |context: &str| -> Vec<String> {
+        pieces(&gate)
+            .iter()
+            .filter(|piece| piece.context == context)
+            .flat_map(|piece| view_structs(piece, &views))
+            .collect()
+    };
     assert_eq!(
-        in_the_lender,
-        [VIEW_TYPE, LENT, LENT],
+        held_by(LEND_AS),
+        [VIEW_TYPE, LENT],
         "the scan reads the view structs {LEND_AS} holds"
+    );
+    assert_eq!(
+        held_by(SETTLE),
+        [LENT, VIEW_TYPE],
+        "the scan reads the view structs {SETTLE} holds"
     );
     let source =
         std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
@@ -2136,10 +2636,16 @@ fn nothing_else_in_the_gate_file_reaches_the_lent_view_s_fields() {
         "impl View<'_, AsOwner> {\n    fn widen(self) -> Box<dyn CommissionRepo> {\n        let Self { repo, .. } = self;\n        repo\n    }\n}\n\n",
         "fn widen(lent: &mut Lent<'_, AsOwner>) {\n    let reach = || lent.view.capability.thing();\n}\n\n",
     ];
-    let lender_taken_apart = (
-        "    drop(view);\n",
-        "    let View { repo, .. } = view;\n    drop(repo);\n",
-    );
+    let taken_apart_early = [
+        (
+            "    let handled = handler.handle(&mut lent).await;\n",
+            "    let handled = handler.handle(&mut lent).await;\n    let Lent { view, .. } = &mut lent;\n",
+        ),
+        (
+            "    drop(repo);\n",
+            "    drop(repo);\n    let View { node, .. } = View { ..todo!() };\n",
+        ),
+    ];
     assert!(source.contains(AFTER_THE_LENT_VIEW));
     let mut planted: Vec<String> = planted_items
         .iter()
@@ -2151,8 +2657,10 @@ fn nothing_else_in_the_gate_file_reaches_the_lent_view_s_fields() {
             )
         })
         .collect();
-    assert!(source.contains(lender_taken_apart.0));
-    planted.push(source.replacen(lender_taken_apart.0, lender_taken_apart.1, 1));
+    for (from, to) in taken_apart_early {
+        assert!(source.contains(from), "{from}");
+        planted.push(source.replacen(from, to, 1));
+    }
     for planted_gate in planted {
         let file = syn::parse_file(&planted_gate).expect("the planted gate parses");
 
@@ -4087,12 +4595,19 @@ fn every_commission_write_takes_a_capability_or_is_named() {
     let sorted = file_authority(&file, writes[0]);
     assert_eq!(
         sorted.capped,
-        BTreeSet::from(["create".to_owned()]),
-        "only create takes the gate's create capability, in place of the id"
+        BTreeSet::from(["create".to_owned(), "set_lifecycle".to_owned()]),
+        "create takes the gate's create capability and set_lifecycle a Participant's, each in \
+         place of the id"
     );
     let (held, homes) = held_names(&file);
     assert_eq!(homes, Vec::<String>::new());
-    for name in [WRITE_CAPABILITY, NEW, CREATOR, COMMISSION_ID] {
+    for name in [
+        WRITE_CAPABILITY,
+        NEW,
+        CREATOR,
+        COMMISSION_ID,
+        AS_PARTICIPANT,
+    ] {
         assert!(
             held.contains(name),
             "the port file imports {name} from its home"

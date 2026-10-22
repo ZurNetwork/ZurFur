@@ -2025,6 +2025,25 @@ pub mod commission {
         .map(|r| r.rows_affected())
     }
 
+    /// `queries/commission/set_lifecycle.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Move a commission's lifecycle step by compare-and-set: the row changes only while it still
+    /// holds the step the move was checked from, so a stale move matches no row.
+    pub async fn set_lifecycle(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        to_step: &str,
+        from_step: &str,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/commission/set_lifecycle.sql"))
+            .bind(id)
+            .bind(to_step)
+            .bind(from_step)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
     /// `queries/commission/set_linked_channel.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn set_linked_channel(
         conn: impl sqlx::PgExecutor<'_>,
@@ -2785,6 +2804,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "commission::set_deadline",
     "commission::set_deadline_status",
     "commission::set_direction_status",
+    "commission::set_lifecycle",
     "commission::set_linked_channel",
     "commission::set_maturity",
     "file::delete",

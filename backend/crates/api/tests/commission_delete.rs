@@ -30,9 +30,9 @@ use async_trait::async_trait;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
-        ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
+        AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
         CommissionMarkup, CommissionTitle, DeadlineStatus, DirectionStatus, ElementId, GrantLevel,
-        LapsedDeadline, LockedStanding, NewCommission, NewElement, NewSeat, NewSlot,
+        LapsedDeadline, LifecycleMove, LockedStanding, NewCommission, NewElement, NewSeat, NewSlot,
         SeatInvitation, SeatInvitationId, TabId, element::TabRow,
     },
     did::Did,
@@ -352,6 +352,14 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         commission: &NewCommission,
     ) -> anyhow::Result<()> {
         self.0.create(capability, birth, commission).await
+    }
+
+    async fn set_lifecycle(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &LifecycleMove,
+    ) -> anyhow::Result<bool> {
+        self.0.set_lifecycle(capability, change).await
     }
 
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
