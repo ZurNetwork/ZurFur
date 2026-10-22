@@ -253,7 +253,7 @@
     {
       "page": 2026093001,
       "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
-      "governs": "migrations/20261022052438_create_node.sql: the node table holds each node's key, real parent, segment, type, level and name (D24); a node is never moved or retyped; migrations/20261022132603_fill_commission_nodes.sql: every commission has its node and a commission node its commission, bound by node_id; src/node.rs and queries/node/: the node port over that table; tests/it/node.rs, tests/it/node_backfill.rs and tests/it/commission_fill.rs; queries/commission/create_commission.sql and src/commission.rs: a commission is created at its own node, a top-level commission node whose segment is its id, taking its title and level from it, and its name and level are read from that node"
+      "governs": "migrations/20261022052438_create_node.sql: the node table holds each node's key, real parent, segment, type, level and name (D24); a node is never moved or retyped; migrations/20261022132603_fill_commission_nodes.sql: every commission has its node and a commission node its commission, bound by node_id; migrations/20261022165210_drop_commission_title_and_visibility.sql: a commission's name and level live on its node alone, and node_id is NOT NULL; src/node.rs and queries/node/: the node port over that table; tests/it/node.rs, tests/it/node_backfill.rs, tests/it/commission_fill.rs and tests/it/commission_drop.rs; queries/commission/create_commission.sql and src/commission.rs: a commission is created at its own node, a top-level commission node whose segment is its id, and its name and level are read from that node"
     },
     {
       "page": 2026100701,

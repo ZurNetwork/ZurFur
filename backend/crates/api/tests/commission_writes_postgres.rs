@@ -26,7 +26,7 @@ struct CommissionFacts {
     created_at: DateTime<Utc>,
 }
 
-/// A stored commission row's columns, in [`CommissionFacts`]'s order.
+/// A stored commission's columns and its node's name and level, in [`CommissionFacts`]'s order.
 type CommissionRow = (
     String,
     String,
@@ -40,11 +40,13 @@ type CommissionRow = (
     DateTime<Utc>,
 );
 
-/// The commission `id` as its row stores it.
+/// The commission `id` as its row and its node store it: its title and visibility are its
+/// node's name and level.
 async fn stored(world: &DenWorld, id: CommissionId) -> CommissionFacts {
     let row: CommissionRow = sqlx::query_as(
-        "SELECT title, lifecycle, visibility, deadline, maturity, graphic, direction_status, \
-         deadline_status, linked_channel, created_at FROM commission WHERE id = $1",
+        "SELECT n.name, c.lifecycle, n.level, c.deadline, c.maturity, c.graphic, \
+         c.direction_status, c.deadline_status, c.linked_channel, c.created_at \
+         FROM commission c JOIN node n ON n.id = c.node_id WHERE c.id = $1",
     )
     .bind(uuid::Uuid::from(id))
     .fetch_one(&world.served.runtime.pool)

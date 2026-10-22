@@ -173,8 +173,8 @@ async fn bound_commission(pool: &PgPool) -> BoundCommission {
     let mut tx = pool.begin().await.expect("begin");
     let nodes = bare_commission_node(&mut tx, &id.to_string()).await;
     sqlx::query(
-        "INSERT INTO commission (id, title, owner_id, lifecycle, visibility, created_at, node_id)
-         VALUES ($1, 'A commission', $2, 'draft', 'private', now(), $3)",
+        "INSERT INTO commission (id, owner_id, lifecycle, created_at, node_id)
+         VALUES ($1, $2, 'draft', now(), $3)",
     )
     .bind(id)
     .bind(crate::node_backfill::OWNER_DID)
@@ -838,8 +838,8 @@ async fn a_commission_created_and_deleted_in_one_unit_commits() {
     let mut tx = pool.begin().await.expect("begin");
     let nodes = bare_commission_node(&mut tx, &id.to_string()).await;
     sqlx::query(
-        "INSERT INTO commission (id, title, owner_id, lifecycle, visibility, created_at, node_id)
-         VALUES ($1, 'A short-lived commission', $2, 'draft', 'private', now(), $3)",
+        "INSERT INTO commission (id, owner_id, lifecycle, created_at, node_id)
+         VALUES ($1, $2, 'draft', now(), $3)",
     )
     .bind(id)
     .bind(crate::node_backfill::OWNER_DID)

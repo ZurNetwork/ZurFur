@@ -186,8 +186,8 @@ async fn group_positions(
 
 // ZMVP-166 (pg) — creating a commission mints its skeleton tabs in the same unit
 // of work: the loaded composition holds exactly the declared tabs, every one
-// born Total, and no elements. Nothing derives a tab's mode from
-// `commission.visibility`: the commission is the formal root, gating OVER the
+// born Total, and no elements. Nothing derives a tab's mode from the
+// commission's level: the commission is the formal root, gating OVER the
 // composition rather than seeding it.
 #[tokio::test]
 async fn creating_a_commission_mints_its_skeleton_tabs() {
