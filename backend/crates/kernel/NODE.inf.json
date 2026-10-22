@@ -2,7 +2,7 @@
   "path": "backend/crates/kernel",
   "charted": "2026-10-22",
   "short": "The shared domain vocabulary",
-  "is": "The bottom domain crate: the vocabulary every other domain crate speaks — the DID, the text primitives, the rule for a name safe to show, the maturity posture, the three-level visibility, the Den node element, the blob and markdown stubs, the one clock type and the string-validation builder — and the node port, with no I/O and no workspace dependency (shared allowed).",
+  "is": "The bottom domain crate: the vocabulary every other domain crate speaks — the DID, the text primitives, the rule for a name safe to show, the maturity posture, the three-level visibility, the Den node element, the blob and markdown stubs, the one clock type and the string-validation builder — and the node port and the write capability a gated port method takes, with no I/O and no workspace dependency (shared allowed).",
   "type": "code",
   "tags": [
     "category:source"
@@ -25,7 +25,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "chrono (the clock), cid (BlobId), serde, thiserror, derive_more, strum, uuid (NodeId), async-trait + anyhow (the node port); dev-deps proptest, serde_json (the shared segment cases)",
+      "role": "chrono (the clock), cid (BlobId), serde, thiserror, derive_more, strum, uuid (NodeId), async-trait + anyhow (the node port); dev-deps proptest, serde_json (the shared segment cases), trybuild (the write capability's compile-fail cases)",
       "node": false
     },
     {
@@ -115,12 +115,12 @@
     },
     {
       "name": "src/ports.rs",
-      "role": "port façade: re-exports the node port and SegmentTaken",
+      "role": "port façade: re-exports the node port, SegmentTaken and the write capability (WriteCapability, New, Creator)",
       "node": false
     },
     {
       "name": "src/ports/",
-      "role": "node.rs = NodeStore (pool reads: at_top by type, child, children bytewise), NodeReads (the same on a unit), NodeWrites (create, set_name -> bool, delete -> bool; a refusal ends the unit), NodeRepo; errors.rs = SegmentTaken",
+      "role": "node.rs = NodeStore (pool reads: at_top by type, child, children bytewise), NodeReads (the same on a unit), NodeWrites (create, set_name -> bool, delete -> bool; a refusal ends the unit), NodeRepo; errors.rs = SegmentTaken; capability.rs = WriteCapability<T, R> (private thing and PhantomData role; no Clone, Copy, Default, From or serde; a hand-written Debug that prints nothing of the thing; its surface is exactly gate_issued, banned by path in application, api and test-support, and thing()), New<T> (a thing not yet made: From and AsRef, no Default) and the marker Creator; R carries no bound, the role table lives with the gate; capability/tests.rs",
       "node": false
     },
     {
@@ -136,6 +136,16 @@
     {
       "name": "src/string_builder/unicode.rs",
       "role": "the public print-safety tables: FORMAT_CHARACTERS (Cf) and DEFAULT_IGNORABLE from UCD 16.0.0, the one copy: the name rule (src/elements/name.rs) reads them too; is_format, is_default_ignorable, is_bidi_control (the nine explicit bidi formatting characters, U+202A–U+202E and U+2066–U+2069; StringBuilder::no_bidi_control reports them as ControlCharacter, as StringBuilder::no_line_separator does U+2028 and U+2029) and is_unsafe_to_print (Cc ∪ Cf ∪ Default_Ignorable ∪ U+2028 ∪ U+2029), for a printer that escapes stored text",
+      "node": false
+    },
+    {
+      "name": "tests/ui.rs",
+      "role": "trybuild harness: each tests/ui/*.rs must fail to compile, with the message in its .stderr",
+      "node": false
+    },
+    {
+      "name": "tests/ui/",
+      "role": "compile-fail cases for WriteCapability: by_literal.rs (private fields), not_clone.rs, no_from.rs, no_default.rs, not_kept.rs (a handler lent &WriteCapability can neither keep nor return it)",
       "node": false
     }
   ],

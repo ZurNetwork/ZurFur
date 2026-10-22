@@ -28,3 +28,5 @@ anyhow = { workspace = true }
 proptest = { workspace = true }
 # The node segment tests read the shared case file contract/golden/segments.json.
 serde_json = { workspace = true }
+# Compile-fail tests: the write capability can't be forged, cloned or kept.
+trybuild = { workspace = true }

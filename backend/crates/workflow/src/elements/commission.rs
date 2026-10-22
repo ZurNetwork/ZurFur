@@ -23,6 +23,7 @@ mod errors;
 mod grant_level;
 mod id;
 mod lifecycle;
+mod role_marker;
 mod rows;
 mod standing;
 mod title;
@@ -51,6 +52,7 @@ pub use grant_level::GrantLevel;
 pub use id::CommissionId;
 pub use lifecycle::LifecycleStep;
 pub use markup::{CommissionMarkup, Markup, MarkupError, MarkupKey, MarkupShape};
+pub use role_marker::{AsOwner, AsParticipant};
 pub use rows::{CommissionSummary, NewCommission};
 pub use seat::{
     NewSeat, Seat, SeatKind, SeatKindError, SeatLink, SeatLinkError, SeatPrompt, SeatPromptError,
