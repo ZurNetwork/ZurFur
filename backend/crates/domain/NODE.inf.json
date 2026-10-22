@@ -33,7 +33,7 @@
     },
     {
       "name": "tests/",
-      "role": "it/ — the domain crates' one guard binary: elements_do_not_import_ports.rs (elements never depend on ports, in every domain crate), domain_crates_point_one_way.rs (allowed workspace dependencies per domain crate; consumers name only domain), facade_paths.rs (every re-exported path resolves)",
+      "role": "it/ — the domain crates' one guard binary: elements_do_not_import_ports.rs (elements never depend on ports, in every domain crate), domain_crates_point_one_way.rs (allowed workspace dependencies per domain crate; consumers name only domain), facade_paths.rs (every re-exported path resolves), no_actor_port_takes_a_node_id.rs (no port of identity, nor of kernel but the node port, takes or returns a NodeId, through any renamed import or type alias in either crate; a source-text scan with planted alias cases)",
       "node": false
     }
   ],

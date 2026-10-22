@@ -41,7 +41,7 @@
     },
     {
       "name": "den_type.rs",
-      "role": "DenType, the wire words, and the kind and content-not-shown tables",
+      "role": "DenType, its 21 wire words, and the kind and content-not-shown tables; commission.brief and commission.participants are files whose content isn't shown, and unserved: no arm projects them, so nothing lists them",
       "node": false
     },
     {

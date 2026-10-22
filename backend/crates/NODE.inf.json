@@ -1,6 +1,6 @@
 {
   "path": "backend/crates",
-  "charted": "2026-10-20",
+  "charted": "2026-10-22",
   "short": "The twenty-one workspace crates",
   "is": "Twenty-one workspace crates arranged as a hexagon: an I/O-free core of domain crates (kernel, identity, workflow and the gallery and moderation stubs) behind the domain façade, one application layer of use cases, one HTTP-free composition root, two driving adapters (api, cli) over it, two HTTP crates that api and test-support share (http-cookies, http-stack), three data-boundary adapters implementing its ports, a leaf config crate, three support/codegen crates, one proc-macro crate serving the application layer, and one host-agnostic engine (atta) that knows no Zurfur type.",
   "type": "code",
@@ -12,7 +12,7 @@
     "Closed-vocabulary enums implement std `Display`/`FromStr`, never bespoke `as_str`/`parse` pairs; id newtypes may derive serde, loaded entities never do.",
     "Codegen crates are libraries first so the runner binary and the staleness-gate test share one generation body.",
     "`test-support` dev-depends on `adapter-pg` while adapters dev-depend on `test-support` — a cargo dev-cycle, not a runtime edge.",
-    "`application` depends only on `domain` + `shared` + the compile-time `application-macros` crate, never an adapter or `composition`."
+    "`application` depends only on `domain` + `shared` + `atta` + the compile-time `application-macros` crate, never an adapter or `composition`."
   ],
   "entry_points": [
     "each crate's src/lib.rs — the module-level docs are the real map"
@@ -95,7 +95,7 @@
     },
     {
       "name": "kernel/",
-      "role": "bottom domain crate: the shared vocabulary (did, text, maturity, blob, markdown), the clock and the string-validation builder; no workspace deps",
+      "role": "bottom domain crate: the shared vocabulary (did, text, name, level, node, maturity, blob, markdown), the clock, the string-validation builder and the node port; no workspace deps",
       "node": true
     },
     {

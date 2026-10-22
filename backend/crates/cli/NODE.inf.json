@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/cli",
-  "charted": "2026-10-17",
+  "charted": "2026-10-22",
   "short": "The zurfur terminal driver (clap)",
   "is": "The `zurfur` terminal driving adapter: one-shot clap subcommands that call the same application-layer use cases as the HTTP API, in-process via `composition::Runtime` — no HTTP, no contract, no token.",
   "type": "code",
@@ -14,7 +14,8 @@
     "Commands are thin: each is the CLI face of the same application-layer use case the HTTP driver calls — no domain logic duplicated here.",
     "Irreversible operations go through `crate::confirm`: a person at a terminal is asked (only typed y/yes proceeds); anything without a terminal is refused, not defaulted — `--yes` is the explicit scripted opt-in.",
     "No `.env` loading in `main` — walking parent dirs for `.env` would leak `DATABASE_URL`/root key from an unrelated directory.",
-    "The identity file (`$ZURFUR_CLI_HOME/identity.json` or platform config dir) is the one record of which User the CLI acts as; versioned JSON, written 0600 atomically, fingerprinted to its database."
+    "The identity file (`$ZURFUR_CLI_HOME/identity.json` or platform config dir) is the one record of which User the CLI acts as; versioned JSON, written 0600 atomically, fingerprinted to its database.",
+    "Never reaches the Den's node port nor names Atta's checked-name constructor: `application/tests/node_and_name_seams.rs` scans this crate's `src/` too."
   ],
   "entry_points": [
     "src/main.rs (bin: zurfur)",

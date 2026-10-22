@@ -27,6 +27,11 @@
       "node": false
     },
     {
+      "name": "clippy.toml",
+      "role": "large-error-threshold 192 (Problem with field errors); disallowed-methods: tower_sessions::SessionManagerLayer::new (sessions mount only through http_cookies::session_layer), axum::serve (serving only through http_stack::serve) and UnitOfWork::nodes (no driver reaches the Den's node port; the delegating double in tests/commission_delete.rs carries an `#[expect]`)",
+      "node": false
+    },
+    {
       "name": "src/",
       "role": "lib/main, logging (the server subscriber with the shared DNS-client filter), extractors, routes, problem, sweep, generated contract types",
       "node": true

@@ -714,6 +714,13 @@
       "governs": "Protobuf as the Independent IDL; src/lib.rs, src/main.rs: governs why generation is pure-Rust/protox, the committed-output + drift-test pattern, and why `service` blocks generate nothing"
     }
   ],
+  "backend/crates/domain": [
+    {
+      "page": 57081857,
+      "title": "Actor Addressing — DID as the Only Identifier, Everywhere",
+      "governs": "tests/it/no_actor_port_takes_a_node_id.rs: no port of identity, nor of kernel but the node port, takes or returns a NodeId — an actor is addressed by DID"
+    }
+  ],
   "backend/crates/domain/src": [
     {
       "page": 11763713,
@@ -890,8 +897,8 @@
     },
     {
       "page": 57081857,
-      "title": "Actor Addressing",
-      "governs": "src/elements/did.rs"
+      "title": "Actor Addressing — DID as the Only Identifier, Everywhere",
+      "governs": "src/elements/did.rs and src/elements/node.rs: actors stay addressed by DID; a NodeId is internal to the Den, never an actor's address — no actor port takes or returns one, guarded by domain/tests/it/no_actor_port_takes_a_node_id.rs"
     },
     {
       "page": 64290818,
