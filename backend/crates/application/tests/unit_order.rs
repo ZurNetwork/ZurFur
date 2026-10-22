@@ -10,7 +10,7 @@ use std::sync::Arc;
 use application::{
     account,
     character::{self, Characters},
-    commission::files::upload,
+    commission::{create, files::upload},
     transaction,
 };
 use chrono::Utc;
@@ -18,7 +18,7 @@ use composition::Runtime;
 use domain::{
     elements::{
         character::{CharacterAttributes, CharacterDescription},
-        commission::{Commission, CommissionId},
+        commission::CommissionId,
         did::Did,
         handle::HandleDomain,
         user::{User, UserId},
@@ -172,7 +172,7 @@ async fn uploading_a_file_writes_the_blob_before_the_unit_opens() {
     let mut runtime = test_support::runtime::mem(&did).build().runtime;
     let user = recognized(&*runtime.database, &did).await;
     let owner_id = user.id.clone();
-    let commission_id = seed_commission(&*runtime.database, owner_id).await;
+    let commission_id = seed_commission(&runtime, owner_id).await;
     let log = record_calls(&mut runtime);
 
     let command = upload::Command {
@@ -192,15 +192,19 @@ async fn uploading_a_file_writes_the_blob_before_the_unit_opens() {
     assert_eq!(log.events(), vec!["put", "begin", "commit"]);
 }
 
-/// Seeds a committed commission owned by `owner_id`.
-async fn seed_commission(database: &dyn Database, owner_id: UserId) -> CommissionId {
-    let title = "Ref sheet".parse().expect("valid title");
-    transaction(database, async move |uow: &mut dyn UnitOfWork| {
-        let commission = Commission::create(title, owner_id, Utc::now(), None);
-        let id = commission.id;
-        uow.commissions().create(&commission).await?;
-        Ok(id)
-    })
-    .await
-    .expect("seed a commission")
+/// Seeds a commission owned by `owner_id`, through the create use case.
+async fn seed_commission(runtime: &Runtime, owner_id: UserId) -> CommissionId {
+    let command = create::Command {
+        actor_id: owner_id,
+        title: "Ref sheet".parse().expect("valid title"),
+        maturity: None,
+        deadline: None,
+    };
+    let created = runtime
+        .app()
+        .commissions()
+        .create(command, Utc::now())
+        .await
+        .expect("seed a commission");
+    created.id
 }

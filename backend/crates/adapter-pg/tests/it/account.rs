@@ -7,6 +7,7 @@
 //! [`PgDatabase`] factory's [`UnitOfWork`]. The founder is
 //! provisioned first because `account_members.user_id` references `users(id)`.
 //! Requires a container runtime socket (DOCKER_HOST honored).
+use crate::seed;
 use std::collections::BTreeSet;
 
 use adapter_pg::{
@@ -17,7 +18,6 @@ use chrono::{Duration, Utc};
 use domain::{
     elements::{
         account::{Account, AccountId, AccountMembership, AccountName, ListingScope},
-        commission::{Commission, CommissionTitle},
         did::Did,
         handle::Handle,
         invitation::{Invitation, InvitationId, InvitationState},
@@ -1567,22 +1567,7 @@ async fn hard_delete_severs_the_boards_while_the_commission_survives() {
 
     // A User owns a commission; a separate account will hold its positioning.
     let owner = provision(&pool, "did:plc:sever-owner").await;
-    let commission = Commission::create(
-        "A ref sheet".parse::<CommissionTitle>().expect("title"),
-        owner.id.clone(),
-        Utc::now(),
-        None,
-    );
-    let commission_id = commission.id;
-    {
-        let db = PgDatabase::new(pool.clone());
-        let mut uow = db.begin().await.expect("begin");
-        uow.commissions()
-            .create(&commission)
-            .await
-            .expect("create commission");
-        uow.commit().await.expect("commit");
-    }
+    let commission_id = seed::seed_titled(&pool, &owner.id, "A ref sheet").await;
 
     let account_owner = provision(&pool, "did:plc:sever-acct-owner").await;
     let (account, membership) = Account::open(

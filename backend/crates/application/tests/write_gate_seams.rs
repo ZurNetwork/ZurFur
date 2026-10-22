@@ -1,8 +1,11 @@
 //! The den's write gate is the only way to write a commission's node or fields. These scans
 //! hold its seams: the write capability's surface, its one issuer across the workspace and the
-//! issuer's callers in the den, no compiled source the scans can't read, the write host and the
-//! gate named once each, the write use case kept inside the crate, nothing of it (and no raw
-//! SQL) in a driver, and the commission field writes not yet gated, frozen.
+//! issuer's callers in the den, the lent view's surface and its latch, nothing else in the gate
+//! file reaching the lent view's fields, no compiled source the scans can't read, the write
+//! host and the gate named once each, the write use case kept inside the crate, nothing of it
+//! (and no raw SQL or in-memory seeder) in a driver, no lint silencer in the den, in
+//! commission's acts or on the modules above them, and the commission field writes not yet
+//! gated, frozen.
 
 mod seams;
 
@@ -58,8 +61,7 @@ const API: &str = "api";
 const COMMISSION_REPOS: [&str; 2] = ["commissions", "changelog"];
 
 /// The commission repo's field writes the gate doesn't hold yet, by name.
-const FIELD_WRITES: [&str; 7] = [
-    "set_title",
+const FIELD_WRITES: [&str; 6] = [
     "set_archived",
     "set_maturity",
     "set_direction_status",
@@ -69,7 +71,8 @@ const FIELD_WRITES: [&str; 7] = [
 ];
 
 /// The commission repo's writes counted only on a commission repo: their names are common.
-/// Through any other receiver in `application`, clippy's ban on `CommissionWrites` holds them.
+/// Through any other receiver in `application`, a create needs the gate's capability, and
+/// clippy's ban on `CommissionWrites::delete` holds a delete.
 const REPO_WRITES: [&str; 2] = ["create", "delete"];
 
 /// The SQL words a table name follows.
@@ -86,13 +89,12 @@ const NODE_TABLE: &str = "node";
 
 /// The ungated commission field writes in `application`, by file, function and method: each
 /// leaves this list when the den's write gate takes it over, until the list is empty.
-const FROZEN_FIELD_WRITES: [(&str, &str, &str); 11] = [
+const FROZEN_FIELD_WRITES: [(&str, &str, &str); 9] = [
     (
         "commission/archive.rs",
         "Commissions::archive",
         "set_archived",
     ),
-    ("commission/create.rs", "Commissions::create", "create"),
     (
         "commission/deadline/clear.rs",
         "Deadline::clear",
@@ -114,7 +116,6 @@ const FROZEN_FIELD_WRITES: [(&str, &str, &str); 11] = [
         "Maturity::run",
         "set_maturity",
     ),
-    ("commission/rename.rs", "Commissions::rename", "set_title"),
     (
         "commission/slots/declare.rs",
         "Slots::declare",
@@ -642,14 +643,20 @@ const ROLE_TABLE: &str = "RoleTable";
 /// The gate file, relative to the use-case layer's sources.
 const GATE_FILE: &str = "den/gate.rs";
 
-/// The gate's lender: one [`ISSUE`] call per act arm a driver can reach.
+/// The gate's one generic lender: the one [`ISSUE`] call.
+const LEND_AS: &str = "lend_as";
+
+/// The gate's lender: one [`LEND_AS`] call per leaf act a driver can reach.
 const LEND: &str = "lend";
 
-/// The gate's test-only lender of the probe's capability: one [`ISSUE`] call.
-const LEND_PROBE: &str = "lend_probe";
-
-/// The den's acts, one lender arm each.
+/// The den's acts: each arm a driver can reach is an owning module's own act enum.
 const DEN_ACT: &str = "DenAct";
+
+/// The commission's acts, one leaf act each.
+const COMMISSION_ACT: &str = "CommissionAct";
+
+/// The file of the commission's acts, relative to the use-case layer's sources.
+const COMMISSION_ACT_FILE: &str = "commission/act.rs";
 
 /// The den module's production files: `den.rs` and those under `den/`, each with its path
 /// relative to the use-case layer's sources.
@@ -663,45 +670,60 @@ fn den_production() -> Vec<(String, PathBuf)> {
         .collect()
 }
 
-/// The act arms a driver can reach: `DenAct`'s variants not under `#[cfg(test)]`.
-fn production_act_arms(act: &syn::File) -> usize {
-    let den_acts: Vec<&syn::ItemEnum> = act
+/// The variants of the one enum named `name` in `file` that a driver can reach: those not
+/// under `#[cfg(test)]`.
+fn production_variants(file: &syn::File, name: &str) -> Vec<String> {
+    let enums: Vec<&syn::ItemEnum> = file
         .items
         .iter()
         .filter_map(|item| match item {
-            Item::Enum(enumeration) if enumeration.ident == DEN_ACT => Some(enumeration),
+            Item::Enum(enumeration) if enumeration.ident == name => Some(enumeration),
             _ => None,
         })
         .collect();
-    assert_eq!(den_acts.len(), 1, "one `{DEN_ACT}` in den/act.rs");
-    den_acts[0]
+    assert_eq!(enums.len(), 1, "one `{name}`");
+    enums[0]
         .variants
         .iter()
         .filter(|variant| !under_cfg_test(&variant.attrs))
-        .count()
+        .map(|variant| variant.ident.to_string())
+        .collect()
 }
 
-/// The allowance the issuer-caller scan gives `file`: in [`GATE_FILE`], `issue`'s definition,
-/// one call in [`LEND_PROBE`] and `arms` calls in [`LEND`].
-fn issue_allowance(file: &str, arms: usize) -> Vec<(&'static str, &'static str, usize)> {
+/// The leaf acts a driver can reach: `DenAct`'s one production arm is the commission's, and
+/// each of `CommissionAct`'s production variants is one leaf act.
+fn production_leaf_acts(den_act: &syn::File, commission_act: &syn::File) -> usize {
+    let arms = production_variants(den_act, DEN_ACT);
+    assert_eq!(
+        arms,
+        ["Commission"],
+        "a new arm counts its own leaf acts here"
+    );
+    production_variants(commission_act, COMMISSION_ACT).len()
+}
+
+/// The allowance the issuer-caller scan gives `file`: in [`GATE_FILE`], `issue`'s definition
+/// and one call in [`LEND_AS`]; `lend_as`'s definition and `leaves` calls in [`LEND`].
+fn issue_allowance(file: &str, leaves: usize) -> Vec<(&'static str, &'static str, usize)> {
     if file != GATE_FILE {
         return Vec::new();
     }
     vec![
         (ISSUE, ISSUE, 1),
-        (LEND_PROBE, ISSUE, 1),
-        (LEND, ISSUE, arms),
+        (LEND_AS, ISSUE, 1),
+        (LEND_AS, LEND_AS, 1),
+        (LEND, LEND_AS, leaves),
     ]
 }
 
-/// Each naming in den file `file` of the issuer (`issues`) past its allowance, and of the role
-/// table (`roles`) outside [`GATE_FILE`].
+/// Each naming in den file `file` of the issuer or the generic lender (`issues`) past its
+/// allowance, and of the role table (`roles`) outside [`GATE_FILE`].
 fn issue_caller_findings(
     file: &str,
     source: &str,
     issues: &BTreeSet<String>,
     roles: &BTreeSet<String>,
-    arms: usize,
+    leaves: usize,
 ) -> Vec<String> {
     let parsed = syn::parse_file(source).expect("the source parses");
     let names: BTreeSet<String> = if file == GATE_FILE {
@@ -709,7 +731,12 @@ fn issue_caller_findings(
     } else {
         issues.union(roles).cloned().collect()
     };
-    let found = named_past(file, &pieces(&parsed), &names, &issue_allowance(file, arms));
+    let found = named_past(
+        file,
+        &pieces(&parsed),
+        &names,
+        &issue_allowance(file, leaves),
+    );
     show(&found)
 }
 
@@ -720,14 +747,19 @@ fn issue_is_called_only_by_the_lenders_and_the_role_table_stays_in_the_gate() {
         .iter()
         .map(|(_, path)| std::fs::read_to_string(path).expect("a readable source"))
         .collect();
-    let issues = with_aliases(&[ISSUE], &sources);
+    let issues = with_aliases(&[ISSUE, LEND_AS], &sources);
     let roles = with_aliases(&[ROLE_TABLE], &sources);
-    let arms = production_act_arms(&parse(&application_src().join("den/act.rs")));
+    let leaves = production_leaf_acts(
+        &parse(&application_src().join("den/act.rs")),
+        &parse(&application_src().join(COMMISSION_ACT_FILE)),
+    );
 
     let offenders: Vec<String> = files
         .iter()
         .zip(&sources)
-        .flat_map(|((file, _), source)| issue_caller_findings(file, source, &issues, &roles, arms))
+        .flat_map(|((file, _), source)| {
+            issue_caller_findings(file, source, &issues, &roles, leaves)
+        })
         .collect();
 
     assert_eq!(offenders, Vec::<String>::new());
@@ -737,11 +769,11 @@ fn issue_is_called_only_by_the_lenders_and_the_role_table_stays_in_the_gate() {
     }
     let gate = parse(&application_src().join(GATE_FILE));
     let gate_pieces = pieces(&gate);
-    for context in [ISSUE, LEND_PROBE, LEND] {
+    for context in [ISSUE, LEND_AS, LEND] {
         let held = gate_pieces.iter().any(|piece| piece.context == context);
         assert!(held, "{GATE_FILE} holds {context}");
     }
-    let lender = "fn issue<R: RoleTable>(grant: &Grant) -> Option<WriteCapability<R::Thing, R>> { let thing = R::granted(grant)?; Some(WriteCapability::gate_issued(thing)) }\n#[cfg(test)]\nasync fn lend_probe<R: RoleTable>(grant: &Grant) { let Some(capability) = issue::<R>(grant) else { return; }; }\nasync fn lend(act: DenAct, grant: &Grant) { match act { DenAct::Rename(_) => { issue::<AsOwner>(grant); } DenAct::Create(_) => { issue::<Creator>(grant); } } }\nimpl RoleTable for AsOwner { type Thing = CommissionId; }";
+    let lender = "fn issue<R: RoleTable>(grant: &Grant) -> Option<WriteCapability<R::Thing, R>> { let thing = R::granted(grant)?; Some(WriteCapability::gate_issued(thing)) }\nasync fn lend_as<H: Handler>(handler: &H, grant: &Grant) { let Some(capability) = issue::<H::Role>(grant) else { return; }; }\nasync fn lend(act: DenAct, grant: &Grant) { match act { DenAct::Commission(CommissionAct::Rename(rename)) => lend_as(&rename, grant).await, DenAct::Commission(CommissionAct::Create(create)) => lend_as(&create, grant).await } }\nimpl RoleTable for AsOwner { type Thing = CommissionId; }";
     let allowed = issue_caller_findings(GATE_FILE, lender, &issues, &roles, 2);
     assert_eq!(allowed, Vec::<String>::new());
     let refused = [
@@ -774,7 +806,32 @@ fn issue_is_called_only_by_the_lenders_and_the_role_table_stays_in_the_gate() {
         ),
         (
             GATE_FILE,
-            "#[cfg(test)]\nasync fn lend_probe<R: RoleTable>(grant: &Grant) { issue::<R>(grant); issue::<AsOwner>(grant); }",
+            "#[cfg(test)]\nasync fn lend_for_test<R: RoleTable>(grant: &Grant) { issue::<R>(grant); issue::<AsOwner>(grant); }",
+            0,
+        ),
+        (
+            GATE_FILE,
+            "async fn lend_as<H: Handler>(handler: &H, grant: &Grant) { issue::<H::Role>(grant); issue::<Creator>(grant); }",
+            0,
+        ),
+        (
+            GATE_FILE,
+            "async fn lend(act: DenAct, grant: &Grant) { match act { DenAct::Commission(CommissionAct::Create(create)) => { lend_as(&create, grant).await; lend_as(&create, grant).await; } } }",
+            1,
+        ),
+        (
+            GATE_FILE,
+            "#[cfg(test)]\nasync fn lend_for_test(act: &TestAct, grant: &Grant) { lend_as(&AsOwnerForTest(act), grant).await; }",
+            0,
+        ),
+        (
+            GATE_FILE,
+            "async fn walk(grant: &Grant) { lend_as(&create, grant).await; }",
+            0,
+        ),
+        (
+            "den/write.rs",
+            "fn early(grant: &Grant, act: &create::Act) { crate::den::gate::lend_as(act, grant); }",
             0,
         ),
         (
@@ -813,20 +870,542 @@ fn issue_is_called_only_by_the_lenders_and_the_role_table_stays_in_the_gate() {
             0,
         ),
     ];
-    for (file, source, fixture_arms) in refused {
+    for (file, source, fixture_leaves) in refused {
         let fixture_sources = [source.to_owned()];
-        let fixture_issues = with_aliases(&[ISSUE], &fixture_sources);
+        let fixture_issues = with_aliases(&[ISSUE, LEND_AS], &fixture_sources);
         let fixture_roles = with_aliases(&[ROLE_TABLE], &fixture_sources);
 
-        let found =
-            issue_caller_findings(file, source, &fixture_issues, &fixture_roles, fixture_arms);
+        let found = issue_caller_findings(
+            file,
+            source,
+            &fixture_issues,
+            &fixture_roles,
+            fixture_leaves,
+        );
 
         assert!(!found.is_empty(), "{file}: {source}");
     }
-    let one_arm =
-        "pub(crate) enum DenAct {\n    #[cfg(test)]\n    Probe(Probe),\n    Rename(Rename),\n}";
-    let act = syn::parse_file(one_arm).expect("the planted act parses");
-    assert_eq!(production_act_arms(&act), 1);
+    let den_act = "pub(crate) enum DenAct {\n    Commission(CommissionAct),\n    #[cfg(test)]\n    TestOnly(TestAct),\n}";
+    let commission_act =
+        "pub(crate) enum CommissionAct {\n    Create(create::Act),\n    Rename(rename::Act),\n}";
+    let den_act = syn::parse_file(den_act).expect("the planted act parses");
+    let commission_act = syn::parse_file(commission_act).expect("the planted act parses");
+    assert_eq!(production_leaf_acts(&den_act, &commission_act), 2);
+}
+
+// The lent view.
+
+/// The view the gate lends a handler.
+const LENT: &str = "Lent";
+
+/// The lent view's field holding the latch every method passes its call through.
+const LATCH: &str = "latch";
+
+/// The lent view's field holding the unlatched calls.
+const VIEW: &str = "view";
+
+/// The latch's one method.
+const PASS: &str = "pass";
+
+/// The role an inherent impl on the lent view is for: its self type's role argument, or
+/// "every role" when that argument is the impl's own type parameter.
+fn lent_role(implementation: &syn::ItemImpl) -> String {
+    let Type::Path(path) = &*implementation.self_ty else {
+        return "an unnamed type".to_owned();
+    };
+    let Some(last) = path.path.segments.last() else {
+        return "an unnamed type".to_owned();
+    };
+    let syn::PathArguments::AngleBracketed(arguments) = &last.arguments else {
+        return "no role".to_owned();
+    };
+    let parameters: BTreeSet<String> = implementation
+        .generics
+        .type_params()
+        .map(|parameter| parameter.ident.to_string())
+        .collect();
+    let role = arguments.args.iter().find_map(|argument| match argument {
+        syn::GenericArgument::Type(role) => Some(type_name(role)),
+        _ => None,
+    });
+    match role {
+        Some(role) if parameters.contains(&role) => "every role".to_owned(),
+        Some(role) => role,
+        None => "no role".to_owned(),
+    }
+}
+
+/// Every item in `items` and in each inline module among them, at any depth.
+fn every_item(items: &[Item]) -> Vec<&Item> {
+    items
+        .iter()
+        .flat_map(|item| {
+            let mut found = vec![item];
+            if let Item::Mod(module) = item
+                && let Some((_, content)) = &module.content
+            {
+                found.extend(every_item(content));
+            }
+            found
+        })
+        .collect()
+}
+
+/// `seeds`, and every name `file` binds to one of them, through any chain of aliases.
+fn aliases_in_file(seeds: &[&str], file: &syn::File) -> BTreeSet<String> {
+    let source = file.to_token_stream().to_string();
+    with_aliases(seeds, &[source])
+}
+
+/// Every method the lent view defines in `file`, inline modules included, with the role its
+/// impl is for, and what else breaks its pinned surface there: a visible field, a derive, a
+/// trait impl, an inherent item other than a method. An alias of the view counts as the view.
+fn lent_surface(file: &syn::File) -> (Vec<(String, String)>, Vec<String>) {
+    let lents = aliases_in_file(&[LENT], file);
+    let mut methods = Vec::new();
+    let mut out = Vec::new();
+    let mut defined = 0;
+    for item in every_item(&file.items) {
+        match item {
+            Item::Struct(structure) if structure.ident == LENT => {
+                defined += 1;
+                let derives = structure
+                    .attrs
+                    .iter()
+                    .any(|attribute| attribute.path().is_ident("derive"));
+                if derives {
+                    out.push("a derive on the lent view".to_owned());
+                }
+                for field in &structure.fields {
+                    if !matches!(field.vis, Visibility::Inherited) {
+                        out.push(format!("a visible field: {}", field.to_token_stream()));
+                    }
+                }
+            }
+            Item::Impl(implementation) if lents.contains(&type_name(&implementation.self_ty)) => {
+                if let Some((_, trait_path, _)) = &implementation.trait_ {
+                    out.push(format!("a trait impl: {}", trait_path.to_token_stream()));
+                    continue;
+                }
+                let role = lent_role(implementation);
+                for impl_item in &implementation.items {
+                    match impl_item {
+                        ImplItem::Fn(method) => {
+                            methods.push((method.sig.ident.to_string(), role.clone()));
+                        }
+                        other => out.push(format!(
+                            "an inherent item other than a method: {}",
+                            other.to_token_stream()
+                        )),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if defined != 1 {
+        out.push(format!("{defined} `{LENT}` structs"));
+    }
+    (methods, out)
+}
+
+/// What breaks the lent view's pinned surface in `file`: `create` for a creator's view, `lent`
+/// for every role's, and nothing else.
+fn lent_surface_findings(file: &syn::File) -> Vec<String> {
+    let (methods, mut out) = lent_surface(file);
+    let pinned = [
+        ("create".to_owned(), "Creator".to_owned()),
+        ("lent".to_owned(), "every role".to_owned()),
+    ];
+    if methods != pinned {
+        out.push(format!("the methods and their roles are {methods:?}"));
+    }
+    out
+}
+
+/// Each impl on the lent view, under any alias, outside the gate file.
+fn lent_impls_elsewhere() -> Vec<String> {
+    let src = application_src();
+    let sources: Vec<(PathBuf, String)> = walk(&src)
+        .production
+        .into_iter()
+        .map(|path| {
+            let source = std::fs::read_to_string(&path).expect("a readable source");
+            (path, source)
+        })
+        .collect();
+    let texts: Vec<String> = sources.iter().map(|(_, source)| source.clone()).collect();
+    let names = with_aliases(&[LENT], &texts);
+    let mut out = Vec::new();
+    for (path, source) in &sources {
+        let file = relative(path, &src);
+        if file == GATE_FILE {
+            continue;
+        }
+        let parsed = syn::parse_file(source).expect("the source parses");
+        for piece in pieces(&parsed) {
+            let Some(self_name) = &piece.impl_of else {
+                continue;
+            };
+            if piece.context.ends_with(&format!("impl {self_name}")) && names.contains(self_name) {
+                out.push(format!("{file}: {}", piece.context));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn the_lent_view_s_surface_is_create_and_lent() {
+    let gate = parse(&application_src().join(GATE_FILE));
+
+    let findings = lent_surface_findings(&gate);
+    let elsewhere = lent_impls_elsewhere();
+
+    assert_eq!(findings, Vec::<String>::new());
+    assert_eq!(elsewhere, Vec::<String>::new());
+    let source =
+        std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
+    let widened = format!("{WIDENED_MODULE}{AFTER_THE_LENT_VIEW}");
+    let broken = [
+        (
+            "impl<R: RoleTable> Lent<'_, R> {",
+            "impl<R: RoleTable> Lent<'_, R> {\n    pub(crate) async fn grant_view(&mut self) -> anyhow::Result<()> {\n        self.latch.pass(self.view.grant_view().await)\n    }\n",
+        ),
+        (
+            "    view: View<'a, R>,",
+            "    pub(crate) view: View<'a, R>,",
+        ),
+        (
+            "pub(crate) struct Lent<'a, R: RoleTable> {",
+            "#[derive(Default)]\npub(crate) struct Lent<'a, R: RoleTable> {",
+        ),
+        ("impl Lent<'_, Creator> {", "impl Lent<'_, AsOwner> {"),
+        (
+            "impl Lent<'_, Creator> {",
+            "impl<R: RoleTable> std::ops::Deref for Lent<'_, R> {\n    type Target = Box<dyn CommissionRepo>;\n    fn deref(&self) -> &Self::Target {\n        &self.view.repo\n    }\n}\n\nimpl Lent<'_, Creator> {",
+        ),
+        (
+            "impl Lent<'_, Creator> {",
+            "impl Lent<'_, AsOwner> {\n    pub(crate) async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {\n        self.latch.pass(self.view.create(commission).await)\n    }\n}\n\nimpl Lent<'_, Creator> {",
+        ),
+        (AFTER_THE_LENT_VIEW, widened.as_str()),
+        (
+            AFTER_THE_LENT_VIEW,
+            "mod outer {\n    mod inner {\n        impl super::super::Lent<'_, AsOwner> {\n            pub(crate) async fn grant(&mut self) -> anyhow::Result<()> {\n                self.latch.pass(self.view.grant().await)\n            }\n        }\n    }\n}\n\n/// What a lent handler answered",
+        ),
+        (
+            AFTER_THE_LENT_VIEW,
+            "type Owned<'a> = Lent<'a, AsOwner>;\n\nimpl Owned<'_> {\n    pub(crate) async fn grant(&mut self) -> anyhow::Result<()> {\n        self.latch.pass(self.view.grant().await)\n    }\n}\n\n/// What a lent handler answered",
+        ),
+    ];
+    for (from, to) in broken {
+        assert!(source.contains(from), "{from}");
+        let planted = source.replacen(from, to, 1);
+        let file = syn::parse_file(&planted).expect("the planted gate parses");
+
+        let findings = lent_surface_findings(&file);
+
+        assert!(!findings.is_empty(), "{to}");
+    }
+}
+
+/// Whether `expr` is `self.<field>`.
+fn is_self_field(expr: &syn::Expr, field: &str) -> bool {
+    let syn::Expr::Field(access) = expr else {
+        return false;
+    };
+    let syn::Member::Named(member) = &access.member else {
+        return false;
+    };
+    let syn::Expr::Path(base) = &*access.base else {
+        return false;
+    };
+    base.path.is_ident("self") && member == field
+}
+
+/// Whether `method`'s whole body is `self.latch.pass(self.view.<its own name>(…).await)`.
+fn passes_its_call_through_the_latch(method: &syn::ImplItemFn) -> bool {
+    let [syn::Stmt::Expr(syn::Expr::MethodCall(pass), None)] = method.block.stmts.as_slice() else {
+        return false;
+    };
+    let [syn::Expr::Await(awaited)] = pass.args.iter().collect::<Vec<_>>().as_slice() else {
+        return false;
+    };
+    let syn::Expr::MethodCall(inner) = &*awaited.base else {
+        return false;
+    };
+    is_self_field(&pass.receiver, LATCH)
+        && pass.method == PASS
+        && is_self_field(&inner.receiver, VIEW)
+        && inner.method == method.sig.ident
+}
+
+/// Each method of the lent view in `file`, inline modules and aliases included, whose body
+/// doesn't pass its own inner call through the latch.
+fn unlatched_methods(file: &syn::File) -> Vec<String> {
+    let lents = aliases_in_file(&[LENT], file);
+    every_item(&file.items)
+        .into_iter()
+        .filter_map(|item| match item {
+            Item::Impl(implementation)
+                if lents.contains(&type_name(&implementation.self_ty))
+                    && implementation.trait_.is_none() =>
+            {
+                Some(implementation)
+            }
+            _ => None,
+        })
+        .flat_map(|implementation| &implementation.items)
+        .filter_map(|impl_item| match impl_item {
+            ImplItem::Fn(method) if !passes_its_call_through_the_latch(method) => {
+                Some(format!("{LENT}::{}", method.sig.ident))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn every_lent_method_goes_through_the_latch() {
+    let gate = parse(&application_src().join(GATE_FILE));
+
+    let unlatched = unlatched_methods(&gate);
+
+    assert_eq!(unlatched, Vec::<String>::new());
+    let (methods, _) = lent_surface(&gate);
+    assert_eq!(methods.len(), 2, "the scan reads both lent methods");
+    let source =
+        std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
+    let widened = format!("{WIDENED_MODULE}{AFTER_THE_LENT_VIEW}");
+    let broken = [
+        (AFTER_THE_LENT_VIEW, widened.as_str()),
+        (
+            "        self.latch.pass(self.view.lent().await)",
+            "        self.view.lent().await",
+        ),
+        (
+            "        self.latch.pass(self.view.create(commission).await)",
+            "        self.view.create(commission).await",
+        ),
+        (
+            "        self.latch.pass(self.view.lent().await)",
+            "        self.latch.pass(self.view.create(&NewCommission { maturity: None, deadline: None }).await)",
+        ),
+        (
+            "        self.latch.pass(self.view.lent().await)",
+            "        let read = self.view.lent().await;\n        self.latch.pass(read)",
+        ),
+        (
+            "        self.latch.pass(self.view.lent().await)",
+            "        self.latch.pass(self.view.lent().await);\n        self.view.lent().await",
+        ),
+        (
+            "        self.latch.pass(self.view.lent().await)",
+            "        self.view.latch.pass(self.view.lent().await)",
+        ),
+        (
+            "        self.latch.pass(self.view.lent().await)",
+            "        self.latch.keep(self.view.lent().await)",
+        ),
+    ];
+    for (from, to) in broken {
+        assert!(source.contains(from), "{from}");
+        let planted = source.replacen(from, to, 1);
+        let file = syn::parse_file(&planted).expect("the planted gate parses");
+
+        let unlatched = unlatched_methods(&file);
+
+        assert!(!unlatched.is_empty(), "{to}");
+    }
+}
+
+/// The lent view's inner view: only [`LENT`]'s methods and [`LEND_AS`] reach it.
+const VIEW_TYPE: &str = "View";
+
+/// The inner view's field holding the commission repo.
+const REPO: &str = "repo";
+
+/// The struct literals and patterns of the views [`LEND_AS`] holds: it builds the inner view
+/// and the lent view, then takes the lent view apart.
+const LENDER_STRUCTS: [(&str, &str, usize); 2] = [(LEND_AS, VIEW_TYPE, 1), (LEND_AS, LENT, 2)];
+
+/// The anchor in the gate file a planted item goes before: the item after the lent view.
+const AFTER_THE_LENT_VIEW: &str = "/// What a lent handler answered";
+
+/// A nested module in the gate file that widens an owner's lent view: a module there sees the
+/// private fields of `Lent` and `View`.
+const WIDENED_MODULE: &str = "mod widened {\n    use super::*;\n    use domain::elements::commission::GrantLevel;\n\n    impl Lent<'_, AsOwner> {\n        pub(crate) async fn grant_view_to(&mut self, user: &UserId) -> anyhow::Result<()> {\n            let commission = *self.view.capability.thing();\n            self.latch.pass(\n                self.view\n                    .repo\n                    .grant_view(&commission, user, GrantLevel::Total)\n                    .await,\n            )\n        }\n    }\n}\n\n";
+
+/// Whether `piece` sits in an impl of a view in `views` at the file's top level.
+fn held_by_a_view(piece: &Piece, views: &BTreeSet<String>) -> bool {
+    piece.impl_of.as_ref().is_some_and(|name| {
+        let in_the_impl = piece.context == format!("impl {name}")
+            || piece.context.starts_with(&format!("{name}::"));
+        views.contains(name) && in_the_impl
+    })
+}
+
+/// Whether the identifier at `at` is the `mod` keyword, a raw `r#mod` aside.
+fn module_keyword_at(level: &[TokenTree], at: usize) -> bool {
+    matches!(level.get(at), Some(TokenTree::Ident(ident)) if *ident == "mod")
+}
+
+/// Whether a `.view` or `.repo` field access (or a method of either name) starts at `at`.
+fn view_field_at(level: &[TokenTree], at: usize) -> bool {
+    let field = ident_at(level, at + 1);
+    let named = matches!(field.as_deref(), Some(name) if name == VIEW || name == REPO);
+    punct_at(level, at, '.') && !punct_at(level, at.wrapping_sub(1), '.') && named
+}
+
+/// Whether the identifier at `at`, a view in `views` (or `Self` in a view's impl), opens a
+/// struct literal or pattern: a brace group next, or after a turbofish.
+fn view_struct_at(
+    level: &[TokenTree],
+    at: usize,
+    views: &BTreeSet<String>,
+    held: bool,
+) -> Option<String> {
+    let name = ident_at(level, at)?;
+    let a_view = views.contains(&name) || (held && name == "Self");
+    let defines = matches!(
+        ident_at(level, at.wrapping_sub(1)).as_deref(),
+        Some("struct" | "enum" | "union" | "impl")
+    );
+    let returned =
+        punct_at(level, at.wrapping_sub(1), '>') && punct_at(level, at.wrapping_sub(2), '-');
+    let braces_at = if path_separator_at(level, at + 1) && punct_at(level, at + 3, '<') {
+        past_generics(level, at + 3)
+    } else {
+        at + 1
+    };
+    let braced = matches!(level.get(braces_at), Some(TokenTree::Group(group)) if group.delimiter() == Delimiter::Brace);
+    (a_view && braced && !defines && !returned).then_some(name)
+}
+
+/// Each view of `views` a struct literal or pattern in `piece` names, in order.
+fn view_structs(piece: &Piece, views: &BTreeSet<String>) -> Vec<String> {
+    let held = held_by_a_view(piece, views);
+    levels(piece.tokens.clone())
+        .iter()
+        .flat_map(|level| (0..level.len()).filter_map(|at| view_struct_at(level, at, views, held)))
+        .collect()
+}
+
+/// What reaches the private fields of the lent view or its inner view in the gate file
+/// `file`, besides their own methods: any module but the unit tests' (a module there sees
+/// both views' fields), a `.view` or `.repo` outside an impl of either view at the file's top
+/// level, and a struct literal or pattern of either past [`LENDER_STRUCTS`]. Macro bodies and
+/// function bodies included.
+fn lent_reach_findings(file: &syn::File) -> Vec<String> {
+    let views = aliases_in_file(&[LENT, VIEW_TYPE], file);
+    let mut out = Vec::new();
+    for item in &file.items {
+        let Item::Mod(_) = item else {
+            let nested = levels(item.to_token_stream())
+                .iter()
+                .any(|level| (0..level.len()).any(|at| module_keyword_at(level, at)));
+            if nested {
+                out.push(format!("a module inside {}", item_name(item)));
+            }
+            continue;
+        };
+        if !declares_under_cfg_test(std::slice::from_ref(item), "tests") {
+            out.push(format!(
+                "a module other than the unit tests: {}",
+                item_name(item)
+            ));
+        }
+    }
+    let mut left: BTreeMap<(String, String), usize> = LENDER_STRUCTS
+        .iter()
+        .map(|(context, name, count)| (((*context).to_owned(), (*name).to_owned()), *count))
+        .collect();
+    for piece in pieces(file) {
+        let reached = !held_by_a_view(&piece, &views)
+            && levels(piece.tokens.clone())
+                .iter()
+                .any(|level| (0..level.len()).any(|at| view_field_at(level, at)));
+        if reached {
+            out.push(format!("a view field reached in {}", piece.context));
+        }
+        for name in view_structs(&piece, &views) {
+            let key = (piece.context.clone(), name.clone());
+            if let Some(count) = left.get_mut(&key)
+                && *count > 0
+            {
+                *count -= 1;
+                continue;
+            }
+            out.push(format!(
+                "a `{name}` struct literal or pattern in {}",
+                piece.context
+            ));
+        }
+    }
+    out
+}
+
+#[test]
+fn nothing_else_in_the_gate_file_reaches_the_lent_view_s_fields() {
+    let gate = parse(&application_src().join(GATE_FILE));
+
+    let findings = lent_reach_findings(&gate);
+
+    assert_eq!(findings, Vec::<String>::new());
+    let views = aliases_in_file(&[LENT, VIEW_TYPE], &gate);
+    let in_the_lender: Vec<String> = pieces(&gate)
+        .iter()
+        .filter(|piece| piece.context == LEND_AS)
+        .flat_map(|piece| view_structs(piece, &views))
+        .collect();
+    assert_eq!(
+        in_the_lender,
+        [VIEW_TYPE, LENT, LENT],
+        "the scan reads the view structs {LEND_AS} holds"
+    );
+    let source =
+        std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
+    let free_function = "pub(crate) async fn grant_view_to(lent: &mut Lent<'_, AsOwner>, user: &UserId) -> anyhow::Result<()> {\n    let commission = *lent.view.capability.thing();\n    lent.view.repo.grant_view(&commission, user, GrantLevel::Total).await\n}\n\n";
+    let destructured = "pub(crate) async fn grant_view_to(lent: &mut Lent<'_, AsOwner>, user: &UserId) -> anyhow::Result<()> {\n    let Lent { view, .. } = lent;\n    let View { repo, capability, .. } = view;\n    repo.grant_view(capability.thing(), user, GrantLevel::Total).await\n}\n\n";
+    let planted_items = [
+        WIDENED_MODULE,
+        free_function,
+        destructured,
+        "mod widened;\n\n",
+        "#[cfg(test)]\nmod tests_too;\n\n",
+        "fn widen() {\n    mod inner {}\n}\n\n",
+        "macro_rules! widen {\n    ($lent:expr) => {\n        $lent.view.repo\n    };\n}\n\n",
+        "fn widen(view: &mut View<'_, AsOwner>) -> &mut Box<dyn CommissionRepo + '_> {\n    &mut view.repo\n}\n\n",
+        "fn widen<'a>(lent: Lent<'a, AsOwner>) -> View<'a, AsOwner> {\n    let Lent::<'a, AsOwner> { view, .. } = lent;\n    view\n}\n\n",
+        "type Bare<'a> = View<'a, AsOwner>;\n\nfn widen(view: Bare<'_>) {\n    let Bare { repo, .. } = view;\n}\n\n",
+        "impl View<'_, AsOwner> {\n    fn widen(self) -> Box<dyn CommissionRepo> {\n        let Self { repo, .. } = self;\n        repo\n    }\n}\n\n",
+        "fn widen(lent: &mut Lent<'_, AsOwner>) {\n    let reach = || lent.view.capability.thing();\n}\n\n",
+    ];
+    let lender_taken_apart = (
+        "    drop(view);\n",
+        "    let View { repo, .. } = view;\n    drop(repo);\n",
+    );
+    assert!(source.contains(AFTER_THE_LENT_VIEW));
+    let mut planted: Vec<String> = planted_items
+        .iter()
+        .map(|item| {
+            source.replacen(
+                AFTER_THE_LENT_VIEW,
+                &format!("{item}{AFTER_THE_LENT_VIEW}"),
+                1,
+            )
+        })
+        .collect();
+    assert!(source.contains(lender_taken_apart.0));
+    planted.push(source.replacen(lender_taken_apart.0, lender_taken_apart.1, 1));
+    for planted_gate in planted {
+        let file = syn::parse_file(&planted_gate).expect("the planted gate parses");
+
+        let findings = lent_reach_findings(&file);
+
+        assert!(!findings.is_empty(), "{planted_gate}");
+    }
 }
 
 // Every compiled source is a file the walker reads.
@@ -1205,12 +1784,26 @@ fn the_write_use_case_stays_crate_private() {
 
 // Nothing in the drivers.
 
-/// What a driver may not name: the node port, the issuer, the capability, and raw SQL.
+/// The in-memory adapter's commission seeders, each a write beneath the gate: a bound
+/// commission, a stored title past the name rule, a lifecycle step, a tab row, and standing
+/// given or taken. The dev profile reaches them only through the fixture.
+const IN_MEMORY_SEEDERS: [&str; 6] = [
+    "seed_bound_commission",
+    "seed_stored_title",
+    "seed_lifecycle_step",
+    "seed_tab",
+    "seed_participant",
+    "remove_participant",
+];
+
+/// What a driver may not name: the node port, the issuer, the capability, the in-memory
+/// seeders, and raw SQL.
 fn driver_forbidden(sources: &[String]) -> BTreeSet<String> {
     let seeds: Vec<&str> = NODE_PORT
         .iter()
         .copied()
         .chain([GATE_ISSUED, WRITE_CAPABILITY])
+        .chain(IN_MEMORY_SEEDERS)
         .chain(RAW_SQL)
         .collect();
     with_aliases(&seeds, sources)
@@ -1502,6 +2095,13 @@ fn the_driver_scan_refuses_each_planted_route() {
         "fn rename(capability: &domain::ports::WriteCapability<CommissionId, AsOwner>) {}",
         "use domain::ports::WriteCapability as Leave;",
         "async fn seed(backend: MemBackend) { let store = backend.node_store(); }",
+        "async fn seed(backend: MemBackend, seed: CommissionSeed) { backend.seed_bound_commission(&seed).await; }",
+        "use adapter_mem::MemBackend;\nfn seeder() -> fn(&MemBackend) { MemBackend::seed_bound_commission }",
+        "fn seed(backend: &MemBackend) { backend.seed_stored_title(adapter_mem::fixture::untitled(), \"a/name\"); }",
+        "fn seed(backend: &MemBackend) { adapter_mem::MemBackend::seed_lifecycle_step(backend, untitled(), LifecycleStep::Active); }",
+        "use adapter_mem::MemBackend;\nfn seed(backend: &MemBackend, user: UserId) { backend.seed_participant(untitled(), user, now()); }",
+        "fn seeder() -> fn(&MemBackend, CommissionId, &UserId) { MemBackend::remove_participant }",
+        "fn seed(backend: &MemBackend, tab: TabName) { let tab_id = backend.seed_tab(untitled(), tab); }",
         "async fn rename(state: AppState) { adapter_pg::queries::node::set_name(&state.pool, &id, &name).await; }",
         "use adapter_pg::queries as q;",
         "use adapter_pg::queries::commission::add_participant;",
@@ -1690,6 +2290,375 @@ fn the_scan_reads_every_crate_that_depends_on_composition() {
     );
 }
 
+// No lint silencer in the den, in commission's acts or on the modules above them.
+
+/// The lints nothing in the den's production files or commission's act files may silence:
+/// an item no real act reaches is removed, never silenced. `warnings` silences them all.
+const SILENCED_LINTS: [&str; 5] = [
+    "dead_code",
+    "unused",
+    "unused_variables",
+    "unreachable_code",
+    "warnings",
+];
+
+/// The lint attributes that silence a lint.
+const SILENCERS: [&str; 2] = ["allow", "expect"];
+
+/// The attribute that applies others under a condition.
+const CFG_ATTR: &str = "cfg_attr";
+
+/// Commission's act and handler files, relative to the use-case layer's sources.
+const COMMISSION_ACT_FILES: [&str; 4] = [
+    "commission/act.rs",
+    "commission/create.rs",
+    "commission/rename.rs",
+    "commission/den.rs",
+];
+
+/// An identifier's text, a raw identifier's `r#` dropped.
+fn unraw(ident: &proc_macro2::Ident) -> String {
+    ident.unraw().to_string()
+}
+
+/// `stream` cut at its top-level commas.
+fn comma_separated(stream: TokenStream) -> Vec<Vec<TokenTree>> {
+    let mut parts = vec![Vec::new()];
+    for tree in stream {
+        let comma = matches!(&tree, TokenTree::Punct(punct) if punct.as_char() == ',');
+        if comma {
+            parts.push(Vec::new());
+            continue;
+        }
+        if let Some(part) = parts.last_mut() {
+            part.push(tree);
+        }
+    }
+    parts.retain(|part| !part.is_empty());
+    parts
+}
+
+/// The silenced lints one attribute's contents name: an `allow` or `expect` of a lint in
+/// [`SILENCED_LINTS`] (any letter case), bare or under any depth of `cfg_attr`.
+fn silenced_by(meta: &[TokenTree]) -> Vec<String> {
+    let (Some(TokenTree::Ident(name)), Some(TokenTree::Group(arguments))) =
+        (meta.first(), meta.get(1))
+    else {
+        return Vec::new();
+    };
+    if arguments.delimiter() != Delimiter::Parenthesis {
+        return Vec::new();
+    }
+    let name = unraw(name);
+    let parts = comma_separated(arguments.stream());
+    if name == CFG_ATTR {
+        return parts
+            .iter()
+            .skip(1)
+            .flat_map(|applied| silenced_by(applied))
+            .collect();
+    }
+    if !SILENCERS.contains(&name.as_str()) {
+        return Vec::new();
+    }
+    parts
+        .iter()
+        .filter_map(|lint| match lint.as_slice() {
+            [TokenTree::Ident(lint)] => Some(unraw(lint).to_lowercase()),
+            _ => None,
+        })
+        .filter(|lint| SILENCED_LINTS.contains(&lint.as_str()))
+        .map(|lint| format!("{name}({lint})"))
+        .collect()
+}
+
+/// Every silencer in `tokens`, at any depth: each outer `#[…]` or inner `#![…]` attribute,
+/// in items, bodies and macro bodies alike, that silences a lint in [`SILENCED_LINTS`].
+fn silencers(tokens: TokenStream) -> Vec<String> {
+    let level: Vec<TokenTree> = tokens.into_iter().collect();
+    let mut found = Vec::new();
+    for (at, tree) in level.iter().enumerate() {
+        if let TokenTree::Group(group) = tree {
+            found.extend(silencers(group.stream()));
+        }
+        if !punct_at(&level, at, '#') {
+            continue;
+        }
+        let bracket_at = if punct_at(&level, at + 1, '!') {
+            at + 2
+        } else {
+            at + 1
+        };
+        let Some(TokenTree::Group(attribute)) = level.get(bracket_at) else {
+            continue;
+        };
+        if attribute.delimiter() != Delimiter::Bracket {
+            continue;
+        }
+        let meta: Vec<TokenTree> = attribute.stream().into_iter().collect();
+        found.extend(silenced_by(&meta));
+    }
+    found
+}
+
+/// Each silencer in `source`, from `file`.
+fn silencer_findings(file: &str, source: &str) -> Vec<String> {
+    let tokens: TokenStream = source.parse().expect("the source lexes");
+    silencers(tokens)
+        .into_iter()
+        .map(|silencer| format!("{file}: {silencer}"))
+        .collect()
+}
+
+/// The files above the `guarded` ones (paths relative to the use-case layer's sources) that
+/// aren't guarded themselves, each with the modules it declares on the way down to a guarded
+/// file: `lib.rs` declares a top module, `a.rs` declares `a/b.rs`'s `b`.
+fn ancestor_modules(guarded: &[&str]) -> BTreeMap<String, BTreeSet<String>> {
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for file in guarded {
+        let modules: Vec<&str> = file.trim_end_matches(".rs").split('/').collect();
+        for (depth, module) in modules.iter().enumerate() {
+            let parent = match depth {
+                0 => "lib.rs".to_owned(),
+                _ => format!("{}.rs", modules[..depth].join("/")),
+            };
+            if !guarded.contains(&parent.as_str()) {
+                out.entry(parent).or_default().insert((*module).to_owned());
+            }
+        }
+    }
+    out
+}
+
+/// Each silencer in the ancestor module file `file` that reaches a guarded file: an inner one,
+/// which silences the whole file and its modules, or an outer one on the `mod` item declaring
+/// a module in `declared`.
+fn ancestor_silencer_findings(
+    file: &str,
+    source: &str,
+    declared: &BTreeSet<String>,
+) -> Vec<String> {
+    let parsed = syn::parse_file(source).expect("the source parses");
+    let inner: TokenStream = parsed
+        .attrs
+        .iter()
+        .map(|attribute| attribute.to_token_stream())
+        .collect();
+    let mut found = silencers(inner);
+    for item in &parsed.items {
+        let Item::Mod(module) = item else {
+            continue;
+        };
+        if !declared.contains(&unraw(&module.ident)) {
+            continue;
+        }
+        let outer: TokenStream = module
+            .attrs
+            .iter()
+            .map(|attribute| attribute.to_token_stream())
+            .collect();
+        found.extend(silencers(outer));
+    }
+    found
+        .into_iter()
+        .map(|silencer| format!("{file}: {silencer}"))
+        .collect()
+}
+
+#[test]
+fn den_and_commission_hold_no_lint_silencer() {
+    let src = application_src();
+    let commission_files: Vec<(String, PathBuf)> = COMMISSION_ACT_FILES
+        .iter()
+        .map(|file| ((*file).to_owned(), src.join(file)))
+        .collect();
+    let files: Vec<(String, PathBuf)> = den_production()
+        .into_iter()
+        .chain(commission_files)
+        .collect();
+
+    let offenders: Vec<String> = files
+        .iter()
+        .flat_map(|(file, path)| {
+            let source = std::fs::read_to_string(path).expect("a readable source");
+            silencer_findings(file, &source)
+        })
+        .collect();
+
+    assert_eq!(offenders, Vec::<String>::new());
+    let read: Vec<&str> = files.iter().map(|(file, _)| file.as_str()).collect();
+    for file in [
+        "den.rs",
+        GATE_FILE,
+        "den/act.rs",
+        "den/write.rs",
+        "den/authority.rs",
+    ]
+    .into_iter()
+    .chain(COMMISSION_ACT_FILES)
+    {
+        assert!(read.contains(&file), "the scan reads {file}: {read:?}");
+    }
+    let ancestors = ancestor_modules(&read);
+    let ancestor_offenders: Vec<String> = ancestors
+        .iter()
+        .flat_map(|(file, declared)| {
+            let source = std::fs::read_to_string(src.join(file)).expect("a readable source");
+            ancestor_silencer_findings(file, &source, declared)
+        })
+        .collect();
+    assert_eq!(ancestor_offenders, Vec::<String>::new());
+    let named = |modules: &[&str]| -> BTreeSet<String> {
+        modules.iter().map(|module| (*module).to_owned()).collect()
+    };
+    let expected_ancestors = BTreeMap::from([
+        (
+            "commission.rs".to_owned(),
+            named(&["act", "create", "den", "rename"]),
+        ),
+        ("lib.rs".to_owned(), named(&["commission", "den"])),
+    ]);
+    assert_eq!(
+        ancestors, expected_ancestors,
+        "the scan reads lib.rs and commission.rs"
+    );
+    let refused = [
+        "#[allow(dead_code)]\nfn grant_fits() {}",
+        "#[expect(dead_code, reason = \"only a test builds it\")]\nenum Anchor { Thing }",
+        "#![allow(unused)]\nfn later() {}",
+        "#![expect(unused_variables, reason = \"later\")]\nfn later(grant: Grant) {}",
+        "#[allow(unreachable_code)]\nfn later() { return; }",
+        "#[allow(warnings)]\nfn later() {}",
+        "#[cfg_attr(not(test), expect(dead_code, reason = \"only a test builds one\"))]\nenum Anchor { Thing }",
+        "#[cfg_attr(test, allow(unused_variables))]\nfn later(grant: Grant) {}",
+        "#![cfg_attr(not(test), allow(dead_code))]\nfn later() {}",
+        "#[cfg_attr(feature = \"x\", cfg_attr(not(test), allow(dead_code)))]\nfn later() {}",
+        "#[allow(clippy::disallowed_methods, dead_code)]\nfn later() {}",
+        "#[allow(Dead_Code)]\nfn later() {}",
+        "#[r#allow(dead_code)]\nfn later() {}",
+        "fn later() { #[allow(unused_variables)] let grant = 1; }",
+        "impl Grant { #[expect(dead_code)] fn later(&self) {} }",
+        "macro_rules! later { () => { #[allow(dead_code)] fn later() {} }; }",
+    ];
+    for source in refused {
+        let found = silencer_findings("den/gate.rs", source);
+
+        assert_eq!(found.len(), 1, "{source}: {found:?}");
+    }
+    let kept = [
+        "#[allow(clippy::disallowed_methods, reason = \"a test opens its unit\")]\nfn opens() {}",
+        "#[expect(clippy::disallowed_methods, reason = \"the gate's one node port\")]\nfn gate() {}",
+        "#[cfg_attr(test, derive(Debug))]\nstruct Grant;",
+        "/// Never `#[allow(dead_code)]` here.\nfn documented() {}",
+        "fn named() { let allow = \"dead_code\"; }",
+        "#[cfg(test)]\nmod tests;",
+    ];
+    for source in kept {
+        let found = silencer_findings("den/gate.rs", source);
+
+        assert_eq!(found, Vec::<String>::new(), "{source}");
+    }
+}
+
+#[test]
+fn the_modules_above_the_guarded_files_silence_none_of_them() {
+    let library = BTreeSet::from(["commission".to_owned(), "den".to_owned()]);
+    let commission = ["act", "create", "den", "rename"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<String>>();
+    let refused = [
+        ("lib.rs", &library, "#[allow(dead_code)]\npub mod den;"),
+        ("lib.rs", &library, "#![allow(dead_code)]\npub mod den;"),
+        (
+            "lib.rs",
+            &library,
+            "#[expect(unused, reason = \"later\")]\npub mod commission;",
+        ),
+        (
+            "lib.rs",
+            &library,
+            "#![cfg_attr(not(test), allow(warnings))]\npub mod account;",
+        ),
+        (
+            "commission.rs",
+            &commission,
+            "#[cfg_attr(not(test), allow(dead_code))]\npub(crate) mod act;",
+        ),
+        (
+            "commission.rs",
+            &commission,
+            "#[expect(unused)]\npub mod rename;",
+        ),
+        (
+            "commission.rs",
+            &commission,
+            "#[allow(dead_code)]\npub mod create;",
+        ),
+        (
+            "commission.rs",
+            &commission,
+            "#[allow(Dead_Code)]\npub(crate) mod r#den;",
+        ),
+        (
+            "commission.rs",
+            &commission,
+            "#![expect(unused_variables, reason = \"later\")]\npub mod archive;",
+        ),
+    ];
+    for (file, declared, source) in refused {
+        let found = ancestor_silencer_findings(file, source, declared);
+
+        assert_eq!(found.len(), 1, "{file}: {source}: {found:?}");
+    }
+    let sweep = "#[allow(\n    clippy::disallowed_methods,\n    reason = \"the sweep is a system job, not a use-case method\"\n)]\npub async fn sweep_deadlines() {}";
+    let kept = [
+        ("commission.rs", &commission, sweep),
+        (
+            "commission.rs",
+            &commission,
+            "#[allow(dead_code)]\nmod values;",
+        ),
+        ("lib.rs", &library, "#[cfg(test)]\nmod test_world;"),
+        (
+            "lib.rs",
+            &library,
+            "#[cfg_attr(test, derive(Debug))]\npub mod den;",
+        ),
+        (
+            "lib.rs",
+            &library,
+            "//! Never `#![allow(dead_code)]` here.\n\npub mod den;",
+        ),
+    ];
+    for (file, declared, source) in kept {
+        let found = ancestor_silencer_findings(file, source, declared);
+
+        assert_eq!(found, Vec::<String>::new(), "{file}: {source}");
+    }
+    let guarded = [
+        "den.rs",
+        "den/gate.rs",
+        "den/read/walk.rs",
+        "commission/act.rs",
+    ];
+    let expected = BTreeMap::from([
+        (
+            "commission.rs".to_owned(),
+            BTreeSet::from(["act".to_owned()]),
+        ),
+        (
+            "lib.rs".to_owned(),
+            BTreeSet::from(["commission".to_owned(), "den".to_owned()]),
+        ),
+        (
+            "den/read.rs".to_owned(),
+            BTreeSet::from(["walk".to_owned()]),
+        ),
+    ]);
+    assert_eq!(ancestor_modules(&guarded), expected);
+}
+
 // The interim guard: the frozen list.
 
 /// Each commission field write in `file`: a [`FIELD_WRITES`] name anywhere, and a
@@ -1793,7 +2762,7 @@ fn the_ungated_field_writes_are_exactly_these() {
         "async fn copy(uow: Unit<'_>) { let mut repo = uow.commissions(); repo.create(&commission).await?; }",
         "async fn purge(uow: Unit<'_>) { UnitOfWork::commissions(uow).delete(&id).await?; }",
         "async fn purge(uow: Unit<'_>) { let repo = uow.commissions(); (*repo).delete(&id).await?; }",
-        "fn setter() { let set = CommissionRepo::set_title; }",
+        "fn setter() { let set = CommissionRepo::set_maturity; }",
         "async fn extend(uow: Unit<'_>) { tokio::join!(async { uow.commissions().declare_slots(&slots).await }); }",
     ];
     for source in new_sites {
@@ -1807,7 +2776,7 @@ fn the_ungated_field_writes_are_exactly_these() {
         "async fn upload(ports: &Ports, key: FileKey) { ports.files.delete(key).await?; }",
         "async fn open(uow: Unit<'_>) { uow.accounts().create(&account, &owner).await?; }",
         "fn make() -> Commission { Commission::create(title, owner, now, None) }",
-        "trait Repo { async fn set_title(&mut self, id: &CommissionId, title: &Title); }",
+        "trait Repo { async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity); }",
     ];
     for source in not_field_writes {
         let file = syn::parse_file(source).expect("the planted source parses");

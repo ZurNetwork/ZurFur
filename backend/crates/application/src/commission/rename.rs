@@ -1,17 +1,21 @@
-use crate::LazyUnit;
 use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{CommissionId, CommissionTitle, NewChangelogEntry},
+        commission::{AsOwner, ChangelogEntryKind, CommissionId, CommissionTitle},
         user::UserId,
     },
 };
 
 use crate::{
-    Ports,
-    commission::{CommissionResult, CommissionValues, Commissions, den_title, require_owner},
-    common_error::CommonError,
+    commission::{
+        CommissionResult, CommissionValues, Commissions, act::CommissionAct, den::CommissionPlace,
+    },
+    den::{
+        Den, DenType, Handler, Lent, Place,
+        act::{ActShape, ActSpec, Anchor, DenAct, EntryRule, Handled, HandlerError},
+        needs, write,
+    },
 };
 
 pub struct Command {
@@ -20,15 +24,52 @@ pub struct Command {
     pub title: CommissionTitle,
 }
 
+/// The rename act: the commission it is anchored on and the name its node is given. The den
+/// writes the node its grant names, never the act's id.
+pub(crate) struct Act {
+    /// The commission it is anchored on.
+    pub(crate) commission: CommissionId,
+    /// The name its node is given.
+    pub(crate) title: CommissionTitle,
+}
+
+impl Act {
+    /// A new name for the commission's node; it needs the role its capability's marker needs,
+    /// the Owner.
+    pub(crate) fn spec(&self) -> ActSpec {
+        let place = Place::Commission(CommissionPlace::Commission(self.commission));
+        let shape = ActShape::Rename {
+            name: self.title.clone().into(),
+        };
+        ActSpec {
+            word: "rename",
+            den_type: DenType::Commission,
+            anchor: Anchor::Thing(place),
+            needs: needs::<Self>(),
+            shape,
+        }
+    }
+}
+
+impl Handler for Act {
+    type Role = AsOwner;
+
+    const ENTRY: EntryRule = EntryRule::OnChange(ChangelogEntryKind::Renamed);
+
+    /// Answers the renamed commission as the unit holds it; the gate wrote its node's name.
+    async fn handle(&self, lent: &mut Lent<'_, AsOwner>) -> Result<Handled, HandlerError> {
+        let answer = lent.lent().await?;
+        Ok(Handled { answer })
+    }
+}
+
 impl Commissions<'_> {
-    /// Rename the commission and answer it as stored. Owner-only through `require_owner`; the
-    /// title passes the Den's name rule. A rename to the stored title writes nothing, and a
-    /// real one appends a `renamed` entry naming neither title, in the same unit.
+    /// Rename the commission's node through the Den's write, Owner-only, and answer it as the
+    /// write left it. A rename to the stored name writes nothing and records nothing; a real
+    /// one appends a `renamed` entry naming neither title, in the same unit.
     #[use_case]
     pub async fn rename(
         &self,
-        #[ports] ports: &Ports,
-        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         now: DateTimeUtc,
     ) -> CommissionResult<CommissionValues> {
@@ -37,23 +78,17 @@ impl Commissions<'_> {
             commission_id,
             title,
         } = cmd;
-        let commission = require_owner(ports, &commission_id, &actor_id).await?;
-        let title = den_title(&title)?;
-
-        let uow = uow.open().await?;
-        let mut commissions = uow.commissions();
-        let changed = commissions.set_title(&commission.id, &title).await?;
-        // Deleted since `require_owner`: the same not-found, and the unit rolls back.
-        let stored = commissions
-            .find(&commission.id)
-            .await?
-            .ok_or_else(CommonError::commission_not_found)?;
-        drop(commissions);
-        if changed {
-            let entry = NewChangelogEntry::renamed(commission.id, actor_id, now);
-            uow.changelog().append(&entry).await?;
-        }
-        Ok(CommissionValues::from(stored))
+        let act = Act {
+            commission: commission_id,
+            title,
+        };
+        let command = write::Command {
+            actor: actor_id,
+            act: DenAct::Commission(CommissionAct::Rename(act)),
+        };
+        let written = Den::from(self.ports()).write(command, now).await?;
+        let values = CommissionValues::try_from(written)?;
+        Ok(values)
     }
 }
 

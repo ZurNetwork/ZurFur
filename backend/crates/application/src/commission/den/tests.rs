@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use adapter_mem::fixture::{alice, bob, old_sketch, untitled, untitled_files, untitled_slots};
-use domain::{
-    elements::commission::{Commission, CommissionTitle, FileKey, FileName},
-    ports::UnitOfWork,
+use adapter_mem::{
+    CommissionSeed,
+    fixture::{alice, bob, old_sketch, untitled, untitled_files, untitled_slots},
 };
+use domain::elements::commission::{CommissionTitle, FileKey, FileName};
 use test_support::recording::{CallLog, RecordingCommissionStore, RecordingFileStore};
 use uuid::Uuid;
 
@@ -255,21 +255,18 @@ async fn a_participant_holds_standing_at_the_commission() {
 
 #[tokio::test]
 async fn a_stored_title_the_name_rule_refuses_shows_unnamed() {
-    let World { runtime, ports } = test_world::world().await;
+    let World { ports, backend, .. } = test_world::world().await;
     let alice = alice();
-    let legacy_title = "photo\u{202E}gpj.exe"
+    let title = "Legacy photo"
         .parse::<CommissionTitle>()
-        .expect("the title rule of its day accepted it");
-    let legacy = Commission::create(legacy_title, alice.clone(), chrono::Utc::now(), None);
-    let legacy_id = legacy.id;
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "test seeding creates the commission directly, beneath the den's write gate"
-    )]
-    runtime
-        .transaction(async move |uow: &mut dyn UnitOfWork| uow.commissions().create(&legacy).await)
+        .expect("a valid test title");
+    let seed = CommissionSeed::private(title, alice.clone());
+    let legacy_id = seed.id;
+    backend
+        .seed_bound_commission(&seed)
         .await
         .expect("the legacy commission seeds");
+    backend.seed_stored_title(legacy_id, "photo\u{202E}gpj.exe");
 
     let read = test_world::read(&ports, &alice, false, &commission_path(legacy_id), &[])
         .await
@@ -304,12 +301,21 @@ async fn mounts_in_the_viewer_s_own_commissions_include_archived_ones() {
 
 /// The fixture world with its commission and file stores recording every read.
 async fn recorded() -> (World, CallLog) {
-    let World { runtime, mut ports } = test_world::world().await;
+    let World {
+        runtime,
+        mut ports,
+        backend,
+    } = test_world::world().await;
     let log = CallLog::default();
     let commissions = RecordingCommissionStore::new(ports.commissions.clone(), log.clone());
     ports.commissions = Arc::new(commissions);
     ports.files = Arc::new(RecordingFileStore::new(ports.files.clone(), log.clone()));
-    (World { runtime, ports }, log)
+    let world = World {
+        runtime,
+        ports,
+        backend,
+    };
+    (world, log)
 }
 
 #[tokio::test]

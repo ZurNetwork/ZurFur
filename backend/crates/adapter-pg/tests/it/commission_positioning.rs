@@ -5,12 +5,13 @@
 //! through the [`UnitOfWork`]'s views; the reads through the pool-backed stores.
 //! Requires a container runtime socket.
 
+use crate::seed;
 use adapter_pg::{PgColumnStore, PgCommissionStore, PgDatabase, PgPool, PgWorkflowStore};
 use chrono::Utc;
 use domain::{
     elements::{
         account::{Account, AccountId, AccountName},
-        commission::{Commission, CommissionTitle, GrantLevel},
+        commission::GrantLevel,
         did::Did,
         handle::Handle,
         user::User,
@@ -44,17 +45,7 @@ async fn seed_commission(
     owner_did: &str,
 ) -> (User, domain::elements::commission::CommissionId) {
     let owner = provision(pool, owner_did).await;
-    let commission = Commission::create(
-        "A ref sheet".parse::<CommissionTitle>().expect("title"),
-        owner.id.clone(),
-        Utc::now(),
-        None,
-    );
-    let id = commission.id;
-    let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions().create(&commission).await.expect("create");
-    uow.commit().await.expect("commit");
+    let id = seed::seed_titled(pool, &owner.id, "A ref sheet").await;
     (owner, id)
 }
 

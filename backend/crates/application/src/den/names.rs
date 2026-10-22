@@ -27,6 +27,10 @@ pub(crate) const CHANGELOG: &str = "changelog";
 pub(crate) const PRODUCTS: &str = "products";
 /// A commission's folder of slots.
 pub(crate) const SLOTS: &str = "slots";
+/// A commission's participants file.
+pub(crate) const PARTICIPANTS: &str = "participants";
+/// A commission's brief file.
+pub(crate) const BRIEF: &str = "brief";
 /// A user's mount of their own posts.
 pub(crate) const POSTS: &str = "posts";
 /// The name a node shows when its stored text fails the name rule.

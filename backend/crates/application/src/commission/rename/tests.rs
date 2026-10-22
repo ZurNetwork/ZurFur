@@ -7,8 +7,9 @@ use adapter_mem::MemBackend;
 use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::{
-    commission::{ChangelogEntry, ChangelogEntryKind},
+    commission::{ChangelogEntry, ChangelogEntryKind, NewChangelogEntry},
     did::Did,
+    name::NodeNameError,
 };
 use domain::ports::{
     AccountRepo, ActorIdentityWrites, BugReportWrites, ChangelogWrites, CharacterWrites,
@@ -18,8 +19,7 @@ use domain::ports::{
 use super::*;
 use crate::{
     commission::{CommissionError, create},
-    common_error::NotFoundEntity,
-    den::DenNameError,
+    common_error::{CommonError, NotFoundEntity},
 };
 
 /// The owner every test's commission belongs to.
@@ -34,9 +34,15 @@ struct World {
 }
 
 impl World {
-    fn new() -> Self {
+    /// The world, its owner recognized as a User.
+    async fn new() -> Self {
         let did = Did::from("did:plc:rename-owner".to_owned());
         let built = test_support::runtime::mem(&did).build();
+        built
+            .backend
+            .provision(&did)
+            .await
+            .expect("the owner is recognized");
         let ports = crate::Ports::from(&built.runtime);
         Self {
             ports,
@@ -80,7 +86,7 @@ impl World {
         let commission = self
             .ports
             .commissions
-            .find(&id)
+            .find_summary(&id)
             .await
             .expect("the store reads")
             .expect("the commission exists");
@@ -242,7 +248,7 @@ impl Database for VanishingDatabase {
 
 #[tokio::test]
 async fn the_owner_renames_the_commission() {
-    let world = World::new();
+    let world = World::new().await;
     let id = world.commission("A ref sheet").await;
 
     let renamed = world
@@ -259,7 +265,7 @@ async fn the_owner_renames_the_commission() {
 
 #[tokio::test]
 async fn a_participant_who_is_not_the_owner_is_refused() {
-    let world = World::new();
+    let world = World::new().await;
     let id = world.commission("A ref sheet").await;
     let participant = UserId::from(Did::from("did:plc:rename-participant".to_owned()));
     world
@@ -276,16 +282,22 @@ async fn a_participant_who_is_not_the_owner_is_refused() {
     assert_eq!(world.kinds(id).await, [ChangelogEntryKind::Created]);
 }
 
+// A stranger is answered as an id that names nothing is.
 #[tokio::test]
-async fn a_stranger_is_answered_not_a_member() {
-    let world = World::new();
+async fn a_stranger_is_answered_not_found() {
+    let world = World::new().await;
     let id = world.commission("A ref sheet").await;
     let stranger = UserId::from(Did::from("did:plc:rename-stranger".to_owned()));
 
     let refused = world.rename(stranger, id, "Mine now").await;
 
     assert!(
-        matches!(refused, Err(CommissionError::NotAMember)),
+        matches!(
+            refused,
+            Err(CommissionError::CommonError(CommonError::NotFound(
+                NotFoundEntity::Commission
+            )))
+        ),
         "{refused:?}"
     );
     assert_eq!(world.stored_title(id).await, "A ref sheet");
@@ -293,7 +305,7 @@ async fn a_stranger_is_answered_not_a_member() {
 
 #[tokio::test]
 async fn a_made_up_id_is_answered_not_found() {
-    let world = World::new();
+    let world = World::new().await;
     let made_up = CommissionId::from(uuid::Uuid::now_v7());
 
     let refused = world.rename(owner(), made_up, "Anything").await;
@@ -311,7 +323,7 @@ async fn a_made_up_id_is_answered_not_found() {
 
 #[tokio::test]
 async fn a_rename_whose_entry_fails_leaves_the_title_unchanged() {
-    let mut world = World::new();
+    let mut world = World::new().await;
     let id = world.commission("A ref sheet").await;
     let refusing = RefusingChangelogDatabase(world.ports.database.clone());
     world.ports.database = Arc::new(refusing);
@@ -328,7 +340,7 @@ async fn a_rename_whose_entry_fails_leaves_the_title_unchanged() {
 
 #[tokio::test]
 async fn a_commission_deleted_before_the_write_answers_not_found() {
-    let mut world = World::new();
+    let mut world = World::new().await;
     let id = world.commission("A ref sheet").await;
     let vanishing = VanishingDatabase {
         inner: world.ports.database.clone(),
@@ -351,7 +363,7 @@ async fn a_commission_deleted_before_the_write_answers_not_found() {
 
 #[tokio::test]
 async fn the_rename_entry_is_built_by_its_constructor() {
-    let world = World::new();
+    let world = World::new().await;
     let id = world.commission("A ref sheet").await;
 
     world
@@ -370,35 +382,19 @@ async fn the_rename_entry_is_built_by_its_constructor() {
     assert_eq!(renamed.actor_id, Some(owner()));
 }
 
-#[tokio::test]
-async fn a_title_the_den_name_rule_refuses_writes_nothing() {
-    let world = World::new();
-    let id = world.commission("A ref sheet").await;
+// A title the Den's name rule refuses can't be made, so no rename ever carries one.
+#[test]
+fn a_title_the_den_name_rule_refuses_is_never_a_title() {
+    let slashed = "Ref/sheet".parse::<CommissionTitle>();
+    let reversed = "Ref\u{202E}sheet".parse::<CommissionTitle>();
 
-    let slashed = world.rename(owner(), id, "Ref/sheet").await;
-    let reversed = world.rename(owner(), id, "Ref\u{202E}sheet").await;
-
-    assert!(
-        matches!(
-            slashed,
-            Err(CommissionError::InvalidName(DenNameError::Slash))
-        ),
-        "{slashed:?}"
-    );
-    assert!(
-        matches!(
-            reversed,
-            Err(CommissionError::InvalidName(DenNameError::Invisible))
-        ),
-        "{reversed:?}"
-    );
-    assert_eq!(world.stored_title(id).await, "A ref sheet");
-    assert_eq!(world.kinds(id).await, [ChangelogEntryKind::Created]);
+    assert_eq!(slashed, Err(NodeNameError::Slash));
+    assert_eq!(reversed, Err(NodeNameError::Invisible));
 }
 
 #[tokio::test]
 async fn the_answer_is_the_title_as_stored() {
-    let world = World::new();
+    let world = World::new().await;
     let id = world.commission("A ref sheet").await;
 
     let renamed = world
@@ -412,7 +408,7 @@ async fn the_answer_is_the_title_as_stored() {
 
 #[tokio::test]
 async fn renaming_to_the_same_title_records_nothing() {
-    let world = World::new();
+    let world = World::new().await;
     let id = world.commission("A ref sheet").await;
 
     let renamed = world
@@ -427,7 +423,7 @@ async fn renaming_to_the_same_title_records_nothing() {
 
 #[tokio::test]
 async fn a_refused_rename_opens_no_unit() {
-    let mut world = World::new();
+    let mut world = World::new().await;
     let id = world.commission("A ref sheet").await;
     let participant = UserId::from(Did::from("did:plc:rename-participant".to_owned()));
     world
@@ -438,7 +434,12 @@ async fn a_refused_rename_opens_no_unit() {
 
     let by_stranger = world.rename(stranger, id, "Mine now").await;
     assert!(
-        matches!(by_stranger, Err(CommissionError::NotAMember)),
+        matches!(
+            by_stranger,
+            Err(CommissionError::CommonError(CommonError::NotFound(
+                NotFoundEntity::Commission
+            )))
+        ),
         "{by_stranger:?}"
     );
     assert_eq!(opened.load(Ordering::SeqCst), 0, "a stranger opens no unit");
@@ -456,25 +457,11 @@ async fn a_refused_rename_opens_no_unit() {
         0,
         "a Participant who isn't the owner opens no unit"
     );
-
-    let refused_title = world.rename(owner(), id, "Ref/sheet").await;
-    assert!(
-        matches!(
-            refused_title,
-            Err(CommissionError::InvalidName(DenNameError::Slash))
-        ),
-        "{refused_title:?}"
-    );
-    assert_eq!(
-        opened.load(Ordering::SeqCst),
-        0,
-        "a title the name rule refuses opens no unit"
-    );
 }
 
 #[tokio::test]
 async fn a_real_rename_opens_one_unit() {
-    let mut world = World::new();
+    let mut world = World::new().await;
     let id = world.commission("A ref sheet").await;
     let opened = world.count_units();
 

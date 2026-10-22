@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/api/src",
-  "charted": "2026-10-17",
+  "charted": "2026-10-22",
   "short": "Composition + cross-cutting HTTP concerns",
   "is": "Composition (lib/main) plus the cross-cutting HTTP concerns (extractors, problem, wire_time, sweep) around the route groups and the generated contract module.",
   "type": "code",
@@ -55,7 +55,7 @@
     },
     {
       "name": "problem/",
-      "role": "fields.rs: FieldPointer, FieldCode, FieldRefusal and Problem::invalid_fields, the one way a problem names the fields it refused; tests.rs, fields/tests.rs with the token pin and the source scan",
+      "role": "fields.rs: FieldPointer, FieldCode (From<NodeNameError>: each name-rule refusal its own code), FieldRefusal and Problem::invalid_fields, the one way a problem names the fields it refused; tests.rs, fields/tests.rs with the token pin and the source scan",
       "node": false
     },
     {

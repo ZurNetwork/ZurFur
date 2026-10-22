@@ -1,6 +1,8 @@
-use adapter_mem::MemBackend;
-use chrono::Utc;
-use domain::elements::{commission::CommissionRole, level::Level};
+use adapter_mem::{CommissionSeed, MemBackend};
+use domain::elements::{
+    commission::{CommissionRole, CommissionTitle},
+    level::Level,
+};
 
 use super::*;
 
@@ -9,11 +11,14 @@ use super::*;
 #[tokio::test]
 async fn the_pool_and_the_unit_are_scripted_apart() -> anyhow::Result<()> {
     let backend = MemBackend::new();
-    let owner = UserId::from(Did::from("did:plc:scriptowner".to_string()));
+    let owner = backend
+        .provision(&Did::from("did:plc:scriptowner".to_string()))
+        .await?
+        .id;
     let stranger = UserId::from(Did::from("did:plc:scriptstranger".to_string()));
     let title = "A scripted commission".parse::<CommissionTitle>()?;
-    let commission = Commission::create(title, owner.clone(), Utc::now(), None);
-    backend.create_commission(&commission).await?;
+    let commission = CommissionSeed::private(title, owner.clone());
+    let node = backend.seed_bound_commission(&commission).await?;
     let script = StandingScript::default();
     let store = ScriptedStanding::new(backend.commission_store(), script.clone());
     let database = ScriptedStandingDatabase::new(backend.database(), script.clone());
@@ -38,9 +43,13 @@ async fn the_pool_and_the_unit_are_scripted_apart() -> anyhow::Result<()> {
         .commissions()
         .standing_for_update(&commission.id, &owner)
         .await?;
+    let owner_locked = LockedStanding {
+        standing: as_owner,
+        node,
+    };
     assert_eq!(
         read_through,
-        Some(as_owner),
+        Some(owner_locked),
         "an unscripted pair reads through"
     );
     unit.rollback().await?;

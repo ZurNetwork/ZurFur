@@ -1,7 +1,7 @@
 use crate::LazyUnit;
 use crate::use_case;
 use domain::elements::{
-    commission::CommissionId,
+    commission::{CommissionId, CommissionRole, CommissionStanding},
     level::Level,
     user::UserId,
     workflow::{ColumnId, LexOrdering, WorkflowError},
@@ -25,20 +25,31 @@ pub struct Output {
     pub commissions: Vec<CommissionId>,
 }
 
+/// Whether the commission shows on a board without the actor's own view: its owner's, or
+/// at a Public or Listed level.
+fn is_immediately_visible(standing: &CommissionStanding) -> bool {
+    matches!(standing.level, Level::Public | Level::Listed)
+        || standing.role == Some(CommissionRole::Owner)
+}
+
+/// Whether `actor_id` sees the commission `standing` was read for through their own role or
+/// their own view grant. Reads the grant whether or not the commission was found, so a
+/// made-up id and a stranger's commission run the same statements.
 async fn has_own_view(
     ports: &Ports,
     actor_id: &UserId,
     commission_id: &CommissionId,
+    standing: Option<&CommissionStanding>,
 ) -> Result<bool, AccountError> {
-    Ok(ports
+    let granted = ports
         .commissions
-        .is_participant(commission_id, actor_id)
+        .view_grant(commission_id, actor_id)
         .await?
-        || ports
-            .commissions
-            .view_grant(commission_id, actor_id)
-            .await?
-            .is_some())
+        .is_some();
+    let Some(standing) = standing else {
+        return Ok(false);
+    };
+    Ok(standing.role.is_some() || granted)
 }
 
 impl Commissions<'_> {
@@ -79,19 +90,17 @@ impl Commissions<'_> {
             .await?
             .ok_or(AccountError::NotAMember)?;
 
-        let commission = ports
+        let standing = ports
             .commissions
-            .find(&commission_id)
-            .await?
-            .ok_or(AccountError::NotFound(AccountEntity::Commission))?;
+            .standing(&commission_id, &actor_id)
+            .await?;
 
         // Two rails onto a board: PULL (publicly visible) or PUSH (the actor's
         // OWN standing or OWN view grant — keys are per-User, so membership of
-        // this account lifts nothing). (DD 29130754)
-        let is_immediately_visible = matches!(commission.visibility, Level::Public | Level::Listed)
-            || commission.owner_id == actor_id;
+        // this account lifts nothing).
+        let visible = standing.as_ref().is_some_and(is_immediately_visible);
 
-        if !is_immediately_visible && !has_own_view(ports, &actor_id, &commission_id).await? {
+        if !visible && !has_own_view(ports, &actor_id, &commission_id, standing.as_ref()).await? {
             // The same closed door an absent commission gets: `IncorrectRole`
             // would render `403`, an existence oracle over private work.
             return Err(AccountError::NotFound(AccountEntity::Commission));

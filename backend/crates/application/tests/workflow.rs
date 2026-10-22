@@ -9,12 +9,12 @@
 #![allow(clippy::disallowed_methods, reason = "test seeding")]
 
 use application::account::{self, AccountEntity, AccountError, workflow};
-use application::transaction;
+use application::commission;
 use chrono::Utc;
 use composition::Runtime;
 use domain::elements::{
     account::AccountId,
-    commission::{Commission, CommissionId, CommissionTitle},
+    commission::CommissionId,
     did::Did,
     handle::HandleDomain,
     role::Role,
@@ -231,21 +231,23 @@ async fn remove_column(
     accounts.workflows().columns().remove(command).await
 }
 
-/// Seed a commission owned by `owner`, directly (test seed, no use case
-/// involved) — owning it is enough to make it immediately visible to
-/// `insert_in_column`'s PUSH rail, without standing up a separate view
-/// grant.
+/// Seed a commission owned by `owner` through the create use case — owning it is enough to
+/// make it immediately visible to `insert_in_column`'s PUSH rail, without standing up a
+/// separate view grant.
 async fn seed_commission(runtime: &Runtime, owner: &UserId, title: &str) -> CommissionId {
-    let title: CommissionTitle = title.parse().expect("a valid commission title");
-    let owner = owner.clone();
-    transaction(&*runtime.database, async move |uow: &mut dyn UnitOfWork| {
-        let commission = Commission::create(title, owner, Utc::now(), None);
-        let id = commission.id;
-        uow.commissions().create(&commission).await?;
-        Ok(id)
-    })
-    .await
-    .expect("seeds a commission")
+    let command = commission::create::Command {
+        actor_id: owner.clone(),
+        title: title.parse().expect("a valid commission title"),
+        maturity: None,
+        deadline: None,
+    };
+    let created = runtime
+        .app()
+        .commissions()
+        .create(command, Utc::now())
+        .await
+        .expect("seeds a commission");
+    created.id
 }
 
 // --- delete: the role gate (F1 — the predicate was inverted, so the two

@@ -402,7 +402,7 @@ async fn a_row_whose_visibility_no_parser_reads_is_the_same_404() {
     let world = pg_app::den_world(api::app).await;
     let expected = the_one_404(&world).await;
 
-    world.store_unparsable_visibility(world.old_sketch.id).await;
+    world.store_unparsable_level(world.old_sketch.id).await;
 
     for pair in den_stranger_pairs(&world.old_sketch) {
         assert_pair_is_the_one_404(&world.stranger, &world, &pair, &expected).await;
@@ -415,7 +415,7 @@ async fn a_row_whose_visibility_no_parser_reads_is_the_same_404() {
 #[tokio::test]
 async fn with_old_sketch_s_visibility_unreadable_alice_s_commissions_list_it_at_private() {
     let world = pg_app::den_world(api::app).await;
-    world.store_unparsable_visibility(world.old_sketch.id).await;
+    world.store_unparsable_level(world.old_sketch.id).await;
 
     let everything = ok_json(
         get(
@@ -438,7 +438,7 @@ async fn with_old_sketch_s_visibility_unreadable_alice_s_commissions_list_it_at_
 #[tokio::test]
 async fn with_old_sketch_s_visibility_unreadable_its_typed_path_opens_archived_at_private() {
     let world = pg_app::den_world(api::app).await;
-    world.store_unparsable_visibility(world.old_sketch.id).await;
+    world.store_unparsable_level(world.old_sketch.id).await;
     let path = format!("/den/commissions/{}", world.old_sketch.id);
 
     let old_sketch = ok_json(get(&world.alice, world.base_url(), &path).await).await;

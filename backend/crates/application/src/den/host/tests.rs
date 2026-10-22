@@ -599,7 +599,7 @@ async fn a_read_host_s_apply_refuses() {
         level: atta::Level::Private,
     };
     let act = atta::Act {
-        name: atta::ActName::from("probe".to_owned()),
+        name: atta::ActName::from("change".to_owned()),
         typ,
         shape: atta::Shape::Change { node },
         body: (),

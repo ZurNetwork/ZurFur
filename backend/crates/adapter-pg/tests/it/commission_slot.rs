@@ -7,14 +7,14 @@
 //! with its commission (what the commission's "gone entirely" hard-delete relies on).
 //! Requires a container runtime socket (DOCKER_HOST honored).
 
+use crate::seed;
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use chrono::Utc;
-use domain::elements::commission::NewCommission;
 use domain::{
     elements::{
         commission::{
-            Commission, CommissionId, CommissionTitle, ElementId, ElementType, NewSlot, SKELETON,
-            SlotTitle, SurfaceAddress, SurfaceName, TabId,
+            Commission, CommissionId, ElementId, ElementType, NewSlot, SKELETON, SlotTitle,
+            SurfaceAddress, SurfaceName, TabId,
         },
         did::Did,
         user::User,
@@ -50,20 +50,8 @@ async fn composed_commission(
     pool: &PgPool,
     owner: &User,
     title: &str,
-) -> (NewCommission, SurfaceAddress) {
-    let commission = Commission::create(
-        title.parse::<CommissionTitle>().expect("valid title"),
-        owner.id.clone(),
-        Utc::now(),
-        None,
-    );
-    let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .create(&commission)
-        .await
-        .expect("create commission");
-    uow.commit().await.expect("commit");
+) -> (Commission, SurfaceAddress) {
+    let commission = seed::seed_stored(pool, &owner.id, title).await;
     let address = address_of(pool, commission.id).await;
     (commission, address)
 }

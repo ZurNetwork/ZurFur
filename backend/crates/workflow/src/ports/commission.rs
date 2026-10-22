@@ -6,16 +6,20 @@ use async_trait::async_trait;
 
 use crate::elements::{
     commission::{
-        ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
-        CommissionMarkup, CommissionStanding, CommissionSummary, CommissionTitle, DeadlineStatus,
+        ChannelPointer, Commission, CommissionBirth, CommissionComposition, CommissionFile,
+        CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary, DeadlineStatus,
         DirectionStatus, ElementId, FileKey, FileSummary, GrantLevel, LapsedDeadline,
-        NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot,
-        TabId, TabRow,
+        LockedStanding, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
+        SeatInvitationId, Slot, TabId, TabRow,
     },
     workflow::{Column, ColumnId, WorkflowId},
 };
 use identity::elements::user::UserId;
-use kernel::{datetime::DateTimeUtc, elements::maturity::Maturity};
+use kernel::{
+    datetime::DateTimeUtc,
+    elements::maturity::Maturity,
+    ports::{Creator, New, WriteCapability},
+};
 
 pub use super::errors::{ElementNotFound, UnknownSurface, UnknownTab};
 
@@ -29,15 +33,15 @@ pub trait CommissionStore: Send + Sync {
     /// found — filtering it out is a listing projection's job.
     async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
 
-    /// The [`CommissionSummary`] of the commission `id` names, or `None`: its stored title,
-    /// its own visibility and its archive time, and nothing else of the row. An archived
-    /// commission is still found.
+    /// The [`CommissionSummary`] of the commission `id` names, or `None`: its node's name and
+    /// level and whether it is archived, and nothing else of the row. A commission with no
+    /// node reads as absent; an archived one is still found.
     async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>>;
 
     /// The [`CommissionStanding`] `user` holds on `commission`, or `None` when no
     /// commission has that id. An absent id and a stranger take the same one-row
-    /// read, and the read carries no title and no whole row. An archived
-    /// commission is still found.
+    /// read, and the read carries no name and no whole row. The level is the
+    /// commission's node's, Private when it has none. An archived commission is still found.
     async fn standing(
         &self,
         commission: &CommissionId,
@@ -128,9 +132,10 @@ pub trait CommissionStore: Send + Sync {
     async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>>;
 
     /// The commissions `user` is a Participant of, read from the same
-    /// participant record as [`is_participant`](Self::is_participant). Archived
-    /// commissions are included; hiding them is the caller's. Ordered by
-    /// [`CommissionId`]; empty for a user who takes part in none.
+    /// participant record as [`is_participant`](Self::is_participant), each named and
+    /// levelled by its node; one with no node is left out. Archived commissions are
+    /// included; hiding them is the caller's. Ordered by [`CommissionId`]; empty for a
+    /// user who takes part in none.
     async fn list_participating(&self, user: &UserId) -> anyhow::Result<Vec<CommissionSummary>>;
 
     /// Every file entry of `commission` as a [`FileSummary`] (key and upload
@@ -145,16 +150,22 @@ pub trait CommissionStore: Send + Sync {
 }
 
 /// The **write** surface of Zurfur's record of commissions — reachable only on an
-/// open `UnitOfWork` (`uow.commissions()`). Authority
-/// and the commission's own existence are always the caller's checks, settled
-/// before any of these is reached.
+/// open `UnitOfWork` (`uow.commissions()`). A create's authority is the den's write
+/// gate's create [`WriteCapability`], which [`create`](Self::create) takes; every
+/// other method's authority, and the commission's own existence, are the caller's
+/// checks, settled before it is reached.
 #[async_trait]
 pub trait CommissionWrites: Send {
-    /// Persist a freshly created [`NewCommission`], together with its skeleton
-    /// tab rows and its owner's participant row. The title is a checked
-    /// [`CommissionTitle`](crate::elements::commission::CommissionTitle) by type. Both are minted inside the
-    /// implementation, so a tabless or owner-less commission is unrepresentable.
-    async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()>;
+    /// Persist a new commission under the id `capability` was issued for, at `birth`'s
+    /// node, owner and time, with what `commission` chose, in its starting state: Draft,
+    /// no statuses, no linked channel, not archived. Its skeleton tab rows and its owner's
+    /// participant row are written with it, so a tabless or owner-less one can't exist.
+    async fn create(
+        &mut self,
+        capability: &WriteCapability<New<CommissionId>, Creator>,
+        birth: &CommissionBirth,
+        commission: &NewCommission,
+    ) -> anyhow::Result<()>;
 
     /// Declare a [`NewSeat`] into a declared surface, as one element plus one
     /// satellite row sharing the seat's id. Refuses an absent/foreign tab with
@@ -235,15 +246,6 @@ pub trait CommissionWrites: Send {
         &mut self,
         id: &CommissionId,
         archived_at: Option<DateTimeUtc>,
-    ) -> anyhow::Result<bool>;
-
-    /// Replace the commission's title. Returns whether the stored title actually
-    /// changed, so the caller keys its `renamed` append on a real change in this
-    /// same unit. A no-op on an absent commission, answering `false`.
-    async fn set_title(
-        &mut self,
-        id: &CommissionId,
-        title: &CommissionTitle,
     ) -> anyhow::Result<bool>;
 
     /// Set or replace the commission's maturity posture. Replace-only by
@@ -334,7 +336,8 @@ pub trait CommissionReads: Send {
     async fn find_for_update(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
 
     /// [`CommissionStore::standing`], with the commission row locked
-    /// (`FOR NO KEY UPDATE`) for the rest of the unit; `None` when it is absent.
+    /// (`FOR NO KEY UPDATE`) for the rest of the unit, beside the node the commission
+    /// points at; `None` when it is absent or has no node.
     /// Every change to someone's standing (evict, leave, role change, Admin grant
     /// or revoke, transfer) locks the commission row first, so this answer holds
     /// until the unit ends.
@@ -342,7 +345,7 @@ pub trait CommissionReads: Send {
         &mut self,
         commission: &CommissionId,
         user: &UserId,
-    ) -> anyhow::Result<Option<CommissionStanding>>;
+    ) -> anyhow::Result<Option<LockedStanding>>;
 
     /// Whether `user` is a Participant of `commission`; as
     /// [`CommissionStore::is_participant`].

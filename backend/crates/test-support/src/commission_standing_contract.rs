@@ -1,22 +1,29 @@
 //! The shared commission-standing conformance suite, run by both adapters: `adapter-mem`'s
 //! `tests/commission_standing.rs` and `adapter-pg`'s `tests/it/commission_standing.rs`.
 //!
-//! Each case takes a fresh [`Database`], the [`CommissionStore`] over the same store, and the
-//! adapter's [`ParticipantRows`], and checks the pool's `standing` and a unit's
-//! `standing_for_update` alike wherever both apply.
+//! Each case takes a fresh [`Database`], the [`CommissionStore`] over the same store, the
+//! adapter's [`ParticipantRows`] and its [`CommissionSeeder`], and checks the pool's `standing`
+//! and a unit's `standing_for_update` alike wherever both apply, and the node the locked read
+//! answers.
 //! [`commission_standing_contract_tests!`](crate::commission_standing_contract_tests) writes one
 //! test per case.
 
 use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::{
-    commission::{Commission, CommissionId, CommissionRole, CommissionStanding, NewCommission},
+    commission::{CommissionId, CommissionRole, CommissionStanding, LockedStanding},
     did::Did,
     level::Level,
+    node::{NodeId, NodeSegment, NodeType},
     user::UserId,
 };
 use domain::ports::{CommissionStore, Database};
 use strum::VariantArray;
+
+use crate::seeder::{CommissionSeeder, seed_commission, write_commission};
+
+/// The name every commission node a case seeds holds.
+const MADE_UP_NAME: &str = "A made-up commission";
 
 /// The participant rows a case needs, written each adapter's own way. A trait of its own:
 /// no port adds a non-owner participant row or removes one today.
@@ -30,8 +37,9 @@ pub trait ParticipantRows: Send + Sync {
 }
 
 /// Writes one `#[tokio::test]` per suite case. `$setup` is an async fn returning
-/// `(Arc<dyn Database>, Arc<dyn CommissionStore>, Arc<dyn ParticipantRows>, impl Sized)` over
-/// one fresh store; the fourth item is kept alive for the test.
+/// `(Arc<dyn Database>, Arc<dyn CommissionStore>, Arc<dyn ParticipantRows>,
+/// Arc<dyn CommissionSeeder>, impl Sized)` over one fresh store; the fifth item is kept alive
+/// for the test.
 #[macro_export]
 macro_rules! commission_standing_contract_tests {
     ($setup:path) => {
@@ -43,14 +51,18 @@ macro_rules! commission_standing_contract_tests {
             archived_is_reported,
             the_level_is_reported,
             the_locked_read_sees_the_unit_s_own_writes,
+            the_locked_read_answers_the_commission_s_node,
         );
     };
     (@cases $setup:path; $($case:ident),* $(,)?) => {
         $(
             #[tokio::test]
             async fn $case() {
-                let (database, store, rows, _kept) = $setup().await;
-                $crate::commission_standing_contract::$case(&*database, &*store, &*rows).await;
+                let (database, store, rows, seeder, _kept) = $setup().await;
+                $crate::commission_standing_contract::$case(
+                    &*database, &*store, &*rows, &*seeder,
+                )
+                .await;
             }
         )*
     };
@@ -68,30 +80,6 @@ async fn provision(database: &dyn Database, did: &str) -> UserId {
     user.id
 }
 
-/// A new commission owned by `owner` at `level`.
-fn new_commission(owner: &UserId, level: Level) -> NewCommission {
-    let title = "A made-up commission".parse().expect("a made-up title");
-    let mut commission = Commission::create(title, owner.clone(), Utc::now(), None);
-    commission.visibility = level;
-    commission
-}
-
-/// Creates a commission owned by `owner` at `level` in a unit of its own.
-async fn committed_commission(
-    database: &dyn Database,
-    owner: &UserId,
-    level: Level,
-) -> CommissionId {
-    let commission = new_commission(owner, level);
-    let mut unit = database.begin().await.expect("begin");
-    unit.commissions()
-        .create(&commission)
-        .await
-        .expect("create the commission");
-    unit.commit().await.expect("commit the commission");
-    commission.id
-}
-
 /// Archives `commission` in a unit of its own.
 async fn archive(database: &dyn Database, commission: &CommissionId) {
     let mut unit = database.begin().await.expect("begin");
@@ -104,13 +92,13 @@ async fn archive(database: &dyn Database, commission: &CommissionId) {
     unit.commit().await.expect("commit the archive");
 }
 
-/// `user`'s standing on `commission` through a unit's `standing_for_update`; the unit is
-/// rolled back after.
+/// `user`'s standing on `commission` through a unit's `standing_for_update`, beside the node
+/// it answered; the unit is rolled back after.
 async fn locked_standing(
     database: &dyn Database,
     commission: &CommissionId,
     user: &UserId,
-) -> Option<CommissionStanding> {
+) -> Option<LockedStanding> {
     let mut unit = database.begin().await.expect("begin");
     let standing = unit
         .commissions()
@@ -119,6 +107,19 @@ async fn locked_standing(
         .expect("the locked standing read");
     unit.rollback().await.expect("roll the read back");
     standing
+}
+
+/// The node `commission` stands for at the top of the tree, read on a unit that keeps nothing.
+async fn top_node(database: &dyn Database, commission: &CommissionId) -> Option<NodeId> {
+    let segment = NodeSegment::try_from(commission.to_string()).expect("an id is a segment");
+    let mut unit = database.begin().await.expect("begin");
+    let row = unit
+        .nodes()
+        .at_top(&NodeType::Commission, &segment)
+        .await
+        .expect("the node row reads");
+    unit.rollback().await.expect("roll the read back");
+    row.map(|row| row.id)
 }
 
 /// Asserts the pool's `standing` and a unit's `standing_for_update` both answer `expected`.
@@ -135,7 +136,8 @@ async fn assert_both_read(
         .expect("the pool's standing read");
     assert_eq!(pooled, expected, "standing");
     let locked = locked_standing(database, commission, user).await;
-    assert_eq!(locked, expected, "standing_for_update");
+    let locked_standing = locked.map(|locked| locked.standing);
+    assert_eq!(locked_standing, expected, "standing_for_update");
 }
 
 /// A live Private standing holding `role`.
@@ -152,9 +154,10 @@ pub async fn the_owner_is_owner_without_a_participant_row(
     database: &dyn Database,
     store: &dyn CommissionStore,
     rows: &dyn ParticipantRows,
+    seeder: &dyn CommissionSeeder,
 ) {
     let owner = provision(database, "did:plc:standingowner").await;
-    let commission = committed_commission(database, &owner, Level::Private).await;
+    let commission = seed_commission(database, seeder, &owner, Level::Private, MADE_UP_NAME).await;
     rows.remove(&commission, &owner).await;
     let still_a_participant = store
         .is_participant(&commission, &owner)
@@ -171,10 +174,11 @@ pub async fn a_participant_is_a_participant(
     database: &dyn Database,
     store: &dyn CommissionStore,
     rows: &dyn ParticipantRows,
+    seeder: &dyn CommissionSeeder,
 ) {
     let owner = provision(database, "did:plc:standingowner").await;
     let member = provision(database, "did:plc:standingmember").await;
-    let commission = committed_commission(database, &owner, Level::Private).await;
+    let commission = seed_commission(database, seeder, &owner, Level::Private, MADE_UP_NAME).await;
     rows.add(&commission, &member).await;
 
     let expected = private_standing(Some(CommissionRole::Participant));
@@ -186,10 +190,11 @@ pub async fn a_stranger_has_no_role(
     database: &dyn Database,
     store: &dyn CommissionStore,
     _rows: &dyn ParticipantRows,
+    seeder: &dyn CommissionSeeder,
 ) {
     let owner = provision(database, "did:plc:standingowner").await;
     let stranger = provision(database, "did:plc:standingstranger").await;
-    let commission = committed_commission(database, &owner, Level::Private).await;
+    let commission = seed_commission(database, seeder, &owner, Level::Private, MADE_UP_NAME).await;
 
     let expected = private_standing(None);
     assert_both_read(database, store, &commission, &stranger, Some(expected)).await;
@@ -200,9 +205,10 @@ pub async fn an_absent_commission_is_not_found(
     database: &dyn Database,
     store: &dyn CommissionStore,
     _rows: &dyn ParticipantRows,
+    seeder: &dyn CommissionSeeder,
 ) {
     let owner = provision(database, "did:plc:standingowner").await;
-    committed_commission(database, &owner, Level::Private).await;
+    seed_commission(database, seeder, &owner, Level::Private, MADE_UP_NAME).await;
     let absent = CommissionId::from(uuid::Uuid::now_v7());
 
     assert_both_read(database, store, &absent, &owner, None).await;
@@ -213,9 +219,10 @@ pub async fn archived_is_reported(
     database: &dyn Database,
     store: &dyn CommissionStore,
     _rows: &dyn ParticipantRows,
+    seeder: &dyn CommissionSeeder,
 ) {
     let owner = provision(database, "did:plc:standingowner").await;
-    let commission = committed_commission(database, &owner, Level::Private).await;
+    let commission = seed_commission(database, seeder, &owner, Level::Private, MADE_UP_NAME).await;
     archive(database, &commission).await;
 
     let expected = CommissionStanding {
@@ -231,10 +238,11 @@ pub async fn the_level_is_reported(
     database: &dyn Database,
     store: &dyn CommissionStore,
     _rows: &dyn ParticipantRows,
+    seeder: &dyn CommissionSeeder,
 ) {
     let owner = provision(database, "did:plc:standingowner").await;
     for level in Level::VARIANTS {
-        let commission = committed_commission(database, &owner, *level).await;
+        let commission = seed_commission(database, seeder, &owner, *level, MADE_UP_NAME).await;
         let expected = CommissionStanding {
             role: Some(CommissionRole::Owner),
             level: *level,
@@ -250,19 +258,17 @@ pub async fn the_locked_read_sees_the_unit_s_own_writes(
     database: &dyn Database,
     store: &dyn CommissionStore,
     _rows: &dyn ParticipantRows,
+    seeder: &dyn CommissionSeeder,
 ) {
     let owner = provision(database, "did:plc:standingowner").await;
     let stranger = provision(database, "did:plc:standingstranger").await;
-    let commission = new_commission(&owner, Level::Listed);
     let mut unit = database.begin().await.expect("begin");
-    unit.commissions()
-        .create(&commission)
-        .await
-        .expect("create the commission");
+    let commission =
+        write_commission(&mut *unit, seeder, &owner, Level::Listed, MADE_UP_NAME).await;
 
     let created = unit
         .commissions()
-        .standing_for_update(&commission.id, &owner)
+        .standing_for_update(&commission, &owner)
         .await
         .expect("the locked standing read");
     let owner_standing = CommissionStanding {
@@ -270,16 +276,18 @@ pub async fn the_locked_read_sees_the_unit_s_own_writes(
         level: Level::Listed,
         archived: false,
     };
+    let created = created.map(|locked| locked.standing);
     assert_eq!(created, Some(owner_standing), "the owner, after the create");
     let seen_by_a_stranger = unit
         .commissions()
-        .standing_for_update(&commission.id, &stranger)
+        .standing_for_update(&commission, &stranger)
         .await
         .expect("the locked standing read");
     let stranger_standing = CommissionStanding {
         role: None,
         ..owner_standing
     };
+    let seen_by_a_stranger = seen_by_a_stranger.map(|locked| locked.standing);
     assert_eq!(
         seen_by_a_stranger,
         Some(stranger_standing),
@@ -287,22 +295,23 @@ pub async fn the_locked_read_sees_the_unit_s_own_writes(
     );
 
     unit.commissions()
-        .set_archived(&commission.id, Some(Utc::now()))
+        .set_archived(&commission, Some(Utc::now()))
         .await
         .expect("archive the commission");
     let archived = unit
         .commissions()
-        .standing_for_update(&commission.id, &owner)
+        .standing_for_update(&commission, &owner)
         .await
         .expect("the locked standing read");
     let archived_standing = CommissionStanding {
         archived: true,
         ..owner_standing
     };
+    let archived = archived.map(|locked| locked.standing);
     assert_eq!(archived, Some(archived_standing), "after the archive");
 
     let pooled = store
-        .standing(&commission.id, &owner)
+        .standing(&commission, &owner)
         .await
         .expect("the pool's standing read");
     assert_eq!(
@@ -310,4 +319,30 @@ pub async fn the_locked_read_sees_the_unit_s_own_writes(
         "the pool can't see the unit's uncommitted create"
     );
     unit.rollback().await.expect("roll the unit back");
+}
+
+/// The locked read answers the node the commission points at, for its owner and a stranger
+/// alike: the commission's own node at the top of the tree.
+pub async fn the_locked_read_answers_the_commission_s_node(
+    database: &dyn Database,
+    _store: &dyn CommissionStore,
+    _rows: &dyn ParticipantRows,
+    seeder: &dyn CommissionSeeder,
+) {
+    let owner = provision(database, "did:plc:standingowner").await;
+    let stranger = provision(database, "did:plc:standingstranger").await;
+    let commission = seed_commission(database, seeder, &owner, Level::Private, MADE_UP_NAME).await;
+    seed_commission(database, seeder, &owner, Level::Private, MADE_UP_NAME).await;
+
+    let node = top_node(database, &commission).await;
+    let owner_s = locked_standing(database, &commission, &owner).await;
+    let stranger_s = locked_standing(database, &commission, &stranger).await;
+
+    assert!(node.is_some(), "the seeded commission has its node");
+    assert_eq!(owner_s.map(|locked| locked.node), node, "the owner's read");
+    assert_eq!(
+        stranger_s.map(|locked| locked.node),
+        node,
+        "a stranger's read"
+    );
 }

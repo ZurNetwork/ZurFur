@@ -25,11 +25,11 @@
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
-use adapter_mem::MemBackend;
+use adapter_mem::{CommissionSeed, MemBackend};
 use chrono::Utc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
-    commission::{Commission, CommissionId, CommissionTitle, GrantLevel},
+    commission::{CommissionId, CommissionTitle, GrantLevel},
     did::Did,
     handle::Handle,
     profile::Profile,
@@ -123,10 +123,10 @@ async fn seed_foreign_commission(backend: &MemBackend) -> (uuid::Uuid, UserId) {
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
-    let commission = Commission::create(title, owner.id.clone(), Utc::now(), None);
-    let id = uuid::Uuid::from(commission.id);
+    let seed = CommissionSeed::private(title, owner.id.clone());
+    let id = uuid::Uuid::from(seed.id);
     backend
-        .create_commission(&commission)
+        .seed_bound_commission(&seed)
         .await
         .expect("seed foreign commission");
     (id, owner.id)

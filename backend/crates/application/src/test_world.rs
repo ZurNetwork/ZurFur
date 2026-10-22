@@ -4,13 +4,12 @@
 
 use std::sync::Arc;
 
-use adapter_mem::MemBackend;
+use adapter_mem::{CommissionSeed, MemBackend};
 use atta::{Caps, RealPath, Segment};
 use domain::{
+    datetime::DateTimeUtc,
     elements::{
-        commission::{
-            Commission, CommissionFile, CommissionId, CommissionTitle, FileKey, FileName,
-        },
+        commission::{CommissionFile, CommissionId, CommissionTitle, FileKey, FileName},
         did::Did,
         level::Level,
         user::UserId,
@@ -35,6 +34,8 @@ use crate::{
 pub(crate) struct World {
     pub(crate) runtime: composition::Runtime,
     pub(crate) ports: Ports,
+    /// The in-memory backend under it, for seeding what no port writes.
+    pub(crate) backend: MemBackend,
 }
 
 /// The fixture world: identity's people and Account, then commission's rows.
@@ -60,6 +61,7 @@ pub(crate) async fn world_and_backend() -> (World, MemBackend) {
     let world = World {
         runtime: built.runtime,
         ports,
+        backend: built.backend.clone(),
     };
     (world, built.backend)
 }
@@ -126,7 +128,11 @@ pub(crate) async fn read(
 /// The fixture world with its commission, file and changelog stores recording every read into
 /// the returned log.
 pub(crate) async fn recorded() -> (World, CallLog) {
-    let World { runtime, mut ports } = world().await;
+    let World {
+        runtime,
+        mut ports,
+        backend,
+    } = world().await;
     let log = CallLog::default();
     let commissions = RecordingCommissionStore::new(ports.commissions.clone(), log.clone());
     let files = RecordingFileStore::new(ports.files.clone(), log.clone());
@@ -134,7 +140,12 @@ pub(crate) async fn recorded() -> (World, CallLog) {
     ports.commissions = Arc::new(commissions);
     ports.files = Arc::new(files);
     ports.changelog = Arc::new(changelog);
-    (World { runtime, ports }, log)
+    let world = World {
+        runtime,
+        ports,
+        backend,
+    };
+    (world, log)
 }
 
 /// A user who takes part in nothing in the fixture world.
@@ -202,34 +213,39 @@ pub(crate) async fn seed_alice_s(
     let parsed_title = title
         .parse::<CommissionTitle>()
         .expect("a valid test title");
-    let now = chrono::Utc::now();
-    let mut commission = Commission::create(parsed_title, adapter_mem::fixture::alice(), now, None);
-    commission.visibility = visibility;
-    let id = commission.id;
-    let archived_at = archived.then_some(now);
+    let seed = CommissionSeed {
+        level: visibility,
+        ..CommissionSeed::private(parsed_title, adapter_mem::fixture::alice())
+    };
+    let id = seed.id;
     world
-        .runtime
-        .transaction(async move |uow: &mut dyn UnitOfWork| {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "test seeding creates the commission directly, beneath the den's write gate"
-            )]
-            uow.commissions().create(&commission).await?;
-            if let Some(archived_at) = archived_at {
-                uow.commissions()
-                    .set_archived(&id, Some(archived_at))
-                    .await?;
-            }
-            Ok(())
-        })
+        .backend
+        .seed_bound_commission(&seed)
         .await
         .expect("the commission seeds");
+    if archived {
+        archive(world, id, seed.created_at).await;
+    }
     let file = seed_file(world, id).await;
     Target {
         label: title,
         id,
         file,
     }
+}
+
+/// Archives `commission` at `archived_at`, straight through the commission repo.
+async fn archive(world: &World, commission: CommissionId, archived_at: DateTimeUtc) {
+    world
+        .runtime
+        .transaction(async move |uow: &mut dyn UnitOfWork| {
+            uow.commissions()
+                .set_archived(&commission, Some(archived_at))
+                .await?;
+            Ok(())
+        })
+        .await
+        .expect("the commission is archived");
 }
 
 /// Seeds a file into `commission`, uploaded by alice, under a fresh key.
@@ -274,7 +290,7 @@ pub(crate) enum ArchiveState {
 }
 
 /// Seeds a Private commission of alice's at the fixed `id`, titled `title`, live or archived,
-/// with `others` as Participants beside her; its rows go in straight through the stores.
+/// with `others` as Participants beside her; it is bound to its node as a create binds it.
 pub(crate) async fn seed_titled_at(
     world: &World,
     backend: &MemBackend,
@@ -286,30 +302,20 @@ pub(crate) async fn seed_titled_at(
     let parsed_title = title
         .parse::<CommissionTitle>()
         .expect("a valid test title");
-    let now = chrono::Utc::now();
-    let mut commission = Commission::create(parsed_title, adapter_mem::fixture::alice(), now, None);
     let commission_id = CommissionId::from(id);
-    commission.id = commission_id;
-    let archived_at = matches!(archive_state, ArchiveState::Archived).then_some(now);
-    world
-        .runtime
-        .transaction(async move |uow: &mut dyn UnitOfWork| {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "test seeding creates the commission directly, beneath the den's write gate"
-            )]
-            uow.commissions().create(&commission).await?;
-            if let Some(archived_at) = archived_at {
-                uow.commissions()
-                    .set_archived(&commission_id, Some(archived_at))
-                    .await?;
-            }
-            Ok(())
-        })
+    let seed = CommissionSeed {
+        id: commission_id,
+        ..CommissionSeed::private(parsed_title, adapter_mem::fixture::alice())
+    };
+    backend
+        .seed_bound_commission(&seed)
         .await
         .expect("the commission seeds");
+    if matches!(archive_state, ArchiveState::Archived) {
+        archive(world, commission_id, seed.created_at).await;
+    }
     for other in others {
-        backend.seed_participant(commission_id, other.clone(), now);
+        backend.seed_participant(commission_id, other.clone(), seed.created_at);
     }
     commission_id
 }

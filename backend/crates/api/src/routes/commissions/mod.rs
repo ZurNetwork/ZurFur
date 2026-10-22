@@ -95,15 +95,6 @@ fn title_refused(code: FieldCode) -> Problem {
     Problem::invalid_fields(title_refusal, [])
 }
 
-/// A create's or a rename's refusal as the wire problem: a title the name rule refuses
-/// names `#/title`; any other error maps as every commission error does.
-fn title_write_problem(err: CommissionError) -> Problem {
-    match err {
-        CommissionError::InvalidName(rule) => title_refused(FieldCode::from(rule)),
-        other => Problem::from(other),
-    }
-}
-
 /// Domain time → the contract's wire timestamp type.
 pub(super) fn wire_timestamp(at: domain::datetime::DateTimeUtc) -> crate::wire_time::WireTimestamp {
     crate::wire_time::WireTimestamp::from(at)

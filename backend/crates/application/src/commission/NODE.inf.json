@@ -2,7 +2,7 @@
   "path": "backend/crates/application/src/commission",
   "charted": "2026-10-22",
   "short": "Commission use cases",
-  "is": "Commission use cases — lifecycle (create/delete/archive/unarchive) and per-facet action trees (deadline, status, files, invitations, view, seats, slots, notes, maturity, markup, changelog), one Command/Query + Output + `#[use_case]` method file per action; the module root `../commission.rs` holds the `Commissions` namespace, `CommissionError`, `CommissionResult` and the system-actor `sweep_deadlines`.",
+  "is": "Commission use cases — lifecycle (create/delete/archive/unarchive) and per-facet action trees (deadline, status, files, invitations, view, seats, slots, notes, maturity, markup, changelog), one Command/Query + Output + `#[use_case]` method file per action; the module root `../commission.rs` holds the `Commissions` namespace, `CommissionError` (with `From<DenWriteError>`), `CommissionResult` and the system-actor `sweep_deadlines`; `act.rs` holds the commission's acts through the Den's write.",
   "type": "code",
   "tags": [
     "category:source"
@@ -12,6 +12,11 @@
     "../commission.rs"
   ],
   "fs": [
+    {
+      "name": "act.rs + act/tests.rs",
+      "role": "CommissionAct, the commission's acts the Den's write carries (Create, Rename), each body beside its typed use case; spec() and a Debug that prints the variant alone; act/tests.rs: a create needs no role and a rename the Owner, each read from its capability marker, a create's six Private entries named by their words, a rename's shape its new name",
+      "node": false
+    },
     {
       "name": "archive.rs + unarchive.rs",
       "role": "toggle the archived state",
@@ -24,7 +29,7 @@
     },
     {
       "name": "create.rs + create/tests.rs",
-      "role": "create a Commission for the caller (+ a `created` entry with an empty payload, skeleton tabs), then read the row back by id on its own unit and answer it as CommissionValues",
+      "role": "the create act (create::Act: the title and NewCommission; its spec anchors /commission, makes the node Private with its six entries, and reads its needed role, none, from the Creator marker; its Handler creates through the lent view and answers the lent commission, the gate writing the `created` entry) and the use case, a pure #[use_case] delegation to Den::write with no unit: NotFound is the commission's not-found, Forbidden InsufficientPermissions, Refused and Store Infrastructure; it answers CommissionValues from the write's answer, named and levelled as the gate wrote the node",
       "node": false
     },
     {
@@ -69,7 +74,7 @@
     },
     {
       "name": "rename.rs + rename/tests.rs",
-      "role": "the owner renames the commission: require_owner and the Den's name rule (den_title in ../commission.rs, shared with create) before the lazy unit opens, set_title on it, the row read back by id (gone → the one not-found), and a `renamed` entry (empty payload, no note) only on a real change; rename/tests.rs pins that a stranger, a non-owner Participant and a refused title open no unit",
+      "role": "the rename act (rename::Act: the commission it is anchored on and its new title; its spec anchors the commission's place and reads its needed role, the Owner, from the AsOwner marker; its Handler answers the lent commission, the gate writing the node's name, or nothing when the name is already stored, and a `renamed` entry only on a real change) and the use case, a pure #[use_case] delegation to Den::write with no unit, mapped as create's: a stranger and a made-up id the same not-found, a non-owner Participant InsufficientPermissions; it answers CommissionValues from the write's answer, named and levelled as the gate left the node; rename/tests.rs pins that a refused rename opens no unit, a same-title rename records nothing, and that a refused title is never a title",
       "node": false
     },
     {
@@ -89,7 +94,7 @@
     },
     {
       "name": "values.rs",
-      "role": "CommissionValues: the flat values create and rename answer, built from the row they read back",
+      "role": "CommissionValues: the flat values create and rename answer; TryFrom<WriteResult> builds them from the write's answer, its id the thing written and its title and visibility the name and level the gate wrote, through from_parts",
       "node": false
     },
     {

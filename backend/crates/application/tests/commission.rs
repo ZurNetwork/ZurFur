@@ -5,14 +5,16 @@
 
 #![allow(clippy::disallowed_methods, reason = "test seeding")]
 
+use adapter_mem::CommissionSeed;
 use application::commission::{SweepResult, sweep_deadlines};
 use application::transaction;
 use chrono::{DateTime, Utc};
 use domain::elements::commission::{
-    ChangelogEntry, Commission, CommissionId, CommissionTitle, DeadlineStatus, LifecycleStep,
+    ChangelogEntry, CommissionId, CommissionTitle, DeadlineStatus, LifecycleStep,
 };
 use domain::elements::did::Did;
 use domain::ports::{ChangelogStore, CommissionStore, Database, UnitOfWork};
+use test_support::runtime::MemRuntime;
 
 /// A deadline that is long past.
 fn past() -> DateTime<Utc> {
@@ -30,29 +32,38 @@ fn seeded_at() -> DateTime<Utc> {
     "2019-12-01T00:00:00Z".parse().expect("valid timestamp")
 }
 
-/// Seeds a committed commission in `step` with `deadline`, owned by a
-/// directly-provisioned user — the arrangement the sweep's scope tests need
-/// (the struct fields are public by design; there is no lifecycle-transition
-/// use case in this lineage).
+/// Seeds a commission in `step` with `deadline`, owned by a directly-provisioned user and
+/// bound to its node; a create is born Draft, so its step is written onto its row.
 async fn seed(
-    database: &dyn Database,
+    fixture: &MemRuntime,
     owner_did: &str,
     title: &str,
     deadline: Option<DateTime<Utc>>,
     step: LifecycleStep,
 ) -> CommissionId {
     let owner_did = Did::from(owner_did.to_string());
-    let title: CommissionTitle = title.parse().expect("valid title");
-    transaction(database, async move |uow: &mut dyn UnitOfWork| {
-        let owner = uow.users().provision(&owner_did).await?;
-        let mut commission = Commission::create(title, owner.id, seeded_at(), deadline);
-        commission.lifecycle_step = step;
-        let id = commission.id;
-        uow.commissions().create(&commission).await?;
-        Ok(id)
-    })
+    let owner = transaction(
+        &*fixture.runtime.database,
+        async move |uow: &mut dyn UnitOfWork| {
+            let owner = uow.users().provision(&owner_did).await?;
+            Ok(owner.id)
+        },
+    )
     .await
-    .expect("seed a commission")
+    .expect("provision the owner");
+    let title: CommissionTitle = title.parse().expect("valid title");
+    let seed = CommissionSeed {
+        created_at: seeded_at(),
+        deadline,
+        ..CommissionSeed::private(title, owner)
+    };
+    fixture
+        .backend
+        .seed_bound_commission(&seed)
+        .await
+        .expect("seed a commission");
+    fixture.backend.seed_lifecycle_step(seed.id, step);
+    seed.id
 }
 
 /// Flags the manual "slipping" status a Participant would set.
@@ -99,10 +110,10 @@ async fn sweep(database: &dyn Database, now: DateTime<Utc>) -> SweepResult {
 #[tokio::test]
 async fn the_sweep_records_every_missed_deadline_once() {
     let fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
-    let runtime = fixture.runtime;
+    let runtime = &fixture.runtime;
     let database = &*runtime.database;
     let first = seed(
-        database,
+        &fixture,
         "did:plc:one",
         "One",
         Some(past()),
@@ -110,7 +121,7 @@ async fn the_sweep_records_every_missed_deadline_once() {
     )
     .await;
     let second = seed(
-        database,
+        &fixture,
         "did:plc:two",
         "Two",
         Some("2020-02-01T00:00:00Z".parse().expect("valid timestamp")),
@@ -118,7 +129,7 @@ async fn the_sweep_records_every_missed_deadline_once() {
     )
     .await;
     let unbothered = seed(
-        database,
+        &fixture,
         "did:plc:three",
         "Future",
         Some("2099-01-01T00:00:00Z".parse().expect("valid timestamp")),
@@ -126,7 +137,7 @@ async fn the_sweep_records_every_missed_deadline_once() {
     )
     .await;
     let deadlineless = seed(
-        database,
+        &fixture,
         "did:plc:four",
         "Open-ended",
         None,
@@ -192,10 +203,10 @@ async fn the_sweep_records_every_missed_deadline_once() {
 #[tokio::test]
 async fn a_standing_delayed_upgrades_to_late() {
     let fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
-    let runtime = fixture.runtime;
+    let runtime = &fixture.runtime;
     let database = &*runtime.database;
     let id = seed(
-        database,
+        &fixture,
         "did:plc:slipping",
         "Ref",
         Some(past()),
@@ -222,11 +233,11 @@ async fn a_standing_delayed_upgrades_to_late() {
 #[tokio::test]
 async fn the_sweeper_skips_terminal_lifecycles() {
     let fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
-    let runtime = fixture.runtime;
+    let runtime = &fixture.runtime;
     let database = &*runtime.database;
     let owner = "did:plc:lifecycle-owner";
     let completed = seed(
-        database,
+        &fixture,
         owner,
         "Staged",
         Some(past()),
@@ -234,7 +245,7 @@ async fn the_sweeper_skips_terminal_lifecycles() {
     )
     .await;
     let cancelled = seed(
-        database,
+        &fixture,
         owner,
         "Staged",
         Some(past()),
@@ -242,7 +253,7 @@ async fn the_sweeper_skips_terminal_lifecycles() {
     )
     .await;
     let disputed = seed(
-        database,
+        &fixture,
         owner,
         "Staged",
         Some(past()),

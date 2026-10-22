@@ -35,6 +35,8 @@ strum = { workspace = true }
 # Property tests for the Position ordering invariants.
 proptest = { workspace = true }
 chrono = { workspace = true }
+# Compile-fail cases: a commission create takes the den's write gate's create capability.
+trybuild = { workspace = true }
 
 [lints]
 workspace = true

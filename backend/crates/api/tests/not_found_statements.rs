@@ -1,18 +1,20 @@
 //! Each pair of not-found causes at the same depth (absent; present but not the viewer's) runs
 //! the same SQL statements in the same order on PostgreSQL, through the den routes and through
-//! commission's reads behind den's check, with the profile cache warm and then cold. The
-//! statements are read off the wire by the recording proxy; only bound values may differ.
+//! commission's reads behind den's check, with the profile cache warm and then cold, and
+//! through the rename and the board card's placement. The statements are read off the wire by
+//! the recording proxy; only bound values may differ.
 //! Requires a container runtime socket.
 
 use domain::elements::did::Did;
 use strum::VariantArray as _;
 use test_support::{
-    den::get,
+    den::{get, patch_title},
     pg_app::{
-        self, COMMISSION_NOT_FOUND, DenWorld, MissPair, ProfileCacheState, Statement, StatementLog,
-        archived_participant_pairs, commission_read_live_pairs, commission_read_stranger_pairs,
-        den_account_pair, den_character_pair, den_participant_pairs, den_stranger_pairs,
-        den_stranger_targets, download_participant_pair, stranger_targets,
+        self, COMMISSION_NOT_FOUND, DenWorld, MissPair, ProfileCacheState, RENAME_TITLE, Statement,
+        StatementLog, absent_commission, archived_participant_pairs, commission_read_live_pairs,
+        commission_read_stranger_pairs, den_account_pair, den_character_pair,
+        den_participant_pairs, den_stranger_pairs, den_stranger_targets, download_participant_pair,
+        rename_stranger_pair, stranger_targets,
     },
 };
 
@@ -40,6 +42,14 @@ const NEVER_FOR_A_STRANGER: [&str; 6] = [
 /// What a download of a file the viewer's check can't find must never run: the file's row,
 /// its name or its bytes, by key.
 const NEVER_FOR_A_MISSING_FILE: [&str; 3] = ["commission/find_file", "file/filename", "file/get"];
+
+/// What placing a card reads of a commission the actor can't see, and all of it: the
+/// actor's standing, then the actor's own view grant.
+const BOARD_CARD_CHECK: [&str; 2] = ["commission/standing", "commission/view_grant"];
+
+/// Everything a rename by someone outside the commission runs, and all of it: the session's
+/// load, then the actor's standing, read on the pool before any unit opens.
+const RENAME_MISS: [&str; 2] = ["session/load", "commission/standing"];
 
 /// The profile cache's read, by DID.
 const PROFILE_GET: &str = "profile/get";
@@ -369,8 +379,8 @@ async fn with_a_visibility_no_parser_reads_each_pair_still_runs_the_same_stateme
     let world = &recorded.world;
     let stranger = stranger(world);
     let bob = bob(world);
-    world.store_unparsable_visibility(world.old_sketch.id).await;
-    world.store_unparsable_visibility(world.untitled.id).await;
+    world.store_unparsable_level(world.old_sketch.id).await;
+    world.store_unparsable_level(world.untitled.id).await;
 
     for target in [world.old_sketch, world.untitled] {
         for pair in den_stranger_pairs(&target) {
@@ -420,4 +430,103 @@ async fn the_recording_tells_a_node_alice_opens_from_a_miss_at_the_same_depth() 
     let missed = recorded.statements.since(missed_mark);
 
     assert_ne!(texts(&opened), texts(&missed), "{:?}", names(&opened));
+}
+
+/// The statements `POST /commissions/{commission}/placements` into `column` runs as `reader`,
+/// after checking it is answered `status`.
+async fn placement_statements(
+    recorded: &Recorded,
+    reader: &Reader<'_>,
+    commission: domain::elements::commission::CommissionId,
+    column: domain::elements::workflow::ColumnId,
+    status: u16,
+) -> Vec<Statement> {
+    let path = format!("/commissions/{commission}/placements");
+    let body = serde_json::json!({ "column_id": column.to_string(), "index": 0 });
+    let mark = recorded.statements.mark();
+    let response = reader
+        .client
+        .post(format!("{}{path}", recorded.world.base_url()))
+        .json(&body)
+        .send()
+        .await
+        .expect("the placement is answered");
+    assert_eq!(response.status(), status, "{path}");
+    let statements = recorded.statements.since(mark);
+    let unreadable = statements.iter().any(Statement::is_unreadable);
+    assert!(!unreadable, "{path}: {:?}", names(&statements));
+    statements
+}
+
+#[tokio::test]
+async fn a_stranger_s_board_card_and_a_made_up_id_s_run_the_same_statements() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let bob = bob(world);
+    let column = world.add_backlog_column("To do").await;
+
+    // bob owns "Night Shift"'s board and holds no role and no grant on the Private "Old sketch".
+    let not_yours = placement_statements(&recorded, &bob, world.old_sketch.id, column, 404).await;
+    let absent = placement_statements(&recorded, &bob, absent_commission(), column, 404).await;
+
+    assert_eq!(
+        texts(&absent),
+        texts(&not_yours),
+        "{:?} against {:?}",
+        names(&absent),
+        names(&not_yours)
+    );
+    assert_eq!(commission_data(&absent), BOARD_CARD_CHECK);
+    assert_eq!(commission_data(&not_yours), BOARD_CARD_CHECK);
+}
+
+// A Participant's card of a Private commission passes on the role, after the same commission
+// reads a miss takes: the standing, then the view grant.
+#[tokio::test]
+async fn a_participant_s_board_card_reads_what_a_miss_reads() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let bob = bob(world);
+    let column = world.add_backlog_column("To do").await;
+
+    let placed = placement_statements(&recorded, &bob, world.untitled.id, column, 204).await;
+
+    assert_eq!(commission_data(&placed), BOARD_CARD_CHECK);
+}
+
+/// The statements `PATCH {path}` with [`RENAME_TITLE`] runs as `reader`, after checking it is a
+/// `404`.
+async fn rename_statements(recorded: &Recorded, reader: &Reader<'_>, path: &str) -> Vec<Statement> {
+    let mark = recorded.statements.mark();
+    let response = patch_title(reader.client, recorded.world.base_url(), path, RENAME_TITLE).await;
+    assert_eq!(response.status(), 404, "{path}");
+    let statements = recorded.statements.since(mark);
+    let unreadable = statements.iter().any(Statement::is_unreadable);
+    assert!(!unreadable, "{path}: {:?}", names(&statements));
+    statements
+}
+
+/// Whether `statement` opens a transaction.
+fn begins(statement: &Statement) -> bool {
+    let words = statement.sql.trim_start().to_ascii_uppercase();
+    words.starts_with("BEGIN") || words.starts_with("START TRANSACTION")
+}
+
+#[tokio::test]
+async fn a_stranger_s_rename_and_a_made_up_id_s_run_the_same_statements() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let bob = bob(world);
+    let pair = rename_stranger_pair(world);
+
+    // bob takes no part in "Old sketch".
+    let not_yours = rename_statements(&recorded, &bob, &pair.not_yours).await;
+    let absent = rename_statements(&recorded, &bob, &pair.absent).await;
+
+    for (cause, statements) in [("not yours", &not_yours), ("absent", &absent)] {
+        assert_eq!(names(statements), RENAME_MISS, "{cause}");
+        let opened = statements.iter().find(|statement| begins(statement));
+        assert_eq!(opened, None, "{cause}: a unit opened");
+    }
+    assert_eq!(texts(&absent), texts(&not_yours));
 }

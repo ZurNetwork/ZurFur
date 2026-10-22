@@ -24,17 +24,16 @@
 
 use std::sync::Arc;
 
-use adapter_mem::MemBackend;
+use adapter_mem::{CommissionSeed, MemBackend};
 use api::AppState;
 use async_trait::async_trait;
-use chrono::Utc;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
-        ChannelPointer, Commission, CommissionFile, CommissionId, CommissionMarkup,
-        CommissionStanding, CommissionTitle, DeadlineStatus, DirectionStatus, ElementId,
-        GrantLevel, LapsedDeadline, NewCommission, NewElement, NewSeat, NewSlot, SeatInvitation,
-        SeatInvitationId, TabId, element::TabRow,
+        ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
+        CommissionMarkup, CommissionTitle, DeadlineStatus, DirectionStatus, ElementId, GrantLevel,
+        LapsedDeadline, LockedStanding, NewCommission, NewElement, NewSeat, NewSlot,
+        SeatInvitation, SeatInvitationId, TabId, element::TabRow,
     },
     did::Did,
     maturity::Maturity,
@@ -43,7 +42,8 @@ use domain::elements::{
 };
 use domain::ports::{
     AccountRepo, ActorIdentityWrites, ChangelogWrites, ColumnWrites, CommissionReads,
-    CommissionRepo, CommissionWrites, Database, UnitOfWork, UserWrites, WorkflowWrites,
+    CommissionRepo, CommissionWrites, Creator, Database, New, UnitOfWork, UserWrites,
+    WorkflowWrites, WriteCapability,
 };
 use serde_json::json;
 use test_support::http::{client, serve, sign_in};
@@ -113,15 +113,14 @@ async fn sign_in_and_create(
 
 /// Seeds a commission owned by an off-session User directly onto the backend.
 async fn seed_foreign_commission(backend: &MemBackend, title: &str) -> CommissionId {
-    let commission = Commission::create(
-        title.parse::<CommissionTitle>().expect("valid title"),
-        UserId::from(Did::from("did:plc:offsession-owner".to_string())),
-        Utc::now(),
-        None,
-    );
-    let id = commission.id;
-    backend.create_commission(&commission).await.expect("seed");
-    id
+    let owner = backend
+        .provision(&Did::from("did:plc:offsession-owner".to_string()))
+        .await
+        .expect("provision the off-session owner");
+    let title = title.parse::<CommissionTitle>().expect("valid title");
+    let seed = CommissionSeed::private(title, owner.id);
+    backend.seed_bound_commission(&seed).await.expect("seed");
+    seed.id
 }
 
 // AC1 — the owner deletes their fact-free commission: 204, the row is gone
@@ -318,7 +317,7 @@ impl CommissionReads for FactBearingCommissions<'_> {
         &mut self,
         commission: &CommissionId,
         user: &UserId,
-    ) -> anyhow::Result<Option<CommissionStanding>> {
+    ) -> anyhow::Result<Option<LockedStanding>> {
         self.0.standing_for_update(commission, user).await
     }
 
@@ -346,8 +345,13 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         Ok(true)
     }
 
-    async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {
-        self.0.create(commission).await
+    async fn create(
+        &mut self,
+        capability: &WriteCapability<New<CommissionId>, Creator>,
+        birth: &CommissionBirth,
+        commission: &NewCommission,
+    ) -> anyhow::Result<()> {
+        self.0.create(capability, birth, commission).await
     }
 
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
@@ -399,14 +403,6 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         archived_at: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool> {
         self.0.set_archived(id, archived_at).await
-    }
-
-    async fn set_title(
-        &mut self,
-        id: &CommissionId,
-        title: &CommissionTitle,
-    ) -> anyhow::Result<bool> {
-        self.0.set_title(id, title).await
     }
 
     async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {

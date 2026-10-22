@@ -234,6 +234,24 @@ pub fn den_participant_pairs(world: &DenWorld) -> [MissPair; 3] {
     [file_pair, slot_pair, workflow_pair]
 }
 
+/// The title every rename pair sends: one the name rule keeps, so each answer is the
+/// standing's.
+pub const RENAME_TITLE: &str = "Bob's now";
+
+/// bob's pair through the rename, `PATCH` with [`RENAME_TITLE`]: an absent commission against
+/// alice's archived "Old sketch", which he takes no part in until
+/// [`DenWorld::add_bob_to_old_sketch`]. `home` is the real one's path, which alice renames.
+pub fn rename_stranger_pair(world: &DenWorld) -> MissPair {
+    let absent = absent_commission();
+    let old_sketch = format!("/commissions/{}/title", world.old_sketch.id);
+    MissPair {
+        label: "the rename",
+        absent: format!("/commissions/{absent}/title"),
+        not_yours: old_sketch.clone(),
+        home: old_sketch,
+    }
+}
+
 /// The live levels a stranger can reach "Untitled"'s node at, or a card of it, and each of
 /// commission's reads' pairs there with the problem code both causes answer: the changelog's
 /// `changelog` stays closed at both; the download opens the node at Public, so its pair is an

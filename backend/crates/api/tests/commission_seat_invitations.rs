@@ -20,10 +20,10 @@
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
-use adapter_mem::MemBackend;
+use adapter_mem::{CommissionSeed, MemBackend};
 use chrono::Utc;
 use domain::elements::{
-    commission::{Commission, CommissionId, CommissionTitle, ElementId, SKELETON},
+    commission::{CommissionId, CommissionTitle, ElementId, SKELETON},
     did::Did,
     profile::Profile,
 };
@@ -396,10 +396,10 @@ async fn a_participant_who_is_not_owner_cannot_invite() {
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
-    let foreign = Commission::create(title, foreign_owner.id, Utc::now(), None);
+    let foreign = CommissionSeed::private(title, foreign_owner.id);
     let foreign_id = uuid::Uuid::from(foreign.id);
     backend
-        .create_commission(&foreign)
+        .seed_bound_commission(&foreign)
         .await
         .expect("seed foreign commission");
     backend.seed_participant(foreign.id, artist.id, Utc::now());

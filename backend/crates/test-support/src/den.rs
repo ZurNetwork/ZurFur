@@ -16,6 +16,22 @@ pub async fn get(client: &reqwest::Client, base: &str, path: &str) -> reqwest::R
         .expect("the request is answered")
 }
 
+/// `PATCH {base}{path}` as `client`, with `title` as the body's `title`.
+pub async fn patch_title(
+    client: &reqwest::Client,
+    base: &str,
+    path: &str,
+    title: &str,
+) -> reqwest::Response {
+    let request = serde_json::json!({ "title": title });
+    client
+        .patch(format!("{base}{path}"))
+        .json(&request)
+        .send()
+        .await
+        .expect("the request is answered")
+}
+
 /// A `200` answer's JSON body, after checking its cache header.
 pub async fn ok_json(response: reqwest::Response) -> Value {
     assert_eq!(response.status(), 200, "{}", response.url());

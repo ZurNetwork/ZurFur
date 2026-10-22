@@ -2,7 +2,7 @@
 //! refused. A refusal list cannot be empty, and a field's detail is fixed per
 //! code, so it can never echo what the caller sent.
 
-use application::den::DenNameError;
+use domain::elements::name::NodeNameError;
 
 use super::Problem;
 use crate::generated::FieldError;
@@ -66,16 +66,16 @@ impl FieldCode {
     }
 }
 
-impl From<DenNameError> for FieldCode {
+impl From<NodeNameError> for FieldCode {
     /// Why the name rule refused a name, whichever field it was typed in.
-    fn from(rule: DenNameError) -> Self {
+    fn from(rule: NodeNameError) -> Self {
         match rule {
-            DenNameError::Empty => Self::NameEmpty,
-            DenNameError::TooLong => Self::NameTooLong,
-            DenNameError::Slash => Self::NameSlash,
-            DenNameError::Invisible => Self::NameInvisible,
-            DenNameError::Separator => Self::NameSeparator,
-            DenNameError::Reserved => Self::NameReserved,
+            NodeNameError::Empty => Self::NameEmpty,
+            NodeNameError::TooLong => Self::NameTooLong,
+            NodeNameError::Slash => Self::NameSlash,
+            NodeNameError::Invisible => Self::NameInvisible,
+            NodeNameError::Separator => Self::NameSeparator,
+            NodeNameError::Reserved => Self::NameReserved,
         }
     }
 }

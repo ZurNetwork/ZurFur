@@ -11,8 +11,13 @@ use domain::{
     },
 };
 
-/// A commission's values as the store holds them, read back after a write: what create and
-/// rename answer.
+use crate::{
+    commission::CommissionError,
+    common_error::CommonError,
+    den::{DenThing, act::ArmAnswer, write::WriteResult},
+};
+
+/// A commission's values after a write: what create and rename answer.
 #[derive(Debug)]
 pub struct CommissionValues {
     pub id: CommissionId,
@@ -29,14 +34,15 @@ pub struct CommissionValues {
     pub created_at: DateTimeUtc,
 }
 
-impl From<Commission> for CommissionValues {
-    /// The loaded commission's values, field for field.
-    fn from(commission: Commission) -> Self {
+impl CommissionValues {
+    /// The loaded commission's values, named `title` and levelled `visibility` as its node
+    /// holds them. Not `From`: the commission, its name and its level are three facts.
+    fn from_parts(commission: Commission, title: StoredText, visibility: Level) -> Self {
         Self {
             id: commission.id,
-            title: commission.title,
+            title,
             lifecycle: commission.lifecycle_step,
-            visibility: commission.visibility,
+            visibility,
             deadline: commission.deadline,
             maturity: commission.maturity,
             direction_status: commission.direction_status,
@@ -44,5 +50,34 @@ impl From<Commission> for CommissionValues {
             linked_channel: commission.linked_channel,
             created_at: commission.created_at,
         }
+    }
+}
+
+impl TryFrom<WriteResult> for CommissionValues {
+    type Error = CommissionError;
+
+    /// The commission the Den's write answered, its id the thing written, named and levelled
+    /// as the write left its node.
+    fn try_from(written: WriteResult) -> Result<Self, Self::Error> {
+        let WriteResult {
+            thing,
+            name,
+            level,
+            answer: ArmAnswer::Commission(commission),
+        } = written;
+        let DenThing::Commission(id) = thing else {
+            let other = anyhow::anyhow!("the den's write answered no commission");
+            return Err(CommonError::Infrastructure(other).into());
+        };
+        let name = name.ok_or_else(|| {
+            let unnamed = anyhow::anyhow!("the den's write gave the commission no name");
+            CommonError::Infrastructure(unnamed)
+        })?;
+        let title = StoredText::from(name.as_ref().to_owned());
+        let values = Self {
+            id,
+            ..Self::from_parts(commission, title, level)
+        };
+        Ok(values)
     }
 }

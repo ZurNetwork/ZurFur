@@ -36,7 +36,7 @@
     },
     {
       "name": "create.rs",
-      "role": "POST /commissions → commission::create, which answers the created row read back by id; rendered into CreateCommissionResponse; a blank title or one the name rule refuses → 422 with a field error at #/title",
+      "role": "POST /commissions → commission::create, the Den's write, which answers the created commission as the write left it; rendered into CreateCommissionResponse; the title is parsed with FromStr before any use case runs, so a blank title or one the name rule refuses → 422 with a field error at #/title",
       "node": false
     },
     {
@@ -76,7 +76,7 @@
     },
     {
       "name": "mod.rs",
-      "role": "router assembly, body limits, the CommissionError→Problem mapping, title_write_problem (create's and rename's name-rule refusal as a field error at #/title; slots and files keep the plain mapping), and require_owner — the last driver-side gate, kept only for the unmigrated channel/elements acts",
+      "role": "router assembly, body limits, the CommissionError→Problem mapping (create and rename map through it too), title_refused (a title the name rule refuses at parse, as a field error at #/title), and require_owner — the last driver-side gate, kept only for the unmigrated channel/elements acts",
       "node": false
     },
     {
@@ -91,7 +91,7 @@
     },
     {
       "name": "rename.rs",
-      "role": "PATCH /{id}/title → commission::rename, owner-only; the path's id wins over the body's; answers the renamed row read back by id, rendered into RenameCommissionResponse; a refused title → 422 with a field error at #/title",
+      "role": "PATCH /{id}/title → commission::rename, owner-only; the path's id wins over the body's; answers the commission as the write left it, read by the gate's lent view in the write's unit, rendered into RenameCommissionResponse; the title is parsed before anyone's standing is checked, so a refused title → 422 with a field error at #/title for anyone, a Participant who isn't the owner included",
       "node": false
     },
     {

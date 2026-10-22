@@ -7,12 +7,17 @@ use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use chrono::Utc;
 use domain::{
     elements::{
-        commission::{Commission, CommissionTitle},
+        commission::{CommissionBirth, CommissionId, NewCommission},
         did::Did,
+        level::Level,
+        text::StoredText,
         user::{User, UserId},
     },
     ports::{CommissionStore, Database},
 };
+use test_support::seeder::commission_node;
+
+use crate::seed;
 
 /// A fresh, fully migrated private database — a clone of the shared template
 /// (see `test_support::pg`). The second element keeps the shared container
@@ -40,34 +45,48 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 async fn a_swallowed_statement_failure_fails_the_commit_and_keeps_nothing() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:swallow-owner").await;
-    let original_title = "Before".parse::<CommissionTitle>().expect("valid title");
-    let commission = Commission::create(original_title, owner.id, Utc::now(), None);
-    let id = commission.id;
-
+    let id = seed::seed_titled(&pool, &owner.id, "Before").await;
     let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin seeding unit");
-    uow.commissions().create(&commission).await.expect("create");
-    uow.commit().await.expect("commit seeding unit");
 
-    let renamed_title = "After".parse::<CommissionTitle>().expect("valid title");
+    let renamed_title = StoredText::from("After".to_owned());
     let stranger = UserId::from(Did::from("did:plc:never-provisioned".to_string()));
-    let orphan_title = "Orphan".parse::<CommissionTitle>().expect("valid title");
-    let orphan = Commission::create(orphan_title, stranger, Utc::now(), None);
+    let orphan_id = CommissionId::mint();
+    let orphan_node = commission_node(orphan_id, Level::Private, "Orphan");
+    let orphan_birth = CommissionBirth {
+        node: orphan_node.id,
+        owner_id: stranger,
+        created_at: Utc::now(),
+    };
+    let unrated = NewCommission {
+        maturity: None,
+        deadline: None,
+    };
 
     let mut uow = db.begin().await.expect("begin");
-    {
-        let mut commissions = uow.commissions();
-        let changed = commissions
-            .set_title(&id, &renamed_title)
-            .await
-            .expect("the rename itself succeeds");
-        assert!(changed, "the rename changed the stored title in the unit");
-        let orphan_created = commissions.create(&orphan).await;
-        assert!(
-            orphan_created.is_err(),
-            "the owner's foreign key refuses the orphan"
-        );
-    }
+    uow.nodes()
+        .create(&orphan_node)
+        .await
+        .expect("store the orphan's node");
+    let locked = uow
+        .commissions()
+        .standing_for_update(&id, &owner.id)
+        .await
+        .expect("the locked read")
+        .expect("the seeded commission stands");
+    let renamed = uow
+        .nodes()
+        .set_name(&locked.node, &renamed_title)
+        .await
+        .expect("the rename itself succeeds");
+    assert!(
+        renamed,
+        "the rename found the commission's node in the unit"
+    );
+    let orphan_created = seed::create(&mut *uow, orphan_id, &orphan_birth, &unrated).await;
+    assert!(
+        orphan_created.is_err(),
+        "the owner's foreign key refuses the orphan"
+    );
     let committed = uow.commit().await;
     assert!(
         committed.is_err(),
@@ -75,7 +94,7 @@ async fn a_swallowed_statement_failure_fails_the_commit_and_keeps_nothing() {
     );
 
     let stored = PgCommissionStore::new(pool.clone())
-        .find(&id)
+        .find_summary(&id)
         .await
         .expect("read back")
         .expect("the seeded commission exists");

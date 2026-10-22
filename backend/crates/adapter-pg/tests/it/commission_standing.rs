@@ -1,7 +1,8 @@
 //! The commission standing reads over PostgreSQL: the shared suite
 //! (`test_support::commission_standing_contract`), an unreadable visibility read as Private,
-//! the pool read's one statement for a stranger and a made-up id, and the locked read holding
-//! the commission row until its unit ends. Requires a container runtime socket.
+//! the pool read's one statement for a stranger and a made-up id, that statement's node probe
+//! running for both, and the locked read holding the commission row until its unit ends.
+//! Requires a container runtime socket.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,7 +11,7 @@ use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::{
-    commission::{Commission, CommissionId, CommissionRole, CommissionStanding},
+    commission::{CommissionId, CommissionRole, CommissionStanding},
     did::Did,
     level::Level,
     user::UserId,
@@ -18,6 +19,13 @@ use domain::elements::{
 use domain::ports::{CommissionStore, Database};
 use test_support::commission_standing_contract::ParticipantRows;
 use test_support::pg_app::{StatementLog, pg_runtime_recording};
+use test_support::seeder::{self, CommissionSeeder};
+
+use crate::commission_reads::{allow_any_node_level, assert_the_node_probe_runs, store_node_level};
+use crate::seed::MintingSeeder;
+
+/// The shipped pool standing statement, as the generated reader sends it.
+const STANDING_SQL: &str = include_str!("../../queries/commission/standing.sql");
 
 /// The participant table, written by direct statements: no port writes a non-owner row yet.
 struct PgParticipantRows(PgPool);
@@ -55,18 +63,25 @@ impl ParticipantRows for PgParticipantRows {
     }
 }
 
-/// A fresh database's unit factory, commission store and participant rows.
+/// A fresh database's unit factory, commission store, participant rows and commission seeder.
 async fn fresh() -> (
     Arc<dyn Database>,
     Arc<dyn CommissionStore>,
     Arc<dyn ParticipantRows>,
+    Arc<dyn CommissionSeeder>,
     impl Sized,
 ) {
     let (pool, kept) = test_support::pg::fresh_pool().await;
     let database = PgDatabase::new(pool.clone());
     let store = PgCommissionStore::new(pool.clone());
     let rows = PgParticipantRows(pool);
-    (Arc::new(database), Arc::new(store), Arc::new(rows), kept)
+    (
+        Arc::new(database),
+        Arc::new(store),
+        Arc::new(rows),
+        Arc::new(MintingSeeder),
+        kept,
+    )
 }
 
 test_support::commission_standing_contract_tests!(fresh);
@@ -83,17 +98,16 @@ async fn provision(database: &dyn Database, did: &str) -> UserId {
     user.id
 }
 
-/// Creates a Private commission owned by `owner` in a unit of its own.
+/// Seeds a Private commission owned by `owner` in a unit of its own.
 async fn committed_commission(database: &dyn Database, owner: &UserId) -> CommissionId {
-    let title = "A made-up commission".parse().expect("a made-up title");
-    let commission = Commission::create(title, owner.clone(), Utc::now(), None);
-    let mut unit = database.begin().await.expect("begin");
-    unit.commissions()
-        .create(&commission)
-        .await
-        .expect("create the commission");
-    unit.commit().await.expect("commit the commission");
-    commission.id
+    seeder::seed_commission(
+        database,
+        &MintingSeeder,
+        owner,
+        Level::Private,
+        "A made-up commission",
+    )
+    .await
 }
 
 /// Whether a second connection's `FOR NO KEY UPDATE NOWAIT` on the commission row is refused
@@ -118,26 +132,24 @@ async fn the_row_is_held(pool: &PgPool, commission: &CommissionId) -> bool {
     true
 }
 
-// A stored visibility token outside the vocabulary reads as Private, on both reads.
+// A node level outside the vocabulary (stored with `node_level_known` dropped in this test's
+// own database) reads as Private, on both reads.
 #[tokio::test]
-async fn an_unreadable_visibility_reads_private() {
+async fn an_unreadable_node_level_reads_private_on_both_reads() {
     let (pool, _kept) = test_support::pg::fresh_pool().await;
     let database = PgDatabase::new(pool.clone());
     let store = PgCommissionStore::new(pool.clone());
     let owner = provision(&database, "did:plc:unreadableowner").await;
     let commission = committed_commission(&database, &owner).await;
-    let updated = sqlx::query("UPDATE commission SET visibility = 'public-ish' WHERE id = $1")
-        .bind(uuid::Uuid::from(commission))
-        .execute(&pool)
-        .await
-        .expect("store a visibility outside the vocabulary");
-    assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
-    let stored_level: String =
-        sqlx::query_scalar("SELECT visibility FROM commission WHERE id = $1")
-            .bind(uuid::Uuid::from(commission))
-            .fetch_one(&pool)
-            .await
-            .expect("read the stored token");
+    allow_any_node_level(&pool).await;
+    store_node_level(&pool, commission, "public-ish").await;
+    let stored_level: String = sqlx::query_scalar(
+        "SELECT n.level FROM node n JOIN commission c ON c.node_id = n.id WHERE c.id = $1",
+    )
+    .bind(uuid::Uuid::from(commission))
+    .fetch_one(&pool)
+    .await
+    .expect("read the stored token");
     assert_eq!(stored_level, "public-ish", "the token is stored as written");
 
     let expected = CommissionStanding {
@@ -156,7 +168,8 @@ async fn an_unreadable_visibility_reads_private() {
         .standing_for_update(&commission, &owner)
         .await
         .expect("the locked standing read");
-    assert_eq!(locked, Some(expected), "standing_for_update");
+    let locked_standing = locked.map(|locked| locked.standing);
+    assert_eq!(locked_standing, Some(expected), "standing_for_update");
 }
 
 // A stranger's standing on a real commission and a standing on a made-up id each run exactly
@@ -200,6 +213,30 @@ async fn a_stranger_and_a_made_up_id_run_the_same_one_statement() {
         .await
         .expect("the pool's standing read");
     assert_eq!(answered, None, "a made-up id answers not found");
+}
+
+// The shipped standing statement probes the node index for a made-up id as for a stranger's
+// real commission: neither plan reads `node` conditionally, so the two answer in the same steps.
+#[tokio::test]
+async fn a_stranger_and_a_made_up_id_both_probe_the_node_index() {
+    let (pool, _kept) = test_support::pg::fresh_pool().await;
+    let database = PgDatabase::new(pool.clone());
+    let owner = provision(&database, "did:plc:planowner").await;
+    let stranger = provision(&database, "did:plc:planstranger").await;
+    let commission = committed_commission(&database, &owner).await;
+    let made_up = CommissionId::from(uuid::Uuid::now_v7());
+    let explain = format!("EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF) {STANDING_SQL}");
+
+    let cases = [("a made-up id", made_up), ("a stranger", commission)];
+    for (label, target) in cases {
+        let plan: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(explain.clone()))
+            .bind(uuid::Uuid::from(target))
+            .bind(stranger.as_ref())
+            .fetch_all(&pool)
+            .await
+            .expect("explain the standing statement");
+        assert_the_node_probe_runs(label, &plan);
+    }
 }
 
 // A unit that ran `standing_for_update` holds the commission row: a second connection can't
@@ -267,7 +304,7 @@ async fn standing_for_update_sees_a_change_committed_while_it_waited() {
             .await
             .expect("the locked standing read");
         unit.rollback().await.expect("end the unit");
-        standing
+        standing.map(|locked| locked.standing)
     });
     wait_for_a_lock_wait(&pool).await;
     evict.commit().await.expect("commit the eviction");

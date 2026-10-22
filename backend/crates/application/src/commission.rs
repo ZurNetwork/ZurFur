@@ -9,8 +9,8 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            ChangelogEntryKind, Commission, CommissionId, CommissionTitle, CommissionTitleError,
-            FileNameError, MarkupError, NewChangelogEntry,
+            ChangelogEntryKind, Commission, CommissionId, FileNameError, MarkupError,
+            NewChangelogEntry,
         },
         user::UserId,
     },
@@ -22,9 +22,10 @@ use serde_json::json;
 
 use crate::{
     common_error::{CommonError, NotFoundEntity},
-    den::{DenError, DenName, DenNameError},
+    den::{DenError, DenNameError, write::DenWriteError},
     transaction,
 };
+pub(crate) mod act;
 pub mod archive;
 pub mod changelog;
 pub mod create;
@@ -214,13 +215,19 @@ pub(crate) async fn require_owner(
     Err(CommissionError::NotAMember)
 }
 
-/// The title as the Den's name rule keeps it: refused where the rule refuses, and stored
-/// without the characters the rule strips.
-pub(crate) fn den_title(title: &CommissionTitle) -> CommissionResult<CommissionTitle> {
-    let name = DenName::try_from(title.as_str()).map_err(CommissionError::InvalidName)?;
-    name.as_ref()
-        .parse()
-        .map_err(|CommissionTitleError::Empty| CommissionError::InvalidName(DenNameError::Empty))
+impl From<DenWriteError> for CommissionError {
+    /// The Den's write refusal as a commission answer: its one not-found is the commission's,
+    /// a role below the act's need is forbidden, and a refusal or a store failure is the
+    /// store's, its cause kept on `source()`.
+    fn from(refusal: DenWriteError) -> Self {
+        match refusal {
+            DenWriteError::NotFound => CommonError::commission_not_found().into(),
+            DenWriteError::Forbidden => Self::InsufficientPermissions,
+            failure @ (DenWriteError::Refused(_) | DenWriteError::Store(_)) => {
+                CommonError::Infrastructure(anyhow::Error::new(failure)).into()
+            }
+        }
+    }
 }
 
 /// Den's refusal as a commission answer: its one not-found becomes `not_found`, and a store

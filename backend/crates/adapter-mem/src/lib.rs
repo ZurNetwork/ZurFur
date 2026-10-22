@@ -22,7 +22,7 @@ pub use actor_identity::{MemActorIdentityStore, MemActorIdentityWrites, StoredAc
 pub use bug_report::{MemBugReportStore, MemBugReportWrites};
 pub use character::{MemCharacterStore, MemCharacterWrites};
 pub use commission::{
-    MemChangelogStore, MemChangelogWrites, MemCommissionStore, MemCommissionWrites,
+    CommissionSeed, MemChangelogStore, MemChangelogWrites, MemCommissionStore, MemCommissionWrites,
 };
 pub use file_store::MemFileStore;
 pub use fixed_sign_in::FixedSignIn;
@@ -1900,17 +1900,25 @@ pub struct MemDatabase(MemBackend);
 impl Database for MemDatabase {
     #[tracing::instrument(level = "debug", skip_all)]
     async fn begin(&self) -> anyhow::Result<Box<dyn UnitOfWork>> {
+        Ok(Box::new(self.0.unit()))
+    }
+}
+
+impl MemBackend {
+    /// A unit of work over this store, as [`MemDatabase::begin`] opens one, unboxed for
+    /// the crate's own seeders.
+    pub(crate) fn unit(&self) -> MemUnitOfWork {
         // `staged` is what the write views mutate; `base` is an independent copy
         // taken at the same instant, never touched, that `commit` diffs against.
-        let staged = self.0.stage();
+        let staged = self.stage();
         let base = staged.stage();
-        Ok(Box::new(MemUnitOfWork {
-            shared: self.0.clone(),
+        MemUnitOfWork {
+            shared: self.clone(),
             base,
             staged,
             bug_report_filing: None,
             node_spent: false,
-        }))
+        }
     }
 }
 
@@ -1931,8 +1939,8 @@ pub struct MemUnitOfWork {
     /// The bug-report filing lock once this unit has taken it; released when the
     /// unit is dropped, after `commit` has merged.
     bug_report_filing: Option<tokio::sync::OwnedMutexGuard<()>>,
-    /// Set once a node call is refused: every later node call fails, and commit
-    /// returns an error and keeps nothing, as a failed PostgreSQL unit does.
+    /// Set once a node call or a commission create is refused: every later node call
+    /// fails, and commit returns an error and keeps nothing, as a failed PostgreSQL unit does.
     node_spent: bool,
 }
 
@@ -1944,9 +1952,12 @@ impl UnitOfWork for MemUnitOfWork {
         Box::new(MemAccountWrites(self.staged.clone()))
     }
 
-    /// The commission repo over this unit's staged snapshot.
+    /// The commission repo over this unit's staged snapshot; a refused create spends the unit.
     fn commissions(&mut self) -> Box<dyn CommissionRepo + '_> {
-        Box::new(MemCommissionWrites(self.staged.clone()))
+        Box::new(MemCommissionWrites(
+            self.staged.clone(),
+            &mut self.node_spent,
+        ))
     }
 
     /// The changelog append surface over this unit's staged snapshot, so an entry
@@ -1999,15 +2010,16 @@ impl UnitOfWork for MemUnitOfWork {
         })
     }
 
-    /// Merges the staged writes onto the shared store; a spent unit merges nothing
-    /// and returns an error.
+    /// Merges the staged writes onto the shared store; a spent unit, or one whose staged
+    /// state fails the commission binding checks, merges nothing and returns an error.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
-        // A spent unit's `base`/`staged` are dropped unmerged, rolling back.
+        // A spent or refused unit's `base`/`staged` are dropped unmerged, rolling back.
         anyhow::ensure!(
             !self.node_spent,
-            "a refused node call ended this unit of work; nothing was kept"
+            "a refused call ended this unit of work; nothing was kept"
         );
+        self.staged.check_bindings()?;
         // Without this call `base`/`staged` are simply dropped, rolling back.
         self.shared.merge(&self.base, &self.staged);
         Ok(())

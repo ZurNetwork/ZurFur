@@ -25,7 +25,7 @@
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
-use adapter_mem::MemBackend;
+use adapter_mem::{CommissionSeed, MemBackend};
 use chrono::{DateTime, Utc};
 use domain::elements::{
     commission::{Commission, CommissionId, CommissionTitle, LifecycleStep},
@@ -56,13 +56,12 @@ async fn create_commission(
         .expect("POST /commissions");
     assert_eq!(res.status(), 201, "creating a commission returns 201");
     let title = body["title"].as_str().expect("body carries a title");
-    let all = backend.all_commissions().await.expect("list commissions");
-    uuid::Uuid::from(
-        all.iter()
-            .find(|c| c.title.as_str() == title)
-            .expect("the created commission was persisted")
-            .id,
-    )
+    let created = backend
+        .commission_titled(title)
+        .await
+        .expect("list commissions")
+        .expect("the created commission was persisted");
+    uuid::Uuid::from(created)
 }
 
 /// The persisted commission, rebuilt.
@@ -140,10 +139,11 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
-    let commission = Commission::create(title, owner.id, Utc::now(), Some(past()));
-    let id = uuid::Uuid::from(commission.id);
+    let mut seed = CommissionSeed::private(title, owner.id);
+    seed.deadline = Some(past());
+    let id = uuid::Uuid::from(seed.id);
     backend
-        .create_commission(&commission)
+        .seed_bound_commission(&seed)
         .await
         .expect("seed foreign commission");
     id

@@ -2,6 +2,8 @@
 //! verdict, opens the unit, makes the grant from the locked standing, builds Atta's act from
 //! the grant alone, and has Atta check it and the write host apply it.
 
+use std::fmt;
+
 use atta::{Act, ActName, Born, Placed, RealPath, Shape, WriteCaps, WriteError, Writer};
 use domain::{
     datetime::DateTimeUtc,
@@ -14,7 +16,7 @@ use crate::{
     commission::den::CommissionPlace,
     den::{
         Den, DenName, DenThing, DenType, Place, TopLevel,
-        act::{ActShape, ActSpec, BornEntry, DenAct},
+        act::{ActShape, ActSpec, ArmAnswer, BornEntry, DenAct},
         authority::{self, Grant},
         gate::{DenApplied, DenRefusal, DenWriteHost},
         host::{DenHost, type_key},
@@ -25,13 +27,6 @@ use crate::{
 };
 
 /// A write: who acts, and the act.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 pub(crate) struct Command {
     /// The session's user.
     pub(crate) actor: UserId,
@@ -40,22 +35,27 @@ pub(crate) struct Command {
 }
 
 /// What a write answers, from what the gate wrote: the thing it acted on, the name it gave,
-/// and the level of the node it acted on or made.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
+/// the level of the node it acted on or made, and what the type's handler answered.
 pub(crate) struct WriteResult {
     /// The thing written, a new one's id included.
     pub(crate) thing: DenThing,
-    /// The name a create or a rename wrote; `None` for a change.
+    /// The name a create or a rename left on the node.
     pub(crate) name: Option<DenName>,
     /// A made node's settled level, or the level of the node acted on.
     pub(crate) level: Level,
+    /// The thing the handler acted on, as its lent view read it.
+    pub(crate) answer: ArmAnswer,
+}
+
+impl fmt::Debug for WriteResult {
+    /// The level and the answer's id; never the name, nor a DID.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WriteResult")
+            .field("level", &self.level)
+            .field("answer", &self.answer)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Why a write was refused, by class: Atta's own refusals and the den's. Its word is for logs.
@@ -73,25 +73,16 @@ pub(crate) enum RefusalClass {
     /// Two entries of one act would share a key.
     DuplicateKey,
     /// The grant doesn't fit the act: an existing thing's for a create, a create's for a
-    /// rename or change, or a role below the capability's.
+    /// rename, or a role below the capability's.
     WrongGrant,
     /// A made node would be wider than Private, which nothing may be until 0.6.
     WiderThanPrivate,
     /// Another node already holds the made node's key.
     SegmentTaken,
-    /// The type's handler refused the act.
-    TypeRefused,
 }
 
 /// Atta's refusal under the den's word for it. A function, not `From`: the Atta-exposure
 /// guard counts every trait impl that names Atta as public, whatever its type's visibility.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 fn refusal_class(refusal: atta::Refusal) -> RefusalClass {
     match refusal {
         atta::Refusal::EntriesInFile => RefusalClass::EntriesInFile,
@@ -109,7 +100,6 @@ impl From<DenRefusal> for RefusalClass {
             DenRefusal::WrongGrant => Self::WrongGrant,
             DenRefusal::WiderThanPrivate => Self::WiderThanPrivate,
             DenRefusal::SegmentTaken => Self::SegmentTaken,
-            DenRefusal::TypeRefused => Self::TypeRefused,
         }
     }
 }
@@ -117,13 +107,6 @@ impl From<DenRefusal> for RefusalClass {
 /// Why a Den write failed. `Display` is fixed text and never interpolates a cause; a store's
 /// cause rides `source()`.
 #[derive(Debug, thiserror::Error)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 pub(crate) enum DenWriteError {
     /// No such thing, or the actor holds no standing on it: the same answer for both.
     #[error("node not found")]
@@ -131,7 +114,7 @@ pub(crate) enum DenWriteError {
     /// The actor's role is below what the act needs.
     #[error("the act needs a higher role")]
     Forbidden,
-    /// Atta, the gate or the type refused the act.
+    /// Atta or the gate refused the act.
     #[error("the den refused the act")]
     Refused(RefusalClass),
     /// A store behind the Den failed, or the den broke one of its own rules.
@@ -140,25 +123,11 @@ pub(crate) enum DenWriteError {
 }
 
 /// A store failure, or a rule of the den's own broken, as the write's error.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
-fn broken(what: &'static str) -> DenWriteError {
+pub(in crate::den) fn broken(what: &'static str) -> DenWriteError {
     DenWriteError::Store(anyhow::anyhow!(what))
 }
 
 /// The real path of `/commission`, the top-level directory a create makes a commission in.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 pub(in crate::den) fn commission_directory() -> Option<RealPath> {
     let segment = names::fixed_segment(TopLevel::Commission.into())?;
     Some(RealPath::from(vec![segment]))
@@ -166,13 +135,6 @@ pub(in crate::den) fn commission_directory() -> Option<RealPath> {
 
 /// The existing node the grant names, as Atta's act carries it: its path from the grant's
 /// commission id, its type the act's, its level the locked read's.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 fn granted_node(grant: &Grant, den_type: DenType) -> Result<Placed, DenWriteError> {
     let authority::GrantKind::Existing {
         commission, level, ..
@@ -192,20 +154,14 @@ fn granted_node(grant: &Grant, den_type: DenType) -> Result<Placed, DenWriteErro
     Ok(placed)
 }
 
-/// An entry a create makes, as Atta's act carries it.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
+/// An entry a create makes, as Atta's act carries it: its word its key and its name.
 fn born_entry(entry: BornEntry) -> Result<Born, DenWriteError> {
     let key = names::fixed_segment(entry.word).ok_or_else(|| broken("a fixed word is no key"))?;
+    let name = names::fixed_name(entry.word).ok_or_else(|| broken("a fixed word is no name"))?;
     let born = Born {
         key,
         typ: type_key(entry.den_type),
-        name: names::display_name(&entry.name),
+        name: names::display_name(&name),
         level: entry.level.map(atta_level),
     };
     Ok(born)
@@ -213,13 +169,6 @@ fn born_entry(entry: BornEntry) -> Result<Born, DenWriteError> {
 
 /// The den's one builder of Atta's act: every path from the grant's typed ids, an existing
 /// node's level from the locked read, a create's key from the id the grant minted.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 fn build(spec: ActSpec, body: DenAct, grant: &Grant) -> Result<Act<DenAct>, DenWriteError> {
     let ActSpec {
         word,
@@ -265,9 +214,6 @@ fn build(spec: ActSpec, body: DenAct, grant: &Grant) -> Result<Act<DenAct>, DenW
             node: granted_node(grant, den_type)?,
             name: names::display_name(&name),
         },
-        ActShape::Change => Shape::Change {
-            node: granted_node(grant, den_type)?,
-        },
     };
     let act = Act {
         name: ActName::from(word.to_owned()),
@@ -279,13 +225,6 @@ fn build(spec: ActSpec, body: DenAct, grant: &Grant) -> Result<Act<DenAct>, DenW
 }
 
 /// Atta's write error as the den's: a refusal by its class, a host failure a store failure.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 fn write_error(error: WriteError) -> DenWriteError {
     match error {
         WriteError::Refused(refusal) => DenWriteError::Refused(refusal_class(refusal)),
@@ -294,13 +233,6 @@ fn write_error(error: WriteError) -> DenWriteError {
 }
 
 /// What the gate wrote, as the write's answer; the name is re-checked by the Den's rule.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 fn answer(applied: DenApplied) -> Result<WriteResult, DenWriteError> {
     let name = applied
         .name
@@ -315,19 +247,13 @@ fn answer(applied: DenApplied) -> Result<WriteResult, DenWriteError> {
         thing: DenThing::Commission(applied.commission),
         name,
         level: den_level(applied.level),
+        answer: applied.answer,
     };
     Ok(written)
 }
 
 /// Steps four and five on an open unit: build Atta's act from `grant`, then have Atta check it
 /// and the write host apply it. A refusal of any kind is an `Err`, so the unit rolls back.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 pub(in crate::den) async fn written(
     unit: Unit<'_>,
     grant: Grant,

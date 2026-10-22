@@ -1,8 +1,10 @@
 //! The node table's guards, on a fully migrated database: the shape a node
 //! takes on its own, what may change after it is written, and how a commission
-//! or Slot row and its node stay bound. Raw SQL, on bare nodes where no row
-//! needs to point at them. Requires a container runtime socket (DOCKER_HOST
-//! honored).
+//! or Slot row and its node stay bound. Raw SQL. A commission node needs its
+//! commission at commit, so a bare one lives only inside an uncommitted unit;
+//! the tests of binding a node-less commission row run on a database migrated
+//! only through the node table's migration. Requires a container runtime socket
+//! (DOCKER_HOST honored).
 
 use std::fmt::Debug;
 
@@ -10,7 +12,8 @@ use adapter_pg::PgPool;
 use sqlx::postgres::PgQueryResult;
 use uuid::Uuid;
 
-use crate::node_backfill::{seed_commission, seed_owner, seed_slot};
+use crate::migration_steps::{bare_pool, run_migrations_through};
+use crate::node_backfill::{DEN_1_VERSION, seed_commission, seed_owner, seed_slot};
 
 /// The six fixed entries every commission node holds.
 const ENTRY_WORDS: [&str; 6] = [
@@ -25,6 +28,15 @@ const ENTRY_WORDS: [&str; 6] = [
 /// A fresh, fully migrated database with the made-up owner seeded.
 async fn migrated() -> (PgPool, impl Sized) {
     let (pool, db) = test_support::pg::fresh_pool().await;
+    seed_owner(&pool).await;
+    (pool, db)
+}
+
+/// A fresh database migrated only through the node table's migration, where a
+/// commission row may still lack a node, with the made-up owner seeded.
+async fn migrated_through_den_1() -> (PgPool, impl Sized) {
+    let (pool, db) = bare_pool().await;
+    run_migrations_through(&pool, DEN_1_VERSION).await;
     seed_owner(&pool).await;
     (pool, db)
 }
@@ -96,7 +108,8 @@ impl NewNode {
     }
 }
 
-/// A commission node and its six entries, inserted bare: no row points at it.
+/// A commission node and its six entries, inserted bare: no row points at it, so
+/// on a fully migrated database it commits only once a commission points at it.
 struct BareCommissionNode {
     node: Uuid,
     brief: Uuid,
@@ -154,10 +167,23 @@ async fn give_it_its_nodes(pool: &PgPool, commission: Uuid) -> BoundCommission {
     }
 }
 
-/// A new commission row bound to its own nodes, committed.
+/// A new commission row inserted with its own nodes in one statement, committed.
 async fn bound_commission(pool: &PgPool) -> BoundCommission {
-    let commission = seed_commission(pool, "A commission", "private").await;
-    give_it_its_nodes(pool, commission).await
+    let id = Uuid::now_v7();
+    let mut tx = pool.begin().await.expect("begin");
+    let nodes = bare_commission_node(&mut tx, &id.to_string()).await;
+    sqlx::query(
+        "INSERT INTO commission (id, title, owner_id, lifecycle, visibility, created_at, node_id)
+         VALUES ($1, 'A commission', $2, 'draft', 'private', now(), $3)",
+    )
+    .bind(id)
+    .bind(crate::node_backfill::OWNER_DID)
+    .bind(nodes.node)
+    .execute(&mut *tx)
+    .await
+    .expect("insert the commission bound to its node");
+    tx.commit().await.expect("the bound commission commits");
+    BoundCommission { id, nodes }
 }
 
 /// A Slot row and the node it points at.
@@ -259,8 +285,7 @@ async fn a_slot_at_top_level_is_refused() {
 #[tokio::test]
 async fn an_entry_under_a_non_commission_is_refused() {
     let (pool, _container) = migrated().await;
-    let mut connection = pool.acquire().await.expect("a connection");
-    let commission = bare_commission_node(&mut connection, &Uuid::now_v7().to_string()).await;
+    let commission = bound_commission(&pool).await.nodes;
     let entry = NewNode::entry(commission.slots, "brief");
 
     let inserted = entry.insert(&pool).await;
@@ -271,8 +296,7 @@ async fn an_entry_under_a_non_commission_is_refused() {
 #[tokio::test]
 async fn a_slot_under_a_non_slots_folder_is_refused() {
     let (pool, _container) = migrated().await;
-    let mut connection = pool.acquire().await.expect("a connection");
-    let commission = bare_commission_node(&mut connection, &Uuid::now_v7().to_string()).await;
+    let commission = bound_commission(&pool).await.nodes;
     let slot = NewNode::slot(commission.brief, &Uuid::now_v7().to_string());
 
     let inserted = slot.insert(&pool).await;
@@ -285,8 +309,7 @@ async fn a_slot_under_a_non_slots_folder_is_refused() {
 #[tokio::test]
 async fn deleting_a_fixed_entry_is_refused_while_its_commission_lives() {
     let (pool, _container) = migrated().await;
-    let mut connection = pool.acquire().await.expect("a connection");
-    let commission = bare_commission_node(&mut connection, &Uuid::now_v7().to_string()).await;
+    let commission = bound_commission(&pool).await.nodes;
 
     let deleted = sqlx::query("DELETE FROM node WHERE id = $1")
         .bind(commission.brief)
@@ -296,20 +319,25 @@ async fn deleting_a_fixed_entry_is_refused_while_its_commission_lives() {
     assert_refused_saying(deleted, "it leaves only with its commission");
 }
 
+// A bare commission node, its entries and a slot node deleted in the unit that
+// wrote them: the delete takes the subtree, and the unit commits, because a
+// commission node deleted since is not checked for its commission.
 #[tokio::test]
 async fn deleting_a_commission_node_takes_its_entries() {
     let (pool, _container) = migrated().await;
-    let mut connection = pool.acquire().await.expect("a connection");
-    let commission = bare_commission_node(&mut connection, &Uuid::now_v7().to_string()).await;
+    let mut tx = pool.begin().await.expect("begin");
+    let commission = bare_commission_node(&mut tx, &Uuid::now_v7().to_string()).await;
     let slot = NewNode::slot(commission.slots, &Uuid::now_v7().to_string());
-    slot.insert(&pool).await.expect("insert a slot node");
+    slot.insert(&mut *tx).await.expect("insert a slot node");
 
     let deleted = sqlx::query("DELETE FROM node WHERE id = $1")
         .bind(commission.node)
-        .execute(&pool)
+        .execute(&mut *tx)
         .await;
+    let committed = tx.commit().await;
 
     assert!(deleted.is_ok(), "the commission node deletes: {deleted:?}");
+    assert!(committed.is_ok(), "the unit commits: {committed:?}");
     assert_eq!(
         node_count(&pool).await,
         0,
@@ -322,9 +350,8 @@ async fn deleting_a_commission_node_takes_its_entries() {
 #[tokio::test]
 async fn moving_a_node_is_refused() {
     let (pool, _container) = migrated().await;
-    let mut connection = pool.acquire().await.expect("a connection");
-    let first = bare_commission_node(&mut connection, &Uuid::now_v7().to_string()).await;
-    let second = bare_commission_node(&mut connection, &Uuid::now_v7().to_string()).await;
+    let first = bound_commission(&pool).await.nodes;
+    let second = bound_commission(&pool).await.nodes;
     let slot = NewNode::slot(first.slots, &Uuid::now_v7().to_string());
     slot.insert(&pool).await.expect("insert a slot node");
 
@@ -340,8 +367,7 @@ async fn moving_a_node_is_refused() {
 #[tokio::test]
 async fn changing_a_segment_is_refused() {
     let (pool, _container) = migrated().await;
-    let mut connection = pool.acquire().await.expect("a connection");
-    let commission = bare_commission_node(&mut connection, &Uuid::now_v7().to_string()).await;
+    let commission = bound_commission(&pool).await.nodes;
     let slot = NewNode::slot(commission.slots, &Uuid::now_v7().to_string());
     slot.insert(&pool).await.expect("insert a slot node");
 
@@ -357,8 +383,7 @@ async fn changing_a_segment_is_refused() {
 #[tokio::test]
 async fn retyping_a_node_is_refused() {
     let (pool, _container) = migrated().await;
-    let mut connection = pool.acquire().await.expect("a connection");
-    let commission = bare_commission_node(&mut connection, &Uuid::now_v7().to_string()).await;
+    let commission = bound_commission(&pool).await.nodes;
 
     let retyped = sqlx::query("UPDATE node SET type = 'commission.products' WHERE id = $1")
         .bind(commission.brief)
@@ -371,8 +396,7 @@ async fn retyping_a_node_is_refused() {
 #[tokio::test]
 async fn renaming_a_node_is_allowed() {
     let (pool, _container) = migrated().await;
-    let mut connection = pool.acquire().await.expect("a connection");
-    let commission = bare_commission_node(&mut connection, &Uuid::now_v7().to_string()).await;
+    let commission = bound_commission(&pool).await.nodes;
 
     let renamed =
         sqlx::query("UPDATE node SET name = 'Another name', level = 'listed' WHERE id = $1")
@@ -417,7 +441,7 @@ async fn re_pointing_a_slot_is_refused() {
 
 #[tokio::test]
 async fn setting_a_node_id_from_null_is_allowed() {
-    let (pool, _container) = migrated().await;
+    let (pool, _container) = migrated_through_den_1().await;
     let commission = seed_commission(&pool, "A commission", "private").await;
 
     let bound = give_it_its_nodes(&pool, commission).await;
@@ -512,8 +536,7 @@ async fn a_level_outside_the_three_is_refused() {
 #[tokio::test]
 async fn a_type_outside_the_eight_words_is_refused() {
     let (pool, _container) = migrated().await;
-    let mut connection = pool.acquire().await.expect("a connection");
-    let commission = bare_commission_node(&mut connection, &Uuid::now_v7().to_string()).await;
+    let commission = bound_commission(&pool).await.nodes;
 
     for node_type in ["folder", "commission.extras", "Slot"] {
         let node = NewNode {
@@ -530,8 +553,7 @@ async fn a_type_outside_the_eight_words_is_refused() {
 #[tokio::test]
 async fn a_segment_of_the_allowed_characters_is_accepted() {
     let (pool, _container) = migrated().await;
-    let mut connection = pool.acquire().await.expect("a connection");
-    let commission = bare_commission_node(&mut connection, &Uuid::now_v7().to_string()).await;
+    let commission = bound_commission(&pool).await.nodes;
     let longest = "a".repeat(2048);
     let accepted = [
         "under_score",
@@ -553,8 +575,7 @@ async fn a_segment_of_the_allowed_characters_is_accepted() {
 #[tokio::test]
 async fn a_segment_outside_the_rule_is_refused() {
     let (pool, _container) = migrated().await;
-    let mut connection = pool.acquire().await.expect("a connection");
-    let commission = bare_commission_node(&mut connection, &Uuid::now_v7().to_string()).await;
+    let commission = bound_commission(&pool).await.nodes;
     let too_long = "a".repeat(2049);
     let refused = [
         "é",
@@ -579,12 +600,13 @@ async fn a_segment_outside_the_rule_is_refused() {
 async fn a_second_top_level_row_with_the_same_segment_is_refused() {
     let (pool, _container) = migrated().await;
     let segment = Uuid::now_v7().to_string();
+    let mut tx = pool.begin().await.expect("begin");
     NewNode::commission(&segment)
-        .insert(&pool)
+        .insert(&mut *tx)
         .await
         .expect("the first top-level node");
 
-    let second = NewNode::commission(&segment).insert(&pool).await;
+    let second = NewNode::commission(&segment).insert(&mut *tx).await;
 
     assert_refused_by(second, "node_parent_segment_key");
 }
@@ -670,11 +692,33 @@ async fn truncating_commission_slot_leaves_no_slot_node() {
     );
 }
 
+// ─── A commission node has its commission ──────────────────────────────────
+
+#[tokio::test]
+async fn a_commission_node_without_its_commission_is_refused_at_commit() {
+    let (pool, _container) = migrated().await;
+    let mut tx = pool.begin().await.expect("begin");
+    let bare = bare_commission_node(&mut tx, &Uuid::now_v7().to_string()).await;
+
+    let committed = tx.commit().await;
+
+    assert_refused_saying(
+        committed,
+        "a commission node stands only with its commission",
+    );
+    let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM node WHERE id = $1")
+        .bind(bare.node)
+        .fetch_one(&pool)
+        .await
+        .expect("count the node");
+    assert_eq!(kept, 0, "the refused unit keeps no node");
+}
+
 // ─── A thing points only at its own node ───────────────────────────────────
 
 #[tokio::test]
 async fn a_commission_pointing_at_another_commission_s_node_is_refused_at_commit() {
-    let (pool, _container) = migrated().await;
+    let (pool, _container) = migrated_through_den_1().await;
     let pointing = seed_commission(&pool, "A pointing commission", "private").await;
     let other = seed_commission(&pool, "Another commission", "private").await;
     let mut tx = pool.begin().await.expect("begin");
@@ -693,7 +737,7 @@ async fn a_commission_pointing_at_another_commission_s_node_is_refused_at_commit
 
 #[tokio::test]
 async fn a_commission_pointing_at_a_non_commission_node_is_refused_at_commit() {
-    let (pool, _container) = migrated().await;
+    let (pool, _container) = migrated_through_den_1().await;
     let pointing = seed_commission(&pool, "A pointing commission", "private").await;
     let mut tx = pool.begin().await.expect("begin");
     let its_nodes = bare_commission_node(&mut tx, &pointing.to_string()).await;
@@ -879,9 +923,13 @@ async fn segments_follow_the_shared_cases() {
         "the 2049-byte case is present"
     );
 
+    // An accepted commission node is inserted in a unit rolled back after: committed bare,
+    // it would stand without its commission.
     for case in &accepted {
-        let inserted = NewNode::commission(&case.segment).insert(&pool).await;
+        let mut tx = pool.begin().await.expect("begin");
+        let inserted = NewNode::commission(&case.segment).insert(&mut *tx).await;
         assert!(inserted.is_ok(), "{}: {inserted:?}", case.description);
+        tx.rollback().await.expect("roll the accepted node back");
     }
     for case in &refused {
         let inserted = NewNode::commission(&case.segment).insert(&pool).await;
@@ -926,13 +974,23 @@ mod contract {
 
     use adapter_pg::{PgDatabase, PgNodeStore};
     use domain::ports::{Database, NodeStore};
+    use test_support::seeder::CommissionSeeder;
 
-    /// A fresh migrated database's unit factory and node store, and the database kept alive.
-    async fn fresh() -> (Arc<dyn Database>, Arc<dyn NodeStore>, impl Sized) {
+    use crate::seed::MintingSeeder;
+
+    /// A fresh migrated database's unit factory, node store and commission seeder, and the
+    /// database kept alive.
+    async fn fresh() -> (
+        Arc<dyn Database>,
+        Arc<dyn NodeStore>,
+        Arc<dyn CommissionSeeder>,
+        impl Sized,
+    ) {
         let (pool, db) = test_support::pg::fresh_pool().await;
         let database: Arc<dyn Database> = Arc::new(PgDatabase::new(pool.clone()));
         let store: Arc<dyn NodeStore> = Arc::new(PgNodeStore::new(pool));
-        (database, store, db)
+        let seeder: Arc<dyn CommissionSeeder> = Arc::new(MintingSeeder);
+        (database, store, seeder, db)
     }
 
     test_support::node_contract_tests!(fresh);

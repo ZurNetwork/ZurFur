@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/workflow",
-  "charted": "2026-10-17",
+  "charted": "2026-10-22",
   "short": "The work: the workflow domain crate",
   "is": "The workflow domain crate: the commission aggregate and an account's boards, with the ports that store them; I/O-free, built on kernel and identity only (shared allowed).",
   "type": "code",
@@ -19,7 +19,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "kernel, identity, uuid, serde, serde_json (changelog payloads), async-trait, anyhow, thiserror, derive_more, strum; tokio io-util only to name AsyncRead for the streaming FileStore port; dev-deps proptest, chrono",
+      "role": "kernel, identity, uuid, serde, serde_json (changelog payloads), async-trait, anyhow, thiserror, derive_more, strum; tokio io-util only to name AsyncRead for the streaming FileStore port; dev-deps proptest, chrono, trybuild (the create capability's compile-fail cases)",
       "node": false
     },
     {
@@ -34,7 +34,7 @@
     },
     {
       "name": "tests/",
-      "role": "fact_contract.rs — the Fact contract (commission-anchored evidence blocks hard deletion)",
+      "role": "fact_contract.rs — the Fact contract (commission-anchored evidence blocks hard deletion); ui.rs + ui/ — compile-fail cases: CommissionWrites::create without a capability, and with an AsOwner one",
       "node": false
     }
   ],

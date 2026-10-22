@@ -8,7 +8,7 @@ use domain::elements::{
     level::Level,
     profile::Profile,
     user::UserId,
-    workflow::WorkflowId,
+    workflow::{ColumnId, WorkflowId},
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -22,8 +22,8 @@ pub use identity::{absent_account, stranger};
 /// The stranger's DID: a user who signs in and takes part in nothing.
 const STRANGER_DID: &str = "did:plc:s5trstrangerfixtureaaaaa";
 
-/// The visibility token no parser reads, for the row a stored token can't be parsed from.
-const UNPARSABLE_VISIBILITY: &str = "not-a-visibility";
+/// The level token no parser reads, for the node a stored token can't be parsed from.
+const UNPARSABLE_LEVEL: &str = "not-a-visibility";
 
 /// The lifecycle token no parser reads, for the row only the whole-commission read parses.
 const UNPARSABLE_LIFECYCLE: &str = "not-a-lifecycle";
@@ -95,7 +95,7 @@ pub struct DenWorld {
 
 /// Serves `app` on a fresh PostgreSQL database and seeds the [`DenWorld`] through the app's
 /// routes and use cases. Two writes no route makes yet are test-only: bob's participation in
-/// "Untitled", and any visibility other than Private ([`DenWorld::set_visibility`]).
+/// "Untitled", and any level other than Private ([`DenWorld::set_visibility`]).
 pub async fn den_world(app: impl FnOnce(Runtime) -> Router) -> DenWorld {
     let served = serve(app).await;
     seed(served).await
@@ -181,16 +181,20 @@ impl DenWorld {
         &self.served.base_url
     }
 
-    /// Sets `commission`'s stored visibility, a test-only update: no route sets it yet.
+    /// Sets the level of `commission`'s node, a test-only update: no route sets it yet.
     pub async fn set_visibility(&self, commission: CommissionId, visibility: Level) {
-        self.store_visibility(commission, &visibility.to_string())
-            .await;
+        self.store_level(commission, &visibility.to_string()).await;
     }
 
-    /// Stores a visibility token no parser reads on `commission`'s row, a test-only update.
-    pub async fn store_unparsable_visibility(&self, commission: CommissionId) {
-        self.store_visibility(commission, UNPARSABLE_VISIBILITY)
-            .await;
+    /// Stores a level token no parser reads on `commission`'s node, a test-only update. The
+    /// node table refuses one, so this drops its `node_level_known` check in this world's own
+    /// database first.
+    pub async fn store_unparsable_level(&self, commission: CommissionId) {
+        sqlx::query("ALTER TABLE node DROP CONSTRAINT IF EXISTS node_level_known")
+            .execute(&self.served.runtime.pool)
+            .await
+            .expect("drop node_level_known in the world's database");
+        self.store_level(commission, UNPARSABLE_LEVEL).await;
     }
 
     /// Stores a lifecycle token no parser reads on `commission`'s row, a test-only update.
@@ -204,8 +208,8 @@ impl DenWorld {
         assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
     }
 
-    /// Stores [`LEGACY_NAME`] as `commission`'s title, as a commission named before today's
-    /// rule holds it: on its row and in its created entry's payload. Test-only updates in one
+    /// Stores [`LEGACY_NAME`] as `commission`'s name, as a commission named before today's
+    /// rule holds it: on its node and in its created entry's payload. Test-only updates in one
     /// transaction, which alone switches the changelog's append-only trigger off.
     pub async fn store_legacy_title(&self, commission: CommissionId) {
         let mut tx = self
@@ -215,12 +219,14 @@ impl DenWorld {
             .begin()
             .await
             .expect("begin a transaction");
-        let titled = sqlx::query("UPDATE commission SET title = $1 WHERE id = $2")
-            .bind(LEGACY_NAME)
-            .bind(Uuid::from(commission))
-            .execute(&mut *tx)
-            .await
-            .expect("update the commission's title");
+        let titled = sqlx::query(
+            "UPDATE node SET name = $1 FROM commission c WHERE c.id = $2 AND node.id = c.node_id",
+        )
+        .bind(LEGACY_NAME)
+        .bind(Uuid::from(commission))
+        .execute(&mut *tx)
+        .await
+        .expect("update the commission node's name");
         sqlx::query(
             "ALTER TABLE commission_changelog DISABLE TRIGGER commission_changelog_append_only",
         )
@@ -244,7 +250,7 @@ impl DenWorld {
         .await
         .expect("switch the append-only trigger back on");
         tx.commit().await.expect("commit the legacy title");
-        assert_eq!(titled.rows_affected(), 1, "one commission row is updated");
+        assert_eq!(titled.rows_affected(), 1, "one node is updated");
         assert_eq!(recorded.rows_affected(), 1, "one created entry is updated");
     }
 
@@ -311,15 +317,51 @@ impl DenWorld {
             .expect("empty the profile cache");
     }
 
-    /// Writes `token` as `commission`'s visibility.
-    async fn store_visibility(&self, commission: CommissionId, token: &str) {
-        let updated = sqlx::query("UPDATE commission SET visibility = $1 WHERE id = $2")
+    /// Adds the column `name` to "Night Shift"'s Workflow "Backlog" as bob, through the add
+    /// use case, and answers its id.
+    pub async fn add_backlog_column(&self, name: &str) -> ColumnId {
+        let command = application::account::workflow::column::add::Command {
+            actor_id: adapter_mem::fixture::bob(),
+            workflow_id: self.backlog,
+            column_name: name.parse().expect("a valid column name"),
+            position: 0,
+        };
+        let app = self.served.runtime.app();
+        let accounts = app.accounts();
+        let added = accounts
+            .workflows()
+            .columns()
+            .add(command)
+            .await
+            .expect("the column is added");
+        added
+            .columns
+            .into_iter()
+            .find(|column| column.name.as_ref() == name)
+            .expect("the added column is on the board")
+            .id
+    }
+
+    /// Writes `token` as the level of the node `commission` points at and as the commission's
+    /// own visibility column, keeping the two equal: no trigger copies a level.
+    async fn store_level(&self, commission: CommissionId, token: &str) {
+        let pool = &self.served.runtime.pool;
+        let leveled = sqlx::query(
+            "UPDATE node SET level = $1 FROM commission c WHERE c.id = $2 AND node.id = c.node_id",
+        )
+        .bind(token)
+        .bind(Uuid::from(commission))
+        .execute(pool)
+        .await
+        .expect("update the commission node's level");
+        assert_eq!(leveled.rows_affected(), 1, "one node is updated");
+        let mirrored = sqlx::query("UPDATE commission SET visibility = $1 WHERE id = $2")
             .bind(token)
             .bind(Uuid::from(commission))
-            .execute(&self.served.runtime.pool)
+            .execute(pool)
             .await
-            .expect("update the commission's visibility");
-        assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
+            .expect("update the commission's own visibility column");
+        assert_eq!(mirrored.rows_affected(), 1, "one commission row is updated");
     }
 }
 

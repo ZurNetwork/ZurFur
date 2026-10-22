@@ -27,7 +27,7 @@
     },
     {
       "name": "src/commission_standing_contract.rs",
-      "role": "the shared commission-standing suite: one pub async fn per case over (&dyn Database, &dyn CommissionStore, &dyn ParticipantRows), checking the pool's standing and a unit's standing_for_update alike; ParticipantRows is each adapter's own write of the participant rows no port writes; commission_standing_contract_tests!(setup) writes one #[tokio::test] per case",
+      "role": "the shared commission-standing suite: one pub async fn per case over (&dyn Database, &dyn CommissionStore, &dyn ParticipantRows, &dyn CommissionSeeder), seeding its commissions (Listed and Public too) through seeder.rs, checking the pool's standing and a unit's standing_for_update alike, and that the locked read answers the commission's own node; ParticipantRows is each adapter's own write of the participant rows no port writes; commission_standing_contract_tests!(setup) writes one #[tokio::test] per case",
       "node": false
     },
     {
@@ -42,7 +42,7 @@
     },
     {
       "name": "src/den.rs",
-      "role": "the den route suites' readers, shared by the in-memory and PostgreSQL setups: get, ok_json, cache_control, entry_names, PRIVATE_NO_STORE and Answer (status, every header but date, body bytes)",
+      "role": "the den route suites' readers, shared by the in-memory and PostgreSQL setups: get, patch_title (PATCH with a title body), ok_json, cache_control, entry_names, PRIVATE_NO_STORE and Answer (status, every header but date, body bytes)",
       "node": false
     },
     {
@@ -87,7 +87,7 @@
     },
     {
       "name": "src/node_contract.rs",
-      "role": "the shared node conformance suite: one pub async fn per case over (&dyn Database, &dyn NodeStore), building 0.2's tree (a commission node, its six entries, Slots under slots), and node_contract_tests!(setup), which writes one #[tokio::test] per case; a refusal ends the unit",
+      "role": "the shared node conformance suite: one pub async fn per case over (&dyn Database, &dyn NodeStore, &dyn CommissionSeeder), building 0.2's tree (a commission node, its six entries, Slots under slots), and node_contract_tests!(setup), which writes one #[tokio::test] per case; write_tree binds each tree's commission (its segment a commission id), and every committed commission node is bound; a case deleting a commission node deletes its commission in the same unit; a refusal ends the unit",
       "node": false
     },
     {
@@ -107,7 +107,7 @@
     },
     {
       "name": "src/pg_app/den_world.rs",
-      "role": "den_world(app) -> DenWorld, and den_world_recording(app, &StatementLog) through the statement proxy: alice, bob and a stranger signed in (profiles cached through GET /me); alice's Account \"Supreme Arts\" (Workflow \"Queue\") and bob's \"Night Shift\" (\"Backlog\"); \"Untitled\" and the archived \"Old sketch\", a file and a slot each, all through routes or use cases; bob a Participant of \"Untitled\" and set_visibility / store_unparsable_visibility as test-only writes; set_profile_cache(ProfileCacheState::{Warm, Cold}) fixes the profile cache's state for all three users; absent_* ids no seed writes",
+      "role": "den_world(app) -> DenWorld, and den_world_recording(app, &StatementLog) through the statement proxy: alice, bob and a stranger signed in (profiles cached through GET /me); alice's Account \"Supreme Arts\" (Workflow \"Queue\") and bob's \"Night Shift\" (\"Backlog\"); \"Untitled\" and the archived \"Old sketch\", a file and a slot each, all through routes or use cases; bob a Participant of \"Untitled\" and test-only writes: set_visibility (the commission node's level and the commission's own visibility column, since no trigger copies a level), store_unparsable_level (drops node_level_known in the world's own database, then writes a level no parser reads onto both), store_legacy_title (the node's name and the created entry's payload); add_backlog_column adds a column to bob's \"Backlog\" through the add use case; set_profile_cache(ProfileCacheState::{Warm, Cold}) fixes the profile cache's state for all three users; absent_* ids no seed writes",
       "node": false
     },
     {
@@ -122,7 +122,7 @@
     },
     {
       "name": "src/pg_app/pairs.rs",
-      "role": "the pairs of not-found causes on the den world, shared by the route, read and statement suites and the timing run: MissPair (absent, not_yours, home), stranger_targets (Untitled Private live; Old sketch Private, Public and Listed archived); the den routes' den_stranger_pairs (the commission, its changelog, its file), den_account_pair, den_character_pair (bob's user DID stands in: no Character on PostgreSQL yet) and den_participant_pairs (a file key, a slot, a Workflow); commission's commission_read_stranger_pairs, commission_read_live_pairs (with each pair's problem code), public_live_download_pair and download_participant_pair",
+      "role": "the pairs of not-found causes on the den world, shared by the route, read and statement suites and the timing run: MissPair (absent, not_yours, home), stranger_targets (Untitled Private live; Old sketch Private, Public and Listed archived); the den routes' den_stranger_pairs (the commission, its changelog, its file), den_account_pair, den_character_pair (bob's user DID stands in: no Character on PostgreSQL yet) and den_participant_pairs (a file key, a slot, a Workflow); commission's commission_read_stranger_pairs, commission_read_live_pairs (with each pair's problem code), public_live_download_pair and download_participant_pair; the rename's rename_stranger_pair (PATCH …/title with RENAME_TITLE: a made-up id against alice's Old sketch, which bob takes no part in)",
       "node": false
     },
     {
@@ -156,13 +156,18 @@
       "node": false
     },
     {
+      "name": "src/seeder.rs",
+      "role": "CommissionSeeder (each adapter's test code mints the capability and calls the port's create; this crate never mints) and the gate's shapes over it: made_up_owner, bind (a commission at a commission node, its id the segment), commission_node, entry_nodes, write_commission, seed_commission",
+      "node": false
+    },
+    {
       "name": "src/store_doubles.rs",
-      "role": "scripted wrappers over AccountStore and UserStore: real answers until a shared script makes a listing list a membership the store wouldn't, a read fail, a role read answer a stale role (as a read taken before a concurrent change would), or a user row read as gone; and the standing double: StandingScript scripts the pool's standing (ScriptedStanding over a CommissionStore) and a unit's standing_for_update (ScriptedStandingDatabase over a Database) apart per commission and viewer, so they can disagree; tests seed first, then script",
+      "role": "scripted wrappers over AccountStore and UserStore: real answers until a shared script makes a listing list a membership the store wouldn't, a read fail, a role read answer a stale role (as a read taken before a concurrent change would), or a user row read as gone; and the standing double: StandingScript scripts the pool's standing (ScriptedStanding over a CommissionStore) and a unit's standing_for_update, a LockedStanding with its node (ScriptedStandingDatabase over a Database), apart per commission and viewer, so they can disagree; tests seed first, then script",
       "node": false
     },
     {
       "name": "src/store_doubles/tests.rs",
-      "role": "pins the standing double answering the pool's and the unit's scripts apart, and reading through unscripted",
+      "role": "pins, over a commission seeded through MemBackend::seed_bound_commission, the standing double answering the pool's and the unit's scripts apart, and reading through unscripted",
       "node": false
     },
     {

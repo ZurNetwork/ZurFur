@@ -1,44 +1,58 @@
 //! Clock times of each pair of not-found causes on PostgreSQL, for the security review: every
-//! pair the statement suite runs, each cause timed over many runs from a warm and a cold profile
-//! cache, printed as a Markdown table. Not gated, as clock times are too noisy for CI: run it
-//! with `just den-timing`. Requires a container runtime socket.
+//! read pair the statement suite runs, each cause timed over many runs from a warm and a cold
+//! profile cache, printed as a Markdown table; then the rename's pair, interleaved and warm,
+//! with each cause's median, p10 and p90 and the pass rule's verdict. Not gated, as clock times
+//! are too noisy for CI: run it with `just den-timing`. Requires a container runtime socket.
 
 use std::time::{Duration, Instant};
 
 use strum::VariantArray as _;
 use test_support::{
-    den::get,
+    den::{get, patch_title},
     pg_app::{
-        self, DenWorld, MissPair, ProfileCacheState, archived_participant_pairs,
+        self, DenWorld, MissPair, ProfileCacheState, RENAME_TITLE, archived_participant_pairs,
         commission_read_live_pairs, commission_read_stranger_pairs, den_account_pair,
         den_character_pair, den_participant_pairs, den_stranger_pairs, den_stranger_targets,
-        download_participant_pair, stranger_targets,
+        download_participant_pair, rename_stranger_pair, stranger_targets,
     },
 };
 
-/// Timed runs of each cause per cache state, unless `DEN_TIMING_RUNS` says otherwise.
+/// Timed runs of each read cause per cache state, and timed pairs of the write's causes,
+/// unless `DEN_TIMING_RUNS` says otherwise.
 const DEFAULT_RUNS: usize = 200;
 
 /// Untimed runs of each cause before the timed ones, so the pool's connections have every
 /// statement prepared.
 const WARM_UP_RUNS: usize = 5;
 
-/// The median and the 95th percentile of one cause's runs.
+/// The most the two causes' medians may differ by, as a share of the smaller, for the write
+/// pair to pass.
+const MEDIAN_TOLERANCE: f64 = 0.05;
+
+/// The median, the 10th, 90th and 95th percentiles of one cause's runs.
 #[derive(Debug, Clone, Copy)]
 struct Spread {
     median: Duration,
+    p10: Duration,
+    p90: Duration,
     p95: Duration,
+}
+
+/// The nearest-rank `percent`th percentile of `sorted`, which must not be empty.
+fn percentile(sorted: &[Duration], percent: usize) -> Duration {
+    let rank = (sorted.len() * percent).div_ceil(100).max(1);
+    sorted[rank - 1]
 }
 
 impl Spread {
     /// The spread of `runs`, which must not be empty.
     fn of(mut runs: Vec<Duration>) -> Self {
         runs.sort();
-        let median = runs[runs.len() / 2];
-        let p95_at = (runs.len() * 95).div_ceil(100) - 1;
         Self {
-            median,
-            p95: runs[p95_at],
+            median: runs[runs.len() / 2],
+            p10: percentile(&runs, 10),
+            p90: percentile(&runs, 90),
+            p95: percentile(&runs, 95),
         }
     }
 }
@@ -128,6 +142,111 @@ impl Timer<'_> {
     }
 }
 
+/// The write pair's two causes, each over the same interleaved runs, and the pass rule.
+struct WritePair {
+    absent: Spread,
+    not_yours: Spread,
+}
+
+impl WritePair {
+    /// Times `pair` as `viewer` through the rename: in each iteration both causes run, in
+    /// alternating order, so drift lands on both alike.
+    async fn time(
+        world: &DenWorld,
+        viewer: &reqwest::Client,
+        pair: &MissPair,
+        runs: usize,
+    ) -> Self {
+        for _ in 0..WARM_UP_RUNS {
+            rename(world, viewer, &pair.absent).await;
+            rename(world, viewer, &pair.not_yours).await;
+        }
+        let mut absent = Vec::with_capacity(runs);
+        let mut not_yours = Vec::with_capacity(runs);
+        for run in 0..runs {
+            if run % 2 == 0 {
+                absent.push(rename(world, viewer, &pair.absent).await);
+                not_yours.push(rename(world, viewer, &pair.not_yours).await);
+            } else {
+                not_yours.push(rename(world, viewer, &pair.not_yours).await);
+                absent.push(rename(world, viewer, &pair.absent).await);
+            }
+        }
+        Self {
+            absent: Spread::of(absent),
+            not_yours: Spread::of(not_yours),
+        }
+    }
+
+    /// Whether each cause's p10 is at or below the other's p90.
+    fn ranges_overlap(&self) -> bool {
+        self.absent.p10 <= self.not_yours.p90 && self.not_yours.p10 <= self.absent.p90
+    }
+
+    /// How far apart the medians are, as a share of the smaller.
+    fn median_gap(&self) -> f64 {
+        let absent = micros(self.absent.median);
+        let not_yours = micros(self.not_yours.median);
+        (absent - not_yours).abs() / absent.min(not_yours)
+    }
+
+    /// Whether the pair passes: the ranges overlap and the medians are within tolerance.
+    fn passes(&self) -> bool {
+        self.ranges_overlap() && self.median_gap() < MEDIAN_TOLERANCE
+    }
+
+    /// The pair's table and its verdict, in microseconds.
+    fn report(&self, runs: usize) -> Vec<String> {
+        let line = |cause: &str, spread: &Spread| {
+            format!(
+                "| rename, {cause} | {:.0} | {:.0} | {:.0} |",
+                micros(spread.median),
+                micros(spread.p10),
+                micros(spread.p90),
+            )
+        };
+        let verdict = if self.passes() {
+            "pass"
+        } else {
+            "FINDING: report the numbers to the security reviewer"
+        };
+        vec![
+            format!(
+                "Write pair: bob's rename, absent against not yours, {runs} interleaved pairs, warm"
+            ),
+            String::new(),
+            "| Cause | Median µs | p10 µs | p90 µs |".to_owned(),
+            "|---|---|---|---|".to_owned(),
+            line("absent", &self.absent),
+            line("not yours", &self.not_yours),
+            String::new(),
+            format!(
+                "Each p10 at or below the other's p90: {}",
+                self.ranges_overlap()
+            ),
+            format!(
+                "Medians apart: {:.1}% of the smaller (under {:.0}%: {})",
+                self.median_gap() * 100.0,
+                MEDIAN_TOLERANCE * 100.0,
+                self.median_gap() < MEDIAN_TOLERANCE,
+            ),
+            format!("Write pair verdict: {verdict}"),
+        ]
+    }
+}
+
+/// One `PATCH {path}` with [`RENAME_TITLE`] as `viewer`, timed from the request to the body's
+/// last byte.
+async fn rename(world: &DenWorld, viewer: &reqwest::Client, path: &str) -> Duration {
+    let started = Instant::now();
+    let response = patch_title(viewer, world.base_url(), path, RENAME_TITLE).await;
+    let status = response.status();
+    let _body = response.bytes().await.expect("the body");
+    let elapsed = started.elapsed();
+    assert_eq!(status, 404, "{path}");
+    elapsed
+}
+
 /// The machine's one-, five- and fifteen-minute load averages.
 fn load_average() -> String {
     std::fs::read_to_string("/proc/loadavg")
@@ -149,6 +268,9 @@ async fn clock_times_of_each_pair_s_causes() {
         .unwrap_or(DEFAULT_RUNS);
     let world = pg_app::den_world(api::app).await;
     let load_before = load_average();
+    world.set_profile_cache(ProfileCacheState::Warm).await;
+    let rename_pair = rename_stranger_pair(&world);
+    let write_pair = WritePair::time(&world, &world.bob, &rename_pair, runs).await;
     let mut timer = Timer {
         world: &world,
         runs,
@@ -208,5 +330,9 @@ async fn clock_times_of_each_pair_s_causes() {
     println!("|---|---|---|---|---|---|---|");
     for row in &timer.rows {
         println!("{}", row.line());
+    }
+    println!();
+    for line in write_pair.report(runs) {
+        println!("{line}");
     }
 }

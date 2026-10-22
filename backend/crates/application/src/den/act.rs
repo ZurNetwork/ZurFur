@@ -4,32 +4,27 @@
 use std::fmt;
 
 use domain::elements::{
-    commission::{ChangelogEntryKind, CommissionRole},
+    commission::{ChangelogEntryKind, Commission, CommissionRole},
     level::Level,
     name::NodeName,
 };
 
-use crate::den::{DenType, Place, TopLevel};
+use crate::{
+    commission::act::CommissionAct,
+    den::{DenType, Place, TopLevel},
+};
 
 /// Every act the den's write use case carries. A typed call hands over its act and holds no
 /// unit; the den matches over this enum exhaustively, so a new act is a compile error until
 /// every step names it.
 pub(crate) enum DenAct {
-    /// The test-only probe, whose every knob a test sets.
-    #[cfg(test)]
-    Probe(crate::den::probe::Probe),
+    /// A commission's act.
+    Commission(CommissionAct),
 }
 
 /// Where an act is anchored: an existing thing, or a top-level directory a create makes a new
 /// thing in.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "only the test probe builds one until the next slice's acts"
-    )
-)]
 pub(crate) enum Anchor {
     /// An existing thing, at its place.
     Thing(Place),
@@ -37,36 +32,20 @@ pub(crate) enum Anchor {
     TopLevel(TopLevel),
 }
 
-/// One entry a create makes inside its node: a fixed word as its key, its type, its name and
-/// the level its creator picked.
+/// One entry a create makes inside its node: a fixed word as its key and its name, its type,
+/// and the level its creator picked.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "only the test probe builds one until the next slice's acts"
-    )
-)]
 pub(crate) struct BornEntry {
-    /// Its key: one of the Den's fixed words, never request text.
+    /// Its key and its name: one of the Den's fixed words, never request text.
     pub(crate) word: &'static str,
     /// Its type.
     pub(crate) den_type: DenType,
-    /// Its name.
-    pub(crate) name: NodeName,
     /// The level its creator picked; `None` means Private.
     pub(crate) level: Option<Level>,
 }
 
 /// What an act does to the tree, in the den's own values: the builder turns it into Atta's.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "only the test probe builds one until the next slice's acts"
-    )
-)]
 pub(crate) enum ActShape {
     /// Makes a new thing named `name`, holding `entries`; its key is the id the den mints.
     Create {
@@ -82,20 +61,11 @@ pub(crate) enum ActShape {
         /// Its new name.
         name: NodeName,
     },
-    /// Changes the anchored thing's content.
-    Change,
 }
 
 /// What an act declares about itself: its word, the type it acts on or makes, its anchor, the
 /// role it needs on an existing thing, and its shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "only the test probe builds one until the next slice's acts"
-    )
-)]
 pub(crate) struct ActSpec {
     /// Its word, for the engine's log.
     pub(crate) word: &'static str,
@@ -103,76 +73,78 @@ pub(crate) struct ActSpec {
     pub(crate) den_type: DenType,
     /// Where it is anchored.
     pub(crate) anchor: Anchor,
-    /// The least role it needs on an existing thing; a create needs none.
-    pub(crate) needs: CommissionRole,
+    /// The least role it needs on an existing thing, from its capability's role; `None` for a
+    /// create, which a thing anchor refuses.
+    pub(crate) needs: Option<CommissionRole>,
     /// What it does to the tree.
     pub(crate) shape: ActShape,
 }
 
 impl DenAct {
     /// What this act declares about itself.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the den's write use case calls it; no driver calls that until the next slice"
-        )
-    )]
     pub(crate) fn spec(&self) -> ActSpec {
-        match *self {
-            #[cfg(test)]
-            DenAct::Probe(ref probe) => probe.spec(),
+        match self {
+            DenAct::Commission(act) => act.spec(),
         }
     }
 }
 
 impl fmt::Debug for DenAct {
     /// The act's variant alone; never its body, which may carry a name.
-    #[cfg_attr(
-        not(test),
-        expect(
-            unused_variables,
-            reason = "with no act but the test probe, a den act is uninhabited outside tests"
-        )
-    )]
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            #[cfg(test)]
-            DenAct::Probe(_) => formatter.write_str("Probe"),
+        match self {
+            DenAct::Commission(act) => formatter.debug_tuple("Commission").field(act).finish(),
         }
     }
 }
 
-/// What a handler hands back for the changelog: the entry's kind and payload. It names no
-/// commission and no actor: the gate takes both from the capability and the grant.
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "only the test probe drafts one until the next slice's acts"
-    )
-)]
-pub(crate) struct EntryDraft {
-    /// What act the entry records.
-    pub(crate) kind: ChangelogEntryKind,
-    /// The kind's parameters.
-    pub(crate) payload: serde_json::Value,
+/// Which changelog entry the gate writes once an act lands: one of a kind on every landing,
+/// or one only when the act changed its node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EntryRule {
+    /// One entry of this kind, whatever the act changed.
+    Always(ChangelogEntryKind),
+    /// One entry of this kind when the act changed its node; none when it changed nothing.
+    OnChange(ChangelogEntryKind),
 }
 
-/// Why a type's handler declined: its own refusal, or a store failure under it.
+impl EntryRule {
+    /// The kind of the one entry an act that `changed` its node writes, or `None`.
+    pub(crate) fn entry(self, changed: bool) -> Option<ChangelogEntryKind> {
+        match self {
+            Self::Always(kind) => Some(kind),
+            Self::OnChange(kind) => changed.then_some(kind),
+        }
+    }
+}
+
+/// What a handler answers once its act lands: the thing it acted on, as the view read it.
+pub(crate) struct Handled {
+    /// The commission the act acted on or made.
+    pub(crate) answer: Commission,
+}
+
+/// What a den write answers beside the node it wrote, by its arm.
+pub(crate) enum ArmAnswer {
+    /// The commission the act acted on or made.
+    Commission(Commission),
+}
+
+impl fmt::Debug for ArmAnswer {
+    /// The arm and the thing's id; never its owner, whose id is a DID.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ArmAnswer::Commission(commission) => formatter
+                .debug_tuple("Commission")
+                .field(&commission.id)
+                .finish(),
+        }
+    }
+}
+
+/// Why a type's handler failed: a store failure under it.
 #[derive(Debug, thiserror::Error)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "only the test probe returns one until the next slice's acts"
-    )
-)]
 pub(crate) enum HandlerError {
-    /// The type refused the act.
-    #[error("the type refused the act")]
-    Refused,
     /// A store under the handler failed.
     #[error("a store under the handler failed")]
     Store(#[from] anyhow::Error),

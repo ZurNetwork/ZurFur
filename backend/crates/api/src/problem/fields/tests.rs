@@ -145,12 +145,12 @@ fn each_code_s_detail_is_these_words() {
 #[test]
 fn each_name_rule_refusal_has_its_own_code() {
     let codes: Vec<FieldCode> = [
-        DenNameError::Empty,
-        DenNameError::TooLong,
-        DenNameError::Slash,
-        DenNameError::Invisible,
-        DenNameError::Separator,
-        DenNameError::Reserved,
+        NodeNameError::Empty,
+        NodeNameError::TooLong,
+        NodeNameError::Slash,
+        NodeNameError::Invisible,
+        NodeNameError::Separator,
+        NodeNameError::Reserved,
     ]
     .into_iter()
     .map(FieldCode::from)
