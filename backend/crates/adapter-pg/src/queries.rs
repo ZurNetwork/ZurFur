@@ -1401,13 +1401,16 @@ pub mod commission {
     }
 
     /// `queries/commission/create_commission.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Store a new commission bound to its node, taking its title and visibility from
+    /// that node. The node must be a top-level `commission` node whose segment is the
+    /// commission's id; any other node inserts no row.
     pub async fn create_commission(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
-        title: &str,
+        node_id: uuid::Uuid,
         owner_id: &str,
         lifecycle: &str,
-        visibility: &str,
         deadline: Option<chrono::DateTime<chrono::Utc>>,
         maturity: Option<&str>,
         graphic: Option<bool>,
@@ -1415,10 +1418,9 @@ pub mod commission {
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/commission/create_commission.sql"))
             .bind(id)
-            .bind(title)
+            .bind(node_id)
             .bind(owner_id)
             .bind(lifecycle)
-            .bind(visibility)
             .bind(deadline)
             .bind(maturity)
             .bind(graphic)

@@ -1,17 +1,22 @@
 //! The shared node conformance suite, run by both adapters: `adapter-mem`'s
 //! `tests/node.rs` and `adapter-pg`'s `tests/it/node.rs`.
 //!
-//! Each case takes a fresh [`Database`] and the [`NodeStore`] over the same store,
-//! and builds 0.2's tree: a commission node, its six entries, Slots under `slots`.
+//! Each case takes a fresh [`Database`], the [`NodeStore`] over the same store and the
+//! adapter's [`CommissionSeeder`], and builds 0.2's tree: a commission node, its six
+//! entries, Slots under `slots`. Every commission node a case commits is bound to its
+//! commission, so its segment is a commission id.
 //! [`node_contract_tests!`](crate::node_contract_tests) writes one test per case.
 //! The suite holds the port's promise that a refusal ends the unit: every later
 //! call on it fails, and its commit returns an error and keeps nothing.
 
+use domain::elements::commission::CommissionId;
 use domain::elements::level::Level;
 use domain::elements::node::{NewNode, NodeId, NodeRow, NodeSegment, NodeType};
 use domain::elements::text::StoredText;
 use domain::ports::{Database, NodeStore, SegmentTaken, UnitOfWork};
 use strum::VariantArray;
+
+use crate::seeder::{CommissionSeeder, bind, made_up_owner};
 
 /// The six fixed entries, in the order a commission's are written.
 pub const ENTRY_TYPES: [NodeType; 6] = [
@@ -24,8 +29,8 @@ pub const ENTRY_TYPES: [NodeType; 6] = [
 ];
 
 /// Writes one `#[tokio::test]` per suite case. `$setup` is an async fn returning
-/// `(Arc<dyn Database>, Arc<dyn NodeStore>, impl Sized)` over one fresh store; the
-/// third item is kept alive for the test.
+/// `(Arc<dyn Database>, Arc<dyn NodeStore>, Arc<dyn CommissionSeeder>, impl Sized)` over
+/// one fresh store; the fourth item is kept alive for the test.
 #[macro_export]
 macro_rules! node_contract_tests {
     ($setup:path) => {
@@ -55,8 +60,8 @@ macro_rules! node_contract_tests {
         $(
             #[tokio::test]
             async fn $case() {
-                let (database, store, _kept) = $setup().await;
-                $crate::node_contract::$case(&*database, &*store).await;
+                let (database, store, seeder, _kept) = $setup().await;
+                $crate::node_contract::$case(&*database, &*store, &*seeder).await;
             }
         )*
     };
@@ -72,9 +77,9 @@ fn name(text: &str) -> StoredText {
     StoredText::from(text.to_owned())
 }
 
-/// A fresh commission segment: a new id's text, as a commission's own segment is.
+/// A fresh commission segment: a new commission id's text, as a commission's own segment is.
 fn fresh_segment() -> NodeSegment {
-    segment(&NodeId::mint().to_string())
+    segment(&CommissionId::mint().to_string())
 }
 
 /// A top-level commission node holding `top`.
@@ -90,7 +95,7 @@ fn commission_node(top: &NodeSegment) -> NewNode {
 }
 
 /// The fixed entry `entry_type` under `parent`, its word as its segment and name.
-fn entry_node(parent: NodeId, entry_type: NodeType) -> NewNode {
+pub(crate) fn entry_node(parent: NodeId, entry_type: NodeType) -> NewNode {
     let word: &'static str = entry_type.into();
     let word = word
         .strip_prefix("commission.")
@@ -117,8 +122,10 @@ fn slot_node(parent: NodeId, slot_segment: &str) -> NewNode {
     }
 }
 
-/// One commission's nodes as written.
+/// One commission's nodes as written, and the commission bound to them.
 pub struct Tree {
+    /// The commission bound to the commission node.
+    pub commission_id: CommissionId,
     /// The commission node.
     pub commission: NewNode,
     /// Its six entries, in [`ENTRY_TYPES`] order.
@@ -149,10 +156,12 @@ impl Tree {
     }
 }
 
-/// Writes 0.2's tree on `unit`: a commission node holding `top`, its six entries,
-/// and one Slot node per `slot_segments` under its `slots` entry.
+/// Writes 0.2's tree on `unit`: a commission node holding `top`, a commission id's text,
+/// its six entries, one Slot node per `slot_segments` under its `slots` entry, and the
+/// commission bound to it.
 pub async fn write_tree(
     unit: &mut dyn UnitOfWork,
+    seeder: &dyn CommissionSeeder,
     top: &NodeSegment,
     slot_segments: &[&str],
 ) -> Tree {
@@ -170,25 +179,33 @@ pub async fn write_tree(
         .iter()
         .map(|slot_segment| slot_node(slots_entry, slot_segment))
         .collect();
-    let tree = Tree {
+    {
+        let mut nodes = unit.nodes();
+        for node in std::iter::once(&commission).chain(&entries).chain(&slots) {
+            nodes
+                .create(node)
+                .await
+                .expect("a node of the tree is stored");
+        }
+    }
+    let owner = made_up_owner(unit).await;
+    let commission_id = bind(unit, seeder, &commission, &owner).await;
+    Tree {
+        commission_id,
         commission,
         entries,
         slots,
-    };
-    let mut nodes = unit.nodes();
-    for node in tree.every_node() {
-        nodes
-            .create(node)
-            .await
-            .expect("a node of the tree is stored");
     }
-    tree
 }
 
 /// Writes 0.2's tree in a unit of its own and commits it.
-async fn committed_tree(database: &dyn Database, slot_segments: &[&str]) -> Tree {
+async fn committed_tree(
+    database: &dyn Database,
+    seeder: &dyn CommissionSeeder,
+    slot_segments: &[&str],
+) -> Tree {
     let mut unit = database.begin().await.expect("begin");
-    let tree = write_tree(&mut *unit, &fresh_segment(), slot_segments).await;
+    let tree = write_tree(&mut *unit, seeder, &fresh_segment(), slot_segments).await;
     unit.commit().await.expect("the tree commits");
     tree
 }
@@ -217,9 +234,13 @@ async fn assert_refused_not_taken(database: &dyn Database, node: &NewNode, what:
 }
 
 /// A created node reads back by its parent and segment, on the unit and after commit.
-pub async fn create_then_child_reads_back(database: &dyn Database, store: &dyn NodeStore) {
+pub async fn create_then_child_reads_back(
+    database: &dyn Database,
+    store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
+) {
     let mut unit = database.begin().await.expect("begin");
-    let tree = write_tree(&mut *unit, &fresh_segment(), &["slot-one"]).await;
+    let tree = write_tree(&mut *unit, seeder, &fresh_segment(), &["slot-one"]).await;
     let brief = tree.entry(NodeType::CommissionBrief);
     let slot = &tree.slots[0];
 
@@ -249,8 +270,12 @@ pub async fn create_then_child_reads_back(database: &dyn Database, store: &dyn N
 }
 
 /// `at_top` finds a top-level node only under the type asked for.
-pub async fn at_top_filters_by_type(database: &dyn Database, store: &dyn NodeStore) {
-    let tree = committed_tree(database, &[]).await;
+pub async fn at_top_filters_by_type(
+    database: &dyn Database,
+    store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
+) {
+    let tree = committed_tree(database, seeder, &[]).await;
     let top = &tree.commission.segment;
 
     for other in NodeType::VARIANTS
@@ -281,6 +306,7 @@ pub async fn at_top_filters_by_type(database: &dyn Database, store: &dyn NodeSto
 pub async fn at_top_reads_back_the_stored_name_and_level(
     database: &dyn Database,
     store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
 ) {
     let top = fresh_segment();
     let listed = NewNode {
@@ -300,6 +326,9 @@ pub async fn at_top_reads_back_the_stored_name_and_level(
         nodes.create(&listed).await.expect("create");
         nodes.create(&public).await.expect("create");
     }
+    let owner = made_up_owner(&mut *unit).await;
+    bind(&mut *unit, seeder, &listed, &owner).await;
+    bind(&mut *unit, seeder, &public, &owner).await;
     unit.commit().await.expect("commit");
 
     let listed_read = store
@@ -315,8 +344,12 @@ pub async fn at_top_reads_back_the_stored_name_and_level(
 }
 
 /// A node of every type the vocabulary holds is stored and reads back with its type.
-pub async fn every_node_type_is_storable(database: &dyn Database, store: &dyn NodeStore) {
-    let tree = committed_tree(database, &["slot-one"]).await;
+pub async fn every_node_type_is_storable(
+    database: &dyn Database,
+    store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
+) {
+    let tree = committed_tree(database, seeder, &["slot-one"]).await;
 
     for node_type in NodeType::VARIANTS {
         let written = tree
@@ -336,8 +369,9 @@ pub async fn every_node_type_is_storable(database: &dyn Database, store: &dyn No
 pub async fn a_second_top_level_row_with_the_same_segment_is_refused(
     database: &dyn Database,
     _store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
 ) {
-    let tree = committed_tree(database, &[]).await;
+    let tree = committed_tree(database, seeder, &[]).await;
     let second = commission_node(&tree.commission.segment);
 
     let mut unit = database.begin().await.expect("begin");
@@ -354,8 +388,9 @@ pub async fn a_second_top_level_row_with_the_same_segment_is_refused(
 pub async fn a_primary_key_collision_is_not_segment_taken(
     database: &dyn Database,
     _store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
 ) {
-    let tree = committed_tree(database, &[]).await;
+    let tree = committed_tree(database, seeder, &[]).await;
     let same_id = NewNode {
         id: tree.commission.id,
         ..commission_node(&fresh_segment())
@@ -368,8 +403,9 @@ pub async fn a_primary_key_collision_is_not_segment_taken(
 pub async fn a_write_after_segment_taken_fails_on_the_same_unit(
     database: &dyn Database,
     _store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
 ) {
-    let tree = committed_tree(database, &[]).await;
+    let tree = committed_tree(database, seeder, &[]).await;
     let mut unit = database.begin().await.expect("begin");
     let refused = unit
         .nodes()
@@ -398,8 +434,9 @@ pub async fn a_write_after_segment_taken_fails_on_the_same_unit(
 pub async fn a_commit_after_segment_taken_fails_and_keeps_nothing(
     database: &dyn Database,
     store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
 ) {
-    let tree = committed_tree(database, &[]).await;
+    let tree = committed_tree(database, seeder, &[]).await;
     let kept_before = commission_node(&fresh_segment());
     let mut unit = database.begin().await.expect("begin");
     unit.nodes()
@@ -429,9 +466,10 @@ pub async fn a_commit_after_segment_taken_fails_and_keeps_nothing(
 pub async fn the_same_segment_under_two_parents_is_allowed(
     database: &dyn Database,
     store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
 ) {
-    let first = committed_tree(database, &["shared-slot"]).await;
-    let second = committed_tree(database, &["shared-slot"]).await;
+    let first = committed_tree(database, seeder, &["shared-slot"]).await;
+    let second = committed_tree(database, seeder, &["shared-slot"]).await;
 
     for tree in [&first, &second] {
         let brief = tree.entry(NodeType::CommissionBrief);
@@ -452,6 +490,7 @@ pub async fn the_same_segment_under_two_parents_is_allowed(
 pub async fn a_child_of_a_missing_parent_is_refused(
     database: &dyn Database,
     store: &dyn NodeStore,
+    _seeder: &dyn CommissionSeeder,
 ) {
     let missing = NodeId::mint();
     let orphans = [
@@ -467,8 +506,12 @@ pub async fn a_child_of_a_missing_parent_is_refused(
 }
 
 /// Children come bytewise by segment, so `B` sorts before `a`.
-pub async fn children_come_in_segment_order(database: &dyn Database, store: &dyn NodeStore) {
-    let tree = committed_tree(database, &["b", "a", "B", "_", "0", "~", "A"]).await;
+pub async fn children_come_in_segment_order(
+    database: &dyn Database,
+    store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
+) {
+    let tree = committed_tree(database, seeder, &["b", "a", "B", "_", "0", "~", "A"]).await;
 
     let slots = store
         .children(&tree.slots_entry().id)
@@ -503,10 +546,15 @@ pub async fn children_come_in_segment_order(database: &dyn Database, store: &dyn
     assert_eq!(unit_segments, slot_segments, "the unit's read orders alike");
 }
 
-/// Deleting a commission node takes every node under it, the Slots under `slots` included.
-pub async fn delete_takes_the_subtree(database: &dyn Database, store: &dyn NodeStore) {
-    let tree = committed_tree(database, &["slot-one", "slot-two"]).await;
-    let other = committed_tree(database, &["slot-one"]).await;
+/// Deleting a commission node takes every node under it, the Slots under `slots` included;
+/// its commission goes in the same unit, since a commission never outlives its node.
+pub async fn delete_takes_the_subtree(
+    database: &dyn Database,
+    store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
+) {
+    let tree = committed_tree(database, seeder, &["slot-one", "slot-two"]).await;
+    let other = committed_tree(database, seeder, &["slot-one"]).await;
 
     let mut unit = database.begin().await.expect("begin");
     let deleted = unit
@@ -514,6 +562,10 @@ pub async fn delete_takes_the_subtree(database: &dyn Database, store: &dyn NodeS
         .delete(&tree.commission.id)
         .await
         .expect("delete");
+    unit.commissions()
+        .delete(&tree.commission_id)
+        .await
+        .expect("the commission goes with its node");
     unit.commit().await.expect("commit");
 
     assert!(deleted, "the commission node was there");
@@ -534,18 +586,23 @@ pub async fn delete_takes_the_subtree(database: &dyn Database, store: &dyn NodeS
     assert_eq!(untouched.len(), 1, "another commission's tree stays");
 }
 
-/// Deleting a commission node takes its six entries.
+/// Deleting a commission node, its commission with it, takes its six entries.
 pub async fn deleting_a_commission_node_takes_its_entries(
     database: &dyn Database,
     store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
 ) {
-    let tree = committed_tree(database, &[]).await;
+    let tree = committed_tree(database, seeder, &[]).await;
 
     let mut unit = database.begin().await.expect("begin");
     unit.nodes()
         .delete(&tree.commission.id)
         .await
         .expect("delete");
+    unit.commissions()
+        .delete(&tree.commission_id)
+        .await
+        .expect("the commission goes with its node");
     unit.commit().await.expect("commit");
 
     let entries = store.children(&tree.commission.id).await.expect("a read");
@@ -563,8 +620,9 @@ pub async fn deleting_a_commission_node_takes_its_entries(
 pub async fn a_node_that_does_not_fit_its_parent_is_refused(
     database: &dyn Database,
     _store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
 ) {
-    let tree = committed_tree(database, &["slot-one"]).await;
+    let tree = committed_tree(database, seeder, &["slot-one"]).await;
     let brief = tree.entry(NodeType::CommissionBrief).id;
     let slots_entry = tree.slots_entry().id;
     let slot = tree.slots[0].id;
@@ -625,8 +683,9 @@ pub async fn a_node_that_does_not_fit_its_parent_is_refused(
 pub async fn deleting_a_fixed_entry_is_refused_while_its_commission_lives(
     database: &dyn Database,
     store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
 ) {
-    let tree = committed_tree(database, &[]).await;
+    let tree = committed_tree(database, seeder, &[]).await;
 
     for entry in &tree.entries {
         let mut unit = database.begin().await.expect("begin");
@@ -647,9 +706,10 @@ pub async fn deleting_a_fixed_entry_is_refused_while_its_commission_lives(
 pub async fn set_name_and_delete_of_a_missing_id_answer_false(
     database: &dyn Database,
     store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
 ) {
     let missing = NodeId::mint();
-    let tree = committed_tree(database, &[]).await;
+    let tree = committed_tree(database, seeder, &[]).await;
 
     let mut unit = database.begin().await.expect("begin");
     let renamed = unit
@@ -681,8 +741,12 @@ pub async fn set_name_and_delete_of_a_missing_id_answer_false(
 }
 
 /// A rename changes the name and nothing else.
-pub async fn set_name_changes_only_the_name(database: &dyn Database, store: &dyn NodeStore) {
-    let tree = committed_tree(database, &["slot-one"]).await;
+pub async fn set_name_changes_only_the_name(
+    database: &dyn Database,
+    store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
+) {
+    let tree = committed_tree(database, seeder, &["slot-one"]).await;
     let slot = &tree.slots[0];
     let new_name = name("A renamed made-up slot");
 
@@ -712,8 +776,12 @@ pub async fn set_name_changes_only_the_name(database: &dyn Database, store: &dyn
 }
 
 /// An empty name is refused on create and on rename.
-pub async fn an_empty_name_is_refused(database: &dyn Database, store: &dyn NodeStore) {
-    let tree = committed_tree(database, &[]).await;
+pub async fn an_empty_name_is_refused(
+    database: &dyn Database,
+    store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
+) {
+    let tree = committed_tree(database, seeder, &[]).await;
     let nameless = NewNode {
         name: name(""),
         ..commission_node(&fresh_segment())
@@ -733,15 +801,19 @@ pub async fn an_empty_name_is_refused(database: &dyn Database, store: &dyn NodeS
 }
 
 /// A unit rolled back or dropped keeps none of its nodes.
-pub async fn a_rolled_back_unit_keeps_no_node(database: &dyn Database, store: &dyn NodeStore) {
+pub async fn a_rolled_back_unit_keeps_no_node(
+    database: &dyn Database,
+    store: &dyn NodeStore,
+    seeder: &dyn CommissionSeeder,
+) {
     let rolled_back_top = fresh_segment();
     let mut unit = database.begin().await.expect("begin");
-    write_tree(&mut *unit, &rolled_back_top, &["slot-one"]).await;
+    write_tree(&mut *unit, seeder, &rolled_back_top, &["slot-one"]).await;
     unit.rollback().await.expect("rollback");
 
     let dropped_top = fresh_segment();
     let mut unit = database.begin().await.expect("begin");
-    write_tree(&mut *unit, &dropped_top, &["slot-one"]).await;
+    write_tree(&mut *unit, seeder, &dropped_top, &["slot-one"]).await;
     drop(unit);
 
     for top in [&rolled_back_top, &dropped_top] {

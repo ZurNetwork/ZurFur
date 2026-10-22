@@ -17,9 +17,15 @@ fn supreme_arts() -> AccountId {
     AccountId::from(Did::from("did:plc:t7nesupremeartsfixtureaa".to_owned()))
 }
 
-/// A backend holding commission's fixture rows.
+/// A backend holding commission's fixture rows, over alice and bob as Users.
 async fn seeded() -> MemBackend {
     let backend = MemBackend::new();
+    for person in [alice(), bob()] {
+        backend
+            .provision(person.did())
+            .await
+            .expect("the fixture people are Users");
+    }
     seed_commission(&backend, &alice(), &bob(), &supreme_arts())
         .await
         .expect("the commission fixtures seed");

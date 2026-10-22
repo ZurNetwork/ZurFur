@@ -10,7 +10,7 @@ use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::{
-    commission::{Commission, CommissionId, CommissionRole, CommissionStanding},
+    commission::{CommissionId, CommissionRole, CommissionStanding},
     did::Did,
     level::Level,
     user::UserId,
@@ -18,6 +18,9 @@ use domain::elements::{
 use domain::ports::{CommissionStore, Database};
 use test_support::commission_standing_contract::ParticipantRows;
 use test_support::pg_app::{StatementLog, pg_runtime_recording};
+use test_support::seeder::{self, CommissionSeeder};
+
+use crate::seed::MintingSeeder;
 
 /// The participant table, written by direct statements: no port writes a non-owner row yet.
 struct PgParticipantRows(PgPool);
@@ -55,18 +58,25 @@ impl ParticipantRows for PgParticipantRows {
     }
 }
 
-/// A fresh database's unit factory, commission store and participant rows.
+/// A fresh database's unit factory, commission store, participant rows and commission seeder.
 async fn fresh() -> (
     Arc<dyn Database>,
     Arc<dyn CommissionStore>,
     Arc<dyn ParticipantRows>,
+    Arc<dyn CommissionSeeder>,
     impl Sized,
 ) {
     let (pool, kept) = test_support::pg::fresh_pool().await;
     let database = PgDatabase::new(pool.clone());
     let store = PgCommissionStore::new(pool.clone());
     let rows = PgParticipantRows(pool);
-    (Arc::new(database), Arc::new(store), Arc::new(rows), kept)
+    (
+        Arc::new(database),
+        Arc::new(store),
+        Arc::new(rows),
+        Arc::new(MintingSeeder),
+        kept,
+    )
 }
 
 test_support::commission_standing_contract_tests!(fresh);
@@ -83,17 +93,16 @@ async fn provision(database: &dyn Database, did: &str) -> UserId {
     user.id
 }
 
-/// Creates a Private commission owned by `owner` in a unit of its own.
+/// Seeds a Private commission owned by `owner` in a unit of its own.
 async fn committed_commission(database: &dyn Database, owner: &UserId) -> CommissionId {
-    let title = "A made-up commission".parse().expect("a made-up title");
-    let commission = Commission::create(title, owner.clone(), Utc::now(), None);
-    let mut unit = database.begin().await.expect("begin");
-    unit.commissions()
-        .create(&commission)
-        .await
-        .expect("create the commission");
-    unit.commit().await.expect("commit the commission");
-    commission.id
+    seeder::seed_commission(
+        database,
+        &MintingSeeder,
+        owner,
+        Level::Private,
+        "A made-up commission",
+    )
+    .await
 }
 
 /// Whether a second connection's `FOR NO KEY UPDATE NOWAIT` on the commission row is refused

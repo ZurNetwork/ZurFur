@@ -35,6 +35,7 @@ mod node_backfill;
 mod plc_operation_log;
 mod profile_cache;
 mod schema_status;
+mod seed;
 mod session_store;
 mod single_binary_guard;
 mod unit_of_work;

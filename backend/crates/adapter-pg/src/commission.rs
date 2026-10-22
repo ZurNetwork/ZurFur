@@ -8,14 +8,14 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            Band, ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
-            CommissionMarkup, CommissionRole, CommissionStanding, CommissionSummary,
-            CommissionTitle, DeadlineStatus, DirectionStatus, ElementId, ElementPayload,
-            ElementRow, ElementType, FileKey, FileSummary, GrantLevel, LapsedDeadline,
-            LifecycleStep, Markup, MarkupKey, NewCommission, NewElement, NewSeat, NewSlot, Seat,
-            SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress,
-            SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs, declares_surface,
-            derive_deadline_status,
+            Band, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
+            CommissionFile, CommissionId, CommissionMarkup, CommissionRole, CommissionStanding,
+            CommissionSummary, CommissionTitle, DeadlineStatus, DirectionStatus, ElementId,
+            ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel,
+            LapsedDeadline, LifecycleStep, Markup, MarkupKey, NewCommission, NewElement, NewSeat,
+            NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
+            SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
+            declares_surface, derive_deadline_status,
         },
         did::Did,
         invitation::InvitationState,
@@ -26,8 +26,8 @@ use domain::{
         workflow::{Column, ColumnId, WorkflowId},
     },
     ports::{
-        ColumnStore, CommissionReads, CommissionStore, CommissionWrites, ElementNotFound,
-        UnknownSurface, UnknownTab,
+        ColumnStore, CommissionReads, CommissionStore, CommissionWrites, Creator, ElementNotFound,
+        New, UnknownSurface, UnknownTab, WriteCapability,
     },
 };
 use sqlx::{PgConnection, PgPool};
@@ -72,6 +72,8 @@ const _: () = assert!(
 pub struct PgCommissionWrites<'a> {
     /// The open transaction; there is deliberately no pool here.
     pub(crate) conn: &'a mut PgConnection,
+    /// The unit's failure memory: set by a refused create, read by its commit.
+    pub(crate) failed: &'a mut bool,
 }
 
 impl PgCommissionWrites<'_> {
@@ -157,30 +159,42 @@ impl PgCommissionWrites<'_> {
 
 #[async_trait::async_trait]
 impl CommissionWrites for PgCommissionWrites<'_> {
-    /// Inserts the commission row, one `commission_tab` row per
+    /// Inserts the commission row bound to `birth`'s node, one `commission_tab` row per
     /// [`declared_tabs`], and the owner's `commission_participant` row, all in one
-    /// transaction. Every tab is minted [`VisibilityMode::Total`].
+    /// transaction. The row takes its title and visibility from the node; unless that node
+    /// is the commission's own, the create errs and ends the unit. Every tab is minted
+    /// [`VisibilityMode::Total`].
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {
-        sql::create_commission(
+    async fn create(
+        &mut self,
+        capability: &WriteCapability<New<CommissionId>, Creator>,
+        birth: &CommissionBirth,
+        commission: &NewCommission,
+    ) -> anyhow::Result<()> {
+        let id = *capability.thing().as_ref();
+        let inserted = sql::create_commission(
             &mut *self.conn,
-            uuid::Uuid::from(commission.id),
-            commission.title.as_str(),
-            commission.owner_id.as_ref(),
-            <&'static str>::from(&commission.lifecycle_step),
-            <&'static str>::from(&commission.visibility),
+            uuid::Uuid::from(id),
+            uuid::Uuid::from(birth.node),
+            birth.owner_id.as_ref(),
+            <&'static str>::from(&LifecycleStep::Draft),
             commission.deadline,
             commission.maturity.map(|m| <&'static str>::from(m.rating)),
             commission.maturity.map(|m| m.graphic),
-            commission.created_at,
+            birth.created_at,
         )
         .await?;
+        if inserted != 1 {
+            // No statement failed, so the transaction lives on: the latch ends the unit.
+            *self.failed = true;
+            anyhow::bail!("the node is not the commission's own: no commission was stored");
+        }
 
         for tab in declared_tabs() {
             sql::create_tab(
                 &mut *self.conn,
                 uuid::Uuid::from(TabId::mint()),
-                uuid::Uuid::from(commission.id),
+                uuid::Uuid::from(id),
                 tab.as_ref(),
                 <&'static str>::from(VisibilityMode::default()),
             )
@@ -189,9 +203,9 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
         sql::add_participant(
             &mut *self.conn,
-            uuid::Uuid::from(commission.id),
-            commission.owner_id.as_ref(),
-            commission.created_at,
+            uuid::Uuid::from(id),
+            birth.owner_id.as_ref(),
+            birth.created_at,
         )
         .await?;
         Ok(())
@@ -443,7 +457,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         title: &CommissionTitle,
     ) -> anyhow::Result<bool> {
         let affected =
-            sql::set_title(&mut *self.conn, uuid::Uuid::from(*id), title.as_str()).await?;
+            sql::set_title(&mut *self.conn, uuid::Uuid::from(*id), title.as_ref()).await?;
         Ok(affected > 0)
     }
 

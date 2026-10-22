@@ -19,13 +19,42 @@ fn user_id() -> UserId {
     UserId::from(mint_did())
 }
 
-fn commission(title: &str, owner: UserId) -> NewCommission {
-    Commission::create(
-        title.parse::<CommissionTitle>().unwrap(),
-        owner,
-        Utc::now(),
-        None,
-    )
+/// A Private commission to seed, titled `title` and owned by `owner`.
+fn commission(title: &str, owner: UserId) -> CommissionSeed {
+    CommissionSeed::private(title.parse::<CommissionTitle>().unwrap(), owner)
+}
+
+/// Seeds `created` bound to its own nodes, its owner recognized as a User first.
+async fn seed(backend: &MemBackend, created: &CommissionSeed) {
+    backend.provision(created.owner_id.did()).await.unwrap();
+    backend.seed_bound_commission(created).await.unwrap();
+}
+
+/// Creates `created` on `uow` the way the den's write gate does: its owner recognized,
+/// its nodes written, then the port's create under a capability minted for its id.
+async fn create_in(uow: &mut dyn UnitOfWork, created: &CommissionSeed) {
+    uow.users().provision(created.owner_id.did()).await.unwrap();
+    let nodes = seed_nodes(created).unwrap();
+    {
+        let mut repo = uow.nodes();
+        for node in &nodes {
+            repo.create(node).await.unwrap();
+        }
+    }
+    let birth = CommissionBirth {
+        node: nodes[0].id,
+        owner_id: created.owner_id.clone(),
+        created_at: created.created_at,
+    };
+    let chosen = NewCommission {
+        maturity: created.maturity,
+        deadline: created.deadline,
+    };
+    let capability = WriteCapability::gate_issued(New::from(created.id));
+    uow.commissions()
+        .create(&capability, &birth, &chosen)
+        .await
+        .unwrap();
 }
 
 // ZMVP-65 AC1/AC2/AC3 (store layer) — a commission written through the
@@ -43,7 +72,7 @@ async fn uow_create_commission_is_visible_after_commit() {
     let id = created.id;
 
     let mut uow = database.begin().await.unwrap();
-    uow.commissions().create(&created).await.unwrap();
+    create_in(&mut *uow, &created).await;
     uow.commit().await.unwrap();
 
     let found = backend
@@ -81,7 +110,7 @@ async fn a_dropped_unit_of_work_rolls_back_the_commission() {
 
     {
         let mut uow = database.begin().await.unwrap();
-        uow.commissions().create(&created).await.unwrap();
+        create_in(&mut *uow, &created).await;
         // `uow` drops here without `commit` → the staged write is discarded.
     }
 
@@ -103,7 +132,7 @@ async fn uncommitted_commission_is_invisible_until_commit() {
     let id = created.id;
 
     let mut uow = database.begin().await.unwrap();
-    uow.commissions().create(&created).await.unwrap();
+    create_in(&mut *uow, &created).await;
     assert!(
         backend.find_commission(id).await.unwrap().is_none(),
         "an open unit's staged commission is invisible to a shared read"
@@ -128,7 +157,7 @@ async fn changelog_appends_commit_and_roll_back_with_the_unit() {
     let id = created.id;
 
     let mut uow = database.begin().await.unwrap();
-    uow.commissions().create(&created).await.unwrap();
+    create_in(&mut *uow, &created).await;
     uow.changelog()
         .append(&NewChangelogEntry::event(
             id,
@@ -202,8 +231,8 @@ async fn delete_removes_the_commission_and_cascades_its_changelog() {
     let survivor_id = survivor.id;
 
     let mut uow = database.begin().await.unwrap();
-    uow.commissions().create(&doomed).await.unwrap();
-    uow.commissions().create(&survivor).await.unwrap();
+    create_in(&mut *uow, &doomed).await;
+    create_in(&mut *uow, &survivor).await;
     for (id, title) in [(doomed_id, "Doomed"), (survivor_id, "Survivor")] {
         uow.changelog()
             .append(&NewChangelogEntry::event(
@@ -260,7 +289,7 @@ async fn a_dropped_unit_of_work_rolls_back_the_delete() {
     let owner = user_id();
     let created = commission("Kept", owner);
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
 
     {
         let mut uow = database.begin().await.unwrap();
@@ -321,7 +350,7 @@ async fn grants_stage_lift_nothing_and_roll_back() {
     let owner = user_id();
     let created = commission("Positioned", owner.clone());
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
     let store = backend.commission_store();
     let grantee = user_id();
 
@@ -385,7 +414,7 @@ async fn placement_is_a_card_stages_lifts_nothing_and_rolls_back() {
     let owner = user_id();
     let created = commission("Positioned", owner.clone());
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
     let store = backend.commission_store();
     let columns = backend.column_store();
 
@@ -458,7 +487,7 @@ async fn placement_is_a_card_stages_lifts_nothing_and_rolls_back() {
     // A dropped unit rolls a card back off the board.
     let third = commission("Not placed", owner.clone());
     let third_id = third.id;
-    backend.create_commission(&third).await.unwrap();
+    seed(&backend, &third).await;
     {
         let mut uow = database.begin().await.unwrap();
         let mut column = columns.find(&column_id).await.unwrap().expect("the column");
@@ -496,7 +525,7 @@ async fn hard_deleting_an_account_severs_its_positioning_but_keeps_the_commissio
     let owner = user_id();
     let created = commission("Placed then orphaned", owner.clone());
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
     let store = backend.commission_store();
     let columns = backend.column_store();
     let workflows = backend.workflow_store();
@@ -561,7 +590,7 @@ async fn creating_a_commission_mints_its_skeleton_tabs() {
     let id = created.id;
 
     let mut uow = database.begin().await.unwrap();
-    uow.commissions().create(&created).await.unwrap();
+    create_in(&mut *uow, &created).await;
     uow.commit().await.unwrap();
 
     let composition = backend
@@ -609,7 +638,7 @@ async fn add_element_appends_within_its_group() {
     let owner = user_id();
     let created = commission("Growing", owner.clone());
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
     let address = only_address(&backend, id).await;
 
     let first = element_at(id, address.clone(), owner.clone());
@@ -655,8 +684,8 @@ async fn add_element_refuses_absent_and_foreign_tabs() {
     let theirs = commission("Theirs", user_id());
     let mine_id = mine.id;
     let theirs_id = theirs.id;
-    backend.create_commission(&mine).await.unwrap();
-    backend.create_commission(&theirs).await.unwrap();
+    seed(&backend, &mine).await;
+    seed(&backend, &theirs).await;
     let their_address = only_address(&backend, theirs_id).await;
 
     // A tab id that exists nowhere.
@@ -705,7 +734,7 @@ async fn add_element_refuses_an_undeclared_surface() {
     let owner = user_id();
     let created = commission("Fail-closed", owner.clone());
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
     let tab = backend.tabs_of(id).await.unwrap()[0].id;
 
     let invented = SurfaceAddress::new(tab, "invented".parse::<SurfaceName>().unwrap());
@@ -736,7 +765,7 @@ async fn add_element_refuses_a_real_surface_under_the_wrong_tab() {
     let owner = user_id();
     let created = commission("Wrongly addressed", owner.clone());
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
 
     // A real tab row of THIS commission whose name the skeleton does not
     // pair with the surface below. (The placeholder skeleton has one tab, so
@@ -772,7 +801,7 @@ async fn an_address_wrong_in_both_ways_answers_unknown_tab() {
     let owner = user_id();
     let created = commission("Doubly wrong", owner.clone());
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
 
     let doubly_wrong =
         SurfaceAddress::new(TabId::mint(), "invented".parse::<SurfaceName>().unwrap());
@@ -796,7 +825,7 @@ async fn an_elements_payload_round_trips_opaquely() {
     let owner = user_id();
     let created = commission("Opaque", owner.clone());
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
     let address = only_address(&backend, id).await;
 
     let body = json!({
@@ -838,7 +867,7 @@ async fn add_element_commits_and_rolls_back_with_the_unit() {
     let owner = user_id();
     let created = commission("Tx", owner.clone());
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
     let address = only_address(&backend, id).await;
 
     {
@@ -866,7 +895,7 @@ async fn effective_visibility_clamps_against_the_loaded_composition() {
     let owner = user_id();
     let created = commission("Clamped", owner.clone());
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
     let address = only_address(&backend, id).await;
 
     let element = element_at(id, address.clone(), owner);
@@ -938,7 +967,7 @@ async fn load_composition_answers_none_for_an_unknown_commission() {
 
     let created = commission("Empty", user_id());
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
     let composition = backend
         .commission_store()
         .load_composition(&id)
@@ -960,7 +989,7 @@ async fn direction_status_sets_replaces_and_clears_through_the_unit() {
     let owner = user_id();
     let created = commission("Statused", owner);
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
 
     let status_of = |backend: &MemBackend| {
         let backend = backend.clone();
@@ -1041,7 +1070,7 @@ async fn deadline_and_status_set_and_clear_through_the_unit() {
     let owner = user_id();
     let created = commission("Deadlined", owner);
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
 
     // A FUTURE deadline, so the derived Late never masks the manual flag.
     let deadline = Utc::now() + chrono::Duration::days(30);
@@ -1104,7 +1133,7 @@ async fn late_is_derived_from_a_passed_deadline() {
     let owner = user_id();
     let created = commission("Slipping", owner);
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
 
     let mut uow = database.begin().await.unwrap();
     {
@@ -1140,26 +1169,19 @@ async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
     let now = Utc::now();
     let past = |days: i64| now - chrono::Duration::days(days);
 
-    let seed = |title: &str, deadline, step: Option<LifecycleStep>| {
-        let mut c = Commission::create(
-            title.parse::<CommissionTitle>().unwrap(),
-            owner.clone(),
-            now,
-            deadline,
-        );
-        if let Some(step) = step {
-            c.lifecycle_step = step;
-        }
-        c
+    let due = |title: &str, deadline| CommissionSeed {
+        created_at: now,
+        deadline,
+        ..commission(title, owner.clone())
     };
-    let missed = seed("Missed", Some(past(30)), None);
-    let slipping = seed("Slipping", Some(past(20)), None);
-    let already_late = seed("Late", Some(past(10)), None);
-    let future = seed("Future", Some(now + chrono::Duration::days(30)), None);
-    let no_deadline = seed("No deadline", None, None);
-    let completed = seed("Done", Some(past(30)), Some(LifecycleStep::Completed));
-    let cancelled = seed("Dropped", Some(past(30)), Some(LifecycleStep::Cancelled));
-    let disputed = seed("Contested", Some(past(5)), Some(LifecycleStep::Disputed));
+    let missed = due("Missed", Some(past(30)));
+    let slipping = due("Slipping", Some(past(20)));
+    let already_late = due("Late", Some(past(10)));
+    let future = due("Future", Some(now + chrono::Duration::days(30)));
+    let no_deadline = due("No deadline", None);
+    let completed = due("Done", Some(past(30)));
+    let cancelled = due("Dropped", Some(past(30)));
+    let disputed = due("Contested", Some(past(5)));
     for c in [
         &missed,
         &slipping,
@@ -1170,7 +1192,22 @@ async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
         &cancelled,
         &disputed,
     ] {
-        backend.create_commission(c).await.unwrap();
+        seed(&backend, c).await;
+    }
+    // A create is born Draft; the terminal and disputed steps are written onto the rows.
+    let stepped = [
+        (completed.id, LifecycleStep::Completed),
+        (cancelled.id, LifecycleStep::Cancelled),
+        (disputed.id, LifecycleStep::Disputed),
+    ];
+    for (id, step) in stepped {
+        backend
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned")
+            .get_mut(&id)
+            .expect("a seeded commission")
+            .lifecycle_step = step;
     }
 
     let mut uow = database.begin().await.unwrap();
@@ -1216,7 +1253,7 @@ async fn commission_store_answers_participant_and_channel_reads() {
     let owner = user_id();
     let created = commission("Mine", owner.clone());
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
 
     let store = backend.commission_store();
     assert!(store.is_participant(&id, &owner).await.unwrap());
@@ -1299,7 +1336,7 @@ async fn set_maturity_round_trips_replaces_and_respects_the_unit() {
     let owner = user_id();
     let created = commission("Rated", owner);
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
 
     let unrated = backend.find_commission(id).await.unwrap().expect("exists");
     assert_eq!(unrated.maturity, None, "born unrated (the invariant)");
@@ -1380,7 +1417,7 @@ async fn composed_commission(
 ) -> (CommissionId, SurfaceAddress) {
     let created = commission("Composed", owner);
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(backend, &created).await;
     let address = only_address(backend, id).await;
     (id, address)
 }
@@ -1488,7 +1525,7 @@ async fn remove_refuses_absent_and_foreign_elements() {
     let (mine, my_address) = composed_commission(&backend, owner.clone()).await;
     let theirs = commission("Theirs", user_id());
     let theirs_id = theirs.id;
-    backend.create_commission(&theirs).await.unwrap();
+    seed(&backend, &theirs).await;
     let their_address = only_address(&backend, theirs_id).await;
 
     let ours = element_at(mine, my_address, owner);
@@ -1651,7 +1688,7 @@ async fn creating_a_commission_persists_its_owners_participant_row() {
     let created_at = created.created_at;
 
     let mut uow = database.begin().await.unwrap();
-    uow.commissions().create(&created).await.unwrap();
+    create_in(&mut *uow, &created).await;
     uow.commit().await.unwrap();
 
     let participants = backend
@@ -1684,7 +1721,7 @@ async fn is_participant_reads_the_membership_record_not_the_owner_column() {
     let seated = user_id();
     let created = commission("Seated later", owner);
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
 
     assert!(
         !backend
@@ -1850,7 +1887,7 @@ async fn declare_seat_walks_the_shared_address_gate() {
     let (id, address) = composed_commission(&backend, owner.clone()).await;
     let theirs = commission("Theirs", user_id());
     let theirs_id = theirs.id;
-    backend.create_commission(&theirs).await.unwrap();
+    seed(&backend, &theirs).await;
     let their_address = only_address(&backend, theirs_id).await;
 
     let seat_at = |address: SurfaceAddress| {
@@ -2172,8 +2209,8 @@ async fn list_participating_reads_the_participant_record_archived_included() {
     let stranger = user_id();
     let first = commission("First", owner.clone());
     let second = commission("Second", owner.clone());
-    backend.create_commission(&first).await.unwrap();
-    backend.create_commission(&second).await.unwrap();
+    seed(&backend, &first).await;
+    seed(&backend, &second).await;
     backend.seed_participant(second.id, member.clone(), Utc::now());
     let mut uow = database.begin().await.unwrap();
     uow.commissions()
@@ -2206,7 +2243,7 @@ async fn a_stored_title_is_loaded_without_a_recheck() {
     let backend = MemBackend::new();
     let owner = user_id();
     let created = commission("Legacy", owner.clone());
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
     backend.seed_stored_title(created.id, "   ");
     assert!(
         "   ".parse::<CommissionTitle>().is_err(),
@@ -2365,7 +2402,7 @@ async fn delete_cascades_participants_files_and_grants() {
     let member = user_id();
     let doomed = commission("Doomed", owner.clone());
     let doomed_id = doomed.id;
-    backend.create_commission(&doomed).await.unwrap();
+    seed(&backend, &doomed).await;
     backend.seed_participant(doomed_id, member.clone(), Utc::now());
     let file = CommissionFile {
         id: FileKey::generate(),
@@ -2414,7 +2451,7 @@ async fn set_title_reports_only_a_real_change() {
     let database = backend.database();
     let created = commission("A ref sheet", user_id());
     let id = created.id;
-    backend.create_commission(&created).await.unwrap();
+    seed(&backend, &created).await;
     let renamed = "A full piece".parse::<CommissionTitle>().unwrap();
     let absent = CommissionId::from(uuid::Uuid::now_v7());
 

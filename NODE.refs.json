@@ -149,6 +149,11 @@
       "governs": "the markups map becomes the comments map (staged/merged like every commission-owned map); tombstoned comments stay in the map, unreachable at read"
     },
     {
+      "page": 2026093001,
+      "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
+      "governs": "src/commission.rs: a commission is created only at its own node (a top-level commission node whose segment is its id), taking its title and level from it; commit refuses a commission whose node isn't its own and a commission node without its commission; a deleted commission takes its node subtree; seed_bound_commission writes what the den's write gate writes; src/node.rs: the node port over the staged map"
+    },
+    {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
       "governs": "src/fixture.rs: the fixture actors; src/fixture/commission.rs: the commission fixtures the Den reads (Untitled, Old sketch, Queue); src/character.rs: tombstoned Characters left out of the keeper read; src/lib.rs: deactivated Accounts read by their Owner only"
@@ -248,7 +253,7 @@
     {
       "page": 2026093001,
       "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
-      "governs": "migrations/20261022052438_create_node.sql: the node table holds each node's key, real parent, segment, type, level and name (D24); a node is never moved or retyped; src/node.rs and queries/node/: the node port over that table; tests/it/node.rs and tests/it/node_backfill.rs"
+      "governs": "migrations/20261022052438_create_node.sql: the node table holds each node's key, real parent, segment, type, level and name (D24); a node is never moved or retyped; src/node.rs and queries/node/: the node port over that table; tests/it/node.rs and tests/it/node_backfill.rs; queries/commission/create_commission.sql and src/commission.rs: a commission is created at its own node, a top-level commission node whose segment is its id, taking its title and level from it"
     },
     {
       "page": 2026100701,
@@ -944,6 +949,11 @@
     }
   ],
   "backend/crates/test-support": [
+    {
+      "page": 2026093001,
+      "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
+      "governs": "src/seeder.rs: a seeded commission is what the den's write gate writes, its node, six Private entries and the commission bound to it; src/node_contract.rs: every committed commission node is bound to its commission"
+    },
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",

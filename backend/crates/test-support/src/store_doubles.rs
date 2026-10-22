@@ -12,11 +12,11 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     account::{Account, AccountId, AccountMembership, ListingScope},
     commission::{
-        ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
-        CommissionMarkup, CommissionStanding, CommissionSummary, CommissionTitle, DeadlineStatus,
-        DirectionStatus, ElementId, FileKey, FileSummary, GrantLevel, LapsedDeadline,
-        NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot,
-        TabId, TabRow,
+        ChannelPointer, Commission, CommissionBirth, CommissionComposition, CommissionFile,
+        CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary, CommissionTitle,
+        DeadlineStatus, DirectionStatus, ElementId, FileKey, FileSummary, GrantLevel,
+        LapsedDeadline, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
+        SeatInvitationId, Slot, TabId, TabRow,
     },
     did::Did,
     handle::Handle,
@@ -29,7 +29,8 @@ use domain::elements::{
 use domain::ports::{
     AccountRepo, AccountStore, ActorIdentityWrites, BugReportWrites, ChangelogWrites,
     CharacterWrites, ColumnWrites, CommissionReads, CommissionRepo, CommissionStore,
-    CommissionWrites, Database, NodeRepo, UnitOfWork, UserStore, UserWrites, WorkflowWrites,
+    CommissionWrites, Creator, Database, New, NodeRepo, UnitOfWork, UserStore, UserWrites,
+    WorkflowWrites, WriteCapability,
 };
 
 /// An [`AccountStore`] read a script can make fail.
@@ -629,8 +630,13 @@ impl CommissionReads for ScriptedStandingRepo<'_> {
 
 #[async_trait]
 impl CommissionWrites for ScriptedStandingRepo<'_> {
-    async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {
-        self.inner.create(commission).await
+    async fn create(
+        &mut self,
+        capability: &WriteCapability<New<CommissionId>, Creator>,
+        birth: &CommissionBirth,
+        commission: &NewCommission,
+    ) -> anyhow::Result<()> {
+        self.inner.create(capability, birth, commission).await
     }
 
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {

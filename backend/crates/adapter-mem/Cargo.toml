@@ -28,13 +28,14 @@ tokio = { version = "1.49.0", default-features = false, features = ["io-util", "
 # an identical, stable CID (fidelity, not realism).
 cid = { workspace = true }
 sha2 = { workspace = true }
+# The seeder writes a commission's fixed entries from NodeType::VARIANTS; the tests
+# iterate the domain vocabularies the same way.
+strum = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
 # The shared PublicRecords conformance suite, run against MemPublicRecords.
 test-support = { path = "../test-support" }
-# strum: VARIANTS over the domain vocabularies
-strum = { workspace = true }
 
 [lints]
 workspace = true

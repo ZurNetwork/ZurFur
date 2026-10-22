@@ -1,5 +1,8 @@
 //! The shared commission-standing suite (`test_support::commission_standing_contract`), run
-//! against the in-memory commission maps: one fresh backend per case.
+//! against the in-memory commission maps: one fresh backend per case, its commissions seeded
+//! through the minting seeder.
+
+mod common;
 
 use std::sync::Arc;
 
@@ -8,6 +11,7 @@ use async_trait::async_trait;
 use domain::elements::{commission::CommissionId, user::UserId};
 use domain::ports::{CommissionStore, Database};
 use test_support::commission_standing_contract::ParticipantRows;
+use test_support::seeder::CommissionSeeder;
 
 /// The backend's participant map, written directly: no port writes a non-owner row yet.
 struct MemParticipantRows(MemBackend);
@@ -24,11 +28,12 @@ impl ParticipantRows for MemParticipantRows {
     }
 }
 
-/// A fresh backend's database, commission store and participant rows.
+/// A fresh backend's database, commission store, participant rows and commission seeder.
 async fn fresh() -> (
     Arc<dyn Database>,
     Arc<dyn CommissionStore>,
     Arc<dyn ParticipantRows>,
+    Arc<dyn CommissionSeeder>,
     (),
 ) {
     let backend = MemBackend::new();
@@ -37,6 +42,7 @@ async fn fresh() -> (
         backend.database(),
         backend.commission_store(),
         Arc::new(rows),
+        Arc::new(common::MintingSeeder),
         (),
     )
 }

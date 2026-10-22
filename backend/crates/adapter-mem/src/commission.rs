@@ -4,13 +4,13 @@
 //! [`MemCommissionStore`]/[`MemChangelogStore`] read stores, and the commission
 //! seed/inspect helpers on [`MemBackend`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
-        Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission,
+        Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission, CommissionBirth,
         CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionRole,
         CommissionStanding, CommissionSummary, CommissionTitle, DeadlineStatus, DirectionStatus,
         ElementId, ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel,
@@ -23,17 +23,24 @@ use domain::elements::{
     invitation::InvitationState,
     level::Level,
     maturity::Maturity,
+    node::{NewNode, NodeId, NodeRow, NodeSegment, NodeType},
     text::StoredText,
     user::UserId,
     workflow::{Column, ColumnId, LexOrdering, WorkflowId},
 };
 use domain::ports::{
     ChangelogStore, ChangelogWrites, ColumnStore, CommissionReads, CommissionStore,
-    CommissionWrites, ElementNotFound, UnknownSurface, UnknownTab,
+    CommissionWrites, Creator, ElementNotFound, New, UnitOfWork, UnknownSurface, UnknownTab,
+    WriteCapability,
 };
 use serde_json::Value;
+use strum::VariantArray;
 
-use crate::{MemBackend, workflow::MemColumnStore};
+use crate::{
+    MemBackend,
+    node::{entry_word, subtree},
+    workflow::MemColumnStore,
+};
 
 /// Resolve a tab within `commission`, handing back its declared name so the
 /// caller can consult the skeleton. An absent id and a foreign tab both refuse
@@ -116,11 +123,96 @@ fn insert_element(backend: &MemBackend, element: &NewElement) -> anyhow::Result<
     Ok(())
 }
 
+/// Whether `node` is commission `id`'s own: a top-level `commission` node whose segment
+/// is the id.
+fn is_own_node(id: CommissionId, node: &NodeRow) -> bool {
+    node.parent.is_none()
+        && node.node_type == NodeType::Commission
+        && node.segment.as_ref() == id.to_string()
+}
+
+/// Store commission `id` on `backend` bound to `birth`'s node, in its starting state, with
+/// its skeleton tabs and its owner's participant row; the one insert path. Its title and
+/// visibility are the node's. Refuses an owner no User holds, a node `backend` doesn't hold
+/// or that isn't the commission's own, and a taken id.
+pub(crate) fn insert_commission(
+    backend: &MemBackend,
+    id: CommissionId,
+    birth: &CommissionBirth,
+    commission: &NewCommission,
+) -> anyhow::Result<()> {
+    let owner_known = backend
+        .users
+        .lock()
+        .expect("MemBackend users mutex poisoned")
+        .contains_key(birth.owner_id.did());
+    anyhow::ensure!(owner_known, "the commission's owner is no User");
+    let node = backend
+        .nodes
+        .lock()
+        .expect("MemBackend nodes mutex poisoned")
+        .get(&birth.node)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("the unit holds no such node"))?;
+    anyhow::ensure!(
+        is_own_node(id, &node),
+        "the node is not the commission's own: no commission was stored"
+    );
+    {
+        let mut commissions = backend
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        anyhow::ensure!(
+            !commissions.contains_key(&id),
+            "a commission already has this id"
+        );
+        let stored = StoredCommission {
+            node_id: node.id,
+            title: node.name,
+            owner_id: birth.owner_id.clone(),
+            lifecycle_step: LifecycleStep::Draft,
+            visibility: node.level,
+            deadline: commission.deadline,
+            maturity: commission.maturity,
+            direction_status: None,
+            deadline_status: None,
+            linked_channel: None,
+            archived_at: None,
+            created_at: birth.created_at,
+        };
+        commissions.insert(id, stored);
+    }
+    {
+        let mut tabs = backend.tabs.lock().expect("MemBackend tabs mutex poisoned");
+        for tab in declared_tabs() {
+            let stored = StoredTab {
+                commission_id: id,
+                tab,
+                mode: VisibilityMode::default(),
+            };
+            tabs.insert(TabId::mint(), stored);
+        }
+    }
+    let mut participants = backend
+        .participants
+        .lock()
+        .expect("MemBackend participants mutex poisoned");
+    // A duplicate add is a no-op preserving the ORIGINAL created_at —
+    // seat acceptance re-adds whoever it seats.
+    participants
+        .entry((id, birth.owner_id.clone()))
+        .or_insert(birth.created_at);
+    Ok(())
+}
+
 /// The fields of a [`Commission`] we keep behind the lock; a read rebuilds the
 /// aggregate, which is not `Clone`. `Clone` lets a unit stage the map,
 /// `PartialEq` lets [`crate::merge_map`] tell an untouched row from a written one.
 #[derive(Clone, PartialEq)]
 pub(crate) struct StoredCommission {
+    /// The commission's own node: a top-level `commission` node whose segment is its id.
+    pub(crate) node_id: NodeId,
     /// The commission's Title as the store holds it — the pg `title` text
     /// column's mirror, so a load never re-checks it.
     pub(crate) title: StoredText,
@@ -341,63 +433,29 @@ impl StoredChangelogEntry {
 
 /// In-memory [`CommissionWrites`] view, vended by
 /// [`MemUnitOfWork::commissions`](crate::MemUnitOfWork) over the unit's staging
-/// snapshot, so a write reaches the shared store only on commit.
-pub struct MemCommissionWrites(pub(crate) MemBackend);
+/// snapshot, so a write reaches the shared store only on commit. The second field is
+/// the unit's spent mark, which a refused create sets.
+pub struct MemCommissionWrites<'a>(pub(crate) MemBackend, pub(crate) &'a mut bool);
 
 #[async_trait]
-impl CommissionWrites for MemCommissionWrites {
-    /// Insert the freshly created commission with one tab row per tab the code
-    /// skeleton declares and its owner's participant row, all on this unit's
-    /// staging snapshot — so a tabless or owner-less commission is
-    /// unrepresentable. Every tab is born [`VisibilityMode::Total`]; the
-    /// commission's own visibility gates over the composition, never seeds it.
+impl CommissionWrites for MemCommissionWrites<'_> {
+    /// Insert the new commission bound to `birth`'s node, with one tab row per tab the code
+    /// skeleton declares and its owner's participant row, all on this unit's staging
+    /// snapshot — so a tabless or owner-less commission is unrepresentable. Refuses an
+    /// unknown owner, and a node the unit can't see or that isn't the commission's own; a
+    /// refusal spends the unit. Every tab is born [`VisibilityMode::Total`].
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {
-        {
-            let mut commissions = self
-                .0
-                .commissions
-                .lock()
-                .expect("MemBackend commissions mutex poisoned");
-            commissions.insert(
-                commission.id,
-                StoredCommission {
-                    title: StoredText::from(commission.title.clone()),
-                    owner_id: commission.owner_id.clone(),
-                    lifecycle_step: commission.lifecycle_step.clone(),
-                    visibility: commission.visibility,
-                    deadline: commission.deadline,
-                    maturity: commission.maturity,
-                    direction_status: commission.direction_status,
-                    deadline_status: commission.deadline_status,
-                    linked_channel: commission.linked_channel.clone(),
-                    archived_at: commission.archived_at,
-                    created_at: commission.created_at,
-                },
-            );
+    async fn create(
+        &mut self,
+        capability: &WriteCapability<New<CommissionId>, Creator>,
+        birth: &CommissionBirth,
+        commission: &NewCommission,
+    ) -> anyhow::Result<()> {
+        let inserted = insert_commission(&self.0, *capability.thing().as_ref(), birth, commission);
+        if inserted.is_err() {
+            *self.1 = true;
         }
-        {
-            let mut tabs = self.0.tabs.lock().expect("MemBackend tabs mutex poisoned");
-            for tab in declared_tabs() {
-                let stored = StoredTab {
-                    commission_id: commission.id,
-                    tab,
-                    mode: VisibilityMode::default(),
-                };
-                tabs.insert(TabId::mint(), stored);
-            }
-        }
-        let mut participants = self
-            .0
-            .participants
-            .lock()
-            .expect("MemBackend participants mutex poisoned");
-        // A duplicate add is a no-op preserving the ORIGINAL created_at —
-        // seat acceptance re-adds whoever it seats.
-        participants
-            .entry((commission.id, commission.owner_id.clone()))
-            .or_insert(commission.created_at);
-        Ok(())
+        inserted
     }
 
     /// Contribute one element into a declared surface at `position = max + 1`
@@ -555,23 +613,31 @@ impl CommissionWrites for MemCommissionWrites {
         Ok(false)
     }
 
-    /// Remove the commission with its changelog entries, its participant rows,
-    /// its file links with their markups, its view grants and its whole
-    /// composition — tabs, elements, surface modes, and the Slot/Seat satellites
-    /// with a seat's pending offers. Lands on the unit's staged snapshot; an
-    /// absent commission is a no-op. Positioning (a card on a board) does NOT
-    /// cascade here, a known divergence; any future child map must. The blobs
+    /// Remove the commission with its node and every node under it, its changelog
+    /// entries, its participant rows, its file links with their markups, its view
+    /// grants and its whole composition — tabs, elements, surface modes, and the
+    /// Slot/Seat satellites with a seat's pending offers. Lands on the unit's staged
+    /// snapshot; an absent commission is a no-op. Positioning (a card on a board) does
+    /// NOT cascade here, a known divergence; any future child map must. The blobs
     /// stay, as in pg: the blob store sits outside the unit.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn delete(&mut self, id: &CommissionId) -> anyhow::Result<()> {
         let id = *id;
-        {
-            let mut commissions = self
+        let removed = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned")
+            .remove(&id);
+        if let Some(gone) = removed {
+            let mut nodes = self
                 .0
-                .commissions
+                .nodes
                 .lock()
-                .expect("MemBackend commissions mutex poisoned");
-            commissions.remove(&id);
+                .expect("MemBackend nodes mutex poisoned");
+            for node in subtree(&nodes, gone.node_id) {
+                nodes.remove(&node);
+            }
         }
         {
             let mut changelog = self
@@ -798,7 +864,7 @@ impl CommissionWrites for MemCommissionWrites {
         let Some(stored) = commissions.get_mut(id) else {
             return Ok(false);
         };
-        if stored.title.as_str() == title.as_str() {
+        if stored.title.as_str() == title.as_ref() {
             return Ok(false);
         }
         stored.title = StoredText::from(title.clone());
@@ -1031,7 +1097,7 @@ impl ChangelogWrites for MemChangelogWrites {
 /// so reads see writes issued through the same handle. There is no lock to take
 /// in process, so `find_for_update`/`tab_for_update` are their unlocked twins.
 #[async_trait]
-impl CommissionReads for MemCommissionWrites {
+impl CommissionReads for MemCommissionWrites<'_> {
     #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
         MemCommissionStore(self.0.clone()).find(id).await
@@ -1507,12 +1573,135 @@ impl ChangelogStore for MemChangelogStore {
     }
 }
 
-/// Commission seed/inspect helpers: they write straight to the shared state,
-/// skipping the begin()/accessor/commit() ceremony.
+/// A commission a test seeds: what the den's write gate decides for a create, chosen by
+/// the test, and what the create itself may choose.
+#[derive(Debug, Clone)]
+pub struct CommissionSeed {
+    /// The commission's id, which its node's segment carries.
+    pub id: CommissionId,
+    /// Its title, which its node is named by.
+    pub title: CommissionTitle,
+    /// Its node's level, which the commission's visibility copies.
+    pub level: Level,
+    /// The User who owns it.
+    pub owner_id: UserId,
+    /// When it was created.
+    pub created_at: DateTimeUtc,
+    /// The deadline, or `None`.
+    pub deadline: Option<DateTimeUtc>,
+    /// The maturity posture, or `None` while unrated.
+    pub maturity: Option<Maturity>,
+}
+
+impl CommissionSeed {
+    /// A Private commission titled `title` and owned by `owner_id`, with a fresh id, created
+    /// now, unrated and with no deadline.
+    pub fn private(title: CommissionTitle, owner_id: UserId) -> Self {
+        Self {
+            id: CommissionId::mint(),
+            title,
+            level: Level::Private,
+            owner_id,
+            created_at: chrono::Utc::now(),
+            deadline: None,
+            maturity: None,
+        }
+    }
+}
+
+/// The nodes the den's write gate writes for `seed`: its commission node, then its six
+/// Private entries, each named and segmented by its word.
+fn seed_nodes(seed: &CommissionSeed) -> anyhow::Result<Vec<NewNode>> {
+    let commission_node = NewNode {
+        id: NodeId::mint(),
+        parent: None,
+        segment: NodeSegment::try_from(seed.id.to_string())?,
+        node_type: NodeType::Commission,
+        level: seed.level,
+        name: StoredText::from(seed.title.clone()),
+    };
+    let parent = commission_node.id;
+    let mut nodes = vec![commission_node];
+    for entry_type in NodeType::VARIANTS {
+        let Some(word) = entry_word(*entry_type) else {
+            continue;
+        };
+        let entry = NewNode {
+            id: NodeId::mint(),
+            parent: Some(parent),
+            segment: NodeSegment::try_from(word)?,
+            node_type: *entry_type,
+            level: Level::Private,
+            name: StoredText::from(word.to_owned()),
+        };
+        nodes.push(entry);
+    }
+    Ok(nodes)
+}
+
+/// The commission checks PostgreSQL runs at commit, over one unit's staged state.
 impl MemBackend {
-    /// Persist a commission directly onto the shared store (test seed).
-    pub async fn create_commission(&self, commission: &NewCommission) -> anyhow::Result<()> {
-        MemCommissionWrites(self.clone()).create(commission).await
+    /// Refuses a state where a commission's node isn't its own, or a commission node has no
+    /// commission.
+    pub(crate) fn check_bindings(&self) -> anyhow::Result<()> {
+        let commissions = self
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        let nodes = self.nodes.lock().expect("MemBackend nodes mutex poisoned");
+        let every_one_bound = commissions.iter().all(|(id, stored)| {
+            nodes
+                .get(&stored.node_id)
+                .is_some_and(|node| is_own_node(*id, node))
+        });
+        anyhow::ensure!(
+            every_one_bound,
+            "a commission points only at its own node; nothing was kept"
+        );
+        let bound: HashSet<NodeId> = commissions.values().map(|stored| stored.node_id).collect();
+        let phantom = nodes
+            .values()
+            .any(|node| node.node_type == NodeType::Commission && !bound.contains(&node.id));
+        anyhow::ensure!(
+            !phantom,
+            "a commission node stands without its commission; nothing was kept"
+        );
+        Ok(())
+    }
+}
+
+/// Commission seed/inspect helpers. The inspect helpers read the shared state; the seed
+/// helpers write straight to it, skipping the begin()/accessor/commit() ceremony, except
+/// [`seed_bound_commission`](Self::seed_bound_commission), which commits a unit.
+impl MemBackend {
+    /// Seed `seed` as the den's write gate writes a create: its commission node at its
+    /// level named by its title, its six Private entries, and the commission bound to that
+    /// node, in one unit whose commit runs the binding checks. Answers the node's id.
+    pub async fn seed_bound_commission(&self, seed: &CommissionSeed) -> anyhow::Result<NodeId> {
+        let nodes = seed_nodes(seed)?;
+        let node = nodes
+            .first()
+            .map(|commission_node| commission_node.id)
+            .ok_or_else(|| anyhow::anyhow!("a seed writes its commission node first"))?;
+        let mut unit = self.unit();
+        {
+            let mut repo = unit.nodes();
+            for written in &nodes {
+                repo.create(written).await?;
+            }
+        }
+        let birth = CommissionBirth {
+            node,
+            owner_id: seed.owner_id.clone(),
+            created_at: seed.created_at,
+        };
+        let chosen = NewCommission {
+            maturity: seed.maturity,
+            deadline: seed.deadline,
+        };
+        insert_commission(&unit.staged, seed.id, &birth, &chosen)?;
+        Box::new(unit).commit().await?;
+        Ok(node)
     }
 
     /// Resolve a commission by id (inspect helper).

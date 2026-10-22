@@ -56,8 +56,8 @@ impl Database for PgDatabase {
 pub struct PgUnitOfWork {
     /// The open transaction (boxable — borrows nothing from the pool beyond a pooled connection).
     tx: Transaction<'static, Postgres>,
-    /// Set once a node statement fails, so the node view refuses later calls and
-    /// [`commit`](UnitOfWork::commit) refuses the unit.
+    /// Set once a node statement fails or a commission create is refused, so the node
+    /// view refuses later calls and [`commit`](UnitOfWork::commit) refuses the unit.
     failed: bool,
 }
 
@@ -69,9 +69,12 @@ impl UnitOfWork for PgUnitOfWork {
     }
 
     /// The commission repo over this transaction: reads (incl. locking
-    /// `*_for_update`) and writes on one connection.
+    /// `*_for_update`) and writes on one connection; a refused create ends the unit.
     fn commissions(&mut self) -> Box<dyn CommissionRepo + '_> {
-        Box::new(PgCommissionWrites { conn: &mut self.tx })
+        Box::new(PgCommissionWrites {
+            conn: &mut self.tx,
+            failed: &mut self.failed,
+        })
     }
 
     /// The changelog append surface over this transaction: an entry commits
@@ -129,7 +132,7 @@ impl UnitOfWork for PgUnitOfWork {
     async fn commit(mut self: Box<Self>) -> anyhow::Result<()> {
         if self.failed {
             self.tx.rollback().await?;
-            anyhow::bail!("a refused node statement ended this unit of work; nothing was kept");
+            anyhow::bail!("a refused statement ended this unit of work; nothing was kept");
         }
         let aborted = queries::health::is_reachable(&mut *self.tx).await.is_err();
         if aborted {

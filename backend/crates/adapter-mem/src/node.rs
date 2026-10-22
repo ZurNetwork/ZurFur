@@ -28,7 +28,7 @@ pub struct MemNodeWrites<'a> {
 }
 
 /// The fixed entry's word when `node_type` is one of the six entries.
-fn entry_word(node_type: NodeType) -> Option<&'static str> {
+pub(crate) fn entry_word(node_type: NodeType) -> Option<&'static str> {
     let word: &'static str = node_type.into();
     word.strip_prefix(ENTRY_PREFIX)
 }
@@ -121,7 +121,7 @@ fn refusal(nodes: &HashMap<NodeId, NodeRow>, node: &NewNode) -> Option<anyhow::E
 }
 
 /// Every node under `root`, `root` included.
-fn subtree(nodes: &HashMap<NodeId, NodeRow>, root: NodeId) -> Vec<NodeId> {
+pub(crate) fn subtree(nodes: &HashMap<NodeId, NodeRow>, root: NodeId) -> Vec<NodeId> {
     let mut found = vec![root];
     let mut next = 0;
     while let Some(current) = found.get(next).copied() {
@@ -295,5 +295,19 @@ impl NodeWrites for MemNodeWrites<'_> {
             nodes.remove(&gone);
         }
         Ok(true)
+    }
+}
+
+/// Node inspect helpers.
+impl MemBackend {
+    /// Every stored node, in unspecified order (inspect helper), so a test can see what a
+    /// write left behind anywhere in the tree.
+    pub fn all_nodes(&self) -> Vec<NodeRow> {
+        self.nodes
+            .lock()
+            .expect("MemBackend nodes mutex poisoned")
+            .values()
+            .cloned()
+            .collect()
     }
 }

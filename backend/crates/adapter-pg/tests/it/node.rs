@@ -926,13 +926,23 @@ mod contract {
 
     use adapter_pg::{PgDatabase, PgNodeStore};
     use domain::ports::{Database, NodeStore};
+    use test_support::seeder::CommissionSeeder;
 
-    /// A fresh migrated database's unit factory and node store, and the database kept alive.
-    async fn fresh() -> (Arc<dyn Database>, Arc<dyn NodeStore>, impl Sized) {
+    use crate::seed::MintingSeeder;
+
+    /// A fresh migrated database's unit factory, node store and commission seeder, and the
+    /// database kept alive.
+    async fn fresh() -> (
+        Arc<dyn Database>,
+        Arc<dyn NodeStore>,
+        Arc<dyn CommissionSeeder>,
+        impl Sized,
+    ) {
         let (pool, db) = test_support::pg::fresh_pool().await;
         let database: Arc<dyn Database> = Arc::new(PgDatabase::new(pool.clone()));
         let store: Arc<dyn NodeStore> = Arc::new(PgNodeStore::new(pool));
-        (database, store, db)
+        let seeder: Arc<dyn CommissionSeeder> = Arc::new(MintingSeeder);
+        (database, store, seeder, db)
     }
 
     test_support::node_contract_tests!(fresh);
