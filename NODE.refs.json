@@ -987,6 +987,11 @@
       "page": 59310081,
       "title": "The Changelog as the Only Record",
       "governs": "ports/changelog.rs x2"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "ports/commission.rs standing/standing_for_update (an unreadable stored visibility reads Private)"
     }
   ],
   "backend/crates/workflow/src/elements": [

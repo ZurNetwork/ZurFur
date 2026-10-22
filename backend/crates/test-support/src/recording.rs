@@ -12,8 +12,8 @@ use domain::elements::{
     character::Character,
     commission::{
         ChangelogEntry, Commission, CommissionComposition, CommissionFile, CommissionId,
-        CommissionMarkup, CommissionSummary, ElementId, FileDownload, FileKey, FileName,
-        FileSummary, GrantLevel, Seat, SeatInvitation, Slot,
+        CommissionMarkup, CommissionStanding, CommissionSummary, ElementId, FileDownload, FileKey,
+        FileName, FileSummary, GrantLevel, Seat, SeatInvitation, Slot,
     },
     did::Did,
     handle::Handle,
@@ -491,6 +491,15 @@ impl CommissionStore for RecordingCommissionStore {
         self.inner.find_summary(id).await
     }
 
+    async fn standing(
+        &self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<Option<CommissionStanding>> {
+        self.log.record("standing");
+        self.inner.standing(commission, user).await
+    }
+
     async fn current_column_of_workflow(
         &self,
         commission: &CommissionId,
@@ -655,3 +664,6 @@ impl WorkflowStore for RecordingWorkflowStore {
         self.inner.list_for_account(account).await
     }
 }
+
+#[cfg(test)]
+mod tests;

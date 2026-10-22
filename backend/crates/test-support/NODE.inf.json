@@ -25,6 +25,11 @@
       "node": false
     },
     {
+      "name": "src/commission_standing_contract.rs",
+      "role": "the shared commission-standing suite: one pub async fn per case over (&dyn Database, &dyn CommissionStore, &dyn ParticipantRows), checking the pool's standing and a unit's standing_for_update alike; ParticipantRows is each adapter's own write of the participant rows no port writes; commission_standing_contract_tests!(setup) writes one #[tokio::test] per case",
+      "node": false
+    },
+    {
       "name": "src/contract.rs",
       "role": "the generic PublicRecords conformance suite (mem + atproto)",
       "node": false
@@ -121,7 +126,7 @@
     },
     {
       "name": "src/pg_app/served.rs",
-      "role": "serve + serve_recording (the app's database reached through the statement proxy) + PgServed (base_url, live Runtime, the PDS, psql_command onto its database) + SignedIn + the dev-profile Config (example root key, PLC submission off); sessions through http-cookies' session_layer over PgSessionStore; served through http-stack's stack (serve_wrapped adds outer layers, PgServed carries the Detach); PgServed::sign_in / sign_in_with_cookie hand back a client sending Origin: base_url on every request (DenWorld's too); pg_runtime: the same live wiring served nowhere, for use-case tests on PostgreSQL; serve_configured changes the dev Config before connecting (the log canary plants its root key)",
+      "role": "serve + serve_recording (the app's database reached through the statement proxy) + PgServed (base_url, live Runtime, the PDS, psql_command onto its database) + SignedIn + the dev-profile Config (example root key, PLC submission off); sessions through http-cookies' session_layer over PgSessionStore; served through http-stack's stack (serve_wrapped adds outer layers, PgServed carries the Detach); PgServed::sign_in / sign_in_with_cookie hand back a client sending Origin: base_url on every request (DenWorld's too); pg_runtime: the same live wiring served nowhere, for use-case tests on PostgreSQL, and pg_runtime_recording, the same through the statement proxy into a StatementLog; serve_configured changes the dev Config before connecting (the log canary plants its root key)",
       "node": false
     },
     {
@@ -136,7 +141,12 @@
     },
     {
       "name": "src/recording.rs",
-      "role": "CallLog + recording wrappers over Database/UnitOfWork (nodes() delegates unrecorded), DidMinter, FileStore, CommissionStore, ChangelogStore (entries) and WorkflowStore (its find logged as find_workflow) — tests read the order of begin/commit/rollback, external calls and store reads; SubjectLog + recording wrappers over the identity reads (AccountStore, UserStore, CharacterStore, ProfileCache, ProfileSource) — tests read which reads ran and whose data each asked for",
+      "role": "CallLog + recording wrappers over Database/UnitOfWork (nodes() delegates unrecorded), DidMinter, FileStore, CommissionStore (standing logged as standing), ChangelogStore (entries) and WorkflowStore (its find logged as find_workflow) — tests read the order of begin/commit/rollback, external calls and store reads; SubjectLog + recording wrappers over the identity reads (AccountStore, UserStore, CharacterStore, ProfileCache, ProfileSource) — tests read which reads ran and whose data each asked for",
+      "node": false
+    },
+    {
+      "name": "src/recording/tests.rs",
+      "role": "pins the recording commission store logging standing",
       "node": false
     },
     {
@@ -146,7 +156,12 @@
     },
     {
       "name": "src/store_doubles.rs",
-      "role": "scripted wrappers over AccountStore and UserStore: real answers until a shared script makes a listing list a membership the store wouldn't, a read fail, a role read answer a stale role (as a read taken before a concurrent change would), or a user row read as gone; tests seed first, then script",
+      "role": "scripted wrappers over AccountStore and UserStore: real answers until a shared script makes a listing list a membership the store wouldn't, a read fail, a role read answer a stale role (as a read taken before a concurrent change would), or a user row read as gone; and the standing double: StandingScript scripts the pool's standing (ScriptedStanding over a CommissionStore) and a unit's standing_for_update (ScriptedStandingDatabase over a Database) apart per commission and viewer, so they can disagree; tests seed first, then script",
+      "node": false
+    },
+    {
+      "name": "src/store_doubles/tests.rs",
+      "role": "pins the standing double answering the pool's and the unit's scripts apart, and reading through unscripted",
       "node": false
     },
     {

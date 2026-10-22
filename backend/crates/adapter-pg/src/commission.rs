@@ -9,12 +9,13 @@ use domain::{
     elements::{
         commission::{
             Band, ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
-            CommissionMarkup, CommissionSummary, CommissionTitle, DeadlineStatus, DirectionStatus,
-            ElementId, ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel,
-            LapsedDeadline, LifecycleStep, Markup, MarkupKey, NewCommission, NewElement, NewSeat,
-            NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
-            SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
-            declares_surface, derive_deadline_status,
+            CommissionMarkup, CommissionRole, CommissionStanding, CommissionSummary,
+            CommissionTitle, DeadlineStatus, DirectionStatus, ElementId, ElementPayload,
+            ElementRow, ElementType, FileKey, FileSummary, GrantLevel, LapsedDeadline,
+            LifecycleStep, Markup, MarkupKey, NewCommission, NewElement, NewSeat, NewSlot, Seat,
+            SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress,
+            SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs, declares_surface,
+            derive_deadline_status,
         },
         did::Did,
         invitation::InvitationState,
@@ -728,6 +729,23 @@ fn archived_flag(archived: Option<bool>) -> bool {
     archived.unwrap_or(true)
 }
 
+/// Reads a standing row's columns leniently: the visibility through [`stored_level`]
+/// (an absent one as Private), an unknown owner match as not the owner, and the archive
+/// flag through [`archived_flag`]. Every unreadable column reads as the closed state.
+fn to_standing(
+    visibility: Option<&str>,
+    is_owner: Option<bool>,
+    is_participant: bool,
+    archived: Option<bool>,
+) -> CommissionStanding {
+    let owns = is_owner.unwrap_or(false);
+    CommissionStanding {
+        role: CommissionRole::held(owns, is_participant),
+        level: visibility.map_or(Level::Private, stored_level),
+        archived: archived_flag(archived),
+    }
+}
+
 /// Rebuilds the [`Commission`] from its persisted fields, re-validating each
 /// stored token through its domain gate; a value outside its vocabulary
 /// surfaces as an `Err`, never a panic or silent default. The one exception is
@@ -812,6 +830,33 @@ impl CommissionReads for PgCommissionWrites<'_> {
         to_commission(*id, row.into()).map(Some)
     }
 
+    /// Two statements on the unit's connection: a locking select of the probe inner-joined
+    /// to `commission` (`FOR NO KEY UPDATE OF commission`), then the participant probe. The
+    /// probe runs after the lock is granted, so it reads a snapshot taken under the lock and
+    /// sees any standing change committed while the lock was awaited. An absent id answers
+    /// `None` without the probe.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn standing_for_update(
+        &mut self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<Option<CommissionStanding>> {
+        let id = uuid::Uuid::from(*commission);
+        let rows = sql::standing_for_update(&mut *self.conn, id, user.as_ref()).await?;
+        // The join is on the primary key: at most one row.
+        let Some(row) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+        let participates = sql::is_participant(&mut *self.conn, id, user.as_ref()).await?;
+        let standing = to_standing(
+            Some(&row.visibility),
+            row.is_owner,
+            participates,
+            row.archived,
+        );
+        Ok(Some(standing))
+    }
+
     /// [`CommissionStore::is_participant`] on the unit's connection.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn is_participant(
@@ -862,6 +907,31 @@ impl CommissionStore for PgCommissionStore {
             archived: archived_flag(row.archived),
         });
         Ok(summary)
+    }
+
+    /// One statement that always answers one row: the probe left-joined to `commission`,
+    /// with the participant probe run whether or not the commission exists. `found`
+    /// false answers `None`; every other column is read leniently.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn standing(
+        &self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<Option<CommissionStanding>> {
+        let rows = sql::standing(&self.pool, uuid::Uuid::from(*commission), user.as_ref()).await?;
+        let [row] = <[sql::StandingRow; 1]>::try_from(rows).map_err(|rows| {
+            anyhow::anyhow!("the standing probe answered {} rows, not one", rows.len())
+        })?;
+        if !row.found.unwrap_or(false) {
+            return Ok(None);
+        }
+        let standing = to_standing(
+            row.visibility.as_deref(),
+            row.is_owner,
+            row.is_participant,
+            row.archived,
+        );
+        Ok(Some(standing))
     }
 
     /// Which column of `workflow_id` currently holds this commission, if any.

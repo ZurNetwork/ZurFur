@@ -11,12 +11,13 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
         Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission,
-        CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionSummary,
-        CommissionTitle, DeadlineStatus, DirectionStatus, ElementId, ElementPayload, ElementRow,
-        ElementType, FileKey, FileSummary, GrantLevel, LapsedDeadline, LifecycleStep,
-        NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
-        SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId,
-        TabName, TabRow, VisibilityMode, declared_tabs, declares_surface, derive_deadline_status,
+        CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionRole,
+        CommissionStanding, CommissionSummary, CommissionTitle, DeadlineStatus, DirectionStatus,
+        ElementId, ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel,
+        LapsedDeadline, LifecycleStep, NewChangelogEntry, NewCommission, NewElement, NewSeat,
+        NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
+        SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
+        declares_surface, derive_deadline_status,
     },
     did::Did,
     invitation::InvitationState,
@@ -1041,6 +1042,18 @@ impl CommissionReads for MemCommissionWrites {
         MemCommissionStore(self.0.clone()).find(id).await
     }
 
+    /// [`CommissionStore::standing`] over the unit's staged maps; there is no row to lock.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn standing_for_update(
+        &mut self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<Option<CommissionStanding>> {
+        MemCommissionStore(self.0.clone())
+            .standing(commission, user)
+            .await
+    }
+
     #[tracing::instrument(level = "debug", skip_all)]
     async fn is_participant(
         &mut self,
@@ -1099,6 +1112,43 @@ impl CommissionStore for MemCommissionStore {
             .lock()
             .expect("MemBackend commissions mutex poisoned");
         Ok(commissions.get(&id).map(|stored| stored.summarize(id)))
+    }
+
+    /// The viewer's role, the commission's level and its archive flag, or `None` for an
+    /// absent commission: Owner when `user` owns it, else Participant when they hold a
+    /// participant row, else no role.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn standing(
+        &self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<Option<CommissionStanding>> {
+        let facets = {
+            let commissions = self
+                .0
+                .commissions
+                .lock()
+                .expect("MemBackend commissions mutex poisoned");
+            commissions.get(commission).map(|stored| {
+                let owns = stored.owner_id == *user;
+                (owns, stored.visibility, stored.archived_at.is_some())
+            })
+        };
+        let Some((owns, level, archived)) = facets else {
+            return Ok(None);
+        };
+        let participates = self
+            .0
+            .participants
+            .lock()
+            .expect("MemBackend participants mutex poisoned")
+            .contains_key(&(*commission, user.clone()));
+        let standing = CommissionStanding {
+            role: CommissionRole::held(owns, participates),
+            level,
+            archived,
+        };
+        Ok(Some(standing))
     }
 
     /// The [`GrantLevel`] `user` holds on `commission`, or `None`. A key is
@@ -1599,6 +1649,15 @@ impl MemBackend {
             .expect("MemBackend participants mutex poisoned")
             .entry((commission, user))
             .or_insert(since);
+    }
+
+    /// Remove `user`'s participant row on `commission` (test-only), the owner's
+    /// included, so a test can read a standing that rests on no row.
+    pub fn remove_participant(&self, commission: CommissionId, user: &UserId) {
+        self.participants
+            .lock()
+            .expect("MemBackend participants mutex poisoned")
+            .remove(&(commission, user.clone()));
     }
 }
 

@@ -25,6 +25,7 @@ mod commission_reads;
 mod commission_seat;
 mod commission_seat_invitation;
 mod commission_slot;
+mod commission_standing;
 mod delete_stored_oauth_sessions;
 mod key_store;
 mod migration_steps;

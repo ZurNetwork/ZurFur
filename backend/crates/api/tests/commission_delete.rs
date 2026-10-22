@@ -32,9 +32,9 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
         ChannelPointer, Commission, CommissionFile, CommissionId, CommissionMarkup,
-        CommissionTitle, DeadlineStatus, DirectionStatus, ElementId, GrantLevel, LapsedDeadline,
-        NewCommission, NewElement, NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId,
-        element::TabRow,
+        CommissionStanding, CommissionTitle, DeadlineStatus, DirectionStatus, ElementId,
+        GrantLevel, LapsedDeadline, NewCommission, NewElement, NewSeat, NewSlot, SeatInvitation,
+        SeatInvitationId, TabId, element::TabRow,
     },
     did::Did,
     maturity::Maturity,
@@ -304,6 +304,14 @@ impl CommissionReads for FactBearingCommissions<'_> {
 
     async fn find_for_update(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
         self.0.find_for_update(id).await
+    }
+
+    async fn standing_for_update(
+        &mut self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<Option<CommissionStanding>> {
+        self.0.standing_for_update(commission, user).await
     }
 
     async fn is_participant(
