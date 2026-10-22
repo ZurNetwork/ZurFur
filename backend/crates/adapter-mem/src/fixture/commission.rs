@@ -11,8 +11,9 @@ use domain::{
         commission::{
             ChangelogEntryKind, Commission, CommissionFile, CommissionId, CommissionTitle,
             ElementId, FileKey, FileName, NewChangelogEntry, NewSlot, SlotTitle, SurfaceAddress,
-            SurfaceName, Visibility,
+            SurfaceName,
         },
+        level::Level,
         user::UserId,
         workflow::{WorkflowId, WorkflowName},
     },
@@ -166,7 +167,7 @@ fn seed_queue(backend: &MemBackend, account: &AccountId) {
     let stored = StoredWorkflow {
         account_id: account.clone(),
         name,
-        visibility: Visibility::Private,
+        visibility: Level::Private,
     };
     backend
         .workflows

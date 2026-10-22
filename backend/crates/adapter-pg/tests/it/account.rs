@@ -1607,7 +1607,7 @@ async fn hard_delete_severs_the_boards_while_the_commission_survives() {
             .await
             .expect("create the board");
         let column_name = "Open".parse::<ColumnName>().expect("column name");
-        let mut column = workflow.new_column(column_name, workflow.visibility.clone());
+        let mut column = workflow.new_column(column_name, workflow.visibility);
         column
             .push(commission_id)
             .expect("the column takes the card");

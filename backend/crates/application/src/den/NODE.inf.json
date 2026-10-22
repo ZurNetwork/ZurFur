@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/application/src/den",
-  "charted": "2026-10-17",
+  "charted": "2026-10-22",
   "short": "The Den read: the den Query and Zurfur's one Atta host",
   "is": "The den module: the `Den` namespace's two Query use cases (`root`, `node`) that turn a driver's path pieces into Atta segments and call Atta's resolver; Zurfur's type enum (`DenType`) with its per-type kind and content-not-shown facts; `DenThing`, the Account or commission an open node stands for; and `DenHost`, the one implementation of `atta::Host`, which records every node it answers for, admits from that record alone, and dispatches each folder through one exhaustive match to the arm of the team that owns it (den's own top level and posts here; identity's and commission's arms in their own modules' `den.rs`). Atta's types are imported only here; every public signature uses the application's own values.",
   "type": "code",
@@ -41,12 +41,12 @@
     },
     {
       "name": "den_type.rs",
-      "role": "DenType, the wire words, and the kind and content-not-shown tables",
+      "role": "DenType, its 21 wire words, and the kind and content-not-shown tables; commission.brief and commission.participants are files whose content isn't shown, and unserved: no arm projects them, so nothing lists them",
       "node": false
     },
     {
       "name": "host.rs",
-      "role": "DenHost, the one atta::Host: the request record, the viewer check, the dispatch to each team's arm; its record answers each open node's soft-deleted word and thing; `for_check` builds den's access check's host, whose reads name the viewer's root from the cache only",
+      "role": "DenHost, the one atta::Host: the request record, the viewer check, the dispatch to each team's arm; its record answers each open node's soft-deleted word and thing; `found` is the one place a name enters Atta (DisplayName::host_checked, banned everywhere else by application/clippy.toml, its #[expect] failing the gate if the ban stops matching); `for_check` builds den's access check's host, whose reads name the viewer's root from the cache only",
       "node": false
     },
     {
@@ -56,12 +56,12 @@
     },
     {
       "name": "level.rs",
-      "role": "NodeLevel: private, listed, public",
+      "role": "atta_level, the one map from kernel's Level to Atta's, run once in DenHost::found; den_level maps Atta's answer back for the output",
       "node": false
     },
     {
       "name": "name.rs",
-      "role": "DenName and DenNameError: the Den's name rule, the write-side check every naming write calls; showable_refusal names Atta's ShowableName refusals (Account founding) in the same DenNameError",
+      "role": "DenName (From kernel's NodeName) and DenNameError: the Den's name rule, the write-side check every naming write calls and the re-check every read makes of the names Atta answers with; showable_refusal names kernel's ShowableName refusals (Account founding) in the same DenNameError",
       "node": false
     },
     {
@@ -101,7 +101,7 @@
     },
     {
       "name": "read.rs",
-      "role": "the Queries' shared read: path parsing, the viewer's root, the Reader over any atta::Host plus a RecordLookup (each open node's soft-deleted word and thing, in one lookup), Atta's answers into output values; a crumb carries its entry's type, an unknown one a store error; Reader::tell_apart numbers a walked node and its crumbs, and every node and crumb carries Atta's number as its name_ordinal",
+      "role": "the Queries' shared read: path parsing, the viewer's root, the Reader over any atta::Host plus a RecordLookup (each open node's soft-deleted word and thing, in one lookup), Atta's answers into output values; each node's and crumb's name is re-checked by the Den's name rule on its way out, a refusal a store error whose text carries no name (read/proptests.rs walks stored text in through stored_name and out again); a crumb carries its entry's type, an unknown one a store error; Reader::tell_apart numbers a walked node and its crumbs, and every node and crumb carries Atta's number as its name_ordinal",
       "node": false
     },
     {

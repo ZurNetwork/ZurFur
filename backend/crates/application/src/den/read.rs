@@ -3,13 +3,15 @@
 
 use std::str::FromStr;
 
-use atta::{Caps, Entry, Host, Kind, Level, RealPath, Resolved, Resolver, Segment, View, Viewer};
+use atta::{
+    Caps, DisplayName, Entry, Host, Kind, RealPath, Resolved, Resolver, Segment, View, Viewer,
+};
 use domain::elements::user::UserId;
 
 use crate::den::{
     DenAccess, DenContent, DenCrumb, DenError, DenListing, DenName, DenNode, DenSegment, DenThing,
-    DenType, NameOrdinal, NodeKind, NodeLevel, PageToken, SoftDelete, TopLevel, host::DenHost,
-    names,
+    DenType, NameOrdinal, NodeKind, PageToken, SoftDelete, TopLevel, host::DenHost,
+    level::den_level, names,
 };
 
 /// The engine's read error as the Den's: every miss is the one not-found.
@@ -48,13 +50,14 @@ fn den_type(entry: &Entry) -> Result<DenType, DenError> {
     })
 }
 
-/// A level in the Den's own words.
-fn node_level(level: Level) -> NodeLevel {
-    match level {
-        Level::Private => NodeLevel::Private,
-        Level::Listed => NodeLevel::Listed,
-        Level::Public => NodeLevel::Public,
-    }
+/// An entry's name, re-checked by the Den's name rule on its way out of the engine; a name
+/// the rule refuses is a broken host. The error never carries the name.
+fn den_name(name: &DisplayName) -> Result<DenName, DenError> {
+    DenName::try_from(name.as_ref()).map_err(|refusal| {
+        let refused_name = anyhow::Error::new(refusal)
+            .context("the den host answered with a name the Den's rule refuses");
+        DenError::Store(refused_name)
+    })
 }
 
 /// A kind in the Den's own words.
@@ -78,7 +81,7 @@ fn segments(view: &View) -> Vec<DenSegment> {
 pub(crate) fn crumb(entry: &Entry) -> Result<DenCrumb, DenError> {
     let crumb = DenCrumb {
         segments: segments(&entry.view),
-        name: DenName::new(entry.name.clone()),
+        name: den_name(&entry.name)?,
         name_ordinal: entry.ordinal.map(NameOrdinal::new),
         den_type: den_type(entry)?,
     };
@@ -169,7 +172,7 @@ impl<'h> Reader<'h> {
                     })?;
                 DenAccess::Open {
                     kind: node_kind(*kind),
-                    own_level: node_level(*own_level),
+                    own_level: den_level(*own_level),
                     content_not_shown: den_type.content_not_shown(),
                     soft_delete,
                     thing,
@@ -178,7 +181,7 @@ impl<'h> Reader<'h> {
         };
         let node = DenNode {
             segments: segments(&entry.view),
-            name: DenName::new(entry.name.clone()),
+            name: den_name(&entry.name)?,
             name_ordinal: entry.ordinal.map(NameOrdinal::new),
             den_type,
             mount: entry.mount,
@@ -241,5 +244,7 @@ impl<'h> Reader<'h> {
     }
 }
 
+#[cfg(test)]
+mod proptests;
 #[cfg(test)]
 mod tests;

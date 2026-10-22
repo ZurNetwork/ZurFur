@@ -17,7 +17,14 @@ thiserror = { workspace = true }
 # Newtype and enum derives; see the workspace notes on both.
 derive_more = { workspace = true }
 strum = { workspace = true }
+# NodeId, a node's UUIDv7 key.
+uuid = { workspace = true }
+# The node port's async traits and their opaque store errors.
+async-trait = { workspace = true }
+anyhow = { workspace = true }
 
 [dev-dependencies]
 # Property tests for the StringBuilder invariants.
 proptest = { workspace = true }
+# The node segment tests read the shared case file contract/golden/segments.json.
+serde_json = { workspace = true }

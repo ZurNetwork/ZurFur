@@ -1,5 +1,6 @@
-use crate::elements::commission::{CommissionId, Visibility};
+use crate::elements::commission::CommissionId;
 use identity::elements::account::AccountId;
+use kernel::elements::level::Level;
 
 use super::{
     errors::WorkflowError,
@@ -17,12 +18,12 @@ pub struct Workflow {
     /// Sorted by [`Column::position`]. Private so only the [`LexOrdering`]
     /// methods, which hold the cap, the unique names and the order, touch it.
     pub(super) columns: Vec<Column>,
-    pub visibility: Visibility,
+    pub visibility: Level,
 }
 
 impl Workflow {
     /// A fresh, empty board with a minted id.
-    pub fn new(name: WorkflowName, account_id: AccountId, visibility: Visibility) -> Self {
+    pub fn new(name: WorkflowName, account_id: AccountId, visibility: Level) -> Self {
         Workflow {
             id: WorkflowId::from(uuid::Uuid::now_v7()),
             name,
@@ -39,7 +40,7 @@ impl Workflow {
         id: WorkflowId,
         name: WorkflowName,
         account_id: AccountId,
-        visibility: Visibility,
+        visibility: Level,
         columns: Vec<Column>,
     ) -> Result<Self, WorkflowError> {
         if columns.len() > MAX_COLUMNS_PER_WORKFLOW {
@@ -71,7 +72,7 @@ impl Workflow {
 
     /// A column for this board, not yet on it: [`insert`](LexOrdering::insert)
     /// assigns its key.
-    pub fn new_column(&self, name: ColumnName, visibility: Visibility) -> Column {
+    pub fn new_column(&self, name: ColumnName, visibility: Level) -> Column {
         Column {
             id: ColumnId::from(uuid::Uuid::now_v7()),
             workflow_id: self.id,
@@ -113,7 +114,7 @@ pub struct Column {
     pub id: ColumnId,
     pub workflow_id: WorkflowId,
     pub name: ColumnName,
-    pub visibility: Visibility,
+    pub visibility: Level,
     /// Its key among the siblings on the board.
     pub position: Position,
     /// The cards in board order. Private so a card can only enter once.
@@ -126,7 +127,7 @@ impl Column {
         id: ColumnId,
         workflow_id: WorkflowId,
         name: ColumnName,
-        visibility: Visibility,
+        visibility: Level,
         position: Position,
         commissions: Vec<CommissionId>,
     ) -> Result<Self, WorkflowError> {

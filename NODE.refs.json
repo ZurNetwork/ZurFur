@@ -246,9 +246,14 @@
       "governs": "the keeper read leaves tombstoned Characters out; empty on PostgreSQL until character storage lands"
     },
     {
+      "page": 2026093001,
+      "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
+      "governs": "migrations/20261022052438_create_node.sql: the node table holds each node's key, real parent, segment, type, level and name (D24); a node is never moved or retyped; src/node.rs and queries/node/: the node port over that table; tests/it/node.rs and tests/it/node_backfill.rs"
+    },
+    {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "queries/account/list_deactivated_for_owner.sql: deactivated Accounts read by their Owner only; queries/commission/find_summary.sql: the narrow read behind the Den commission node (D21); src/commission.rs stored_visibility: an unreadable stored visibility counts as Private in find, find_for_update, list_owned_by, list_participating and find_summary (D22, D21)"
+      "governs": "queries/account/list_deactivated_for_owner.sql: deactivated Accounts read by their Owner only; queries/commission/find_summary.sql: the narrow read behind the Den commission node (D21); src/commission.rs stored_level: an unreadable stored visibility counts as Private in find, find_for_update, list_owned_by, list_participating and find_summary (D22, D21); migrations/20261022052438_create_node.sql: each commission's node named by its title (D6), its fixed entries (D9) and its Slots' nodes, every entry and Slot node Private"
     }
   ],
   "backend/crates/api": [
@@ -660,7 +665,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "D1 a library below application, reached through one host trait answered by an exhaustive match; D2 keys are path segments and identity is the real path; D3 standing on the real subtree; D5 entry levels; D21–D24 one not-found, no stored level means Private, the mount guard, opaque page tokens; D23 one folder never shows two entries with the same name: ordinal.rs and list.rs number equal names at read time, per viewer; D24 the listing order"
+      "governs": "D1 a library below application, reached through one host trait answered by an exhaustive match; D2 keys are path segments and identity is the real path; D3 standing on the real subtree; D5 entry levels; D21–D24 one not-found, no stored level means Private, the mount guard, opaque page tokens; D23 one folder never shows two entries with the same name: ordinal.rs and list.rs number equal names at read time, per viewer; D24 the listing order; D19 (amended 2026-10-15) Atta takes names its host already checked: metadata.rs's DisplayName holds no rule"
     }
   ],
   "backend/crates/cli": [
@@ -707,6 +712,13 @@
       "page": 40992770,
       "title": "The API Contract",
       "governs": "Protobuf as the Independent IDL; src/lib.rs, src/main.rs: governs why generation is pure-Rust/protox, the committed-output + drift-test pattern, and why `service` blocks generate nothing"
+    }
+  ],
+  "backend/crates/domain": [
+    {
+      "page": 57081857,
+      "title": "Actor Addressing — DID as the Only Identifier, Everywhere",
+      "governs": "tests/it/no_actor_port_takes_a_node_id.rs: no port of identity, nor of kernel but the node port, takes or returns a NodeId — an actor is addressed by DID"
     }
   ],
   "backend/crates/domain/src": [
@@ -879,14 +891,29 @@
       "governs": "src/elements/maturity.rs"
     },
     {
+      "page": 34013187,
+      "title": "Identities — the Actor Super-Table, Kind-Checked References & the Polymorphism Ban",
+      "governs": "src/elements/node.rs: a NodeId is no actor id; nodes are keyed by segment under their parent"
+    },
+    {
       "page": 57081857,
-      "title": "Actor Addressing",
-      "governs": "src/elements/did.rs"
+      "title": "Actor Addressing — DID as the Only Identifier, Everywhere",
+      "governs": "src/elements/did.rs and src/elements/node.rs: actors stay addressed by DID; a NodeId is internal to the Den, never an actor's address — no actor port takes or returns one, guarded by domain/tests/it/no_actor_port_takes_a_node_id.rs"
     },
     {
       "page": 64290818,
       "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
       "governs": "newtype derive rules: path-qualified derives, thiserror owns errors, Deref dropped, FromStr/From derived only where the inner type carries the rule, IdError retired; strum allowed here exact-pinned with token tests; dev-dep proptest — StringBuilder properties beside their leaf (x/proptests.rs)"
+    },
+    {
+      "page": 2026093001,
+      "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
+      "governs": "src/elements/node.rs and src/ports/node.rs: node data (D23–D25) — a node's key, real parent, segment, type, level and name; no move, no retype"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "src/elements/name.rs: D19 names are validated (amended 2026-10-15: the rule lives in the domain, the checked value every name type wraps) — ShowableName and NodeName; src/elements/node.rs: D2 keys are path segments — NodeSegment, the segment rule shared through contract/golden/segments.json"
     }
   ],
   "backend/crates/shared": [

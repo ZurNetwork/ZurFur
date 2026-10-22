@@ -15,6 +15,7 @@ mod file_store;
 mod fixed_sign_in;
 pub mod fixture;
 mod identity_resolver;
+mod node;
 mod public_records;
 mod workflow;
 pub use actor_identity::{MemActorIdentityStore, MemActorIdentityWrites, StoredActorIdentity};
@@ -26,6 +27,7 @@ pub use commission::{
 pub use file_store::MemFileStore;
 pub use fixed_sign_in::FixedSignIn;
 pub use identity_resolver::MemIdentityResolver;
+pub use node::{MemNodeStore, MemNodeWrites};
 pub use public_records::MemPublicRecords;
 pub use workflow::{MemColumnStore, MemColumnWrites, MemWorkflowStore, MemWorkflowWrites};
 use workflow::{StoredColumn, StoredWorkflow};
@@ -59,6 +61,7 @@ use domain::elements::{
     did::Did,
     handle::{AtHandle, Handle},
     invitation::{Invitation, InvitationId, InvitationState},
+    node::{NodeId, NodeRow},
     plc_operation::PlcOperationRecord,
     profile::Profile,
     role::{Role, RoleAlias},
@@ -72,8 +75,9 @@ use domain::ports::{
     AccountReads, AccountRepo, AccountStore, AccountWrites, ActorIdentityStore,
     ActorIdentityWrites, Authenticator, BrowserBinding, BugReportStore, BugReportWrites,
     ChangelogStore, ChangelogWrites, ColumnStore, ColumnWrites, CommissionRepo, CommissionStore,
-    Database, DidMinter, FileStore, HandleTaken, KeyStore, PlcOperationLog, ProfileCache,
-    ProfileSource, SigninStarted, UnitOfWork, UserStore, UserWrites, WorkflowStore, WorkflowWrites,
+    Database, DidMinter, FileStore, HandleTaken, KeyStore, NodeRepo, NodeStore, PlcOperationLog,
+    ProfileCache, ProfileSource, SigninStarted, UnitOfWork, UserStore, UserWrites, WorkflowStore,
+    WorkflowWrites,
 };
 
 /// The shared in-memory private store: every map behind its own `Arc<Mutex<…>>`,
@@ -158,6 +162,9 @@ pub struct MemBackend {
     /// The rate limit's lock, the fake of pg's reporter row lock: one for every
     /// reporter, held by a unit from its locked count until it ends. Shared, NOT staged.
     pub(crate) bug_report_filing: Arc<tokio::sync::Mutex<()>>,
+    /// The Den's nodes keyed by [`NodeId`]. Staged, so a node and its subtree
+    /// commit or vanish with the rest of the unit.
+    pub(crate) nodes: Arc<Mutex<HashMap<NodeId, NodeRow>>>,
 }
 
 impl MemBackend {
@@ -205,6 +212,11 @@ impl MemBackend {
     /// The [`BugReportStore`] read port over this backend's shared state.
     pub fn bug_report_store(&self) -> Arc<dyn BugReportStore> {
         Arc::new(MemBugReportStore(self.clone()))
+    }
+
+    /// The [`NodeStore`] read port over this backend's shared state.
+    pub fn node_store(&self) -> Arc<dyn NodeStore> {
+        Arc::new(MemNodeStore(self.clone()))
     }
 
     /// The [`ProfileCache`] read port over this backend's shared state.
@@ -368,6 +380,12 @@ impl MemBackend {
                 self.bug_reports
                     .lock()
                     .expect("MemBackend bug_reports mutex poisoned")
+                    .clone(),
+            )),
+            nodes: Arc::new(Mutex::new(
+                self.nodes
+                    .lock()
+                    .expect("MemBackend nodes mutex poisoned")
                     .clone(),
             )),
         }
@@ -660,6 +678,14 @@ impl MemBackend {
                 .bug_reports
                 .lock()
                 .expect("MemBackend bug_reports mutex poisoned"),
+        );
+        merge_map(
+            &mut self.nodes.lock().expect("MemBackend nodes mutex poisoned"),
+            &base.nodes.lock().expect("MemBackend nodes mutex poisoned"),
+            &staged
+                .nodes
+                .lock()
+                .expect("MemBackend nodes mutex poisoned"),
         );
     }
 
@@ -1883,6 +1909,7 @@ impl Database for MemDatabase {
             base,
             staged,
             bug_report_filing: None,
+            node_spent: false,
         }))
     }
 }
@@ -1904,6 +1931,9 @@ pub struct MemUnitOfWork {
     /// The bug-report filing lock once this unit has taken it; released when the
     /// unit is dropped, after `commit` has merged.
     bug_report_filing: Option<tokio::sync::OwnedMutexGuard<()>>,
+    /// Set once a node call is refused: every later node call fails, and commit
+    /// returns an error and keeps nothing, as a failed PostgreSQL unit does.
+    node_spent: bool,
 }
 
 #[async_trait]
@@ -1961,8 +1991,23 @@ impl UnitOfWork for MemUnitOfWork {
         })
     }
 
+    /// The node repo over this unit's staged snapshot; a refused node call spends the unit.
+    fn nodes(&mut self) -> Box<dyn NodeRepo + '_> {
+        Box::new(MemNodeWrites {
+            staged: self.staged.clone(),
+            spent: &mut self.node_spent,
+        })
+    }
+
+    /// Merges the staged writes onto the shared store; a spent unit merges nothing
+    /// and returns an error.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
+        // A spent unit's `base`/`staged` are dropped unmerged, rolling back.
+        anyhow::ensure!(
+            !self.node_spent,
+            "a refused node call ended this unit of work; nothing was kept"
+        );
         // Without this call `base`/`staged` are simply dropped, rolling back.
         self.shared.merge(&self.base, &self.staged);
         Ok(())

@@ -28,7 +28,6 @@ use crate::ports::WithPorts;
 
 pub use den_type::DenType;
 pub use kind::NodeKind;
-pub use level::NodeLevel;
 pub use name::{DenName, DenNameError};
 pub use name_ordinal::{NameOrdinal, NameOrdinalError};
 pub use output::{DenAccess, DenContent, DenCrumb, DenListing, DenNode};
@@ -37,10 +36,7 @@ pub use segment::DenSegment;
 pub use soft_delete::SoftDelete;
 pub use thing::DenThing;
 
-pub(crate) use atta::Level;
-pub(crate) use atta::NodeName;
 pub(crate) use atta::Segment;
-pub(crate) use atta::ShowableName;
 pub(crate) use context::{DenContext, RootNaming};
 pub(crate) use name::showable_refusal;
 pub(crate) use place::STANDING;

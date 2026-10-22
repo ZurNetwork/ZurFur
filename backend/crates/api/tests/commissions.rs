@@ -16,11 +16,7 @@
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
-use domain::elements::{
-    commission::{LifecycleStep, Visibility},
-    did::Did,
-    profile::Profile,
-};
+use domain::elements::{commission::LifecycleStep, did::Did, level::Level, profile::Profile};
 use serde_json::json;
 use test_support::http::{client, serve, sign_in};
 
@@ -71,7 +67,7 @@ async fn signed_in_user_creates_a_commission_and_owns_it() {
         "a new commission is born in Draft",
     );
     assert!(
-        matches!(commission.visibility, Visibility::Private),
+        matches!(commission.visibility, Level::Private),
         "a new commission is born Private (AC3)",
     );
 }

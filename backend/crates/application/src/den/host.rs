@@ -12,6 +12,7 @@ use crate::{
     den::{
         DenContext, DenMount, DenType, Node, NodeKind, NodeState, Place, RootNaming, TopLevel,
         admission::admission,
+        level::atta_level,
         names,
         place::Parent,
         post,
@@ -20,11 +21,12 @@ use crate::{
     user,
 };
 use atta::{
-    Access, Admission, Found, Host, HostError, Kind, Level, Metadata, Mount, Reach, RealPath,
+    Access, Admission, DisplayName, Found, Host, HostError, Kind, Metadata, Mount, Reach, RealPath,
     Segment, Type, Viewer,
 };
 use domain::elements::{
-    account::AccountId, character::CharacterId, commission::CommissionId, did::Did, user::UserId,
+    account::AccountId, character::CharacterId, commission::CommissionId, did::Did, level::Level,
+    user::UserId,
 };
 
 /// What the host recorded about a node it answered for in this request.
@@ -126,19 +128,24 @@ impl<'a> DenHost<'a> {
 
     /// The engine's answer for an arm's node in the folder `parent` at `parent_path`, recorded
     /// under its real path; `None` when its place can't be a child of that folder or makes no
-    /// key.
+    /// key. The one place a name enters the engine: the arm's name already passed the rule.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one construction of the engine's display name, from a name the rule passed"
+    )]
     fn found(&self, parent_path: &RealPath, parent: &Parent, node: Node) -> Option<Found> {
         if !node.place.is_child_of(parent) {
             return None;
         }
         let parent = parent_path;
         let key = node.place.key()?;
+        let name = DisplayName::host_checked(node.name.to_string());
         let metadata = Metadata {
             key: key.clone(),
             parent: Some(parent.clone()),
             typ: type_key(node.place.den_type()),
-            level: node.level,
-            name: node.name,
+            level: atta_level(node.level),
+            name,
             symlink_target: None,
         };
         let recorded = Recorded {
@@ -307,8 +314,8 @@ impl Host for DenHost<'_> {
         let Some(folder) = self.folder(parent) else {
             return Ok(Vec::new());
         };
-        let nodes = self.children_at(&folder).await.map_err(host_error)?;
-        let found = nodes
+        let children = self.children_at(&folder).await.map_err(host_error)?;
+        let found = children
             .into_iter()
             .filter_map(|node| self.found(parent, &folder, node))
             .collect();

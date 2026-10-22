@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/application",
-  "charted": "2026-10-17",
+  "charted": "2026-10-22",
   "short": "Use cases: one #[use_case] method each",
   "is": "The application layer (DD 55836674): one `#[use_case]` method per use case on a per-entity namespace (`Accounts`, `Commissions`, `Users`, `Characters`), called by every driver (api, cli), holding orchestration between routing and domain — organized as `account/` and `commission/` entity trees, the flat `user` and `character` modules, the `bug_report` module (the `BugReports` namespace: `file`, a rate-limited filing that locks the reporter and counts inside the unit it files in, and `list`, the reports oldest first), the `den` module (the Den read: the `Den` namespace's Queries over Atta and Zurfur's one Atta host, whose arms live in each owning module's `den.rs`), and the `transaction()` orchestrator for callers that are not use-case methods.",
   "type": "code",
@@ -20,7 +20,8 @@
     "A use case need not have an actor: `commission::sweep_deadlines` is the system acting on an injected `now` — a free fn over `transaction()`, since `#[use_case]` needs `self`.",
     "Only `lib.rs` and `ports.rs` name the macros crate: `crate::use_case` and `crate::ports::WithPorts` are what the rest of the crate imports.",
     "A unit never opens inside another use case's unit, nor after a use case it called opened and settled its own (pure delegation stays legal); debug builds assert it (`lazy_unit.rs`).",
-    "A Query use case never writes: the macro rejects a `Query`-typed parameter beside `#[unit]`/`#[lazy_unit]`. `application::transaction` is disallowed in this package's clippy.toml; only `sweep_deadlines` and test seeding allow it, each with a reason."
+    "A Query use case never writes: the macro rejects a `Query`-typed parameter beside `#[unit]`/`#[lazy_unit]`. `application::transaction` is disallowed in this package's clippy.toml; only `sweep_deadlines` and test seeding allow it, each with a reason.",
+    "Nothing here, nor in api, cli or composition, reaches the Den's node port yet: clippy.toml bans `UnitOfWork::nodes` here and in api, and `tests/node_and_name_seams.rs` refuses any production identifier that names the port, with no exemption. So no production identifier is named `nodes`, a local list of a folder's nodes included (`children`, `candidates`)."
   ],
   "entry_points": [
     "src/lib.rs",
@@ -37,12 +38,12 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "deps shared+domain+application-macros+atta+async-trait+derive_more+anyhow+thiserror+strum+tracing+serde_json+tokio(io-util for upload streaming, rt for the nested-unit task-local and the profile lookup's spawn, sync+time for its watch and bounded wait); dev-deps test-support+composition+adapter-mem (the fixture world the Den tests walk, and the fake PDS the profile-wait tests slow down)+proptest+tokio(test-util for the paused-clock profile-wait tests)+uuid (fixed test ids)+chrono+async-trait",
+      "role": "deps shared+domain+application-macros+atta+async-trait+derive_more+anyhow+thiserror+strum+tracing+serde_json+tokio(io-util for upload streaming, rt for the nested-unit task-local and the profile lookup's spawn, sync+time for its watch and bounded wait); dev-deps test-support+composition+adapter-mem (the fixture world the Den tests walk, and the fake PDS the profile-wait tests slow down)+proptest+tokio(test-util for the paused-clock profile-wait tests)+uuid (fixed test ids)+chrono+async-trait+syn+quote+proc-macro2 (the source scans)",
       "node": false
     },
     {
       "name": "clippy.toml",
-      "role": "disallowed-methods: Database::begin, UnitOfWork::commit, UnitOfWork::rollback and `application::transaction` — only the `#[use_case]` wrapper and `LazyUnit` (and, under an `#[allow]`, `transaction()` callers) may use them",
+      "role": "disallowed-methods: Database::begin, UnitOfWork::commit, UnitOfWork::rollback and `application::transaction` — only the `#[use_case]` wrapper and `LazyUnit` (and, under an `#[allow]`, `transaction()` callers) may use them; atta::DisplayName::host_checked — only DenHost::found (and, under an `#[allow]`, test doubles); UnitOfWork::nodes — nothing yet, each delegating unit-of-work double's `fn nodes` under an `#[expect]`",
       "node": false
     },
     {
@@ -183,6 +184,11 @@
     {
       "name": "tests/dep_guard.rs",
       "role": "cargo-tree witness — application must never link an adapter, composition, or an HTTP stack (normal edges only; the dev graph is deliberately cyclic)",
+      "node": false
+    },
+    {
+      "name": "tests/node_and_name_seams.rs",
+      "role": "the scan that no production source of application, api, cli or composition reaches the node port (nodes, NodeRepo, NodeStore, NodeReads, NodeWrites, PgNodeStore, PgNodeWrites, node_store, MemNodeStore, MemNodeWrites) or names atta::DisplayName::host_checked outside DenHost::found: every identifier, macro bodies included, and every alias made anywhere in the workspace; tests.rs and proptests.rs skipped only when their parent declares them under #[cfg(test)]; fixture sources and trees for each evasion",
       "node": false
     },
     {

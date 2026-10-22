@@ -230,7 +230,7 @@ async fn a_stranger_s_causes_run_the_same_statements_through_the_den_routes() {
     let stranger = stranger(world);
 
     for (target, visibility) in den_stranger_targets(world) {
-        world.set_visibility(target.id, visibility.clone()).await;
+        world.set_visibility(target.id, visibility).await;
         let lifecycle = world.archived_or_live(&target);
         for pair in den_stranger_pairs(&target) {
             let label = format!("{visibility} {lifecycle}, {}", pair.label);
@@ -286,7 +286,7 @@ async fn a_stranger_s_causes_run_the_same_statements_through_commission_s_reads(
     let stranger = stranger(world);
 
     for (target, visibility) in stranger_targets(world) {
-        world.set_visibility(target.id, visibility.clone()).await;
+        world.set_visibility(target.id, visibility).await;
         let lifecycle = world.archived_or_live(&target);
         for pair in commission_read_stranger_pairs(&target) {
             let label = format!("{visibility} {lifecycle}, {}", pair.label);
@@ -300,9 +300,7 @@ async fn a_stranger_s_causes_run_the_same_statements_through_commission_s_reads(
         }
     }
     for (visibility, pair, code) in commission_read_live_pairs(world) {
-        world
-            .set_visibility(world.untitled.id, visibility.clone())
-            .await;
+        world.set_visibility(world.untitled.id, visibility).await;
         let label = format!("{visibility}, live, {}", pair.label);
 
         let runs =

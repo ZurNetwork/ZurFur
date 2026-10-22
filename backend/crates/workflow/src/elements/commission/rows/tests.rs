@@ -5,7 +5,7 @@ fn summary(title: &str) -> CommissionSummary {
     CommissionSummary {
         id: CommissionId::from(uuid::Uuid::now_v7()),
         title: StoredText::from(title.to_owned()),
-        visibility: Visibility::Private,
+        visibility: Level::Private,
         archived: false,
     }
 }

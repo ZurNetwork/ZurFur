@@ -14,6 +14,7 @@ pub mod http;
 pub mod identity_resolver_contract;
 pub mod log_capture;
 pub mod membership;
+pub mod node_contract;
 mod pds;
 pub mod pg;
 pub mod pg_app;

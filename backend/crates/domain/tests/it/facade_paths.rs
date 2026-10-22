@@ -10,10 +10,14 @@ use std::any::type_name;
 /// the pin: a module that stops resolving fails to compile.
 #[allow(unused_imports, reason = "each import pins one façade path")]
 mod element_modules {
+    use domain::elements::node::{
+        MAX_SEGMENT_BYTES, NewNode, NodeId, NodeRow, NodeSegment, NodeSegmentError, NodeType,
+        UnknownNodeType,
+    };
     use domain::elements::{
         account, account_keys, achievement, actor_identity, blob, bug_report, character,
-        commission, did, handle, invitation, markdown, maturity, plc_operation, profile,
-        public_record, role, text, user, user_account, workflow,
+        commission, did, handle, invitation, level, markdown, maturity, name, node, plc_operation,
+        profile, public_record, role, text, user, user_account, workflow,
     };
     use domain::{datetime, string_builder};
 }
@@ -41,10 +45,10 @@ fn every_flat_port_name_resolves_to_its_crate() {
         BugReportStore, BugReportWrites, ChangelogStore, ChangelogWrites, CharacterStore,
         CharacterWrites, ColumnStore, ColumnWrites, CommissionReads, CommissionRepo,
         CommissionStore, CommissionWrites, Database, DidBelongsToAnotherActor, DidMinter,
-        ElementNotFound, FileStore, HandleTaken, IdentityResolver, KeyStore, PlcOperationLog,
-        ProfileCache, ProfileSource, PublicRecords, PublicRecordsError, ResolveError,
-        SigninStarted, Unit, UnitOfWork, UnknownSurface, UnknownTab, UserStore, UserWrites,
-        WorkflowStore, WorkflowWrites,
+        ElementNotFound, FileStore, HandleTaken, IdentityResolver, KeyStore, NodeReads, NodeRepo,
+        NodeStore, NodeWrites, PlcOperationLog, ProfileCache, ProfileSource, PublicRecords,
+        PublicRecordsError, ResolveError, SegmentTaken, SigninStarted, Unit, UnitOfWork,
+        UnknownSurface, UnknownTab, UserStore, UserWrites, WorkflowStore, WorkflowWrites,
     };
 
     let identity_names = [
@@ -93,6 +97,13 @@ fn every_flat_port_name_resolves_to_its_crate() {
         type_name::<dyn WorkflowStore>(),
         type_name::<dyn WorkflowWrites>(),
     ];
+    let kernel_names = [
+        type_name::<dyn NodeReads>(),
+        type_name::<dyn NodeRepo>(),
+        type_name::<dyn NodeStore>(),
+        type_name::<dyn NodeWrites>(),
+        type_name::<SegmentTaken>(),
+    ];
     let facade_names = [
         type_name::<dyn Database>(),
         type_name::<dyn UnitOfWork>(),
@@ -106,6 +117,11 @@ fn every_flat_port_name_resolves_to_its_crate() {
             workflow_names
                 .iter()
                 .filter(|name| defining_crate(name) != "workflow"),
+        )
+        .chain(
+            kernel_names
+                .iter()
+                .filter(|name| defining_crate(name) != "kernel"),
         )
         .chain(
             facade_names

@@ -16,11 +16,11 @@ use domain::elements::{
         ElementType, FileKey, FileSummary, GrantLevel, LapsedDeadline, LifecycleStep,
         NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
         SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId,
-        TabName, TabRow, Visibility, VisibilityMode, declared_tabs, declares_surface,
-        derive_deadline_status,
+        TabName, TabRow, VisibilityMode, declared_tabs, declares_surface, derive_deadline_status,
     },
     did::Did,
     invitation::InvitationState,
+    level::Level,
     maturity::Maturity,
     text::StoredText,
     user::UserId,
@@ -127,8 +127,8 @@ pub(crate) struct StoredCommission {
     pub(crate) owner_id: UserId,
     /// Its single [`LifecycleStep`]; a freshly created commission is `Draft`.
     pub(crate) lifecycle_step: LifecycleStep,
-    /// Who may see it; a freshly created commission is [`Visibility::Private`].
-    pub(crate) visibility: Visibility,
+    /// Who may see it; a freshly created commission is [`Level::Private`].
+    pub(crate) visibility: Level,
     /// The nullable-but-fixed deadline envelope field.
     pub(crate) deadline: Option<domain::datetime::DateTimeUtc>,
     /// The maturity posture, or `None` while unrated; one field, so pg's
@@ -152,7 +152,7 @@ impl StoredCommission {
         CommissionSummary {
             id,
             title: self.title.clone(),
-            visibility: self.visibility.clone(),
+            visibility: self.visibility,
             archived: self.archived_at.is_some(),
         }
     }
@@ -172,7 +172,7 @@ impl StoredCommission {
             title: self.title.clone(),
             owner_id: self.owner_id.clone(),
             lifecycle_step: self.lifecycle_step.clone(),
-            visibility: self.visibility.clone(),
+            visibility: self.visibility,
             deadline: self.deadline,
             maturity: self.maturity,
             direction_status: self.direction_status,
@@ -364,7 +364,7 @@ impl CommissionWrites for MemCommissionWrites {
                     title: StoredText::from(commission.title.clone()),
                     owner_id: commission.owner_id.clone(),
                     lifecycle_step: commission.lifecycle_step.clone(),
-                    visibility: commission.visibility.clone(),
+                    visibility: commission.visibility,
                     deadline: commission.deadline,
                     maturity: commission.maturity,
                     direction_status: commission.direction_status,

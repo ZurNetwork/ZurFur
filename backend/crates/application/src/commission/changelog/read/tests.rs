@@ -1,5 +1,5 @@
 use adapter_mem::fixture::{alice, bob, old_sketch, untitled};
-use domain::elements::commission::Visibility;
+use domain::elements::level::Level;
 use test_support::recording::{CallLog, NEVER_FOR_A_STRANGER, assert_reads_none_of};
 
 use super::*;
@@ -66,8 +66,8 @@ async fn a_stranger_s_absent_and_not_theirs_commission_are_one_refusal_with_the_
 async fn a_stranger_reads_no_changelog_of_a_public_or_listed_live_commission() {
     let (world, log) = recorded().await;
     let stranger = stranger();
-    let public = seed_alice_s(&world, "Public, live", Visibility::Public, false).await;
-    let listed = seed_alice_s(&world, "Listed, live", Visibility::Listed, false).await;
+    let public = seed_alice_s(&world, "Public, live", Level::Public, false).await;
+    let listed = seed_alice_s(&world, "Listed, live", Level::Listed, false).await;
 
     for target in [public, listed] {
         let (answer, reads) = recorded_read(&world, &log, &stranger, target.id).await;

@@ -255,6 +255,7 @@ dependencies = [
  "composition",
  "derive_more 2.1.1",
  "domain",
+ "proc-macro2",
  "proptest",
  "quote",
  "serde_json",
@@ -1598,7 +1599,10 @@ dependencies = [
  "async-trait",
  "identity",
  "kernel",
+ "proc-macro2",
+ "quote",
  "serde_json",
+ "syn 2.0.117",
  "workflow",
 ]
 
@@ -3160,13 +3164,17 @@ dependencies = [
 name = "kernel"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "chrono",
  "cid",
  "derive_more 2.1.1",
  "proptest",
  "serde",
+ "serde_json",
  "strum",
  "thiserror 2.0.20",
+ "uuid",
 ]
 
 [[package]]

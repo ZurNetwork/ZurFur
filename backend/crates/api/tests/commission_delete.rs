@@ -260,6 +260,14 @@ impl UnitOfWork for FactBearingUow {
         self.0.bug_reports()
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a unit-of-work double hands out the node repo of the unit it wraps"
+    )]
+    fn nodes(&mut self) -> Box<dyn domain::ports::NodeRepo + '_> {
+        self.0.nodes()
+    }
+
     fn actor_identities(&mut self) -> Box<dyn ActorIdentityWrites + '_> {
         self.0.actor_identities()
     }

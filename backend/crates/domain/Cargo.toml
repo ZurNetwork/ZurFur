@@ -17,3 +17,8 @@ anyhow = { workspace = true }
 [dev-dependencies]
 # The guards read `cargo metadata`'s JSON.
 serde_json = { workspace = true }
+# The actor-port guard parses identity's and kernel's sources and walks their
+# tokens; `visit` reaches every renamed import and type alias at any depth.
+syn = { workspace = true, features = ["visit"] }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }

@@ -10,9 +10,9 @@ use domain::{
     elements::{
         commission::{
             Commission, CommissionFile, CommissionId, CommissionTitle, FileKey, FileName,
-            Visibility,
         },
         did::Did,
+        level::Level,
         user::UserId,
     },
     ports::UnitOfWork,
@@ -182,11 +182,11 @@ pub(crate) async fn stranger_targets(world: &World) -> [Target; 4] {
     };
     let public_archived = Target {
         label: "Public, archived",
-        ..seed_alice_s(world, "Public, archived", Visibility::Public, true).await
+        ..seed_alice_s(world, "Public, archived", Level::Public, true).await
     };
     let listed_archived = Target {
         label: "Listed, archived",
-        ..seed_alice_s(world, "Listed, archived", Visibility::Listed, true).await
+        ..seed_alice_s(world, "Listed, archived", Level::Listed, true).await
     };
     [untitled, private_archived, public_archived, listed_archived]
 }
@@ -196,7 +196,7 @@ pub(crate) async fn stranger_targets(world: &World) -> [Target; 4] {
 pub(crate) async fn seed_alice_s(
     world: &World,
     title: &'static str,
-    visibility: Visibility,
+    visibility: Level,
     archived: bool,
 ) -> Target {
     let parsed_title = title

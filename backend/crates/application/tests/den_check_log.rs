@@ -10,8 +10,9 @@ use application::{commission::files::download, transaction, user::me::MeQuery};
 use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::{
-    commission::{Commission, CommissionId, CommissionTitle, FileKey, Visibility},
+    commission::{Commission, CommissionId, CommissionTitle, FileKey},
     did::Did,
+    level::Level,
     user::{User, UserId},
 };
 use domain::ports::{Database, UnitOfWork, UserStore};
@@ -28,7 +29,7 @@ const STRANGER: &str = "did:plc:dencheckstranger";
 const ABSENT: Uuid = Uuid::from_u128(0x01a0_0000_0000_7000_8000_0000_0000_0c01);
 
 /// The owner, recognized, and a commission of theirs seeded at `visibility`.
-async fn seed(database: &dyn Database, visibility: Visibility) -> (UserId, CommissionId) {
+async fn seed(database: &dyn Database, visibility: Level) -> (UserId, CommissionId) {
     let owner_did = Did::from(OWNER.to_owned());
     transaction(database, async move |uow: &mut dyn UnitOfWork| {
         let owner = uow.users().provision(&owner_did).await?;
@@ -70,7 +71,7 @@ fn stranger_s_download(commission: CommissionId) -> download::Query {
 async fn each_answer_is_logged_by_its_node_kind_and_class_and_never_an_id() {
     let owner_did = Did::from(OWNER.to_owned());
     let runtime = test_support::runtime::mem(&owner_did).build().runtime;
-    let (owner, listed) = seed(&*runtime.database, Visibility::Listed).await;
+    let (owner, listed) = seed(&*runtime.database, Level::Listed).await;
     let mut failing = runtime.clone();
     failing.users = Arc::new(FailingUsers);
     let log = CapturedLog::default();

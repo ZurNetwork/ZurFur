@@ -3,8 +3,9 @@ use domain::{
     elements::{
         commission::{
             ChannelPointer, Commission, CommissionId, DeadlineStatus, DirectionStatus,
-            LifecycleStep, Visibility,
+            LifecycleStep,
         },
+        level::Level,
         maturity::Maturity,
         text::StoredText,
     },
@@ -18,7 +19,7 @@ pub struct CommissionValues {
     /// The title as stored, after the Den's name rule stripped what it strips.
     pub title: StoredText,
     pub lifecycle: LifecycleStep,
-    pub visibility: Visibility,
+    pub visibility: Level,
     pub deadline: Option<DateTimeUtc>,
     pub maturity: Option<Maturity>,
     pub direction_status: Option<DirectionStatus>,

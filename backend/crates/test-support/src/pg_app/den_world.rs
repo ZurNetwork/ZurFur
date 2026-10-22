@@ -3,8 +3,9 @@ use chrono::Utc;
 use composition::Runtime;
 use domain::elements::{
     account::AccountId,
-    commission::{CommissionId, ElementId, FileKey, SKELETON, Visibility},
+    commission::{CommissionId, ElementId, FileKey, SKELETON},
     did::Did,
+    level::Level,
     profile::Profile,
     user::UserId,
     workflow::WorkflowId,
@@ -181,7 +182,7 @@ impl DenWorld {
     }
 
     /// Sets `commission`'s stored visibility, a test-only update: no route sets it yet.
-    pub async fn set_visibility(&self, commission: CommissionId, visibility: Visibility) {
+    pub async fn set_visibility(&self, commission: CommissionId, visibility: Level) {
         self.store_visibility(commission, &visibility.to_string())
             .await;
     }

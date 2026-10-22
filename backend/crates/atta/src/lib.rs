@@ -9,7 +9,6 @@ mod host;
 mod level;
 mod list;
 mod metadata;
-mod name;
 mod ordering;
 mod ordinal;
 mod page;
@@ -25,11 +24,7 @@ pub use host::{
     Viewer,
 };
 pub use level::Level;
-pub use metadata::{Metadata, Type};
-pub use name::{
-    MAX_NAME_BYTES, NodeName, NodeNameError, ShowableName, ShowableNameError, is_default_ignorable,
-    is_format,
-};
+pub use metadata::{DisplayName, Metadata, Type};
 pub use ordinal::{NameOrdinal, NameOrdinalError};
 pub use page::{Listing, PageToken, PageTokenError};
 pub use path::RealPath;

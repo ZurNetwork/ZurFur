@@ -24,8 +24,3 @@ pub enum DeadlineStatusError {
     #[error("Invalid value")]
     InvalidValue,
 }
-
-/// Why a token failed to resolve to a [`Visibility`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("token is not one of: private, listed, public")]
-pub struct UnknownVisibility;

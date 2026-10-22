@@ -7,8 +7,9 @@
 use domain::{
     elements::{
         account::AccountId,
-        commission::{CommissionId, Visibility},
+        commission::CommissionId,
         did::Did,
+        level::Level,
         text::StoredText,
         workflow::{
             Column, ColumnId, LexOrdering, Position, Workflow, WorkflowId, WorkflowName,
@@ -21,10 +22,10 @@ use sqlx::{PgConnection, PgPool};
 
 use crate::queries::{column as column_sql, workflow as workflow_sql};
 
-/// Re-validate a stored `visibility` token into its [`Visibility`]. An `Err`
+/// Re-validate a stored `visibility` token into its [`Level`]. An `Err`
 /// on a tampered or unmigrated token, never a silently-widened board.
-fn to_visibility(token: &str) -> anyhow::Result<Visibility> {
-    Visibility::try_from(token).map_err(|_| anyhow::anyhow!("unknown visibility token {token:?}"))
+fn to_visibility(token: &str) -> anyhow::Result<Level> {
+    Level::try_from(token).map_err(|_| anyhow::anyhow!("unknown visibility token {token:?}"))
 }
 
 /// Re-validate a stored column key into its [`Position`]. An `Err` on a
@@ -122,7 +123,7 @@ impl WorkflowWrites for PgWorkflowWrites<'_> {
         name: &WorkflowName,
         account_id: &AccountId,
     ) -> anyhow::Result<Workflow> {
-        let workflow = Workflow::new(name.clone(), account_id.clone(), Visibility::Private);
+        let workflow = Workflow::new(name.clone(), account_id.clone(), Level::Private);
 
         workflow_sql::create(
             &mut *self.conn,

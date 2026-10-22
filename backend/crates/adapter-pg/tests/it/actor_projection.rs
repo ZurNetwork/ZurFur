@@ -18,6 +18,8 @@ use domain::{
     ports::{AccountStore, Database, DidBelongsToAnotherActor, HandleTaken, UserStore},
 };
 
+use crate::migration_steps::{bare_pool, run_migrations_before};
+
 /// The backfill migration (slice 1: backfill + dedupe assertion), as sqlx numbers
 /// it. The backfill tests run everything *before* this version, seed old-shape
 /// rows, then let the full migrator catch up (the same backfill pattern used
@@ -28,35 +30,6 @@ const BACKFILL_MIGRATION: i64 = 20260718193956;
 /// (see `test_support::pg`). The second element keeps the shared container alive.
 async fn fresh_pool() -> (PgPool, impl Sized) {
     test_support::pg::fresh_pool().await
-}
-
-/// A fresh, empty private database with NO migrations applied (the backfill tests
-/// drive the migrator themselves).
-async fn bare_pool() -> (PgPool, impl Sized) {
-    let db = test_support::pg::bare_db().await;
-    let pool = adapter_pg::connect(db.url()).await.expect("pool connects");
-    (pool, db)
-}
-
-/// Run every embedded migration strictly BEFORE `version` — the pre-backfill
-/// world, where users/accounts still carry their own `did` columns.
-async fn run_migrations_before(pool: &PgPool, version: i64) {
-    let mut migrator = adapter_pg::migrator();
-    let subset: Vec<_> = migrator
-        .migrations
-        .iter()
-        .filter(|migration| migration.version < version)
-        .cloned()
-        .collect();
-    assert!(
-        !subset.is_empty() && subset.len() < migrator.migrations.len(),
-        "the version constant matches an embedded migration"
-    );
-    migrator.migrations = subset.into();
-    migrator
-        .run(pool)
-        .await
-        .expect("pre-backfill migrations run");
 }
 
 /// Does `table` have `column`? Reads the live catalog so the schema shape itself

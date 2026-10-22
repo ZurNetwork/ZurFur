@@ -1,7 +1,7 @@
 use super::*;
-use crate::elements::commission::Visibility;
 use identity::elements::account::AccountId;
 use kernel::elements::did::Did;
+use kernel::elements::level::Level;
 
 // ---- columns -----------------------------------------------------------
 
@@ -11,13 +11,13 @@ fn account() -> AccountId {
 
 fn empty_workflow() -> Workflow {
     let name = "Board".parse().expect("a valid name");
-    Workflow::new(name, account(), Visibility::Private)
+    Workflow::new(name, account(), Level::Private)
 }
 
 /// A column for `workflow`, ready to `insert`, which assigns its key.
 fn column(workflow: &Workflow, name: &str) -> Column {
     let name = name.parse().expect("a valid name");
-    workflow.new_column(name, Visibility::Private)
+    workflow.new_column(name, Level::Private)
 }
 
 fn names(workflow: &Workflow) -> Vec<&str> {

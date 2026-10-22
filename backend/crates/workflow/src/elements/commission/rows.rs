@@ -1,11 +1,10 @@
 use super::{
     ChannelPointer, CommissionId, CommissionTitle, DeadlineStatus, DirectionStatus, LifecycleStep,
-    Visibility,
 };
 use identity::elements::user::UserId;
 use kernel::{
     datetime::DateTimeUtc,
-    elements::{maturity::Maturity, text::StoredText},
+    elements::{level::Level, maturity::Maturity, text::StoredText},
 };
 
 /// A freshly created commission, ready to persist through
@@ -32,7 +31,7 @@ pub struct NewCommission {
     /// The lifecycle state it is born in.
     pub lifecycle_step: LifecycleStep,
     /// Who may see it.
-    pub visibility: Visibility,
+    pub visibility: Level,
     /// The deadline, or `None`.
     pub deadline: Option<DateTimeUtc>,
     /// The maturity posture, or `None` while unrated.
@@ -58,7 +57,7 @@ pub struct CommissionSummary {
     /// The title as stored, not re-checked on load.
     pub title: StoredText,
     /// The commission's own visibility.
-    pub visibility: Visibility,
+    pub visibility: Level,
     /// Whether it carries an archive time; the time itself isn't read.
     pub archived: bool,
 }

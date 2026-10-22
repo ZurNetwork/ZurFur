@@ -62,6 +62,8 @@ composition = { path = "../composition" }
 adapter-mem = { path = "../adapter-mem" }
 # The use-case log tests read what a fmt subscriber wrote.
 tracing-subscriber = { workspace = true }
-# The engine-exposure guard parses the crate's own sources.
+# The engine-exposure guard parses the crate's own sources; the node-port scan
+# walks the drivers' sources token by token.
 syn = { workspace = true }
 quote = { workspace = true }
+proc-macro2 = { workspace = true }

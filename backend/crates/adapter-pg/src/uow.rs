@@ -1,14 +1,14 @@
 //! The private-store [`Database`] factory and its [`UnitOfWork`] handle over
 //! PostgreSQL — "transactions as a capability" made concrete.
 //! [`PgDatabase`] holds the pool and vends a [`PgUnitOfWork`], which holds
-//! only the `sqlx::Transaction`; per-aggregate write views borrow it, so a
-//! bare-pool write is unrepresentable.
+//! the `sqlx::Transaction` and its node failure memory; per-aggregate write
+//! views borrow it, so a bare-pool write is unrepresentable.
 
 use async_trait::async_trait;
 use domain::ports::character::CharacterWrites;
 use domain::ports::{
     AccountRepo, ActorIdentityWrites, BugReportWrites, ChangelogWrites, ColumnWrites,
-    CommissionRepo, Database, UnitOfWork, UserWrites, WorkflowWrites,
+    CommissionRepo, Database, NodeRepo, UnitOfWork, UserWrites, WorkflowWrites,
 };
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -18,6 +18,7 @@ use crate::actor_identity::PgActorIdentityWrites;
 use crate::bug_report::PgBugReportWrites;
 use crate::character::PgCharacterWrites;
 use crate::commission_changelog::PgChangelogWrites;
+use crate::node::PgNodeWrites;
 use crate::user::PgUserWrites;
 use crate::workflow::{PgColumnWrites, PgWorkflowWrites};
 
@@ -43,16 +44,20 @@ impl Database for PgDatabase {
     #[tracing::instrument(level = "debug", skip_all)]
     async fn begin(&self) -> anyhow::Result<Box<dyn UnitOfWork>> {
         let tx = self.pool.begin().await?;
-        Ok(Box::new(PgUnitOfWork { tx }))
+        Ok(Box::new(PgUnitOfWork { tx, failed: false }))
     }
 }
 
-/// One open PostgreSQL transaction, owned by the handler. Holds only the
-/// `Transaction` — the write views reached through it are the only path to
-/// a private-store write. [`commit`](UnitOfWork::commit) consumes the handle; dropping it rolls back.
+/// One open PostgreSQL transaction, owned by the handler. Holds the
+/// `Transaction` and whether a node statement failed on it — the write views
+/// reached through it are the only path to a private-store write.
+/// [`commit`](UnitOfWork::commit) consumes the handle; dropping it rolls back.
 pub struct PgUnitOfWork {
     /// The open transaction (boxable — borrows nothing from the pool beyond a pooled connection).
     tx: Transaction<'static, Postgres>,
+    /// Set once a node statement fails. PostgreSQL answers COMMIT in a failed
+    /// transaction with a rollback and no error, and sqlx passes that on as success.
+    failed: bool,
 }
 
 #[async_trait]
@@ -107,9 +112,22 @@ impl UnitOfWork for PgUnitOfWork {
         Box::new(PgBugReportWrites { conn: &mut self.tx })
     }
 
-    /// Commits the unit, consuming the handle so it can't be reused.
+    /// The node repo over this transaction; a failed node statement ends the unit.
+    fn nodes(&mut self) -> Box<dyn NodeRepo + '_> {
+        Box::new(PgNodeWrites {
+            conn: &mut self.tx,
+            failed: &mut self.failed,
+        })
+    }
+
+    /// Commits the unit, consuming the handle so it can't be reused. A unit a node
+    /// statement ended rolls back instead and returns an error.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
+        if self.failed {
+            self.tx.rollback().await?;
+            anyhow::bail!("a refused node statement ended this unit of work; nothing was kept");
+        }
         self.tx.commit().await?;
         Ok(())
     }

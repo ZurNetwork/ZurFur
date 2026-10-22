@@ -156,7 +156,7 @@ async fn clock_times_of_each_pair_s_causes() {
     };
 
     for (target, visibility) in den_stranger_targets(&world) {
-        world.set_visibility(target.id, visibility.clone()).await;
+        world.set_visibility(target.id, visibility).await;
         let lifecycle = world.archived_or_live(&target);
         for pair in den_stranger_pairs(&target) {
             let label = format!("stranger, den, {visibility} {lifecycle}, {}", pair.label);
@@ -164,7 +164,7 @@ async fn clock_times_of_each_pair_s_causes() {
         }
     }
     for (target, visibility) in stranger_targets(&world) {
-        world.set_visibility(target.id, visibility.clone()).await;
+        world.set_visibility(target.id, visibility).await;
         let lifecycle = world.archived_or_live(&target);
         for pair in commission_read_stranger_pairs(&target) {
             let label = format!("stranger, {visibility} {lifecycle}, {}", pair.label);
@@ -180,9 +180,7 @@ async fn clock_times_of_each_pair_s_causes() {
         .time(&world.stranger, characters_label, &characters)
         .await;
     for (visibility, pair, _) in commission_read_live_pairs(&world) {
-        world
-            .set_visibility(world.untitled.id, visibility.clone())
-            .await;
+        world.set_visibility(world.untitled.id, visibility).await;
         let label = format!("stranger, {visibility} live, {}", pair.label);
         timer.time(&world.stranger, label, &pair).await;
     }

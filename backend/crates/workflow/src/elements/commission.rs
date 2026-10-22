@@ -3,8 +3,8 @@
 //!
 //! This module holds the envelope: id, title, owner, lifecycle, visibility,
 //! deadline, maturity, statuses. A commission belongs to a User, never an
-//! account, and survives account deletion. Its [`Visibility`] is the outermost
-//! gate, applied before the composition's own [`effective_visibility`].
+//! account, and survives account deletion. Its own [`Level`](kernel::elements::level::Level)
+//! is the outermost gate, applied before the composition's own [`effective_visibility`].
 
 pub mod changelog;
 pub mod element;
@@ -24,7 +24,6 @@ mod id;
 mod lifecycle;
 mod rows;
 mod title;
-mod visibility;
 
 pub use changelog::{
     ChangelogEntry, ChangelogEntryKind, ChannelPointer, ChannelPointerError, NewChangelogEntry,
@@ -40,7 +39,6 @@ pub use element::{
 pub use entity::Commission;
 pub use errors::{
     CommissionTitleError, DeadlineStatusError, UnknownDirectionStatus, UnknownLifecycleStep,
-    UnknownVisibility,
 };
 pub use fact::Fact;
 pub use file::{
@@ -57,4 +55,3 @@ pub use seat::{
 pub use seat_invitation::{SeatInvitation, SeatInvitationId};
 pub use slot::{NewSlot, Slot, SlotTitle, SlotTitleError};
 pub use title::CommissionTitle;
-pub use visibility::Visibility;
