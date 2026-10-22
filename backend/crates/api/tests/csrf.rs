@@ -7,16 +7,21 @@
 //! environment. GET, HEAD and OPTIONS pass; `/health` and `/.well-known` sit
 //! outside the guard, and a path no route matches is a bare `404` whatever
 //! its signal. Layers on top of the session cookie's `SameSite=Lax`.
+//! The no-signal case sweeps every write the API serves: the paths come from
+//! each `.route(` in the crate's source, their methods from axum's own `Allow`
+//! on a `405`, and only GET, HEAD and OPTIONS are left out.
 //! Same in-process fakes as the other api e2e tests, no database; the clients
 //! here are bare (no default signal), so each request carries exactly the
 //! signal it names.
+use std::path::{Path, PathBuf};
+
 use domain::elements::{did::Did, profile::Profile};
 use reqwest::{
-    Method, RequestBuilder,
-    header::{CACHE_CONTROL, HOST, ORIGIN},
+    Method, RequestBuilder, StatusCode,
+    header::{ALLOW, CACHE_CONTROL, HOST, ORIGIN},
 };
 use serde_json::json;
-use test_support::http::{Served, bare_client, serve, sign_in};
+use test_support::http::{Served, bare_client, client_with_origin, serve, sign_in};
 
 mod common;
 
@@ -74,16 +79,328 @@ async fn assert_refused(request: RequestBuilder) {
     common::assert_problem(response, 403, "cross_origin").await;
 }
 
+/// The methods the guard lets through without a signal.
+const SAFE_METHODS: [Method; 3] = [Method::GET, Method::HEAD, Method::OPTIONS];
+
+/// Calls that mount routes without a `.route(` path the scan can read.
+const UNREADABLE_CALLS: [&str; 3] = [".nest(", ".nest_service(", ".route_service("];
+
+/// A route's path as its `.route(` call writes it, e.g. `/commissions/{id}/maturity`.
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+struct RouteTemplate(String);
+
+impl RouteTemplate {
+    /// The template with each `{name}` and `{*name}` segment filled with `probe`.
+    fn probe_path(&self) -> String {
+        let segments = self.0.split('/').map(|segment| {
+            let captured = segment.starts_with('{') && segment.ends_with('}');
+            if captured { "probe" } else { segment }
+        });
+        segments.collect::<Vec<_>>().join("/")
+    }
+}
+
+/// A route the scan read, and the `file:line` of its `.route(` call.
+struct ScannedRoute {
+    template: RouteTemplate,
+    written_at: String,
+}
+
+/// What the source scan read: every route path, and every call it can't read.
+#[derive(Default)]
+struct RouteScan {
+    routes: Vec<ScannedRoute>,
+    unreadable: Vec<String>,
+}
+
+impl RouteScan {
+    /// Reads each `.route(` call in `text`, the source of `file`, and flags each
+    /// call whose routes it can't read.
+    fn read(&mut self, file: &str, text: &str) {
+        let code = code_lines(text);
+        for (offset, call) in code.match_indices(".route(") {
+            let written_at = format!("{file}:{}", line_of(&code, offset));
+            let argument = code[offset + call.len()..].trim_start();
+            let Some(template) = string_literal(argument) else {
+                let unreadable = format!(
+                    "{written_at}: a `.route(` whose first argument isn't a string literal"
+                );
+                self.unreadable.push(unreadable);
+                continue;
+            };
+            let route = ScannedRoute {
+                template,
+                written_at,
+            };
+            self.routes.push(route);
+        }
+        for call in UNREADABLE_CALLS {
+            for (offset, _) in code.match_indices(call) {
+                let unreadable = format!(
+                    "{file}:{}: `{call}` mounts routes the scan can't read",
+                    line_of(&code, offset)
+                );
+                self.unreadable.push(unreadable);
+            }
+        }
+    }
+}
+
+/// `text` with each `//` comment line (`///` and `//!` docs included) blanked,
+/// so line numbers still match the source.
+fn code_lines(text: &str) -> String {
+    let lines = text.lines().map(|line| {
+        let comment = line.trim_start().starts_with("//");
+        if comment { "" } else { line }
+    });
+    lines.collect::<Vec<_>>().join("\n")
+}
+
+/// The 1-based line of the byte at `offset` in `code`.
+fn line_of(code: &str, offset: usize) -> usize {
+    code[..offset].matches('\n').count() + 1
+}
+
+/// The plain string literal that opens `text`, without escapes.
+fn string_literal(text: &str) -> Option<RouteTemplate> {
+    let (literal, _) = text.strip_prefix('"')?.split_once('"')?;
+    let plain = !literal.contains('\\');
+    plain.then(|| RouteTemplate(literal.to_owned()))
+}
+
+/// The api crate's source folder.
+fn source_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+}
+
+/// Pushes every `.rs` file under `dir` onto `out`, recursively, but unit-test
+/// files (`tests.rs`, `proptests.rs`).
+fn source_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let entries = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("the scan cannot read {}: {e}", dir.display()));
+    for entry in entries {
+        let path = entry.expect("a dir entry").path();
+        let unit_tests = path
+            .file_name()
+            .is_some_and(|name| name == "tests.rs" || name == "proptests.rs");
+        if path.is_dir() {
+            source_files(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") && !unit_tests {
+            out.push(path);
+        }
+    }
+}
+
+/// Scans every source file of the api crate for its routes.
+fn scan_source() -> RouteScan {
+    let source = source_dir();
+    let mut paths = Vec::new();
+    source_files(&source, &mut paths);
+    paths.sort();
+    let mut scan = RouteScan::default();
+    for path in paths {
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("the scan cannot read {}: {e}", path.display()));
+        let file = path
+            .strip_prefix(&source)
+            .expect("a scanned file sits under src")
+            .display()
+            .to_string();
+        scan.read(&file, &text);
+    }
+    scan
+}
+
+/// The methods axum serves at `url`, read off the `Allow` of the `405` a
+/// first-party `PROPFIND` gets; otherwise, how the `PROPFIND` was answered.
+async fn allowed_methods(first_party: &reqwest::Client, url: &str) -> Result<Vec<Method>, String> {
+    let propfind = Method::from_bytes(b"PROPFIND").expect("a method");
+    let response = first_party
+        .request(propfind, url)
+        .send()
+        .await
+        .expect("the PROPFIND is answered");
+    let status = response.status();
+    if status != StatusCode::METHOD_NOT_ALLOWED {
+        return Err(format!("answered {}", status.as_u16()));
+    }
+    let allow = response
+        .headers()
+        .get(ALLOW)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    let methods: Vec<Method> = allow
+        .split(',')
+        .map(str::trim)
+        .filter(|method| !method.is_empty())
+        .map(|method| Method::from_bytes(method.as_bytes()).expect("an Allow method"))
+        .collect();
+    if methods.is_empty() {
+        return Err("answered 405 with no Allow".to_owned());
+    }
+    Ok(methods)
+}
+
+/// How `request` was answered, unless it was `403 cross_origin`.
+async fn unless_refused(request: RequestBuilder) -> Option<String> {
+    let response = request.send().await.expect("the write is answered");
+    let status = response.status();
+    let body: serde_json::Value = response.json().await.unwrap_or_default();
+    let code = body["code"]
+        .as_str()
+        .unwrap_or("with no problem code")
+        .to_owned();
+    let refused = status == StatusCode::FORBIDDEN && code == "cross_origin";
+    (!refused).then(|| format!("answered {} {code}", status.as_u16()))
+}
+
+/// What the sweep found wrong, each list naming every case.
+#[derive(Default)]
+struct SweepReport {
+    /// Calls the scan can't read.
+    unreadable: Vec<String>,
+    /// Scanned paths axum doesn't serve as a route.
+    unserved: Vec<String>,
+    /// Writes answered without a first-party signal.
+    escaped: Vec<String>,
+}
+
+impl SweepReport {
+    /// Whether the sweep found nothing wrong.
+    fn is_clean(&self) -> bool {
+        self.unreadable.is_empty() && self.unserved.is_empty() && self.escaped.is_empty()
+    }
+}
+
+impl std::fmt::Display for SweepReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let sections = [
+            (
+                "the route scan can't read these calls; teach it the new shape",
+                &self.unreadable,
+            ),
+            (
+                "scanned paths axum doesn't serve (a first-party PROPFIND should answer 405 with an Allow)",
+                &self.unserved,
+            ),
+            (
+                "writes not refused with 403 cross_origin when sent with no Origin and no Sec-Fetch-Site",
+                &self.escaped,
+            ),
+        ];
+        for (heading, lines) in sections.into_iter().filter(|(_, lines)| !lines.is_empty()) {
+            writeln!(f, "{heading}:")?;
+            for line in lines {
+                writeln!(f, "  {line}")?;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn a_write_with_no_origin_and_no_fetch_metadata_is_refused() {
     let served = served().await;
     let base = served.base_url.as_str();
-    let client = bare_client();
+    let first_party = client_with_origin(base);
+    let unsignalled = bare_client();
+    let scan = scan_source();
+    assert!(
+        !scan.routes.is_empty(),
+        "the route scan found no `.route(` under src/; teach it where routes live now"
+    );
 
-    assert_refused(signin(&client, base)).await;
-    assert_refused(found_account(&client, base)).await;
-    assert_refused(logout(&client, base)).await;
-    assert_refused(create_commission(&client, base)).await;
+    let mut report = SweepReport {
+        unreadable: scan.unreadable,
+        ..SweepReport::default()
+    };
+    let mut swept = 0_usize;
+    for route in &scan.routes {
+        let url = format!("{base}{}", route.template.probe_path());
+        let methods = allowed_methods(&first_party, &url)
+            .await
+            .unwrap_or_else(|answer| {
+                let unserved = format!(
+                    "{} from {} ({answer} to a first-party PROPFIND)",
+                    route.template, route.written_at
+                );
+                report.unserved.push(unserved);
+                Vec::new()
+            });
+        let writes = methods
+            .into_iter()
+            .filter(|method| !SAFE_METHODS.contains(method));
+        for method in writes {
+            swept += 1;
+            let request = unsignalled.request(method.clone(), &url);
+            if let Some(answer) = unless_refused(request).await {
+                let escaped = format!("{method} {} ({answer})", route.template);
+                report.escaped.push(escaped);
+            }
+        }
+    }
+
+    assert!(report.is_clean(), "{report}");
+    assert!(swept > 0, "the sweep found no write route to check");
+}
+
+#[test]
+fn the_route_scan_reads_a_multi_line_route_and_a_catch_all() {
+    let source = concat!(
+        "Router::new()\n",
+        "    // .route(\"/commented\", get(gone))\n",
+        "    .route(\"/den/{*path}\", get(read_node))\n",
+        "    .route(\n",
+        "        \"/commissions/{id}/files/{file_id}\",\n",
+        "        get(download),\n",
+        "    )",
+    );
+    let mut scan = RouteScan::default();
+
+    scan.read("fixture.rs", source);
+
+    let templates: Vec<String> = scan.routes.iter().map(|r| r.template.to_string()).collect();
+    let probe_paths: Vec<String> = scan
+        .routes
+        .iter()
+        .map(|r| r.template.probe_path())
+        .collect();
+    let written_at: Vec<&str> = scan.routes.iter().map(|r| r.written_at.as_str()).collect();
+    assert_eq!(
+        templates,
+        ["/den/{*path}", "/commissions/{id}/files/{file_id}"]
+    );
+    assert_eq!(
+        probe_paths,
+        ["/den/probe", "/commissions/probe/files/probe"]
+    );
+    assert_eq!(written_at, ["fixture.rs:3", "fixture.rs:4"]);
+    assert!(scan.unreadable.is_empty(), "{:?}", scan.unreadable);
+}
+
+#[test]
+fn the_route_scan_flags_every_call_it_cannot_read() {
+    let source = concat!(
+        "Router::new()\n",
+        "    .route(PATH, get(x))\n",
+        "    .nest(\"/a\", inner)\n",
+        "    .nest_service(\"/b\", service)\n",
+        "    .route_service(\"/c\", service)\n",
+        "    .route(r\"/d\", get(x))",
+    );
+    let mut scan = RouteScan::default();
+
+    scan.read("fixture.rs", source);
+
+    let flagged = [
+        "fixture.rs:2: a `.route(` whose first argument isn't a string literal",
+        "fixture.rs:6: a `.route(` whose first argument isn't a string literal",
+        "fixture.rs:3: `.nest(` mounts routes the scan can't read",
+        "fixture.rs:4: `.nest_service(` mounts routes the scan can't read",
+        "fixture.rs:5: `.route_service(` mounts routes the scan can't read",
+    ];
+    assert_eq!(scan.unreadable, flagged);
+    assert!(scan.routes.is_empty(), "the scan read no route path");
 }
 
 #[tokio::test]
