@@ -911,6 +911,11 @@
       "governs": "src/elements/blob.rs"
     },
     {
+      "page": 26804226,
+      "title": "did:plc Identity Custody, Minting & Credible Exit",
+      "governs": "src/elements/custody.rs and src/ports/custody.rs: the custody vocabulary and port — one key per purpose (Purpose, SealPurpose, MacUse), key ids, the envelope's values (CustodySubject, SealedEnvelope, MacTag, OpenedSecret, CustodyError), and the purpose-typed handles ScopedSealer<P> and ScopedMac over KeyCustodian"
+    },
+    {
       "page": 29982722,
       "title": "Maturity Vocabulary",
       "governs": "src/elements/maturity.rs"
@@ -933,7 +938,7 @@
     {
       "page": 2026093001,
       "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
-      "governs": "src/elements/node.rs and src/ports/node.rs: node data (D23–D25) — a node's key, real parent, segment, type, level and name; no move, no retype"
+      "governs": "src/elements/node.rs and src/ports/node.rs: node data (D23–D25) — a node's key, real parent, segment, type, level and name; no move, no retype; src/elements/custody.rs and src/ports/custody.rs: the Den's MAC key lives under the same custody as the did:plc keys (Purpose::DenMac, MacUse, MacTag, ScopedMac)"
     },
     {
       "page": 2026100701,
