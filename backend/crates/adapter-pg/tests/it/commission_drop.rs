@@ -4,12 +4,13 @@
 //! it. Checks that each of these stops the drop, naming an id alone, the drop
 //! unrecorded and both columns still there: a title or level that differs from the
 //! commission's node; a commission with no node of its own (none, a node deleted by
-//! hand, or a node that isn't its own); and a level edit committed while the drop
-//! waits for its lock. Checks that a title renamed before the fill and a node
-//! renamed after it both pass; and what the drop leaves: no title or visibility
-//! column, `node_id` NOT NULL, the fill's transitional check, trigger and function
-//! gone, and each commission's name and level on its node. Requires a container
-//! runtime socket (DOCKER_HOST honored).
+//! hand, or a node that isn't its own); and an edit committed while the drop waits
+//! for its lock (a level edit on the node, or a title rename on the commission).
+//! Checks that a title renamed before the fill and a node renamed after it both
+//! pass; and what the drop leaves: no title or visibility column, `node_id` NOT
+//! NULL, the fill's transitional check, trigger and function gone, and each
+//! commission's name and level on its node. Requires a container runtime socket
+//! (DOCKER_HOST honored).
 
 use std::time::Duration;
 
@@ -37,10 +38,13 @@ const CANARY_APART: &str = "A distinctive title set apart";
 const WIDEN_NODE_TO_LISTED: &str =
     "UPDATE node SET level = 'listed' FROM commission c WHERE c.id = $1 AND node.id = c.node_id";
 
-/// How many times the lock test polls for the drop to wait.
+/// Sets commission `$1`'s own title to `$2`.
+const RETITLE_COMMISSION: &str = "UPDATE commission SET title = $2 WHERE id = $1";
+
+/// How many times a lock test polls for the drop to wait.
 const LOCK_WAIT_POLLS: u32 = 500;
 
-/// How long the lock test sleeps between two polls.
+/// How long a lock test sleeps between two polls.
 const LOCK_WAIT_INTERVAL: Duration = Duration::from_millis(20);
 
 /// Whether `commission` has the column `column`.
@@ -101,7 +105,7 @@ async fn function_exists(pool: &PgPool, name: &str) -> bool {
 
 /// Set `commission`'s own title, a test-only update; no trigger copies a title onto a node.
 async fn set_title_apart(pool: &PgPool, commission: Uuid, title: &str) {
-    let updated = sqlx::query("UPDATE commission SET title = $2 WHERE id = $1")
+    let updated = sqlx::query(RETITLE_COMMISSION)
         .bind(commission)
         .bind(title)
         .execute(pool)
@@ -485,6 +489,38 @@ async fn a_level_edit_committed_while_the_drop_waits_stops_the_drop() {
         commission_node(&pool, edited).await.level,
         "listed",
         "no level is re-synced"
+    );
+}
+
+#[tokio::test]
+async fn a_title_rename_committed_while_the_drop_waits_stops_the_drop() {
+    let (pool, _container) = through_den_1().await;
+    let edited = seed_commission(&pool, "A commission renamed mid-drop", "private").await;
+    run_migrations_through(&pool, FILL_VERSION).await;
+    let mut editor = pool.begin().await.expect("begin the editor");
+    let renamed = sqlx::query(RETITLE_COMMISSION)
+        .bind(edited)
+        .bind("A title renamed mid-drop")
+        .execute(&mut *editor)
+        .await
+        .expect("rename the commission's title, uncommitted");
+    assert_eq!(renamed.rows_affected(), 1, "one commission is renamed");
+    let drop_pool = pool.clone();
+    let drop =
+        tokio::spawn(async move { try_run_migrations_through(&drop_pool, DROP_VERSION).await });
+
+    wait_until_a_lock_waits(&pool).await;
+    editor.commit().await.expect("commit the title rename");
+    let stopped = drop
+        .await
+        .expect("join the drop")
+        .expect_err("the drop stops");
+
+    assert_stopped_naming(&pool, &stopped, edited).await;
+    assert_eq!(
+        commission_node(&pool, edited).await.name,
+        "A commission renamed mid-drop",
+        "no title is copied onto the node"
     );
 }
 
