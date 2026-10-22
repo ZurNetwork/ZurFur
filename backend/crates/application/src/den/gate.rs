@@ -234,7 +234,8 @@ pub(crate) trait Handler {
     /// The role of its capability; the act's needed role is read from it, never written apart.
     type Role: RoleTable;
 
-    /// When the gate writes the act's one changelog entry, and of what kind.
+    /// When the gate writes the act's one changelog entry, and the gated entry it builds: a
+    /// kind with its own domain constructor.
     const ENTRY: EntryRule;
 
     /// Acts through `lent` alone, and answers the thing it acted on as `lent` read it.
@@ -616,11 +617,56 @@ fn grant_fits(grant: &Grant, shape: &Shape) -> bool {
     }
 }
 
+/// The act's one entry, if `rule` writes one for what `written` changed: built by the rule's
+/// gated entry's domain constructor on the grant's commission, by `actor`, at `now`. An entry
+/// of another kind than the gated entry's, or built on another commission, by another actor
+/// or at another time, is a broken rule.
+fn built_entry(
+    rule: EntryRule,
+    written: &Written,
+    actor: &UserId,
+    now: DateTimeUtc,
+) -> anyhow::Result<Option<NewChangelogEntry>> {
+    let Some(gated) = rule.entry(written.changed) else {
+        return Ok(None);
+    };
+    let entry = gated.construct(written.commission, actor.clone(), now);
+    if entry.kind != gated.kind() {
+        return Err(facts_lied(
+            "an entry's constructor built another kind than its gated entry's",
+        ));
+    }
+    let as_granted = entry.commission_id == written.commission
+        && entry.actor_id.as_ref() == Some(actor)
+        && entry.created_at == now;
+    if !as_granted {
+        return Err(facts_lied(
+            "an entry's constructor built it off the grant's commission, actor or time",
+        ));
+    }
+    Ok(Some(entry))
+}
+
+/// Appends the act's one entry in the unit, if `rule` writes one for what `written` changed; a
+/// broken rule appends nothing.
+async fn append_entry(
+    unit: Unit<'_>,
+    rule: EntryRule,
+    written: &Written,
+    actor: &UserId,
+    now: DateTimeUtc,
+) -> anyhow::Result<()> {
+    if let Some(entry) = built_entry(rule, written, actor, now)? {
+        unit.changelog().append(&entry).await?;
+    }
+    Ok(())
+}
+
 /// The gate, run once per act from the write host's apply: the grant's kind against the act;
 /// no made node wider than Private until 0.6; the node rows, under the unit's one node-port
 /// binding; the act lent to its handler; then, as the act's entry rule says of what changed,
-/// its one entry, built here with an empty payload and no note, on the grant's commission, by
-/// the grant's actor, at `now`.
+/// its one entry, built here by the rule's gated entry's domain constructor on the grant's
+/// commission, by the grant's actor, at `now`, and refused unless it carries that entry's kind.
 pub(in crate::den) async fn gate(
     unit: Unit<'_>,
     grant: &Grant,
@@ -655,16 +701,7 @@ pub(in crate::den) async fn gate(
         Ok(landed) => landed,
         Err(refusal) => return Ok(Err(refusal)),
     };
-    if let Some(kind) = landed.entry.entry(written.changed) {
-        let entry = NewChangelogEntry::event(
-            written.commission,
-            kind,
-            grant.actor().clone(),
-            serde_json::json!({}),
-            now,
-        );
-        unit.changelog().append(&entry).await?;
-    }
+    append_entry(unit, landed.entry, &written, grant.actor(), now).await?;
     let applied = DenApplied {
         commission: written.commission,
         name: written.name,

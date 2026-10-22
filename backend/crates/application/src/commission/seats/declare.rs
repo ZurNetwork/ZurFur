@@ -71,6 +71,10 @@ impl Seats<'_> {
         );
 
         let uow = uow.open().await?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the ungated seat-declare site, held until its slice routes it through the den's write gate"
+        )]
         uow.commissions().declare_seat(&seat).await?;
         uow.changelog().append(&entry).await?;
         Ok(Output { seat_id })

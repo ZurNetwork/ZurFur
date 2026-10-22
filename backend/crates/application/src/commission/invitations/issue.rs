@@ -87,6 +87,10 @@ impl Invitations<'_> {
         );
         let minted = invitation.id;
 
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the ungated seat-invitation site, held until its slice routes it through the den's write gate"
+        )]
         uow.commissions()
             .create_seat_invitation(&invitation)
             .await?;

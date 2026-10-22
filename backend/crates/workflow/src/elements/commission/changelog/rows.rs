@@ -10,8 +10,9 @@ use kernel::datetime::DateTimeUtc;
 
 /// A changelog entry to append; the store assigns `seq` on insert. Built via
 /// [`event`](Self::event) / [`system`](Self::system) / [`note`](Self::note) /
-/// [`renamed`](Self::renamed) so the actor arm is explicit, then appended on an
-/// open unit of work — an entry commits atomically with the domain write it records.
+/// [`created`](Self::created) / [`renamed`](Self::renamed) so the actor arm is explicit,
+/// then appended on an open unit of work — an entry commits atomically with the domain
+/// write it records.
 #[derive(Debug)]
 pub struct NewChangelogEntry {
     /// The commission whose stream this entry joins.
@@ -80,6 +81,20 @@ impl NewChangelogEntry {
             actor_id: Some(actor),
             payload: Value::Object(serde_json::Map::new()),
             note: Some(text),
+            created_at: at,
+        }
+    }
+
+    /// A create: kind [`Created`](ChangelogEntryKind::Created), an empty
+    /// payload and no note. A named constructor, not a std conversion, because the
+    /// kind fixes the payload.
+    pub fn created(commission: CommissionId, actor: UserId, at: DateTimeUtc) -> Self {
+        Self {
+            commission_id: commission,
+            kind: ChangelogEntryKind::Created,
+            actor_id: Some(actor),
+            payload: Value::Object(serde_json::Map::new()),
+            note: None,
             created_at: at,
         }
     }

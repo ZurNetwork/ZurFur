@@ -5,8 +5,9 @@ use kernel::{
     elements::{level::Level, maturity::Maturity, node::NodeId, text::StoredText},
 };
 
-/// What a create may choose of a new commission: its maturity and its deadline. The store
-/// writes the rest of its starting state, so a create can't choose that.
+/// What a create may choose of a new commission: its maturity and its deadline. The rest
+/// of its starting state is [`CommissionStart`](super::CommissionStart)'s, so a create
+/// can't choose that.
 ///
 /// ```compile_fail,E0560
 /// use workflow::elements::commission::{LifecycleStep, NewCommission};

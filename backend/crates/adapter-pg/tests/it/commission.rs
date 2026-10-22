@@ -15,7 +15,7 @@ use chrono::{SubsecRound, Utc};
 use domain::{
     elements::{
         commission::{
-            ChangelogEntryKind, CommissionBirth, CommissionId, LifecycleStep, NewChangelogEntry,
+            ChangelogEntryKind, CommissionBirth, CommissionId, CommissionStart, NewChangelogEntry,
             NewCommission,
         },
         did::Did,
@@ -457,10 +457,10 @@ fn unrated() -> NewCommission {
     }
 }
 
-// A create writes the starting state and nothing else: Draft, live, no statuses, no linked
-// channel. Its title and level are its node's; only the maturity and deadline are chosen.
+// A create stores the domain's starting state and nothing else. Its title and level are its
+// node's; only the maturity and deadline are chosen.
 #[tokio::test]
-async fn a_created_commission_is_born_draft_live_unlinked_and_unstatused() {
+async fn a_created_commission_is_stored_in_the_domain_s_starting_state() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:pg-born-owner").await;
     let id = CommissionId::mint();
@@ -498,14 +498,18 @@ async fn a_created_commission_is_born_draft_live_unlinked_and_unstatused() {
         .await
         .expect("find")
         .expect("the commission is stored");
-    assert!(
-        matches!(found.lifecycle_step, LifecycleStep::Draft),
-        "born in Draft"
+    let stored_start = CommissionStart {
+        lifecycle_step: found.lifecycle_step.clone(),
+        direction_status: found.direction_status,
+        deadline_status: found.deadline_status,
+        linked_channel: found.linked_channel.clone(),
+        archived_at: found.archived_at,
+    };
+    assert_eq!(
+        stored_start,
+        CommissionStart::default(),
+        "the domain's starting state"
     );
-    assert!(found.archived_at.is_none(), "born live");
-    assert!(found.linked_channel.is_none(), "born unlinked");
-    assert!(found.direction_status.is_none(), "no direction status");
-    assert!(found.deadline_status.is_none(), "no deadline status");
     assert_eq!(found.maturity, Some(maturity), "the chosen maturity");
     assert_eq!(found.deadline, Some(deadline), "the chosen deadline");
     assert_eq!(found.owner_id, owner.id, "the gate's owner");
