@@ -37,7 +37,7 @@ pub struct CommissionValues {
 impl CommissionValues {
     /// The loaded commission's values, named `title` and levelled `visibility` as its node
     /// holds them. Not `From`: the commission, its name and its level are three facts.
-    pub(crate) fn from_parts(commission: Commission, title: StoredText, visibility: Level) -> Self {
+    fn from_parts(commission: Commission, title: StoredText, visibility: Level) -> Self {
         Self {
             id: commission.id,
             title,
