@@ -11,7 +11,7 @@ const VIEWER: &str = "did:plc:viewer-planted";
 fn writer() -> Writer {
     Writer {
         viewer: Viewer::from(VIEWER.to_owned()),
-        caps: Caps::default(),
+        caps: WriteCaps::default(),
     }
 }
 

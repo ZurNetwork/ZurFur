@@ -3,24 +3,21 @@ use crate::{
     RealPath, Relationship, Scope, Segment, Type, Via, Viewer,
 };
 
-/// The caps the host sets for one request.
+/// The read caps the host sets for one request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Caps {
     /// The most segments a Den path may hold.
     pub max_den_path: usize,
     /// The most entries one page of a listing holds; at least one is always served.
     pub page_size: usize,
-    /// The deepest a written node may lie, in real segments below `/`.
-    pub max_depth: usize,
 }
 
 impl Default for Caps {
-    /// 16 segments, 50 entries a page, and writes at most 8 real segments deep.
+    /// 16 segments and 50 entries a page.
     fn default() -> Self {
         Self {
             max_den_path: 16,
             page_size: 50,
-            max_depth: 8,
         }
     }
 }

@@ -6,6 +6,8 @@
 //! Types and content are opaque to it. It knows nothing about the
 //! application that embeds it, which it reaches through one [`Host`].
 
+#![forbid(unsafe_code)]
+
 mod act;
 mod host;
 mod level;
@@ -34,4 +36,4 @@ pub use page::{Listing, PageToken, PageTokenError};
 pub use path::RealPath;
 pub use resolve::{Caps, Entry, Error, Resolved, Resolver, View};
 pub use segment::{MAX_SEGMENT_BYTES, Segment, SegmentError};
-pub use write::{Checked, Refusal, WriteError, Writer};
+pub use write::{Checked, Refusal, WriteCaps, WriteError, Writer};

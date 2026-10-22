@@ -5,8 +5,9 @@
 use std::sync::{Arc, Mutex};
 
 use atta::{
-    Access, Act, ActName, Admission, Born, Caps, Checked, DisplayName, Found, Host, HostError,
-    Kind, Level, Metadata, Mount, Placed, Reach, RealPath, Segment, Shape, Type, Viewer, Writer,
+    Access, Act, ActName, Admission, Born, Checked, DisplayName, Found, Host, HostError, Kind,
+    Level, Metadata, Mount, Placed, Reach, RealPath, Segment, Shape, Type, Viewer, WriteCaps,
+    Writer,
 };
 use tracing_subscriber::fmt::MakeWriter;
 
@@ -134,7 +135,7 @@ fn make(word: &str, parent: Placed, key: &str, level: Option<Level>) -> Act<()> 
 fn writer() -> Writer {
     Writer {
         viewer: Viewer::from("did:plc:alice-viewer".to_owned()),
-        caps: Caps::default(),
+        caps: WriteCaps::default(),
     }
 }
 

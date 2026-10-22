@@ -47,7 +47,7 @@
     },
     {
       "name": "src/lib.rs",
-      "role": "façade: the crate doc and the public surface",
+      "role": "façade: the crate doc, #![forbid(unsafe_code)] and the public surface",
       "node": false
     },
     {
@@ -82,7 +82,7 @@
     },
     {
       "name": "src/resolve.rs",
-      "role": "Resolver::resolve_path: a typed Den path from the viewer root, the level formula, standing along the real path, mounts and the mount guard, admit at each step, one NotFound; it records each step (the folder left, the segment taken) and never lists a folder, so its entries carry no number; Entry (with its NameOrdinal), Resolved, Caps (with max_depth, the write depth cap: 8 real segments by default); Resolver<'h, A = (), P = ()> names its host as &dyn Host<Act = A, Applied = P>",
+      "role": "Resolver::resolve_path: a typed Den path from the viewer root, the level formula, standing along the real path, mounts and the mount guard, admit at each step, one NotFound; it records each step (the folder left, the segment taken) and never lists a folder, so its entries carry no number; Entry (with its NameOrdinal), Resolved, Caps (the read caps: max_den_path, 16 segments of a Den path from the viewer's root, and page_size); Resolver<'h, A = (), P = ()> names its host as &dyn Host<Act = A, Applied = P>",
       "node": false
     },
     {
@@ -92,7 +92,7 @@
     },
     {
       "name": "src/write.rs",
-      "role": "Writer::act: the five generic checks (a file holds no entries; born Private unless the creator picks wider; never wider than its parent, entries against their node; the depth cap, Caps::max_depth; no generic write: only a node of the act's own type, entries' keys distinct), then Host::apply; a refusal (the typed Refusal) reaches no host; Checked<B>, private fields, made only here, proves the checks ran and carries each born node's settled level, never authority; WriteError; logs outcome class, act word and depth at debug; Debugs print no viewer, path, segment or name; write/tests.rs names a test per check",
+      "role": "WriteCaps (max_real_depth, 8 real segments below / by default; apart from the read caps); Writer::act: the five generic checks (a file holds no entries; born Private unless the creator picks wider; never wider than its parent, entries against their node; the depth cap, WriteCaps::max_real_depth; no generic write: only a node of the act's own type, entries' keys distinct), then Host::apply; a refusal (the typed Refusal) reaches no host; Checked<B>, private fields, made only here, proves the checks ran and carries each born node's settled level, never authority; WriteError; logs outcome class, act word and depth at debug; Debugs print no viewer, path, segment or name; write/tests.rs names a test per check",
       "node": false
     },
     {

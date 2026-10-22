@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fmt};
 
-use crate::{Act, Born, Caps, Host, HostError, Kind, Level, Placed, Shape, Type, Viewer};
+use crate::{Act, Born, Host, HostError, Kind, Level, Placed, Shape, Type, Viewer};
 
 /// Why Atta refused an act before any host saw it. Carries no part of the act.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, thiserror::Error, strum::IntoStaticStr)]
@@ -63,12 +63,26 @@ impl<B> Checked<B> {
     }
 }
 
+/// The write caps the host sets for one request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WriteCaps {
+    /// The deepest a written node may lie, in real segments below `/`.
+    pub max_real_depth: usize,
+}
+
+impl Default for WriteCaps {
+    /// Writes at most 8 real segments deep.
+    fn default() -> Self {
+        Self { max_real_depth: 8 }
+    }
+}
+
 /// Writes the tree for one viewer: checks each act, then hands it to the host.
 pub struct Writer {
     /// Who is acting; Atta passes it to the host and never inspects it.
     pub viewer: Viewer,
-    /// The caps, the depth cap among them.
-    pub caps: Caps,
+    /// The write caps.
+    pub caps: WriteCaps,
 }
 
 /// How an act ended, by the name the writer's debug event logs.
@@ -178,7 +192,7 @@ impl Writer {
         } else {
             node_depth + 1
         };
-        if deepest > self.caps.max_depth {
+        if deepest > self.caps.max_real_depth {
             return Err(Refusal::TooDeep);
         }
         let node_level = settle(node);
