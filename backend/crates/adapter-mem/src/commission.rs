@@ -12,12 +12,12 @@ use domain::elements::{
     commission::{
         Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission, CommissionBirth,
         CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionRole,
-        CommissionStanding, CommissionSummary, CommissionTitle, DeadlineStatus, DirectionStatus,
-        ElementId, ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel,
-        LapsedDeadline, LifecycleStep, LockedStanding, NewChangelogEntry, NewCommission,
-        NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink,
-        SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode,
-        declared_tabs, declares_surface, derive_deadline_status,
+        CommissionStanding, CommissionStart, CommissionSummary, CommissionTitle, DeadlineStatus,
+        DirectionStatus, ElementId, ElementPayload, ElementRow, ElementType, FileKey, FileSummary,
+        GrantLevel, LapsedDeadline, LifecycleStep, LockedStanding, NewChangelogEntry,
+        NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId,
+        SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow,
+        VisibilityMode, declared_tabs, declares_surface, derive_deadline_status,
     },
     did::Did,
     invitation::InvitationState,
@@ -131,10 +131,10 @@ fn is_own_node(id: CommissionId, node: &NodeRow) -> bool {
         && node.segment.as_ref() == id.to_string()
 }
 
-/// Store commission `id` on `backend` bound to `birth`'s node, in its starting state, with
-/// its skeleton tabs and its owner's participant row; the one insert path. Its name and
-/// level stay the node's. Refuses an owner no User holds, a node `backend` doesn't hold
-/// or that isn't the commission's own, and a taken id.
+/// Store commission `id` on `backend` bound to `birth`'s node, in [`CommissionStart`]'s
+/// starting state, with its skeleton tabs and its owner's participant row; the one insert
+/// path. Its name and level stay the node's. Refuses an owner no User holds, a node
+/// `backend` doesn't hold or that isn't the commission's own, and a taken id.
 pub(crate) fn insert_commission(
     backend: &MemBackend,
     id: CommissionId,
@@ -167,16 +167,24 @@ pub(crate) fn insert_commission(
             !commissions.contains_key(&id),
             "a commission already has this id"
         );
+        // No `..`: a field the start gains fails to compile here until it is stored.
+        let CommissionStart {
+            lifecycle_step,
+            direction_status,
+            deadline_status,
+            linked_channel,
+            archived_at,
+        } = CommissionStart::default();
         let stored = StoredCommission {
             node_id: node.id,
             owner_id: birth.owner_id.clone(),
-            lifecycle_step: LifecycleStep::Draft,
+            lifecycle_step,
             deadline: commission.deadline,
             maturity: commission.maturity,
-            direction_status: None,
-            deadline_status: None,
-            linked_channel: None,
-            archived_at: None,
+            direction_status,
+            deadline_status,
+            linked_channel,
+            archived_at,
             created_at: birth.created_at,
         };
         commissions.insert(id, stored);
@@ -214,7 +222,7 @@ pub(crate) struct StoredCommission {
     pub(crate) node_id: NodeId,
     /// The User who created it — the permanent owner.
     pub(crate) owner_id: UserId,
-    /// Its single [`LifecycleStep`]; a freshly created commission is `Draft`.
+    /// Its single [`LifecycleStep`]; a freshly created commission is at [`CommissionStart`]'s.
     pub(crate) lifecycle_step: LifecycleStep,
     /// The nullable-but-fixed deadline envelope field.
     pub(crate) deadline: Option<domain::datetime::DateTimeUtc>,
@@ -1819,7 +1827,7 @@ impl MemBackend {
     }
 
     /// Overwrite a stored commission's lifecycle step (test-only seeder): a create is born
-    /// Draft, and no use case moves it yet. Panics if `commission` is not stored.
+    /// at [`CommissionStart`]'s, and no use case moves it yet. Panics if `commission` is not stored.
     pub fn seed_lifecycle_step(&self, commission: CommissionId, step: LifecycleStep) {
         self.commissions
             .lock()

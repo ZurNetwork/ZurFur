@@ -26,6 +26,7 @@ mod lifecycle;
 mod role_marker;
 mod rows;
 mod standing;
+mod start;
 mod title;
 
 pub use changelog::{
@@ -58,4 +59,5 @@ pub use seat::{
 pub use seat_invitation::{SeatInvitation, SeatInvitationId};
 pub use slot::{NewSlot, Slot, SlotTitle, SlotTitleError};
 pub use standing::{CommissionStanding, LockedStanding};
+pub use start::CommissionStart;
 pub use title::CommissionTitle;
