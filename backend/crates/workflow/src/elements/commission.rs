@@ -15,6 +15,7 @@ pub mod seat;
 pub mod seat_invitation;
 pub mod slot;
 
+mod commission_role;
 mod deadline;
 mod direction;
 mod entity;
@@ -22,12 +23,15 @@ mod errors;
 mod grant_level;
 mod id;
 mod lifecycle;
+mod role_marker;
 mod rows;
+mod standing;
 mod title;
 
 pub use changelog::{
     ChangelogEntry, ChangelogEntryKind, ChannelPointer, ChannelPointerError, NewChangelogEntry,
 };
+pub use commission_role::CommissionRole;
 pub use deadline::{DeadlineStatus, LapsedDeadline, derive_deadline_status};
 pub use direction::DirectionStatus;
 pub use element::{
@@ -48,10 +52,12 @@ pub use grant_level::GrantLevel;
 pub use id::CommissionId;
 pub use lifecycle::LifecycleStep;
 pub use markup::{CommissionMarkup, Markup, MarkupError, MarkupKey, MarkupShape};
+pub use role_marker::{AsOwner, AsParticipant};
 pub use rows::{CommissionSummary, NewCommission};
 pub use seat::{
     NewSeat, Seat, SeatKind, SeatKindError, SeatLink, SeatLinkError, SeatPrompt, SeatPromptError,
 };
 pub use seat_invitation::{SeatInvitation, SeatInvitationId};
 pub use slot::{NewSlot, Slot, SlotTitle, SlotTitleError};
+pub use standing::CommissionStanding;
 pub use title::CommissionTitle;

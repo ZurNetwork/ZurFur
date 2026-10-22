@@ -49,3 +49,6 @@ uuid = { workspace = true }
 # `tests/account_process.rs` writes a hostile bug-report row with raw SQL,
 # past every domain rule, to prove `bug-reports list` escapes what it loads.
 sqlx = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/api/src/routes/commissions",
-  "charted": "2026-10-17",
+  "charted": "2026-10-22",
   "short": "The commission JSON API, one file per act",
   "is": "The user-scoped commission API, one file per act, all behind a uniform closed-door 404 for non-participants — each act a thin driver over the matching `application::commission::*` use case.",
   "type": "code",
@@ -12,7 +12,8 @@
     "Existence is participant-only knowledge: non-participants and absent ids get the same 404, never a 403.",
     "A new act adds a file here rather than growing a hotspot.",
     "The handler shape (ZMVP-205): `CallingUser` in, then the `{id}` through `CommissionPath` (a malformed id answers the same 404 as an id that names nothing; a second path parameter keeps its own `Path` extraction, the id read there as `IgnoredAny`), then `state.app().commissions().<act>(command, now)`, with the error mapped through the shared `CommissionError → Problem` impl in `mod.rs` — no handler builds a ports struct or opens a transaction.",
-    "`channel.rs` and `elements.rs` are the two exceptions: no use case covers them, so they keep `require_owner` (the last driver-side authz) plus an inline unit of work until one exists."
+    "`channel.rs` and `elements.rs` are the two exceptions: no use case covers them, so they keep `require_owner` (the last driver-side authz) plus an inline unit of work until one exists.",
+    "The interim guard (until ARC-4 moves them into use cases): `channel.rs`'s and `elements.rs`'s six calls on a unit's `commissions()` and `changelog()` each carry `#[expect(clippy::disallowed_methods, reason = \"ARC-4 moves this into a use case\")]` on its own statement, under api/clippy.toml's ban; a new call fails clippy."
   ],
   "entry_points": [
     "mod.rs (router assembly + the CommissionError → Problem mapping)"

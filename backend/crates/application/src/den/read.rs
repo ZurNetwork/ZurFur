@@ -117,7 +117,7 @@ impl<'h> Reader<'h> {
     /// A reader over any `host` for `viewer` within `caps`, marking open nodes from
     /// `records`; the den Queries use [`Reader::over`].
     pub(crate) fn new(
-        host: &'h dyn Host,
+        host: &'h dyn Host<Act = (), Applied = ()>,
         viewer: Viewer,
         records: &'h dyn RecordLookup,
         caps: Caps,

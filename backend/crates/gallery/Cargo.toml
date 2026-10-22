@@ -6,3 +6,6 @@ edition = "2024"
 
 # A stub: no dependencies and no dependents until its first types arrive.
 [dependencies]
+
+[lints]
+workspace = true

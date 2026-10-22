@@ -42,3 +42,6 @@ test-support = { path = "../test-support" }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
 uuid = { workspace = true }
+
+[lints]
+workspace = true

@@ -42,7 +42,7 @@
     },
     {
       "name": "src/commission.rs",
-      "role": "commission/slot/seat/tab/element/changelog/markup fakes — MemCommissionStore/Writes, MemChangelogStore/Writes + Stored* rows",
+      "role": "commission/slot/seat/tab/element/changelog/markup fakes — MemCommissionStore/Writes (incl. the standing reads; standing_for_update reads the unit's staged maps, no lock), MemChangelogStore/Writes + Stored* rows; seed helpers incl. seed_participant and remove_participant (the owner's row too)",
       "node": false
     },
     {
@@ -88,6 +88,11 @@
     {
       "name": "tests/commission.rs",
       "role": "commission port conformance run against the mem fakes",
+      "node": false
+    },
+    {
+      "name": "tests/commission_standing.rs",
+      "role": "the shared commission-standing suite (test-support::commission_standing_contract) run against the mem fakes, one fresh backend per case",
       "node": false
     },
     {

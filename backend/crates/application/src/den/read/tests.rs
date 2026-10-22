@@ -150,6 +150,9 @@ impl FakeHost {
 
 #[async_trait::async_trait]
 impl Host for FakeHost {
+    type Act = ();
+    type Applied = ();
+
     async fn child(
         &self,
         _viewer: &Viewer,

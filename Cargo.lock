@@ -427,6 +427,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "trybuild",
 ]
 
 [[package]]
@@ -3174,6 +3175,7 @@ dependencies = [
  "serde_json",
  "strum",
  "thiserror 2.0.20",
+ "trybuild",
  "uuid",
 ]
 

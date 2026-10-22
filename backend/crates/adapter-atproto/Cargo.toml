@@ -82,3 +82,6 @@ wiremock = { workspace = true }
 # A TLS test server with an untrusted certificate, for the guarded client's
 # certificate-refusal test.
 tokio-rustls = { workspace = true }
+
+[lints]
+workspace = true

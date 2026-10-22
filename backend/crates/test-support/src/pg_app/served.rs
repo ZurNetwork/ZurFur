@@ -133,9 +133,25 @@ pub struct PgRuntime {
 
 /// A [`PgRuntime`] with the sign-in and profile ports answered by an [`InProcessPds`].
 pub async fn pg_runtime() -> PgRuntime {
+    runtime_through(None).await
+}
+
+/// As [`pg_runtime`], with the runtime reaching its database through a proxy that logs into
+/// `statements` every statement PostgreSQL is asked to execute, seeding included.
+pub async fn pg_runtime_recording(statements: &StatementLog) -> PgRuntime {
+    runtime_through(Some(statements)).await
+}
+
+/// Builds the [`PgRuntime`] as [`pg_runtime`] says, through the recording proxy when
+/// `statements` is given.
+async fn runtime_through(statements: Option<&StatementLog>) -> PgRuntime {
     let db = fresh_db().await;
+    let database_url = match statements {
+        Some(log) => record_statements(db.url(), log.clone()).await,
+        None => db.url().to_owned(),
+    };
     let pds = Arc::new(InProcessPds::default());
-    let live = Runtime::connect(config("http://localhost", db.url()))
+    let live = Runtime::connect(config("http://localhost", &database_url))
         .await
         .expect("the live runtime connects to the test database");
     let runtime = Runtime {

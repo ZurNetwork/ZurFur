@@ -5,5 +5,8 @@ large-error-threshold = 192
 disallowed-methods = [
     { path = "tower_sessions::SessionManagerLayer::new", reason = "mount sessions through `http_cookies::session_layer`, which puts the single-session-cookie guard in front; a bare layer reads whichever of two planted pairs comes last" },
     { path = "domain::ports::UnitOfWork::nodes", reason = "no driver reaches the Den's node port; a unit-of-work double that delegates carries an `#[expect]` and a reason" },
+    { path = "domain::ports::UnitOfWork::commissions", reason = "a driver writes a commission only through a use case; each site left carries an `#[expect]` until ARC-4 moves it into one, and a unit-of-work double or a seeder carries an `#[expect]` or `#[allow]` and a reason" },
+    { path = "domain::ports::UnitOfWork::changelog", reason = "a driver appends to a commission's changelog only through a use case; each site left carries an `#[expect]` until ARC-4 moves it into one, and a unit-of-work double carries an `#[expect]` and a reason" },
     { path = "axum::serve", reason = "serve the app through `http_stack::serve`, which runs every request to its end inside the detach layer" },
+    { path = "domain::ports::WriteCapability::gate_issued", reason = "only the den's write gate issues a write capability; a test double carries an `#[allow]` and a reason" },
 ]

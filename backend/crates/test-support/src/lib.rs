@@ -6,6 +6,7 @@
 //! this crate's node for the usage recipe, the hermeticity guarantees, and
 //! the container-reuse escape hatch.
 
+pub mod commission_standing_contract;
 pub mod contract;
 pub mod cut;
 pub mod den;

@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/workflow/src",
-  "charted": "2026-10-17",
+  "charted": "2026-10-22",
   "short": "Workflow elements and ports",
   "is": "Two public modules: the commission and board nouns (elements) and the seams that store them (ports).",
   "type": "code",
@@ -37,7 +37,7 @@
     },
     {
       "name": "ports/",
-      "role": "trait seams: commission, changelog, workflow, file (FileStore); errors.rs (UnknownTab, UnknownSurface, ElementNotFound)",
+      "role": "trait seams: commission (incl. the standing reads: `standing` on the pool, `standing_for_update` locked in a unit), changelog, workflow, file (FileStore); errors.rs (UnknownTab, UnknownSurface, ElementNotFound)",
       "node": false
     }
   ],
@@ -45,6 +45,7 @@
     "Adapters: `adapter-pg` implements these private-store ports, `adapter-mem` fakes them.",
     "Changelog entries are appended in the same unit as the domain write they record, and nothing is derived from them (59310081).",
     "`commission_element` carries a **composite** FK `(tab_id, commission_id) → commission_tab (id, commission_id)`, so an element citing another commission's tab is unwritable; `UnknownTab` is the friendly 404 half of that rule (45514754).",
-    "View grants are per-User, never per-Account; membership confers no view (29130754, amended 2026-09-04)."
+    "View grants are per-User, never per-Account; membership confers no view (29130754, amended 2026-09-04).",
+    "Standing: every change to someone's standing on a commission (evict, leave, role change, Admin grant or revoke, transfer) locks the commission row first, so `CommissionReads::standing_for_update` holds its answer until its unit ends. Nothing deletes a Participant today. Authority reads `commission.visibility`, never a node's level."
   ]
 }

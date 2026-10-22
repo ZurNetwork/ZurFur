@@ -1270,6 +1270,24 @@ pub mod commission {
         pub notes: Option<String>,
     }
 
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct StandingForUpdateRow {
+        pub visibility: String,
+        pub is_owner: Option<bool>,
+        pub archived: Option<bool>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct StandingRow {
+        pub found: Option<bool>,
+        pub visibility: Option<String>,
+        pub is_owner: Option<bool>,
+        pub is_participant: bool,
+        pub archived: Option<bool>,
+    }
+
     /// `queries/commission/add_element.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// Contribute one element into a declared surface. The single insert
@@ -2060,6 +2078,47 @@ pub mod commission {
             .bind(commission_id)
             .fetch_all(conn)
             .await
+    }
+
+    /// `queries/commission/standing.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// One viewer's standing on one commission, always as exactly one row: a one-row
+    /// probe left-joined to `commission`, so an absent id and a stranger run the same
+    /// statement, get the same row shape and run the same participant probe. `found`
+    /// is false for an absent id. Reads no title and no whole row, and never decodes
+    /// the archive time, only whether there is one.
+    pub async fn standing(
+        conn: impl sqlx::PgExecutor<'_>,
+        commission_id: uuid::Uuid,
+        viewer: &str,
+    ) -> sqlx::Result<Vec<StandingRow>> {
+        sqlx::query_as(include_str!("../queries/commission/standing.sql"))
+            .bind(commission_id)
+            .bind(viewer)
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/commission/standing_for_update.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// `standing`'s commission facets, with the commission row locked until the unit
+    /// of work ends: the same probe inner-joined, so an absent id answers no row.
+    /// FOR NO KEY UPDATE OF commission locks the commission row alone. Every change to
+    /// someone's standing locks that row first, so it waits for this unit. Holds no
+    /// participant probe: a probe in this statement reads the snapshot taken before
+    /// the lock was granted, so the caller runs `is_participant` after it instead.
+    pub async fn standing_for_update(
+        conn: impl sqlx::PgExecutor<'_>,
+        commission_id: uuid::Uuid,
+        viewer: &str,
+    ) -> sqlx::Result<Vec<StandingForUpdateRow>> {
+        sqlx::query_as(include_str!(
+            "../queries/commission/standing_for_update.sql"
+        ))
+        .bind(commission_id)
+        .bind(viewer)
+        .fetch_all(conn)
+        .await
     }
 
     /// `queries/commission/view_grant.sql`, contract inferred from the SQL against the migrated schema.

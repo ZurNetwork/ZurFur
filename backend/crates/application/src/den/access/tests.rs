@@ -56,6 +56,10 @@ async fn seed_alice_s(world: &World, title: &str, visibility: Level) -> Commissi
     let mut commission = Commission::create(title, alice(), chrono::Utc::now(), None);
     commission.visibility = visibility;
     let id = commission.id;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "test seeding creates the commission directly, beneath the den's write gate"
+    )]
     world
         .runtime
         .transaction(async move |uow: &mut dyn UnitOfWork| {

@@ -3,11 +3,14 @@
 
 use domain::elements::{
     account::AccountId,
-    commission::{CommissionId, CommissionSummary, ElementId, FileKey},
+    commission::{
+        CommissionId, CommissionRole, CommissionStanding, CommissionSummary, ElementId, FileKey,
+    },
     level::Level,
     user::UserId,
 };
 
+use crate::Ports;
 use crate::den::{
     DenContext, DenMount, DenType, Node, NodeState, Place, STANDING, Segment, TopLevel,
     names::{self, ATTACHMENTS, CHANGELOG, COMMISSIONS, PRODUCTS, SLOTS},
@@ -267,6 +270,91 @@ pub(crate) async fn mounts(
         | CommissionPlace::Slot(..)
         | CommissionPlace::File(..) => Ok(Vec::new()),
     }
+}
+
+/// What a write's standing on a commission answers: the one not-found, a role below the act's
+/// need, or leave to act with the facts the write needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the den's write use case reads it; no driver calls it until the next slice"
+    )
+)]
+pub(crate) enum Verdict {
+    /// No such commission, or the actor holds no standing on it, whatever its level.
+    NotFound,
+    /// The actor's role is below what the act needs.
+    Forbidden,
+    /// The actor may act.
+    Granted(StandingFacts),
+}
+
+/// The facts a granted standing hands the write: the actor's role, the commission's own level
+/// and whether it is archived. No id: the write already names its commission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the den's write use case reads it; no driver calls it until the next slice"
+    )
+)]
+pub(crate) struct StandingFacts {
+    /// The actor's role, at or above what the act needs.
+    pub(crate) role: CommissionRole,
+    /// The commission's own level.
+    pub(crate) level: Level,
+    /// Whether it is archived; archived refuses nothing yet.
+    pub(crate) archived: bool,
+}
+
+/// The verdict on one standing for an act that needs `needs`: no commission or no role is the
+/// one not-found, a lower role is forbidden, and at or above is granted. The pool's read and the
+/// locked read both answer through it.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the den's write use case calls it; no driver calls that until the next slice"
+    )
+)]
+pub(crate) fn verdict(standing: Option<CommissionStanding>, needs: CommissionRole) -> Verdict {
+    let Some(standing) = standing else {
+        return Verdict::NotFound;
+    };
+    let Some(role) = standing.role else {
+        return Verdict::NotFound;
+    };
+    if role < needs {
+        return Verdict::Forbidden;
+    }
+    let facts = StandingFacts {
+        role,
+        level: standing.level,
+        archived: standing.archived,
+    };
+    Verdict::Granted(facts)
+}
+
+/// The verdict on `actor`'s standing on `commission` from the pool, for an act that needs
+/// `needs`: one statement, the same for a stranger and an id nothing is stored under.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the den's write use case calls it; no driver calls that until the next slice"
+    )
+)]
+pub(crate) async fn pool_verdict(
+    ports: &Ports,
+    commission: &CommissionId,
+    actor: &UserId,
+    needs: CommissionRole,
+) -> anyhow::Result<Verdict> {
+    let standing = ports.commissions.standing(commission, actor).await?;
+    Ok(verdict(standing, needs))
 }
 
 #[cfg(test)]

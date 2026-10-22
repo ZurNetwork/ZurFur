@@ -10,6 +10,7 @@ use std::any::type_name;
 /// the pin: a module that stops resolving fails to compile.
 #[allow(unused_imports, reason = "each import pins one façade path")]
 mod element_modules {
+    use domain::elements::commission::{AsOwner, AsParticipant};
     use domain::elements::node::{
         MAX_SEGMENT_BYTES, NewNode, NodeId, NodeRow, NodeSegment, NodeSegmentError, NodeType,
         UnknownNodeType,
@@ -44,11 +45,12 @@ fn every_flat_port_name_resolves_to_its_crate() {
         ActorIdentityStore, ActorIdentityWrites, Authenticator, BrowserBinding, BrowserMismatch,
         BugReportStore, BugReportWrites, ChangelogStore, ChangelogWrites, CharacterStore,
         CharacterWrites, ColumnStore, ColumnWrites, CommissionReads, CommissionRepo,
-        CommissionStore, CommissionWrites, Database, DidBelongsToAnotherActor, DidMinter,
-        ElementNotFound, FileStore, HandleTaken, IdentityResolver, KeyStore, NodeReads, NodeRepo,
-        NodeStore, NodeWrites, PlcOperationLog, ProfileCache, ProfileSource, PublicRecords,
-        PublicRecordsError, ResolveError, SegmentTaken, SigninStarted, Unit, UnitOfWork,
-        UnknownSurface, UnknownTab, UserStore, UserWrites, WorkflowStore, WorkflowWrites,
+        CommissionStore, CommissionWrites, Creator, Database, DidBelongsToAnotherActor, DidMinter,
+        ElementNotFound, FileStore, HandleTaken, IdentityResolver, KeyStore, New, NodeReads,
+        NodeRepo, NodeStore, NodeWrites, PlcOperationLog, ProfileCache, ProfileSource,
+        PublicRecords, PublicRecordsError, ResolveError, SegmentTaken, SigninStarted, Unit,
+        UnitOfWork, UnknownSurface, UnknownTab, UserStore, UserWrites, WorkflowStore,
+        WorkflowWrites, WriteCapability,
     };
 
     let identity_names = [
@@ -103,6 +105,9 @@ fn every_flat_port_name_resolves_to_its_crate() {
         type_name::<dyn NodeStore>(),
         type_name::<dyn NodeWrites>(),
         type_name::<SegmentTaken>(),
+        type_name::<WriteCapability<(), Creator>>(),
+        type_name::<New<()>>(),
+        type_name::<Creator>(),
     ];
     let facade_names = [
         type_name::<dyn Database>(),

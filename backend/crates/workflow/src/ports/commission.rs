@@ -7,9 +7,10 @@ use async_trait::async_trait;
 use crate::elements::{
     commission::{
         ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
-        CommissionMarkup, CommissionSummary, CommissionTitle, DeadlineStatus, DirectionStatus,
-        ElementId, FileKey, FileSummary, GrantLevel, LapsedDeadline, NewCommission, NewElement,
-        NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
+        CommissionMarkup, CommissionStanding, CommissionSummary, CommissionTitle, DeadlineStatus,
+        DirectionStatus, ElementId, FileKey, FileSummary, GrantLevel, LapsedDeadline,
+        NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot,
+        TabId, TabRow,
     },
     workflow::{Column, ColumnId, WorkflowId},
 };
@@ -32,6 +33,16 @@ pub trait CommissionStore: Send + Sync {
     /// its own visibility and its archive time, and nothing else of the row. An archived
     /// commission is still found.
     async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>>;
+
+    /// The [`CommissionStanding`] `user` holds on `commission`, or `None` when no
+    /// commission has that id. An absent id and a stranger take the same one-row
+    /// read, and the read carries no title and no whole row. An archived
+    /// commission is still found.
+    async fn standing(
+        &self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<Option<CommissionStanding>>;
 
     async fn current_column_of_workflow(
         &self,
@@ -321,6 +332,17 @@ pub trait CommissionReads: Send {
     /// [`find`](Self::find), with the row locked (`FOR NO KEY UPDATE`) for the
     /// rest of the unit; child-row inserts by others are not blocked.
     async fn find_for_update(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
+
+    /// [`CommissionStore::standing`], with the commission row locked
+    /// (`FOR NO KEY UPDATE`) for the rest of the unit; `None` when it is absent.
+    /// Every change to someone's standing (evict, leave, role change, Admin grant
+    /// or revoke, transfer) locks the commission row first, so this answer holds
+    /// until the unit ends.
+    async fn standing_for_update(
+        &mut self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<Option<CommissionStanding>>;
 
     /// Whether `user` is a Participant of `commission`; as
     /// [`CommissionStore::is_participant`].

@@ -146,6 +146,10 @@ url = { version = "2.5.8", features = ["serde"] }
 # Default features off, so it rides the ring provider reqwest already uses.
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring"] }
 
+# `unsafe` is forbidden in every crate; each crate opts in with `[lints] workspace = true`.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
 [profile.dev]
 # Debug info goes to .dwo files beside the objects instead of into every linked
 # binary: each test-binary link needs about half the memory and target/ about

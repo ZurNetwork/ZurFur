@@ -14,7 +14,8 @@
     "All design lives in the design corpus ZurNetwork/zurfur-design at ~/code/zurfur-design (single source of truth; `docs/design-index.md` is the generated pointer index) — read the page before asserting; the Jira ZMVP project is a historical record (old commits and comments cite `ZMVP-N` keys); nothing new is tracked there.",
     "Private data (app-owned rows, Postgres) vs public data (user-owned records, the PDS) is THE boundary; no cross-store transactions.",
     "Generated code (backend `api/src/generated`, frontend `lib/server/api/generated`, `adapter-*/src/queries.rs`) is committed and drift-gated in CI — never hand-edit; `just gen-contract` / `just gen-queries` regenerate it, and a SQL comment change re-generates `queries.rs` too.",
-    "`main` is protected; slice PRs into `feature/*`, squash to `main`."
+    "`main` is protected; slice PRs into `feature/*`, squash to `main`.",
+    "`unsafe` is forbidden in every backend crate (the workspace lint, `unsafe_code = \"forbid\"`); a new crate opts in with `[lints] workspace = true`, which application/tests/write_gate_seams.rs checks."
   ],
   "entry_points": [
     "Justfile",
@@ -86,7 +87,7 @@
     },
     {
       "name": "Cargo.toml",
-      "role": "workspace root; members = backend/crates/*; all dep versions pinned here",
+      "role": "workspace root; members = backend/crates/*; all dep versions pinned here; `[workspace.lints.rust] unsafe_code = \"forbid\"`, which every crate takes with `[lints] workspace = true`",
       "node": false
     },
     {

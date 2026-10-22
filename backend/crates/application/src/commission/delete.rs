@@ -51,6 +51,10 @@ impl Commissions<'_> {
             .commission_has_facts(&commission.id)
             .await?;
         if !has_facts {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the ungated delete site, frozen until its slice routes it through the den's write gate"
+            )]
             uow.commissions().delete(&commission.id).await?;
         }
 

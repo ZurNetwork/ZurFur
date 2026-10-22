@@ -461,7 +461,7 @@
     {
       "page": 55836674,
       "title": "The Application Layer — Use Cases, DTOs and Ports",
-      "governs": "D6/D7: `elements.rs`/`channel.rs`/`mod.rs::require_owner`: driver-side authz/transaction survives only where no use case exists yet"
+      "governs": "D6/D7: `elements.rs`/`channel.rs`/`mod.rs::require_owner`: driver-side authz/transaction survives only where no use case exists yet; each of their unit calls carries its own #[expect] under api/clippy.toml's commissions()/changelog() ban until ARC-4 moves it into a use case"
     },
     {
       "page": 65110018,
@@ -634,14 +634,29 @@
   ],
   "backend/crates/application/src/den": [
     {
+      "page": 24150017,
+      "title": "Transactions as a capability — a compile-enforced Unit of Work in the private store",
+      "governs": "gate.rs, write.rs: a write is one unit from the #[lazy_unit] wrapper; the grant, the node rows, the handler's write and its changelog entry commit together or roll back together (D1)"
+    },
+    {
+      "page": 29425666,
+      "title": "Commission Structural Authority — the Commission Admin Role",
+      "governs": "gate.rs's RoleTable and authority.rs's grant: which commission role a capability's role marker needs (AsOwner the Owner only, AsParticipant any Participant), with no Admin role yet (D2 the Owner-only reserve, D3 the Admin-capable rest)"
+    },
+    {
+      "page": 55836674,
+      "title": "The Application Layer — Use Cases, DTOs and Ports",
+      "governs": "write.rs: Den::write authorizes (the pool's verdict, then the grant from the locked standing) and holds the unit inside the application layer, never in a driver (D6, D7)"
+    },
+    {
       "page": 2026093001,
       "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
-      "governs": "host.rs, place.rs: the global root and its traverse-only top-level directories, actor and commission keys, users' and Accounts' system folders, mounts, commission entries (rulings 14–21); post.rs: /post/<did> is always public (decisions 5 and 20), and a user's posts is a mount of it (ruling 16); whether each post below it is public is still open (the Open table, Posts that aren't public)"
+      "governs": "host.rs, place.rs: the global root and its traverse-only top-level directories, actor and commission keys, users' and Accounts' system folders, mounts, commission entries (rulings 14–21); post.rs: /post/<did> is always public (decisions 5 and 20), and a user's posts is a mount of it (ruling 16); whether each post below it is public is still open (the Open table, Posts that aren't public); the write (write.rs, act.rs, authority.rs, gate.rs): Atta checks every act and the den's one host applies it (D4, ruling 34), a change is only a named act for its type through one use case, never a generic file operation (D22, ruling 31), a made node starts Private unless its creator picks wider and nothing widens implicitly (D9, D12, rulings 32–33)"
     },
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "the whole module: Atta below application, one host trait with an exhaustive match (D1); keys are segments (D2); standing covers the real subtree (D3); soft-deleted nodes hidden unless asked (D13); content not shown is fixed per type (D15); one not-found (D21); no stored level means Private (D22); equal names in one folder told apart at read time, on nodes and crumbs too (D23); page tokens (D24); an open node carries the id of the thing it stands for, an Account's DID or a commission's id, never parsed from a path (D2, amended 2026-10-15); each crumb carries its type for its icon (the breadcrumbs row, amended 2026-10-15)"
+      "governs": "the whole module: Atta below application, one host trait with an exhaustive match (D1; the write host's apply matches over DenAct with no _ arm); keys are segments (D2); standing covers the real subtree (D3); soft-deleted nodes hidden unless asked (D13); content not shown is fixed per type (D15); one not-found (D21; the write answers NotFound alike for no such thing and no standing); no stored level means Private (D22); equal names in one folder told apart at read time, on nodes and crumbs too (D23); page tokens (D24); an open node carries the id of the thing it stands for, an Account's DID or a commission's id, never parsed from a path (D2, amended 2026-10-15); each crumb carries its type for its icon (the breadcrumbs row, amended 2026-10-15)"
     }
   ],
   "backend/crates/application-macros": [
@@ -660,12 +675,12 @@
     {
       "page": 2026093001,
       "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
-      "governs": "the whole crate: D4 Atta is the engine for the tree; D23–D25 node data, rigid metadata and the payload hash; D26 attributes; D28 Atta collects the dotfile cascade"
+      "governs": "the whole crate: D4 Atta is the engine for the tree; D23–D25 node data, rigid metadata and the payload hash; D26 attributes; D28 Atta collects the dotfile cascade; write.rs's checks: D9 (ruling 8) never wider than its parent, ruling 31 no generic write, ruling 33 born Private unless the creator picks wider"
     },
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "D1 a library below application, reached through one host trait answered by an exhaustive match; D2 keys are path segments and identity is the real path; D3 standing on the real subtree; D5 entry levels; D21–D24 one not-found, no stored level means Private, the mount guard, opaque page tokens; D23 one folder never shows two entries with the same name: ordinal.rs and list.rs number equal names at read time, per viewer; D24 the listing order; D19 (amended 2026-10-15) Atta takes names its host already checked: metadata.rs's DisplayName holds no rule"
+      "governs": "D1 a library below application, reached through one host trait answered by an exhaustive match (host.rs's apply and its Act/Applied types extend that one trait); D2 keys are path segments and identity is the real path; D3 standing on the real subtree; D5 entry levels; D21–D24 one not-found, no stored level means Private, the mount guard, opaque page tokens; D23 one folder never shows two entries with the same name: ordinal.rs and list.rs number equal names at read time, per viewer; D24 the listing order; D19 (amended 2026-10-15) Atta takes names its host already checked: metadata.rs's DisplayName holds no rule"
     }
   ],
   "backend/crates/cli": [
@@ -987,6 +1002,11 @@
       "page": 59310081,
       "title": "The Changelog as the Only Record",
       "governs": "ports/changelog.rs x2"
+    },
+    {
+      "page": 2026100701,
+      "title": "My Den — Rulings from the First Slice's Design Study",
+      "governs": "ports/commission.rs standing/standing_for_update (an unreadable stored visibility reads Private)"
     }
   ],
   "backend/crates/workflow/src/elements": [
@@ -1019,6 +1039,11 @@
       "page": 29130754,
       "title": "Commission Ownership Separation",
       "governs": "amended 2026-09-04; commission/grant_level.rs"
+    },
+    {
+      "page": 29425666,
+      "title": "Commission Structural Authority — the Commission Admin Role",
+      "governs": "commission/role_marker.rs: AsOwner and AsParticipant, the roles a write capability is issued in (D2 the Owner-only reserve, D3 the Admin-capable rest); there is no Admin marker until the Admin role exists"
     },
     {
       "page": 29982722,
