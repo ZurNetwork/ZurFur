@@ -18,7 +18,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "kernel, identity, workflow, async-trait, anyhow; dev-dep serde_json for the guards",
+      "role": "kernel, identity, workflow, async-trait, anyhow; dev-deps serde_json, syn (with visit), quote and proc-macro2 for the guards",
       "node": false
     },
     {
@@ -33,7 +33,7 @@
     },
     {
       "name": "tests/",
-      "role": "it/ — the domain crates' one guard binary: elements_do_not_import_ports.rs (elements never depend on ports, in every domain crate), domain_crates_point_one_way.rs (allowed workspace dependencies per domain crate; consumers name only domain), facade_paths.rs (every re-exported path resolves), no_actor_port_takes_a_node_id.rs (no port of identity, nor of kernel but the node port, takes or returns a NodeId, through any renamed import or type alias in either crate; a source-text scan with planted alias cases)",
+      "role": "it/ — the domain crates' one guard binary: elements_do_not_import_ports.rs (elements never depend on ports, in every domain crate), domain_crates_point_one_way.rs (allowed workspace dependencies per domain crate; consumers name only domain), facade_paths.rs (every re-exported path resolves), no_actor_port_takes_a_node_id.rs (no port of identity, nor of kernel but the node port, takes or returns a NodeId, through any renamed import or type alias in either crate; aliases read with syn, signatures from proc-macro2 tokens with macro bodies included; planted alias cases)",
       "node": false
     }
   ],

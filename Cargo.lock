@@ -1599,7 +1599,10 @@ dependencies = [
  "async-trait",
  "identity",
  "kernel",
+ "proc-macro2",
+ "quote",
  "serde_json",
+ "syn 2.0.117",
  "workflow",
 ]
 

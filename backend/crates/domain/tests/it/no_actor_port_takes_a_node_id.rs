@@ -3,10 +3,16 @@
 //! Actors are addressed by DID; a node id is internal to the Den. The guard reads every
 //! port of `identity` and every port of `kernel` but the node port itself, and refuses a
 //! function signature naming `NodeId`, directly or through a renamed import or a type alias
-//! made anywhere in either crate. A source-text scan: an alias compiles fine.
+//! made anywhere in either crate. It reads the sources with `syn`: an alias compiles fine.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+use proc_macro2::{Delimiter, TokenStream, TokenTree};
+use quote::ToTokens;
+use syn::ext::IdentExt;
+use syn::visit::{self, Visit};
+use syn::{ImplItemType, ItemType, TraitItemType, UseRename};
 
 /// The node key no actor port may carry.
 const NODE_ID: &str = "NodeId";
@@ -14,218 +20,82 @@ const NODE_ID: &str = "NodeId";
 /// The names of unit-test and property-test files, which hold no port.
 const TEST_FILES: [&str; 2] = ["tests.rs", "proptests.rs"];
 
-/// One token of a Rust source: an identifier, or one punctuation character. Comments,
-/// literals, numbers and lifetimes leave none.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Token {
-    Ident(String),
-    Punct(char),
-}
-
-fn is_ident_char(character: char) -> bool {
-    character.is_alphanumeric() || character == '_'
-}
-
-/// The index past the identifier characters starting at `at`.
-fn word_end(chars: &[char], at: usize) -> usize {
-    let length = chars[at..]
-        .iter()
-        .take_while(|character| is_ident_char(**character))
-        .count();
-    at + length
-}
-
-/// The index past the escaped literal whose body starts at `at` and ends at `close`.
-fn escaped_end(chars: &[char], mut at: usize, close: char) -> usize {
-    while at < chars.len() {
-        match chars[at] {
-            '\\' => at += 2,
-            character if character == close => return at + 1,
-            _ => at += 1,
-        }
-    }
-    at
-}
-
-/// The index past the raw string whose hashes start at `at`.
-fn raw_string_end(chars: &[char], at: usize) -> usize {
-    let hashes = chars[at..].iter().take_while(|c| **c == '#').count();
-    let mut index = at + hashes + 1;
-    while index < chars.len() {
-        let closes = chars[index] == '"'
-            && chars[index + 1..]
-                .iter()
-                .take(hashes)
-                .filter(|c| **c == '#')
-                .count()
-                == hashes;
-        if closes {
-            return index + 1 + hashes;
-        }
-        index += 1;
-    }
-    index
-}
-
-/// The index past the block comment opening at `at`; block comments nest.
-fn block_comment_end(chars: &[char], mut at: usize) -> usize {
-    let mut depth = 0;
-    while at < chars.len() {
-        let pair = (chars[at], chars.get(at + 1).copied());
-        match pair {
-            ('/', Some('*')) => {
-                depth += 1;
-                at += 2;
-            }
-            ('*', Some('/')) => {
-                depth -= 1;
-                at += 2;
-                if depth == 0 {
-                    return at;
-                }
-            }
-            _ => at += 1,
-        }
-    }
-    at
-}
-
-/// The index past the character literal or lifetime whose quote is at `at`.
-fn quote_end(chars: &[char], at: usize) -> usize {
-    if chars.get(at + 1) == Some(&'\\') {
-        return escaped_end(chars, at + 3, '\'');
-    }
-    if chars.get(at + 2) == Some(&'\'') {
-        return at + 3;
-    }
-    word_end(chars, at + 1)
-}
-
-/// The tokens of `source`.
-fn tokens(source: &str) -> Vec<Token> {
-    let chars: Vec<char> = source.chars().collect();
+/// Every identifier in `tokens`, groups and macro bodies included, raw ones without `r#`;
+/// a lifetime's name is not one.
+fn identifiers(tokens: TokenStream) -> Vec<String> {
     let mut out = Vec::new();
-    let mut at = 0;
-    while at < chars.len() {
-        let character = chars[at];
-        let next = chars.get(at + 1).copied();
-        if character.is_whitespace() {
-            at += 1;
-        } else if character == '/' && next == Some('/') {
-            at += chars[at..].iter().take_while(|c| **c != '\n').count();
-        } else if character == '/' && next == Some('*') {
-            at = block_comment_end(&chars, at);
-        } else if character == '"' {
-            at = escaped_end(&chars, at + 1, '"');
-        } else if character == '\'' {
-            at = quote_end(&chars, at);
-        } else if character.is_ascii_digit() {
-            at = word_end(&chars, at);
-        } else if is_ident_char(character) {
-            let end = word_end(&chars, at);
-            let word: String = chars[at..end].iter().collect();
-            let after = chars.get(end).copied();
-            let raw_prefix = matches!(word.as_str(), "r" | "br" | "cr");
-            let string_prefix = matches!(word.as_str(), "b" | "c");
-            let raw_ident = word == "r"
-                && after == Some('#')
-                && chars.get(end + 1).is_some_and(|c| is_ident_char(*c));
-            if raw_ident {
-                let ident_end = word_end(&chars, end + 1);
-                out.push(Token::Ident(chars[end + 1..ident_end].iter().collect()));
-                at = ident_end;
-            } else if raw_prefix && matches!(after, Some('"' | '#')) {
-                at = raw_string_end(&chars, end);
-            } else if string_prefix && after == Some('"') {
-                at = escaped_end(&chars, end + 1, '"');
-            } else if word == "b" && after == Some('\'') {
-                at = quote_end(&chars, end);
-            } else {
-                out.push(Token::Ident(word));
-                at = end;
-            }
-        } else {
-            out.push(Token::Punct(character));
-            at += 1;
+    let mut after_quote = false;
+    for tree in tokens {
+        match &tree {
+            TokenTree::Group(group) => out.extend(identifiers(group.stream())),
+            TokenTree::Ident(ident) if !after_quote => out.push(ident.unraw().to_string()),
+            TokenTree::Ident(_) | TokenTree::Punct(_) | TokenTree::Literal(_) => {}
         }
+        after_quote = matches!(&tree, TokenTree::Punct(punct) if punct.as_char() == '\'');
     }
     out
 }
 
-fn is_ident(token: &Token, name: &str) -> bool {
-    matches!(token, Token::Ident(ident) if ident == name)
+fn names_forbidden(tokens: TokenStream, forbidden: &BTreeSet<String>) -> bool {
+    identifiers(tokens)
+        .iter()
+        .any(|ident| forbidden.contains(ident))
 }
 
-/// The tokens from `start` to the first of `stops` outside parentheses, brackets and braces.
-fn up_to<'a>(tokens: &'a [Token], start: usize, stops: &[char]) -> &'a [Token] {
-    let mut depth = 0_i32;
-    for (index, token) in tokens.iter().enumerate().skip(start) {
-        let Token::Punct(punct) = token else {
-            continue;
-        };
-        if depth == 0 && stops.contains(punct) {
-            return &tokens[start..index];
-        }
-        match punct {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            _ => {}
-        }
-    }
-    &tokens[start..]
+/// Collects every name a file binds to a forbidden one: `use … X as Y` (never `_`) and
+/// `type Y = …X…`, at any depth.
+struct Aliases<'a> {
+    forbidden: &'a BTreeSet<String>,
+    found: BTreeSet<String>,
 }
 
-/// A function's signature: its tokens from `fn` to its body or its `;`.
-fn signature(tokens: &[Token], start: usize) -> &[Token] {
-    up_to(tokens, start, &[';', '{'])
-}
-
-/// A `use` or `type` item: its tokens up to its `;`.
-fn statement(tokens: &[Token], start: usize) -> &[Token] {
-    up_to(tokens, start, &[';'])
-}
-
-/// Every name `tokens` bind to a forbidden one: `use … X as Y;` (never `_`) and
-/// `type Y = …X…;`.
-fn aliases_in(tokens: &[Token], forbidden: &BTreeSet<String>, out: &mut BTreeSet<String>) {
-    for (index, token) in tokens.iter().enumerate() {
-        if is_ident(token, "use") {
-            let statement = statement(tokens, index);
-            for window in statement.windows(3) {
-                let [Token::Ident(original), as_word, Token::Ident(bound)] = window else {
-                    continue;
-                };
-                if is_ident(as_word, "as") && forbidden.contains(original) && bound != "_" {
-                    out.insert(bound.clone());
-                }
-            }
-        }
-        if is_ident(token, "type") {
-            let Some(Token::Ident(bound)) = tokens.get(index + 1) else {
-                continue;
-            };
-            let item = statement(tokens, index);
-            let Some(equals) = item.iter().position(|token| *token == Token::Punct('=')) else {
-                continue;
-            };
-            let names_forbidden = item[equals..]
-                .iter()
-                .any(|token| matches!(token, Token::Ident(ident) if forbidden.contains(ident)));
-            if names_forbidden {
-                out.insert(bound.clone());
-            }
+impl Aliases<'_> {
+    fn alias(&mut self, bound: &syn::Ident, ty: &syn::Type) {
+        if names_forbidden(ty.to_token_stream(), self.forbidden) {
+            self.found.insert(bound.unraw().to_string());
         }
     }
 }
 
-/// `NodeId` and every name `sources` bind to it, through any chain of aliases.
-fn forbidden_names(sources: &[Vec<Token>]) -> BTreeSet<String> {
+impl<'ast> Visit<'ast> for Aliases<'_> {
+    fn visit_use_rename(&mut self, rename: &'ast UseRename) {
+        let original = rename.ident.unraw().to_string();
+        let bound = rename.rename.unraw().to_string();
+        if self.forbidden.contains(&original) && bound != "_" {
+            self.found.insert(bound);
+        }
+    }
+
+    fn visit_item_type(&mut self, alias: &'ast ItemType) {
+        self.alias(&alias.ident, &alias.ty);
+        visit::visit_item_type(self, alias);
+    }
+
+    fn visit_impl_item_type(&mut self, alias: &'ast ImplItemType) {
+        self.alias(&alias.ident, &alias.ty);
+        visit::visit_impl_item_type(self, alias);
+    }
+
+    fn visit_trait_item_type(&mut self, alias: &'ast TraitItemType) {
+        if let Some((_, ty)) = &alias.default {
+            self.alias(&alias.ident, ty);
+        }
+        visit::visit_trait_item_type(self, alias);
+    }
+}
+
+/// `NodeId` and every name `files` bind to it, through any chain of aliases.
+fn forbidden_names(files: &[syn::File]) -> BTreeSet<String> {
     let mut forbidden = BTreeSet::from([NODE_ID.to_owned()]);
     loop {
-        let mut grown = forbidden.clone();
-        for source in sources {
-            aliases_in(source, &forbidden, &mut grown);
+        let mut aliases = Aliases {
+            forbidden: &forbidden,
+            found: forbidden.clone(),
+        };
+        for file in files {
+            aliases.visit_file(file);
         }
+        let grown = aliases.found;
         if grown == forbidden {
             return forbidden;
         }
@@ -233,44 +103,70 @@ fn forbidden_names(sources: &[Vec<Token>]) -> BTreeSet<String> {
     }
 }
 
-/// The name of each function in `tokens` whose signature names a forbidden name.
-fn signatures_naming(tokens: &[Token], forbidden: &BTreeSet<String>) -> Vec<String> {
+/// Whether `tree` ends a function signature: its `;` or its body.
+fn ends_signature(tree: &TokenTree) -> bool {
+    match tree {
+        TokenTree::Punct(punct) => punct.as_char() == ';',
+        TokenTree::Group(group) => group.delimiter() == Delimiter::Brace,
+        TokenTree::Ident(_) | TokenTree::Literal(_) => false,
+    }
+}
+
+/// The name of each function in `tokens` whose signature names a forbidden name, groups and
+/// macro bodies included.
+fn signatures_naming(tokens: TokenStream, forbidden: &BTreeSet<String>) -> Vec<String> {
+    let trees: Vec<TokenTree> = tokens.into_iter().collect();
     let mut out = Vec::new();
-    for (index, token) in tokens.iter().enumerate() {
-        let Some(Token::Ident(name)) = tokens.get(index + 1) else {
-            continue;
-        };
-        if !is_ident(token, "fn") {
+    for (index, tree) in trees.iter().enumerate() {
+        if let TokenTree::Group(group) = tree {
+            out.extend(signatures_naming(group.stream(), forbidden));
             continue;
         }
-        let signature = signature(tokens, index);
-        let names_forbidden = signature
+        let (TokenTree::Ident(keyword), Some(TokenTree::Ident(name))) =
+            (tree, trees.get(index + 1))
+        else {
+            continue;
+        };
+        if keyword != "fn" {
+            continue;
+        }
+        let signature: TokenStream = trees[index..]
             .iter()
-            .any(|token| matches!(token, Token::Ident(ident) if forbidden.contains(ident)));
-        if names_forbidden {
-            out.push(name.clone());
+            .take_while(|tree| !ends_signature(tree))
+            .cloned()
+            .collect();
+        if names_forbidden(signature, forbidden) {
+            out.push(name.unraw().to_string());
         }
     }
     out
 }
 
+fn parse(file: &str, source: &str) -> syn::File {
+    syn::parse_file(source).unwrap_or_else(|error| panic!("guard cannot parse {file}: {error}"))
+}
+
 /// The `fn` of each port in `ports` whose signature names a node id, as `<file>: fn <name>`;
 /// aliases come from `ports` and `elsewhere` both.
 fn offenders(ports: &[(String, String)], elsewhere: &[String]) -> Vec<String> {
-    let port_tokens: Vec<(String, Vec<Token>)> = ports
+    let port_files: Vec<(String, syn::File)> = ports
         .iter()
-        .map(|(file, source)| (file.clone(), tokens(source)))
+        .map(|(file, source)| (file.clone(), parse(file, source)))
         .collect();
-    let all_tokens: Vec<Vec<Token>> = port_tokens
+    let all_files: Vec<syn::File> = port_files
         .iter()
-        .map(|(_, tokens)| tokens.clone())
-        .chain(elsewhere.iter().map(|source| tokens(source)))
+        .map(|(_, parsed)| parsed.clone())
+        .chain(
+            elsewhere
+                .iter()
+                .map(|source| parse("a source of identity or kernel", source)),
+        )
         .collect();
-    let forbidden = forbidden_names(&all_tokens);
-    port_tokens
+    let forbidden = forbidden_names(&all_files);
+    port_files
         .iter()
-        .flat_map(|(file, tokens)| {
-            signatures_naming(tokens, &forbidden)
+        .flat_map(|(file, parsed)| {
+            signatures_naming(parsed.to_token_stream(), &forbidden)
                 .into_iter()
                 .map(move |name| format!("{file}: fn {name}"))
         })
@@ -442,6 +338,7 @@ fn the_guard_passes_what_names_no_node_id() {
         "pub trait UserStore { fn first(&self) -> char { 'N' } fn find(&self, did: &Did); }",
         "use crate::elements::node::NodeId as _; pub trait UserStore { fn find(&self, id: &_); }",
         "pub trait UserStore { fn find(&self, id: &NodeIdentity); }",
+        "pub trait UserStore { fn find<'NodeId>(&self, did: &'NodeId Did); }",
     ];
 
     for source in allowed {
