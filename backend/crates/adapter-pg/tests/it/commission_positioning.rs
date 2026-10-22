@@ -91,7 +91,7 @@ async fn seed_board(pool: &PgPool, account: &AccountId, name: &str) -> (Workflow
         .await
         .expect("create the board");
     let column_name = "Open".parse::<ColumnName>().expect("column name");
-    let column = workflow.new_column(column_name, workflow.visibility.clone());
+    let column = workflow.new_column(column_name, workflow.visibility);
     let column_id = column.id;
     workflow.insert(0, column).expect("the board is empty");
     uow.workflows()

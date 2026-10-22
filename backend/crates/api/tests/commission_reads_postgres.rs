@@ -88,7 +88,7 @@ async fn a_stranger_s_absent_commission_and_one_not_theirs_answer_alike_through_
     let world = pg_app::den_world(api::app).await;
 
     for (target, visibility) in stranger_targets(&world) {
-        world.set_visibility(target.id, visibility.clone()).await;
+        world.set_visibility(target.id, visibility).await;
         for pair in commission_read_stranger_pairs(&target) {
             assert_alice_opens_its_home(&world, &pair).await;
 
@@ -134,9 +134,7 @@ async fn on_a_live_public_or_listed_commission_a_stranger_s_causes_answer_alike(
     let world = pg_app::den_world(api::app).await;
 
     for (visibility, pair, code) in commission_read_live_pairs(&world) {
-        world
-            .set_visibility(world.untitled.id, visibility.clone())
-            .await;
+        world.set_visibility(world.untitled.id, visibility).await;
         assert_alice_opens_its_home(&world, &pair).await;
 
         let [absent, not_yours] = answers_of(&world.stranger, &world, &pair).await;
@@ -260,7 +258,7 @@ async fn a_pair_s_two_causes_make_the_same_reads_and_a_stranger_s_never_read_by_
     .await;
 
     for (target, visibility) in stranger_targets(&world) {
-        world.set_visibility(target.id, visibility.clone()).await;
+        world.set_visibility(target.id, visibility).await;
         for pair in commission_read_stranger_pairs(&target) {
             let label = format!("{visibility}, {}", pair.label);
             let reads = reads_of_each_cause(&log, &world.stranger, &world, &label, &pair).await;
@@ -271,9 +269,7 @@ async fn a_pair_s_two_causes_make_the_same_reads_and_a_stranger_s_never_read_by_
         }
     }
     for (visibility, pair, code) in commission_read_live_pairs(&world) {
-        world
-            .set_visibility(world.untitled.id, visibility.clone())
-            .await;
+        world.set_visibility(world.untitled.id, visibility).await;
         let label = format!("{visibility}, live, {}", pair.label);
         let reads = reads_of_each_cause(&log, &world.stranger, &world, &label, &pair).await;
 

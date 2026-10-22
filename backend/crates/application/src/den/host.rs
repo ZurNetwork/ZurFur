@@ -12,6 +12,7 @@ use crate::{
     den::{
         DenContext, DenMount, DenType, Node, NodeKind, NodeState, Place, RootNaming, TopLevel,
         admission::admission,
+        level::atta_level,
         names,
         place::Parent,
         post,
@@ -20,11 +21,12 @@ use crate::{
     user,
 };
 use atta::{
-    Access, Admission, DisplayName, Found, Host, HostError, Kind, Level, Metadata, Mount, Reach,
-    RealPath, Segment, Type, Viewer,
+    Access, Admission, DisplayName, Found, Host, HostError, Kind, Metadata, Mount, Reach, RealPath,
+    Segment, Type, Viewer,
 };
 use domain::elements::{
-    account::AccountId, character::CharacterId, commission::CommissionId, did::Did, user::UserId,
+    account::AccountId, character::CharacterId, commission::CommissionId, did::Did, level::Level,
+    user::UserId,
 };
 
 /// What the host recorded about a node it answered for in this request.
@@ -142,7 +144,7 @@ impl<'a> DenHost<'a> {
             key: key.clone(),
             parent: Some(parent.clone()),
             typ: type_key(node.place.den_type()),
-            level: node.level,
+            level: atta_level(node.level),
             name,
             symlink_target: None,
         };

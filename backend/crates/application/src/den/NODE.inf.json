@@ -56,7 +56,7 @@
     },
     {
       "name": "level.rs",
-      "role": "NodeLevel: private, listed, public",
+      "role": "atta_level, the one map from kernel's Level to Atta's, run once in DenHost::found; den_level maps Atta's answer back for the output",
       "node": false
     },
     {

@@ -9,8 +9,9 @@ use std::{
 use adapter_mem::fixture::{alice, bob, old_sketch, supreme_arts, untitled, untitled_files};
 use domain::{
     elements::{
-        commission::{Commission, CommissionFile, CommissionTitle, FileName, Visibility},
+        commission::{Commission, CommissionFile, CommissionTitle, FileName},
         did::Did,
+        level::Level,
         profile::Profile,
         user::User,
     },
@@ -48,7 +49,7 @@ fn not_found(answer: &Result<Opens, DenError>) -> bool {
 }
 
 /// Seeds a commission of alice's at `visibility`, which no one else takes part in.
-async fn seed_alice_s(world: &World, title: &str, visibility: Visibility) -> CommissionId {
+async fn seed_alice_s(world: &World, title: &str, visibility: Level) -> CommissionId {
     let title = title
         .parse::<CommissionTitle>()
         .expect("a valid test title");
@@ -204,7 +205,7 @@ async fn an_archived_commission_s_changelog_opens_by_its_typed_path_only_with_st
 #[tokio::test]
 async fn a_card_does_not_count_as_opening() {
     let world = test_world::world().await;
-    let listed = seed_alice_s(&world, "Listed piece", Visibility::Listed).await;
+    let listed = seed_alice_s(&world, "Listed piece", Level::Listed).await;
     let stranger = stranger();
 
     let card = check(&world, &stranger, ServedNode::Commission(listed)).await;
@@ -219,7 +220,7 @@ async fn a_card_does_not_count_as_opening() {
 #[tokio::test]
 async fn a_public_commission_opens_for_a_stranger_but_its_private_changelog_does_not() {
     let world = test_world::world().await;
-    let public = seed_alice_s(&world, "Public piece", Visibility::Public).await;
+    let public = seed_alice_s(&world, "Public piece", Level::Public).await;
     let stranger = stranger();
 
     let commission = check(&world, &stranger, ServedNode::Commission(public)).await;

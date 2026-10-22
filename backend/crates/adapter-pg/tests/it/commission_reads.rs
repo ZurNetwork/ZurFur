@@ -13,10 +13,11 @@ use domain::{
         account::{Account, AccountId, AccountName},
         commission::{
             Commission, CommissionFile, CommissionId, CommissionSummary, CommissionTitle, FileKey,
-            FileName, NewSlot, SlotTitle, SurfaceAddress, SurfaceName, Visibility,
+            FileName, NewSlot, SlotTitle, SurfaceAddress, SurfaceName,
         },
         did::Did,
         handle::Handle,
+        level::Level,
         text::StoredText,
         user::User,
         workflow::{WorkflowId, WorkflowName},
@@ -187,7 +188,7 @@ async fn participant_listing_includes_archived_commissions() {
     assert!(
         owners
             .iter()
-            .all(|summary| summary.visibility == Visibility::Private)
+            .all(|summary| summary.visibility == Level::Private)
     );
     let members_ids: Vec<CommissionId> = members.iter().map(|summary| summary.id).collect();
     assert_eq!(members_ids, [live]);
@@ -396,13 +397,13 @@ async fn the_summary_answers_the_stored_title_visibility_and_archived_flag() {
     let expected_live = CommissionSummary {
         id: live,
         title: StoredText::from("Untitled".to_owned()),
-        visibility: Visibility::Listed,
+        visibility: Level::Listed,
         archived: false,
     };
     let expected_archived = CommissionSummary {
         id: archived,
         title: StoredText::from("Old sketch".to_owned()),
-        visibility: Visibility::Private,
+        visibility: Level::Private,
         archived: true,
     };
     assert_eq!(live_summary, Some(expected_live));
@@ -412,12 +413,12 @@ async fn the_summary_answers_the_stored_title_visibility_and_archived_flag() {
 // A stored visibility no parser reads counts as Private: the summary, the whole
 // commission and the participant listing each read it so, and none fails.
 #[tokio::test]
-async fn an_unreadable_visibility_counts_as_private_on_every_read() {
+async fn an_unreadable_stored_level_counts_as_private_on_every_read() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:unreadableowner").await;
     let id = seed_commission(&pool, &owner, "Untitled").await;
     store_visibility(&pool, id, "not-a-visibility").await;
-    assert!("not-a-visibility".parse::<Visibility>().is_err());
+    assert!("not-a-visibility".parse::<Level>().is_err());
     let store = PgCommissionStore::new(pool.clone());
 
     let summary = store.find_summary(&id).await.expect("find_summary");
@@ -429,13 +430,13 @@ async fn an_unreadable_visibility_counts_as_private_on_every_read() {
 
     let summary = summary.expect("present");
     let found = found.expect("present");
-    assert_eq!(summary.visibility, Visibility::Private);
-    assert_eq!(found.visibility, Visibility::Private);
-    let listed: Vec<(CommissionId, Visibility)> = listing
+    assert_eq!(summary.visibility, Level::Private);
+    assert_eq!(found.visibility, Level::Private);
+    let listed: Vec<(CommissionId, Level)> = listing
         .into_iter()
         .map(|summary| (summary.id, summary.visibility))
         .collect();
-    assert_eq!(listed, [(id, Visibility::Private)]);
+    assert_eq!(listed, [(id, Level::Private)]);
 }
 
 // An archive time chrono can't hold (`infinity`, by a test-only update) never

@@ -3,6 +3,7 @@
 
 use domain::elements::{
     account::{Account, AccountId},
+    level::Level,
     name::NodeName,
 };
 
@@ -10,7 +11,7 @@ use crate::{
     account::workflow::den::WorkflowPlace,
     commission::den::CommissionPlace,
     den::{
-        DenContext, DenMount, DenType, Level, Node, NodeState, Place, STANDING, Segment, TopLevel,
+        DenContext, DenMount, DenType, Node, NodeState, Place, STANDING, Segment, TopLevel,
         names::{self, CHARACTERS, COMMISSIONS, WORKFLOWS},
     },
     user::den::system_folder,

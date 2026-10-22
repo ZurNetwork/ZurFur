@@ -1,5 +1,5 @@
-use application::den::{DenName, DenType, NameOrdinal, NodeKind, NodeLevel, PageToken, SoftDelete};
-use domain::elements::{account::AccountId, commission::CommissionId, did::Did};
+use application::den::{DenName, DenType, NameOrdinal, NodeKind, PageToken, SoftDelete};
+use domain::elements::{account::AccountId, commission::CommissionId, did::Did, level::Level};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -24,7 +24,7 @@ fn node(access: DenAccess) -> den::DenNode {
 fn an_open_node_carries_its_words() {
     let access = DenAccess::Open {
         kind: NodeKind::Directory,
-        own_level: NodeLevel::Listed,
+        own_level: Level::Listed,
         content_not_shown: true,
         soft_delete: Some(SoftDelete::Archived),
         thing: None,
@@ -50,7 +50,7 @@ fn an_open_node_carries_its_words() {
 fn a_live_node_carries_no_soft_deleted_word() {
     let access = DenAccess::Open {
         kind: NodeKind::File,
-        own_level: NodeLevel::Private,
+        own_level: Level::Private,
         content_not_shown: false,
         soft_delete: None,
         thing: None,
@@ -127,7 +127,7 @@ fn keys(value: &serde_json::Value) -> Vec<String> {
 fn open_standing_for(thing: DenThing) -> DenAccess {
     DenAccess::Open {
         kind: NodeKind::Directory,
-        own_level: NodeLevel::Private,
+        own_level: Level::Private,
         content_not_shown: false,
         soft_delete: None,
         thing: Some(thing),

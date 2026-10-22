@@ -1,10 +1,10 @@
 //! Commission's arm of the Den for Workflows: an Account's `workflows` folder and the
 //! Workflows inside it.
 
-use domain::elements::{account::AccountId, workflow::WorkflowId};
+use domain::elements::{account::AccountId, level::Level, workflow::WorkflowId};
 
 use crate::den::{
-    DenContext, DenMount, DenType, Level, Node, NodeState, Place, Segment, TopLevel,
+    DenContext, DenMount, DenType, Node, NodeState, Place, Segment, TopLevel,
     names::{self, WORKFLOWS},
 };
 

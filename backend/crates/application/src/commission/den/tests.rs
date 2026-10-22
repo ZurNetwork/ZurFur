@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use super::*;
 use crate::{
-    den::{DenAccess, DenContent, DenError, DenNode, NodeKind, NodeLevel, SoftDelete},
+    den::{DenAccess, DenContent, DenError, DenNode, NodeKind, SoftDelete},
     test_world::{self, World, path, segment},
 };
 
@@ -212,7 +212,7 @@ async fn an_archived_commission_opens_by_its_path_marked_archived() {
         read.node.access,
         DenAccess::Open {
             soft_delete: Some(SoftDelete::Archived),
-            own_level: NodeLevel::Private,
+            own_level: Level::Private,
             ..
         }
     ));

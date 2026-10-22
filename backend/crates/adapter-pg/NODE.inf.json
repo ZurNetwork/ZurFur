@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/adapter-pg",
-  "charted": "2026-10-17",
+  "charted": "2026-10-22",
   "short": "Private boundary: the PostgreSQL adapter",
   "is": "The private data boundary in PostgreSQL: app-owned rows (actors keyed by their DID, everything else UUIDv7), SQL kept in per-statement files, and typed accessors generated from a live migrated schema.",
   "type": "code",

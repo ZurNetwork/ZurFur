@@ -13,11 +13,12 @@ use domain::{
             ElementId, ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel,
             LapsedDeadline, LifecycleStep, Markup, MarkupKey, NewCommission, NewElement, NewSeat,
             NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
-            SurfaceAddress, SurfaceName, TabId, TabName, TabRow, Visibility, VisibilityMode,
-            declared_tabs, declares_surface, derive_deadline_status,
+            SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
+            declares_surface, derive_deadline_status,
         },
         did::Did,
         invitation::InvitationState,
+        level::Level,
         maturity::{Maturity, MaturityRating},
         text::StoredText,
         user::UserId,
@@ -628,7 +629,7 @@ struct CommissionFields {
     owner_id: String,
     /// The stored [`LifecycleStep`] token.
     lifecycle: String,
-    /// The stored [`Visibility`] token.
+    /// The stored [`Level`] token.
     visibility: String,
     /// The nullable deadline.
     deadline: Option<DateTimeUtc>,
@@ -710,14 +711,14 @@ impl From<sql::CommissionRow> for CommissionFields {
     }
 }
 
-/// Reads a stored visibility token. A token outside the vocabulary counts as
-/// [`Visibility::Private`], so an unreadable row fails closed instead of failing the read,
+/// Reads a stored level token. A token outside the vocabulary counts as
+/// [`Level::Private`], so an unreadable row fails closed instead of failing the read,
 /// and logs one fixed warning that names nothing of the row.
 /// Not `From<&str>`: only stored rows read leniently; `TryFrom<&str>` stays the strict parse.
-fn stored_visibility(token: &str) -> Visibility {
-    Visibility::try_from(token).unwrap_or_else(|_| {
+fn stored_level(token: &str) -> Level {
+    Level::try_from(token).unwrap_or_else(|_| {
         tracing::warn!("a stored commission visibility is outside the vocabulary; read as private");
-        Visibility::Private
+        Level::Private
     })
 }
 
@@ -730,7 +731,7 @@ fn archived_flag(archived: Option<bool>) -> bool {
 /// Rebuilds the [`Commission`] from its persisted fields, re-validating each
 /// stored token through its domain gate; a value outside its vocabulary
 /// surfaces as an `Err`, never a panic or silent default. The one exception is
-/// the visibility, which [`stored_visibility`] reads as Private.
+/// the visibility, which [`stored_level`] reads as Private.
 fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<Commission> {
     let maturity = match (fields.maturity, fields.graphic) {
         (None, None) => None,
@@ -766,7 +767,7 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
         title: StoredText::from(fields.title),
         owner_id: UserId::from(Did::from(fields.owner_id)),
         lifecycle_step,
-        visibility: stored_visibility(&fields.visibility),
+        visibility: stored_level(&fields.visibility),
         deadline: fields.deadline,
         maturity,
         direction_status: fields
@@ -850,14 +851,14 @@ impl CommissionStore for PgCommissionStore {
     }
 
     /// Reads only the title, the visibility and whether it is archived; the visibility
-    /// through [`stored_visibility`], the title as stored. `None` if absent.
+    /// through [`stored_level`], the title as stored. `None` if absent.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>> {
         let row = sql::find_summary(&self.pool, uuid::Uuid::from(*id)).await?;
         let summary = row.map(|row| CommissionSummary {
             id: *id,
             title: StoredText::from(row.title),
-            visibility: stored_visibility(&row.visibility),
+            visibility: stored_level(&row.visibility),
             archived: archived_flag(row.archived),
         });
         Ok(summary)
@@ -1095,7 +1096,7 @@ impl CommissionStore for PgCommissionStore {
 
     /// One join from the participant record onto `commission`, seeking the
     /// by-user index; archived rows included. Each visibility token is read
-    /// through [`stored_visibility`]; the title is carried as stored.
+    /// through [`stored_level`]; the title is carried as stored.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn list_participating(&self, user: &UserId) -> anyhow::Result<Vec<CommissionSummary>> {
         let rows = sql::list_participating(&self.pool, user.as_ref()).await?;
@@ -1104,7 +1105,7 @@ impl CommissionStore for PgCommissionStore {
             .map(|row| CommissionSummary {
                 id: CommissionId::from(row.id),
                 title: StoredText::from(row.title),
-                visibility: stored_visibility(&row.visibility),
+                visibility: stored_level(&row.visibility),
                 archived: archived_flag(row.archived),
             })
             .collect();

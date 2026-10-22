@@ -44,7 +44,7 @@ fn path(texts: &[&str]) -> RealPath {
 
 fn open_by_standing() -> Access {
     Access {
-        level: Level::Public,
+        level: atta::Level::Public,
         via: atta::Via::Standing,
     }
 }
@@ -139,7 +139,7 @@ async fn the_top_level_directories_are_public_directories_that_list_and_mount_no
         let metadata = found.metadata;
         assert_eq!(metadata.key, segment(word));
         assert_eq!(metadata.parent, Some(root.clone()));
-        assert_eq!(metadata.level, Level::Public);
+        assert_eq!(metadata.level, atta::Level::Public);
         assert_eq!(metadata.name.as_ref(), word);
         assert_eq!(host.kind(&metadata.typ), Kind::Directory, "{word}");
         assert_eq!(found.lifts, Vec::new());
@@ -543,7 +543,7 @@ async fn a_recorded_archived_node_lists_only_when_deleted_nodes_are_asked_for() 
             key: segment("c1"),
             parent: Some(path(&["commission"])),
             typ: type_key(DenType::Commission),
-            level: Level::Private,
+            level: atta::Level::Private,
             name: display_name("Old sketch"),
             symlink_target: None,
         };

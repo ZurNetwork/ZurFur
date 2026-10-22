@@ -4,15 +4,14 @@
 use std::str::FromStr;
 
 use atta::{
-    Caps, DisplayName, Entry, Host, Kind, Level, RealPath, Resolved, Resolver, Segment, View,
-    Viewer,
+    Caps, DisplayName, Entry, Host, Kind, RealPath, Resolved, Resolver, Segment, View, Viewer,
 };
 use domain::elements::user::UserId;
 
 use crate::den::{
     DenAccess, DenContent, DenCrumb, DenError, DenListing, DenName, DenNode, DenSegment, DenThing,
-    DenType, NameOrdinal, NodeKind, NodeLevel, PageToken, SoftDelete, TopLevel, host::DenHost,
-    names,
+    DenType, NameOrdinal, NodeKind, PageToken, SoftDelete, TopLevel, host::DenHost,
+    level::den_level, names,
 };
 
 /// The engine's read error as the Den's: every miss is the one not-found.
@@ -59,15 +58,6 @@ fn den_name(name: &DisplayName) -> Result<DenName, DenError> {
             .context("the den host answered with a name the Den's rule refuses");
         DenError::Store(refused_name)
     })
-}
-
-/// A level in the Den's own words.
-fn node_level(level: Level) -> NodeLevel {
-    match level {
-        Level::Private => NodeLevel::Private,
-        Level::Listed => NodeLevel::Listed,
-        Level::Public => NodeLevel::Public,
-    }
 }
 
 /// A kind in the Den's own words.
@@ -182,7 +172,7 @@ impl<'h> Reader<'h> {
                     })?;
                 DenAccess::Open {
                     kind: node_kind(*kind),
-                    own_level: node_level(*own_level),
+                    own_level: den_level(*own_level),
                     content_not_shown: den_type.content_not_shown(),
                     soft_delete,
                     thing,

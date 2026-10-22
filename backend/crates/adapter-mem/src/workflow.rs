@@ -8,7 +8,8 @@ use async_trait::async_trait;
 use domain::{
     elements::{
         account::AccountId,
-        commission::{CommissionId, Visibility},
+        commission::CommissionId,
+        level::Level,
         text::StoredText,
         workflow::{
             Column, ColumnId, ColumnName, LexOrdering, Position, Workflow, WorkflowId,
@@ -26,7 +27,7 @@ use crate::MemBackend;
 pub(crate) struct StoredWorkflow {
     pub(crate) account_id: AccountId,
     pub(crate) name: WorkflowName,
-    pub(crate) visibility: Visibility,
+    pub(crate) visibility: Level,
 }
 
 /// One column as the mem backend keeps it — a `workflow_column` row plus its
@@ -35,7 +36,7 @@ pub(crate) struct StoredWorkflow {
 pub(crate) struct StoredColumn {
     pub(crate) workflow_id: WorkflowId,
     pub(crate) name: ColumnName,
-    pub(crate) visibility: Visibility,
+    pub(crate) visibility: Level,
     pub(crate) position: Position,
     pub(crate) commissions: Vec<CommissionId>,
 }
@@ -48,7 +49,7 @@ impl StoredColumn {
             id,
             self.workflow_id,
             self.name.clone(),
-            self.visibility.clone(),
+            self.visibility,
             self.position.clone(),
             self.commissions.clone(),
         )
@@ -113,11 +114,11 @@ impl WorkflowWrites for MemWorkflowWrites {
         name: &WorkflowName,
         account_id: &AccountId,
     ) -> anyhow::Result<Workflow> {
-        let workflow = Workflow::new(name.clone(), account_id.clone(), Visibility::Private);
+        let workflow = Workflow::new(name.clone(), account_id.clone(), Level::Private);
         let stored = StoredWorkflow {
             account_id: account_id.clone(),
             name: name.clone(),
-            visibility: workflow.visibility.clone(),
+            visibility: workflow.visibility,
         };
 
         self.0
@@ -167,7 +168,7 @@ impl WorkflowWrites for MemWorkflowWrites {
             let stored = StoredColumn {
                 workflow_id: workflow.id,
                 name: column.name.clone(),
-                visibility: column.visibility.clone(),
+                visibility: column.visibility,
                 position: column.position.clone(),
                 // The board write carries structure, never cards — an upsert
                 // preserves whatever the column already holds.

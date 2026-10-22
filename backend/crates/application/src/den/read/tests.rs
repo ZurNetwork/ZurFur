@@ -1,9 +1,10 @@
 use std::{collections::HashMap, str::FromStr, sync::Mutex};
 
 use atta::{
-    Access, Admission, Found, HostError, Lift, Metadata, Mount, Reach, Relationship, Scope, Type,
+    Access, Admission, Found, HostError, Level, Lift, Metadata, Mount, Reach, Relationship, Scope,
+    Type,
 };
-use domain::elements::commission::CommissionId;
+use domain::elements::{commission::CommissionId, level};
 use uuid::Uuid;
 
 use super::*;
@@ -359,9 +360,9 @@ async fn each_own_level_shows_its_word() {
     let host = tree();
 
     for (piece, own) in [
-        ("private", NodeLevel::Private),
-        ("listed", NodeLevel::Listed),
-        ("public", NodeLevel::Public),
+        ("private", level::Level::Private),
+        ("listed", level::Level::Listed),
+        ("public", level::Level::Public),
     ] {
         let (node, _) = read(&host, &[piece]).await;
 
@@ -422,7 +423,7 @@ async fn a_mount_shows_its_target_s_soft_deleted_word() {
         node.access,
         DenAccess::Open {
             soft_delete: Some(SoftDelete::Archived),
-            own_level: NodeLevel::Public,
+            own_level: level::Level::Public,
             ..
         }
     ));

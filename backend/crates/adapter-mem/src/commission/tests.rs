@@ -59,7 +59,7 @@ async fn uow_create_commission_is_visible_after_commit() {
         "a fresh commission is in Draft"
     );
     assert!(
-        matches!(found.visibility, Visibility::Private),
+        matches!(found.visibility, Level::Private),
         "a fresh commission is Private (the closed-door default)"
     );
     assert!(
@@ -301,7 +301,7 @@ async fn board_with_a_column(backend: &MemBackend, account: &AccountId) -> (Work
     let mut uow = database.begin().await.unwrap();
     let mut workflow = uow.workflows().create(&name, account).await.unwrap();
     let column_name = "Open".parse::<ColumnName>().expect("a valid column name");
-    let column = workflow.new_column(column_name, workflow.visibility.clone());
+    let column = workflow.new_column(column_name, workflow.visibility);
     let column_id = column.id;
     workflow.insert(0, column).expect("the board is empty");
     uow.workflows().set_indexes(&workflow).await.unwrap();

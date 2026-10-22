@@ -1,7 +1,8 @@
 use crate::LazyUnit;
 use crate::use_case;
 use domain::elements::{
-    commission::{CommissionId, Visibility},
+    commission::CommissionId,
+    level::Level,
     user::UserId,
     workflow::{ColumnId, LexOrdering, WorkflowError},
 };
@@ -87,10 +88,8 @@ impl Commissions<'_> {
         // Two rails onto a board: PULL (publicly visible) or PUSH (the actor's
         // OWN standing or OWN view grant — keys are per-User, so membership of
         // this account lifts nothing). (DD 29130754)
-        let is_immediately_visible = matches!(
-            commission.visibility,
-            Visibility::Public | Visibility::Listed
-        ) || commission.owner_id == actor_id;
+        let is_immediately_visible = matches!(commission.visibility, Level::Public | Level::Listed)
+            || commission.owner_id == actor_id;
 
         if !is_immediately_visible && !has_own_view(ports, &actor_id, &commission_id).await? {
             // The same closed door an absent commission gets: `IncorrectRole`

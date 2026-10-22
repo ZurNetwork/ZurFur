@@ -3,15 +3,17 @@
 //! so every answer here is for the session's viewer alone; another user's DID is absent
 //! before any store is read.
 
-use domain::elements::{account::ListingScope, name::NodeName, profile::Profile, user::UserId};
+use domain::elements::{
+    account::ListingScope, level::Level, name::NodeName, profile::Profile, user::UserId,
+};
 
 use crate::{
     account::den::AccountPlace,
     character::den::CharacterPlace,
     commission::den::CommissionPlace,
     den::{
-        DenContext, DenMount, DenType, Level, Node, NodeState, Place, RootNaming, STANDING,
-        Segment, TopLevel,
+        DenContext, DenMount, DenType, Node, NodeState, Place, RootNaming, STANDING, Segment,
+        TopLevel,
         names::{self, ACCOUNTS, CHARACTERS, COMMISSIONS, POSTS},
         post::PostPlace,
     },

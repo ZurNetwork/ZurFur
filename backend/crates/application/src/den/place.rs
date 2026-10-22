@@ -1,5 +1,5 @@
-use atta::{Level, Lift, RealPath, Relationship, Scope, Segment};
-use domain::elements::name::NodeName;
+use atta::{Lift, RealPath, Relationship, Scope, Segment};
+use domain::elements::{level::Level, name::NodeName};
 
 use crate::{
     account::{den::AccountPlace, workflow::den::WorkflowPlace},
@@ -12,7 +12,7 @@ use crate::{
 /// Standing over a node's whole real subtree: the lift a user has at their own root, a member
 /// at their Account, a keeper at their Character and a Participant at their commission.
 pub(crate) const STANDING: Lift = Lift {
-    level: Level::Public,
+    level: atta::Level::Public,
     scope: Scope::Subtree,
     relationship: Relationship::Standing,
 };

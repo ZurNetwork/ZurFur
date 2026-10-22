@@ -3,12 +3,13 @@
 
 use domain::elements::{
     account::AccountId,
-    commission::{CommissionId, CommissionSummary, ElementId, FileKey, Visibility},
+    commission::{CommissionId, CommissionSummary, ElementId, FileKey},
+    level::Level,
     user::UserId,
 };
 
 use crate::den::{
-    DenContext, DenMount, DenType, Level, Node, NodeState, Place, STANDING, Segment, TopLevel,
+    DenContext, DenMount, DenType, Node, NodeState, Place, STANDING, Segment, TopLevel,
     names::{self, ATTACHMENTS, CHANGELOG, COMMISSIONS, PRODUCTS, SLOTS},
 };
 
@@ -83,15 +84,6 @@ impl CommissionPlace {
     }
 }
 
-/// A commission's own level: its stored visibility, one of the Den's three levels.
-fn level_of(visibility: &Visibility) -> Level {
-    match visibility {
-        Visibility::Private => Level::Private,
-        Visibility::Listed => Level::Listed,
-        Visibility::Public => Level::Public,
-    }
-}
-
 /// The node for a commission's summary: its visibility as its level, standing for a
 /// Participant, archived or live, and its title through the name rule.
 fn commission_node(commission: &CommissionSummary, participant: bool) -> Option<Node> {
@@ -109,7 +101,7 @@ fn commission_node(commission: &CommissionSummary, participant: bool) -> Option<
     let node = Node {
         place: Place::Commission(CommissionPlace::Commission(commission.id)),
         name,
-        level: level_of(&commission.visibility),
+        level: commission.visibility,
         lifts,
         state,
     };

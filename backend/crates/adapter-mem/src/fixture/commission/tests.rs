@@ -54,7 +54,7 @@ async fn alice_takes_part_in_untitled_and_the_archived_old_sketch() {
     assert!(
         listing
             .iter()
-            .all(|summary| summary.visibility == Visibility::Private),
+            .all(|summary| summary.visibility == Level::Private),
         "every fixture commission is Private"
     );
 }
@@ -137,7 +137,7 @@ async fn the_account_holds_the_workflow_queue() {
         .await
         .unwrap()
         .expect("Queue exists");
-    assert_eq!(board.visibility, Visibility::Private);
+    assert_eq!(board.visibility, Level::Private);
     assert!(workflows.columns(&queue()).await.unwrap().is_empty());
 }
 

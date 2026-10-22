@@ -69,7 +69,7 @@ impl Columns<'_> {
             return Err(AccountError::IncorrectNumberOfColumns);
         }
 
-        let new_column = workflow.new_column(column_name, workflow.visibility.clone());
+        let new_column = workflow.new_column(column_name, workflow.visibility);
         workflow
             .insert(usize::from(position), new_column)
             .map_err(|e| match e {

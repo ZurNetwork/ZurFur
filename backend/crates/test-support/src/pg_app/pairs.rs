@@ -2,12 +2,11 @@
 //! routes and commission's reads behind its check run them, and so does the suite that reruns
 //! them under statement recording.
 
-use domain::elements::commission::Visibility;
-
 use super::{
     DenWorld, SeededCommission, absent_account, absent_commission, absent_file, absent_slot,
     absent_workflow,
 };
+use domain::elements::level::Level;
 
 /// Two causes of one miss at the same depth: a path to nothing, and a path to a real node
 /// that isn't the viewer's to open. Each must answer the same.
@@ -29,27 +28,27 @@ pub struct MissPair {
     clippy::let_and_return,
     reason = "the style rulebook names a multi-line construction before returning it"
 )]
-pub fn stranger_targets(world: &DenWorld) -> [(SeededCommission, Visibility); 4] {
+pub fn stranger_targets(world: &DenWorld) -> [(SeededCommission, Level); 4] {
     let targets = [
-        (world.untitled, Visibility::Private),
-        (world.old_sketch, Visibility::Private),
-        (world.old_sketch, Visibility::Public),
-        (world.old_sketch, Visibility::Listed),
+        (world.untitled, Level::Private),
+        (world.old_sketch, Level::Private),
+        (world.old_sketch, Level::Public),
+        (world.old_sketch, Level::Listed),
     ];
     targets
 }
 
 /// The targets of the stranger's den-route pairs: [`stranger_targets`], then "Untitled" live
 /// at Public and at Listed.
-pub fn den_stranger_targets(world: &DenWorld) -> [(SeededCommission, Visibility); 6] {
+pub fn den_stranger_targets(world: &DenWorld) -> [(SeededCommission, Level); 6] {
     let [first, second, third, fourth] = stranger_targets(world);
     [
         first,
         second,
         third,
         fourth,
-        (world.untitled, Visibility::Public),
-        (world.untitled, Visibility::Listed),
+        (world.untitled, Level::Public),
+        (world.untitled, Level::Listed),
     ]
 }
 
@@ -239,14 +238,14 @@ pub fn den_participant_pairs(world: &DenWorld) -> [MissPair; 3] {
 /// commission's reads' pairs there with the problem code both causes answer: the changelog's
 /// `changelog` stays closed at both; the download opens the node at Public, so its pair is an
 /// absent key against the real one under it, and refuses it at Listed.
-pub fn commission_read_live_pairs(world: &DenWorld) -> [(Visibility, MissPair, &'static str); 4] {
+pub fn commission_read_live_pairs(world: &DenWorld) -> [(Level, MissPair, &'static str); 4] {
     let [changelog, download] = commission_read_stranger_pairs(&world.untitled);
     let public_download = public_live_download_pair(&world.untitled);
     [
-        (Visibility::Public, changelog.clone(), COMMISSION_NOT_FOUND),
-        (Visibility::Public, public_download, FILE_NOT_FOUND),
-        (Visibility::Listed, changelog, COMMISSION_NOT_FOUND),
-        (Visibility::Listed, download, COMMISSION_NOT_FOUND),
+        (Level::Public, changelog.clone(), COMMISSION_NOT_FOUND),
+        (Level::Public, public_download, FILE_NOT_FOUND),
+        (Level::Listed, changelog, COMMISSION_NOT_FOUND),
+        (Level::Listed, download, COMMISSION_NOT_FOUND),
     ]
 }
 

@@ -1,9 +1,10 @@
 use super::{
     ChannelPointer, CommissionId, CommissionTitle, DeadlineStatus, DirectionStatus, LifecycleStep,
-    NewCommission, Visibility,
+    NewCommission,
 };
 use identity::elements::user::UserId;
 use kernel::datetime::DateTimeUtc;
+use kernel::elements::level::Level;
 use kernel::elements::maturity::Maturity;
 use kernel::elements::text::StoredText;
 
@@ -22,8 +23,10 @@ pub struct Commission {
     /// The single lifecycle state the commission is in; a fresh one is
     /// [`LifecycleStep::Draft`].
     pub lifecycle_step: LifecycleStep,
-    /// Who may see the commission; a fresh one is [`Visibility::Private`].
-    pub visibility: Visibility,
+    /// Who may see the commission, the gate outside its composition's own
+    /// [`effective_visibility`](super::VisibilityMode::effective_visibility);
+    /// a fresh one is [`Level::Private`], and widening is an explicit later act.
+    pub visibility: Level,
     /// The deadline, or `None` when the commission carries none.
     pub deadline: Option<DateTimeUtc>,
     /// The commission's maturity posture. `None` at birth; a rating becomes
@@ -82,7 +85,7 @@ impl Commission {
             owner_id: owner,
             lifecycle_step: LifecycleStep::Draft,
             created_at: now,
-            visibility: Visibility::Private,
+            visibility: Level::Private,
             deadline,
             maturity: None,
             direction_status: None,
