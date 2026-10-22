@@ -1,4 +1,5 @@
-//! `PATCH /commissions/{id}/title` logs no title at info or above, accepted or refused.
+//! `PATCH /commissions/{id}/title` logs no title, DID or handle at info or above, accepted or
+//! refused.
 //!
 //! Its own test binary: the capturing subscriber is this binary's global one, so no other
 //! test's thread can leave a callsite's interest cached without it.
@@ -53,7 +54,7 @@ async fn rename(session: &reqwest::Client, base: &str, id: &str, body: &Value) -
 }
 
 #[tokio::test]
-async fn a_rename_logs_no_title_at_info_or_above() {
+async fn a_rename_logs_no_title_and_no_identity_at_info_or_above() {
     let log = CapturedLog::default();
     api::logging::subscriber(&api::Environment::DEV, EnvFilter::new("trace"), log.clone())
         .try_init()
@@ -100,5 +101,14 @@ async fn a_rename_logs_no_title_at_info_or_above() {
     assert!(
         title_at_info.is_empty(),
         "the log names a title at info or above: {title_at_info:#?}"
+    );
+    let identity_at_info: Vec<&str> = text
+        .lines()
+        .filter(|line| matches!(level_of(line), Some("INFO" | "WARN" | "ERROR")))
+        .filter(|line| line.contains(ARTIST) || line.contains(ARTIST_HANDLE))
+        .collect();
+    assert!(
+        identity_at_info.is_empty(),
+        "the log names a DID or handle at info or above: {identity_at_info:#?}"
     );
 }

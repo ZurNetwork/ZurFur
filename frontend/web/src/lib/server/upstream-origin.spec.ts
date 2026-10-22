@@ -153,6 +153,12 @@ const fileBugReport = () => {
 	);
 };
 
+const signout = () =>
+	runLive(
+		Effect.flatMap(ZurfurApi, (api) => api.signout),
+		requestFetch('/logout', '/(session)/logout')
+	);
+
 describe("SvelteKit's server-side writes reach the API carrying the page's origin", () => {
 	it('the page origin differs from the API stand-in’s own', () => {
 		expect(new URL(upstream.origin).origin).not.toBe(PAGE_ORIGIN);
@@ -164,7 +170,8 @@ describe("SvelteKit's server-side writes reach the API carrying the page's origi
 		['createCommission', 'POST', '/commissions', createCommission],
 		['renameCommission', 'PATCH', `/commissions/${COMMISSION_ID}/title`, renameCommission],
 		['deleteAccount', 'DELETE', `/accounts/${ACCOUNT_ID}`, deleteAccount],
-		['fileBugReport', 'POST', '/bug-reports', fileBugReport]
+		['fileBugReport', 'POST', '/bug-reports', fileBugReport],
+		['signout', 'POST', '/logout', signout]
 	] as const)('%s (%s) arrives with origin set to the page’s', async (_, method, path, send) => {
 		await send();
 

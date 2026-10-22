@@ -1,7 +1,9 @@
 //! The log canary: a whole signed-in visit on PostgreSQL, under the dev subscriber at `trace`
 //! with `log` records bridged, writes no token, cookie, session id or key at any level, and no
-//! DID or handle at info or above. Alone in its binary: it installs the global subscriber. The
-//! visitor's own thread stays out of the capture (this crate's node says why).
+//! DID or handle at info or above. The visit founds an Account, files bug reports, creates two
+//! commissions with one title, opens the Den and one twin, and renames it. Alone in its binary:
+//! it installs the global subscriber. The visitor's own thread stays out of the capture (this
+//! crate's node says why).
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -37,6 +39,11 @@ const ROOT_KEY_BASE64: &str = "Y2FuYXJ5LXJvb3Qta2V5LTdmM2E5YzFlNWIyZDgwNDY=";
 
 /// The Account the visit founds, so the Den lists something.
 const ACCOUNT_HANDLE: &str = "canarystudio.zurfur.app";
+
+/// The title the visit's two commissions share, so the Den numbers the newer one.
+const TWIN_TITLE: &str = "Canary Twin Sketch";
+/// The title the visit renames the newer twin to.
+const RENAMED_TITLE: &str = "Canary Renamed Sketch";
 
 /// What the visit's bug report carries: the reporter's words, page and browser are theirs.
 const REPORT_DESCRIPTION: &str = "canarybugdescription4e8b1f";
@@ -114,6 +121,24 @@ fn session_id_set_by(response: &reqwest::Response) -> Option<String> {
 fn level_of(line: &str) -> Option<&str> {
     line.split_whitespace()
         .find(|word| ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"].contains(word))
+}
+
+/// `POST /commissions` titled `title` as `browser`: its status and the new commission's id.
+async fn create_commission(browser: &reqwest::Client, base: &str, title: &str) -> (u16, String) {
+    let creation = serde_json::json!({ "title": title });
+    let response = browser
+        .post(format!("{base}/commissions"))
+        .json(&creation)
+        .send()
+        .await
+        .expect("POST /commissions");
+    let status = response.status().as_u16();
+    let created: serde_json::Value = response.json().await.expect("a JSON commission");
+    let id = created["id"]
+        .as_str()
+        .expect("the commission's id")
+        .to_owned();
+    (status, id)
 }
 
 /// Whether some line of `text` carries every one of `parts`.
@@ -211,6 +236,29 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         .await
         .expect("GET /den/accounts");
     let accounts_listing: serde_json::Value = accounts.json().await.expect("a JSON listing");
+    let (first_created, first_id) = create_commission(&browser, base, TWIN_TITLE).await;
+    let (second_created, second_id) = create_commission(&browser, base, TWIN_TITLE).await;
+    // The later UUIDv7 is the newer twin, whatever order the two creates landed in.
+    let newer_twin = first_id.max(second_id);
+    let commissions = browser
+        .get(format!("{base}/den/commissions"))
+        .send()
+        .await
+        .expect("GET /den/commissions");
+    let twin = browser
+        .get(format!("{base}/den/commissions/{newer_twin}"))
+        .send()
+        .await
+        .expect("GET /den/commissions/{id}");
+    let twin_status = twin.status();
+    let twin_node: serde_json::Value = twin.json().await.expect("a JSON node");
+    let renaming = serde_json::json!({ "title": RENAMED_TITLE });
+    let renamed = browser
+        .patch(format!("{base}/commissions/{newer_twin}/title"))
+        .json(&renaming)
+        .send()
+        .await
+        .expect("PATCH /commissions/{id}/title");
     let signed_out = browser
         .post(format!("{base}/logout"))
         .send()
@@ -231,6 +279,15 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         listed,
         "the accounts folder lists the Account: {accounts_listing}"
     );
+    assert_eq!(first_created, 201);
+    assert_eq!(second_created, 201);
+    assert_eq!(commissions.status(), 200);
+    assert_eq!(twin_status, 200);
+    assert_eq!(
+        twin_node["node"]["nameOrdinal"], 2,
+        "the Den numbers the newer twin: {twin_node}"
+    );
+    assert_eq!(renamed.status(), 200);
     assert_eq!(signed_out.status(), 303);
 
     let text = without_colors(&log.text());
@@ -238,7 +295,7 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
     if let Some(dump) = std::env::var_os("LOG_CANARY_DUMP") {
         std::fs::write(dump, &text).expect("the dump file is writable");
     }
-    let controls: [(&str, &[&str]); 7] = [
+    let controls: [(&str, &[&str]); 10] = [
         (
             "the callback's finish",
             &["request finished", "route=\"/signin-callback\""],
@@ -246,6 +303,22 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         (
             "the bug report's finish",
             &["request finished", "route=\"/bug-reports\""],
+        ),
+        (
+            "the commission create's finish",
+            &["request finished", "route=\"/commissions\"", "status=201"],
+        ),
+        (
+            "the commission rename's finish",
+            &[
+                "request finished",
+                "route=\"/commissions/{id}/title\"",
+                "status=200",
+            ],
+        ),
+        (
+            "the rename use case's finish",
+            &["application::commission::rename", "use case finished"],
         ),
         (
             "the Den root's finish",
