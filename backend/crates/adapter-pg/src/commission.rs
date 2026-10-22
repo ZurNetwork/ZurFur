@@ -10,9 +10,9 @@ use domain::{
         commission::{
             Band, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
             CommissionFile, CommissionId, CommissionMarkup, CommissionRole, CommissionStanding,
-            CommissionSummary, CommissionTitle, DeadlineStatus, DirectionStatus, ElementId,
-            ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel,
-            LapsedDeadline, LifecycleStep, Markup, MarkupKey, NewCommission, NewElement, NewSeat,
+            CommissionSummary, DeadlineStatus, DirectionStatus, ElementId, ElementPayload,
+            ElementRow, ElementType, FileKey, FileSummary, GrantLevel, LapsedDeadline,
+            LifecycleStep, LockedStanding, Markup, MarkupKey, NewCommission, NewElement, NewSeat,
             NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
             SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
             declares_surface, derive_deadline_status,
@@ -21,6 +21,7 @@ use domain::{
         invitation::InvitationState,
         level::Level,
         maturity::{Maturity, MaturityRating},
+        node::NodeId,
         text::StoredText,
         user::UserId,
         workflow::{Column, ColumnId, WorkflowId},
@@ -448,20 +449,6 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Renames the commission's node, joined through `commission.node_id`, via a
-    /// conditional `UPDATE` (`IS DISTINCT FROM`), so the return value IS the changed
-    /// answer; the node's trigger copies the name onto `commission.title`.
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn set_title(
-        &mut self,
-        id: &CommissionId,
-        title: &CommissionTitle,
-    ) -> anyhow::Result<bool> {
-        let affected =
-            sql::set_title(&mut *self.conn, uuid::Uuid::from(*id), title.as_ref()).await?;
-        Ok(affected > 0)
-    }
-
     /// Repoints or clears `commission.linked_channel` via a conditional `UPDATE`
     /// (`IS DISTINCT FROM`), so the return value IS the changed answer.
     #[tracing::instrument(level = "debug", skip_all)]
@@ -835,13 +822,14 @@ impl CommissionReads for PgCommissionWrites<'_> {
     /// to `commission` and its node (`FOR NO KEY UPDATE OF commission`), then the participant
     /// probe. The probe runs after the lock is granted, so it reads a snapshot taken under
     /// the lock and sees any standing change committed while the lock was awaited. An absent
-    /// id, or a commission with no node, answers `None` without the probe.
+    /// id, or a commission with no node, answers `None` without the probe; else the standing
+    /// beside the node the select joined.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn standing_for_update(
         &mut self,
         commission: &CommissionId,
         user: &UserId,
-    ) -> anyhow::Result<Option<CommissionStanding>> {
+    ) -> anyhow::Result<Option<LockedStanding>> {
         let id = uuid::Uuid::from(*commission);
         let rows = sql::standing_for_update(&mut *self.conn, id, user.as_ref()).await?;
         // The join is on the primary key: at most one row.
@@ -850,7 +838,11 @@ impl CommissionReads for PgCommissionWrites<'_> {
         };
         let participates = sql::is_participant(&mut *self.conn, id, user.as_ref()).await?;
         let standing = to_standing(Some(&row.level), row.is_owner, participates, row.archived);
-        Ok(Some(standing))
+        let locked = LockedStanding {
+            standing,
+            node: NodeId::from(row.node_id),
+        };
+        Ok(Some(locked))
     }
 
     /// [`CommissionStore::is_participant`] on the unit's connection.

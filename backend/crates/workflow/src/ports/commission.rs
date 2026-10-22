@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use crate::elements::{
     commission::{
         ChannelPointer, Commission, CommissionBirth, CommissionComposition, CommissionFile,
-        CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary, CommissionTitle,
-        DeadlineStatus, DirectionStatus, ElementId, FileKey, FileSummary, GrantLevel,
-        LapsedDeadline, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
+        CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary, DeadlineStatus,
+        DirectionStatus, ElementId, FileKey, FileSummary, GrantLevel, LapsedDeadline,
+        LockedStanding, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
         SeatInvitationId, Slot, TabId, TabRow,
     },
     workflow::{Column, ColumnId, WorkflowId},
@@ -248,15 +248,6 @@ pub trait CommissionWrites: Send {
         archived_at: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool>;
 
-    /// Rename the commission's node to `title`. Returns whether the stored name actually
-    /// changed, so the caller keys its `renamed` append on a real change in this
-    /// same unit. A no-op on an absent commission, answering `false`.
-    async fn set_title(
-        &mut self,
-        id: &CommissionId,
-        title: &CommissionTitle,
-    ) -> anyhow::Result<bool>;
-
     /// Set or replace the commission's maturity posture. Replace-only by
     /// signature: taking a [`Maturity`] rather than an `Option` means no call site
     /// can clear a rating back to unrated. A no-op write on an absent commission.
@@ -345,8 +336,8 @@ pub trait CommissionReads: Send {
     async fn find_for_update(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
 
     /// [`CommissionStore::standing`], with the commission row locked
-    /// (`FOR NO KEY UPDATE`) for the rest of the unit; `None` when it is absent or has
-    /// no node.
+    /// (`FOR NO KEY UPDATE`) for the rest of the unit, beside the node the commission
+    /// points at; `None` when it is absent or has no node.
     /// Every change to someone's standing (evict, leave, role change, Admin grant
     /// or revoke, transfer) locks the commission row first, so this answer holds
     /// until the unit ends.
@@ -354,7 +345,7 @@ pub trait CommissionReads: Send {
         &mut self,
         commission: &CommissionId,
         user: &UserId,
-    ) -> anyhow::Result<Option<CommissionStanding>>;
+    ) -> anyhow::Result<Option<LockedStanding>>;
 
     /// Whether `user` is a Participant of `commission`; as
     /// [`CommissionStore::is_participant`].

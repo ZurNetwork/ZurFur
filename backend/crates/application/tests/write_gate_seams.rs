@@ -2,8 +2,9 @@
 //! hold its seams: the write capability's surface, its one issuer across the workspace and the
 //! issuer's callers in the den, the lent view's surface and its latch, no compiled source the
 //! scans can't read, the write host and the gate named once each, the write use case kept
-//! inside the crate, nothing of it (and no raw SQL or bound seeder) in a driver, and the
-//! commission field writes not yet gated, frozen.
+//! inside the crate, nothing of it (and no raw SQL or bound seeder) in a driver, no lint
+//! silencer in the den or in commission's acts, and the commission field writes not yet gated,
+//! frozen.
 
 mod seams;
 
@@ -59,8 +60,7 @@ const API: &str = "api";
 const COMMISSION_REPOS: [&str; 2] = ["commissions", "changelog"];
 
 /// The commission repo's field writes the gate doesn't hold yet, by name.
-const FIELD_WRITES: [&str; 7] = [
-    "set_title",
+const FIELD_WRITES: [&str; 6] = [
     "set_archived",
     "set_maturity",
     "set_direction_status",
@@ -88,7 +88,7 @@ const NODE_TABLE: &str = "node";
 
 /// The ungated commission field writes in `application`, by file, function and method: each
 /// leaves this list when the den's write gate takes it over, until the list is empty.
-const FROZEN_FIELD_WRITES: [(&str, &str, &str); 10] = [
+const FROZEN_FIELD_WRITES: [(&str, &str, &str); 9] = [
     (
         "commission/archive.rs",
         "Commissions::archive",
@@ -115,7 +115,6 @@ const FROZEN_FIELD_WRITES: [(&str, &str, &str); 10] = [
         "Maturity::run",
         "set_maturity",
     ),
-    ("commission/rename.rs", "Commissions::rename", "set_title"),
     (
         "commission/slots/declare.rs",
         "Slots::declare",
@@ -649,12 +648,6 @@ const LEND_AS: &str = "lend_as";
 /// The gate's lender: one [`LEND_AS`] call per leaf act a driver can reach.
 const LEND: &str = "lend";
 
-/// The gate's test-only lender of the probe: one [`LEND_AS`] call per role it is lent in.
-const LEND_PROBE: &str = "lend_probe";
-
-/// How many roles the test-only probe is lent in.
-const PROBE_ROLES: usize = 3;
-
 /// The den's acts: each arm a driver can reach is an owning module's own act enum.
 const DEN_ACT: &str = "DenAct";
 
@@ -709,8 +702,7 @@ fn production_leaf_acts(den_act: &syn::File, commission_act: &syn::File) -> usiz
 }
 
 /// The allowance the issuer-caller scan gives `file`: in [`GATE_FILE`], `issue`'s definition
-/// and one call in [`LEND_AS`]; `lend_as`'s definition, `leaves` calls in [`LEND`] and one
-/// per probe role in [`LEND_PROBE`].
+/// and one call in [`LEND_AS`]; `lend_as`'s definition and `leaves` calls in [`LEND`].
 fn issue_allowance(file: &str, leaves: usize) -> Vec<(&'static str, &'static str, usize)> {
     if file != GATE_FILE {
         return Vec::new();
@@ -720,7 +712,6 @@ fn issue_allowance(file: &str, leaves: usize) -> Vec<(&'static str, &'static str
         (LEND_AS, ISSUE, 1),
         (LEND_AS, LEND_AS, 1),
         (LEND, LEND_AS, leaves),
-        (LEND_PROBE, LEND_AS, PROBE_ROLES),
     ]
 }
 
@@ -777,11 +768,11 @@ fn issue_is_called_only_by_the_lenders_and_the_role_table_stays_in_the_gate() {
     }
     let gate = parse(&application_src().join(GATE_FILE));
     let gate_pieces = pieces(&gate);
-    for context in [ISSUE, LEND_AS, LEND_PROBE, LEND] {
+    for context in [ISSUE, LEND_AS, LEND] {
         let held = gate_pieces.iter().any(|piece| piece.context == context);
         assert!(held, "{GATE_FILE} holds {context}");
     }
-    let lender = "fn issue<R: RoleTable>(grant: &Grant) -> Option<WriteCapability<R::Thing, R>> { let thing = R::granted(grant)?; Some(WriteCapability::gate_issued(thing)) }\nasync fn lend_as<H: Handler>(handler: &H, grant: &Grant) { let Some(capability) = issue::<H::Role>(grant) else { return; }; }\n#[cfg(test)]\nasync fn lend_probe(probe: &Probe, grant: &Grant) { match probe.role() { ProbeRole::Participant => lend_as(&ProbeAsParticipant(probe), grant).await, ProbeRole::Owner => lend_as(&ProbeAsOwner(probe), grant).await, ProbeRole::Creator => lend_as(&ProbeCreating(probe), grant).await } }\nasync fn lend(act: DenAct, grant: &Grant) { match act { DenAct::Commission(CommissionAct::Rename(rename)) => lend_as(&rename, grant).await, DenAct::Commission(CommissionAct::Create(create)) => lend_as(&create, grant).await } }\nimpl RoleTable for AsOwner { type Thing = CommissionId; }";
+    let lender = "fn issue<R: RoleTable>(grant: &Grant) -> Option<WriteCapability<R::Thing, R>> { let thing = R::granted(grant)?; Some(WriteCapability::gate_issued(thing)) }\nasync fn lend_as<H: Handler>(handler: &H, grant: &Grant) { let Some(capability) = issue::<H::Role>(grant) else { return; }; }\nasync fn lend(act: DenAct, grant: &Grant) { match act { DenAct::Commission(CommissionAct::Rename(rename)) => lend_as(&rename, grant).await, DenAct::Commission(CommissionAct::Create(create)) => lend_as(&create, grant).await } }\nimpl RoleTable for AsOwner { type Thing = CommissionId; }";
     let allowed = issue_caller_findings(GATE_FILE, lender, &issues, &roles, 2);
     assert_eq!(allowed, Vec::<String>::new());
     let refused = [
@@ -814,7 +805,7 @@ fn issue_is_called_only_by_the_lenders_and_the_role_table_stays_in_the_gate() {
         ),
         (
             GATE_FILE,
-            "#[cfg(test)]\nasync fn lend_probe<R: RoleTable>(grant: &Grant) { issue::<R>(grant); issue::<AsOwner>(grant); }",
+            "#[cfg(test)]\nasync fn lend_for_test<R: RoleTable>(grant: &Grant) { issue::<R>(grant); issue::<AsOwner>(grant); }",
             0,
         ),
         (
@@ -829,7 +820,7 @@ fn issue_is_called_only_by_the_lenders_and_the_role_table_stays_in_the_gate() {
         ),
         (
             GATE_FILE,
-            "#[cfg(test)]\nasync fn lend_probe(probe: &Probe, grant: &Grant) { lend_as(&ProbeAsOwner(probe), grant).await; lend_as(&ProbeAsOwner(probe), grant).await; lend_as(&ProbeAsOwner(probe), grant).await; lend_as(&ProbeCreating(probe), grant).await; }",
+            "#[cfg(test)]\nasync fn lend_for_test(act: &TestAct, grant: &Grant) { lend_as(&AsOwnerForTest(act), grant).await; }",
             0,
         ),
         (
@@ -893,7 +884,7 @@ fn issue_is_called_only_by_the_lenders_and_the_role_table_stays_in_the_gate() {
 
         assert!(!found.is_empty(), "{file}: {source}");
     }
-    let den_act = "pub(crate) enum DenAct {\n    Commission(CommissionAct),\n    #[cfg(test)]\n    Probe(Probe),\n}";
+    let den_act = "pub(crate) enum DenAct {\n    Commission(CommissionAct),\n    #[cfg(test)]\n    TestOnly(TestAct),\n}";
     let commission_act =
         "pub(crate) enum CommissionAct {\n    Create(create::Act),\n    Rename(rename::Act),\n}";
     let den_act = syn::parse_file(den_act).expect("the planted act parses");
@@ -2060,6 +2051,198 @@ fn the_scan_reads_every_crate_that_depends_on_composition() {
     );
 }
 
+// No lint silencer in the den or in commission's acts.
+
+/// The lints nothing in the den's production files or commission's act files may silence:
+/// an item no real act reaches is removed, never silenced. `warnings` silences them all.
+const SILENCED_LINTS: [&str; 5] = [
+    "dead_code",
+    "unused",
+    "unused_variables",
+    "unreachable_code",
+    "warnings",
+];
+
+/// The lint attributes that silence a lint.
+const SILENCERS: [&str; 2] = ["allow", "expect"];
+
+/// The attribute that applies others under a condition.
+const CFG_ATTR: &str = "cfg_attr";
+
+/// Commission's act and handler files, relative to the use-case layer's sources.
+const COMMISSION_ACT_FILES: [&str; 4] = [
+    "commission/act.rs",
+    "commission/create.rs",
+    "commission/rename.rs",
+    "commission/den.rs",
+];
+
+/// An identifier's text, a raw identifier's `r#` dropped.
+fn unraw(ident: &proc_macro2::Ident) -> String {
+    ident.unraw().to_string()
+}
+
+/// `stream` cut at its top-level commas.
+fn comma_separated(stream: TokenStream) -> Vec<Vec<TokenTree>> {
+    let mut parts = vec![Vec::new()];
+    for tree in stream {
+        let comma = matches!(&tree, TokenTree::Punct(punct) if punct.as_char() == ',');
+        if comma {
+            parts.push(Vec::new());
+            continue;
+        }
+        if let Some(part) = parts.last_mut() {
+            part.push(tree);
+        }
+    }
+    parts.retain(|part| !part.is_empty());
+    parts
+}
+
+/// The silenced lints one attribute's contents name: an `allow` or `expect` of a lint in
+/// [`SILENCED_LINTS`] (any letter case), bare or under any depth of `cfg_attr`.
+fn silenced_by(meta: &[TokenTree]) -> Vec<String> {
+    let (Some(TokenTree::Ident(name)), Some(TokenTree::Group(arguments))) =
+        (meta.first(), meta.get(1))
+    else {
+        return Vec::new();
+    };
+    if arguments.delimiter() != Delimiter::Parenthesis {
+        return Vec::new();
+    }
+    let name = unraw(name);
+    let parts = comma_separated(arguments.stream());
+    if name == CFG_ATTR {
+        return parts
+            .iter()
+            .skip(1)
+            .flat_map(|applied| silenced_by(applied))
+            .collect();
+    }
+    if !SILENCERS.contains(&name.as_str()) {
+        return Vec::new();
+    }
+    parts
+        .iter()
+        .filter_map(|lint| match lint.as_slice() {
+            [TokenTree::Ident(lint)] => Some(unraw(lint).to_lowercase()),
+            _ => None,
+        })
+        .filter(|lint| SILENCED_LINTS.contains(&lint.as_str()))
+        .map(|lint| format!("{name}({lint})"))
+        .collect()
+}
+
+/// Every silencer in `tokens`, at any depth: each outer `#[…]` or inner `#![…]` attribute,
+/// in items, bodies and macro bodies alike, that silences a lint in [`SILENCED_LINTS`].
+fn silencers(tokens: TokenStream) -> Vec<String> {
+    let level: Vec<TokenTree> = tokens.into_iter().collect();
+    let mut found = Vec::new();
+    for (at, tree) in level.iter().enumerate() {
+        if let TokenTree::Group(group) = tree {
+            found.extend(silencers(group.stream()));
+        }
+        if !punct_at(&level, at, '#') {
+            continue;
+        }
+        let bracket_at = if punct_at(&level, at + 1, '!') {
+            at + 2
+        } else {
+            at + 1
+        };
+        let Some(TokenTree::Group(attribute)) = level.get(bracket_at) else {
+            continue;
+        };
+        if attribute.delimiter() != Delimiter::Bracket {
+            continue;
+        }
+        let meta: Vec<TokenTree> = attribute.stream().into_iter().collect();
+        found.extend(silenced_by(&meta));
+    }
+    found
+}
+
+/// Each silencer in `source`, from `file`.
+fn silencer_findings(file: &str, source: &str) -> Vec<String> {
+    let tokens: TokenStream = source.parse().expect("the source lexes");
+    silencers(tokens)
+        .into_iter()
+        .map(|silencer| format!("{file}: {silencer}"))
+        .collect()
+}
+
+#[test]
+fn den_and_commission_hold_no_lint_silencer() {
+    let src = application_src();
+    let commission_files: Vec<(String, PathBuf)> = COMMISSION_ACT_FILES
+        .iter()
+        .map(|file| ((*file).to_owned(), src.join(file)))
+        .collect();
+    let files: Vec<(String, PathBuf)> = den_production()
+        .into_iter()
+        .chain(commission_files)
+        .collect();
+
+    let offenders: Vec<String> = files
+        .iter()
+        .flat_map(|(file, path)| {
+            let source = std::fs::read_to_string(path).expect("a readable source");
+            silencer_findings(file, &source)
+        })
+        .collect();
+
+    assert_eq!(offenders, Vec::<String>::new());
+    let read: Vec<&str> = files.iter().map(|(file, _)| file.as_str()).collect();
+    for file in [
+        "den.rs",
+        GATE_FILE,
+        "den/act.rs",
+        "den/write.rs",
+        "den/authority.rs",
+    ]
+    .into_iter()
+    .chain(COMMISSION_ACT_FILES)
+    {
+        assert!(read.contains(&file), "the scan reads {file}: {read:?}");
+    }
+    let refused = [
+        "#[allow(dead_code)]\nfn grant_fits() {}",
+        "#[expect(dead_code, reason = \"only a test builds it\")]\nenum Anchor { Thing }",
+        "#![allow(unused)]\nfn later() {}",
+        "#![expect(unused_variables, reason = \"later\")]\nfn later(grant: Grant) {}",
+        "#[allow(unreachable_code)]\nfn later() { return; }",
+        "#[allow(warnings)]\nfn later() {}",
+        "#[cfg_attr(not(test), expect(dead_code, reason = \"only a test builds one\"))]\nenum Anchor { Thing }",
+        "#[cfg_attr(test, allow(unused_variables))]\nfn later(grant: Grant) {}",
+        "#![cfg_attr(not(test), allow(dead_code))]\nfn later() {}",
+        "#[cfg_attr(feature = \"x\", cfg_attr(not(test), allow(dead_code)))]\nfn later() {}",
+        "#[allow(clippy::disallowed_methods, dead_code)]\nfn later() {}",
+        "#[allow(Dead_Code)]\nfn later() {}",
+        "#[r#allow(dead_code)]\nfn later() {}",
+        "fn later() { #[allow(unused_variables)] let grant = 1; }",
+        "impl Grant { #[expect(dead_code)] fn later(&self) {} }",
+        "macro_rules! later { () => { #[allow(dead_code)] fn later() {} }; }",
+    ];
+    for source in refused {
+        let found = silencer_findings("den/gate.rs", source);
+
+        assert_eq!(found.len(), 1, "{source}: {found:?}");
+    }
+    let kept = [
+        "#[allow(clippy::disallowed_methods, reason = \"a test opens its unit\")]\nfn opens() {}",
+        "#[expect(clippy::disallowed_methods, reason = \"the gate's one node port\")]\nfn gate() {}",
+        "#[cfg_attr(test, derive(Debug))]\nstruct Grant;",
+        "/// Never `#[allow(dead_code)]` here.\nfn documented() {}",
+        "fn named() { let allow = \"dead_code\"; }",
+        "#[cfg(test)]\nmod tests;",
+    ];
+    for source in kept {
+        let found = silencer_findings("den/gate.rs", source);
+
+        assert_eq!(found, Vec::<String>::new(), "{source}");
+    }
+}
+
 // The interim guard: the frozen list.
 
 /// Each commission field write in `file`: a [`FIELD_WRITES`] name anywhere, and a
@@ -2163,7 +2346,7 @@ fn the_ungated_field_writes_are_exactly_these() {
         "async fn copy(uow: Unit<'_>) { let mut repo = uow.commissions(); repo.create(&commission).await?; }",
         "async fn purge(uow: Unit<'_>) { UnitOfWork::commissions(uow).delete(&id).await?; }",
         "async fn purge(uow: Unit<'_>) { let repo = uow.commissions(); (*repo).delete(&id).await?; }",
-        "fn setter() { let set = CommissionRepo::set_title; }",
+        "fn setter() { let set = CommissionRepo::set_maturity; }",
         "async fn extend(uow: Unit<'_>) { tokio::join!(async { uow.commissions().declare_slots(&slots).await }); }",
     ];
     for source in new_sites {
@@ -2177,7 +2360,7 @@ fn the_ungated_field_writes_are_exactly_these() {
         "async fn upload(ports: &Ports, key: FileKey) { ports.files.delete(key).await?; }",
         "async fn open(uow: Unit<'_>) { uow.accounts().create(&account, &owner).await?; }",
         "fn make() -> Commission { Commission::create(title, owner, now, None) }",
-        "trait Repo { async fn set_title(&mut self, id: &CommissionId, title: &Title); }",
+        "trait Repo { async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity); }",
     ];
     for source in not_field_writes {
         let file = syn::parse_file(source).expect("the planted source parses");

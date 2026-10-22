@@ -14,7 +14,7 @@
   "fs": [
     {
       "name": "act.rs + act/tests.rs",
-      "role": "CommissionAct, the commission's acts the Den's write carries (Create now), each body beside its typed use case; spec() and a Debug that prints the variant alone; act/tests.rs: a create needs no role, its six Private entries named by their words",
+      "role": "CommissionAct, the commission's acts the Den's write carries (Create, Rename), each body beside its typed use case; spec() and a Debug that prints the variant alone; act/tests.rs: a create needs no role and a rename the Owner, each read from its capability marker, a create's six Private entries named by their words, a rename's shape its new name",
       "node": false
     },
     {
@@ -74,7 +74,7 @@
     },
     {
       "name": "rename.rs + rename/tests.rs",
-      "role": "the owner renames the commission (still on its old path until it moves behind the Den's write): require_owner and the commission's summary (its node's level) before the lazy unit opens, the title already the Den's name rule's from its parse, set_title on it (renaming the commission's node), the row read back by id (gone → the one not-found), the answer named by the title and levelled by the summary, and a `renamed` entry (empty payload, no note) only on a real change; rename/tests.rs pins that a stranger and a non-owner Participant open no unit, and that a refused title is never a title",
+      "role": "the rename act (rename::Act: the commission it is anchored on and its new title; its spec anchors the commission's place and reads its needed role, the Owner, from the AsOwner marker; its Handler answers the lent commission, the gate writing the node's name, or nothing when the name is already stored, and a `renamed` entry only on a real change) and the use case, a pure #[use_case] delegation to Den::write with no unit, mapped as create's: a stranger and a made-up id the same not-found, a non-owner Participant InsufficientPermissions; it answers CommissionValues from the write's answer, named and levelled as the gate left the node; rename/tests.rs pins that a refused rename opens no unit, a same-title rename records nothing, and that a refused title is never a title",
       "node": false
     },
     {
@@ -94,7 +94,7 @@
     },
     {
       "name": "values.rs",
-      "role": "CommissionValues: the flat values create and rename answer; TryFrom<WriteResult> builds create's from the write's answer, its id the thing written and its title and visibility the name and level the gate wrote; rename builds its own through from_parts: the row it reads back, the title it wrote and the level its summary read",
+      "role": "CommissionValues: the flat values create and rename answer; TryFrom<WriteResult> builds them from the write's answer, its id the thing written and its title and visibility the name and level the gate wrote, through from_parts",
       "node": false
     },
     {

@@ -1,5 +1,8 @@
 use adapter_mem::{CommissionSeed, MemBackend};
-use domain::elements::{commission::CommissionRole, level::Level};
+use domain::elements::{
+    commission::{CommissionRole, CommissionTitle},
+    level::Level,
+};
 
 use super::*;
 
@@ -15,7 +18,7 @@ async fn the_pool_and_the_unit_are_scripted_apart() -> anyhow::Result<()> {
     let stranger = UserId::from(Did::from("did:plc:scriptstranger".to_string()));
     let title = "A scripted commission".parse::<CommissionTitle>()?;
     let commission = CommissionSeed::private(title, owner.clone());
-    backend.seed_bound_commission(&commission).await?;
+    let node = backend.seed_bound_commission(&commission).await?;
     let script = StandingScript::default();
     let store = ScriptedStanding::new(backend.commission_store(), script.clone());
     let database = ScriptedStandingDatabase::new(backend.database(), script.clone());
@@ -40,9 +43,13 @@ async fn the_pool_and_the_unit_are_scripted_apart() -> anyhow::Result<()> {
         .commissions()
         .standing_for_update(&commission.id, &owner)
         .await?;
+    let owner_locked = LockedStanding {
+        standing: as_owner,
+        node,
+    };
     assert_eq!(
         read_through,
-        Some(as_owner),
+        Some(owner_locked),
         "an unscripted pair reads through"
     );
     unit.rollback().await?;

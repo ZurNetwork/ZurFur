@@ -2453,37 +2453,3 @@ async fn delete_cascades_participants_files_and_grants() {
             .is_none()
     );
 }
-
-// set_title answers true only when the stored title changes: a repeat of the
-// stored title and an absent commission both answer false.
-#[tokio::test]
-async fn set_title_reports_only_a_real_change() {
-    let backend = MemBackend::new();
-    let database = backend.database();
-    let created = commission("A ref sheet", user_id());
-    let id = created.id;
-    seed(&backend, &created).await;
-    let renamed = "A full piece".parse::<CommissionTitle>().unwrap();
-    let absent = CommissionId::from(uuid::Uuid::now_v7());
-
-    let mut uow = database.begin().await.unwrap();
-    let first = uow.commissions().set_title(&id, &renamed).await.unwrap();
-    let repeat = uow.commissions().set_title(&id, &renamed).await.unwrap();
-    let missing = uow
-        .commissions()
-        .set_title(&absent, &renamed)
-        .await
-        .unwrap();
-    uow.commit().await.unwrap();
-
-    assert!(first, "a new title is a real change");
-    assert!(!repeat, "the title already stored answers false");
-    assert!(!missing, "an absent commission answers false");
-    let stored = backend
-        .commission_store()
-        .find_summary(&id)
-        .await
-        .unwrap()
-        .expect("exists");
-    assert_eq!(stored.title.as_str(), "A full piece");
-}

@@ -20,11 +20,13 @@ use domain::{
         account::{Account, AccountId, AccountName},
         commission::{
             CommissionFile, CommissionId, CommissionRole, CommissionStanding, CommissionSummary,
-            CommissionTitle, FileKey, FileName, NewSlot, SlotTitle, SurfaceAddress, SurfaceName,
+            CommissionTitle, FileKey, FileName, LockedStanding, NewSlot, SlotTitle, SurfaceAddress,
+            SurfaceName,
         },
         did::Did,
         handle::Handle,
         level::Level,
+        node::NodeId,
         text::StoredText,
         user::{User, UserId},
         workflow::{WorkflowId, WorkflowName},
@@ -511,8 +513,17 @@ async fn the_summary_and_standing_read_the_node_s_name_and_level() {
     };
     assert_eq!(summary, Some(expected_summary.clone()));
     assert_eq!(listing, [expected_summary]);
+    let node: uuid::Uuid = sqlx::query_scalar("SELECT node_id FROM commission WHERE id = $1")
+        .bind(uuid::Uuid::from(id))
+        .fetch_one(&pool)
+        .await
+        .expect("read the commission's node");
+    let expected_locked = LockedStanding {
+        standing: expected_standing,
+        node: NodeId::from(node),
+    };
     assert_eq!(standing, Some(expected_standing));
-    assert_eq!(locked, Some(expected_standing));
+    assert_eq!(locked, Some(expected_locked));
 }
 
 // On a database migrated only through the node table's migration, a commission row with no

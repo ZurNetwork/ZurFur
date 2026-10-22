@@ -14,7 +14,7 @@ use chrono::Utc;
 use domain::elements::{
     commission::{
         CommissionBirth, CommissionId, CommissionRole, CommissionStanding, CommissionSummary,
-        CommissionTitle, LifecycleStep, NewCommission,
+        CommissionTitle, LifecycleStep, LockedStanding, NewCommission,
     },
     did::Did,
     level::Level,
@@ -543,6 +543,10 @@ async fn the_summary_and_standing_read_the_node_s_name_and_level() {
     };
     assert_eq!(summary, Some(expected_summary.clone()));
     assert_eq!(listing, [expected_summary]);
+    let expected_locked = LockedStanding {
+        standing: expected_standing,
+        node,
+    };
     assert_eq!(standing, Some(expected_standing));
-    assert_eq!(locked, Some(expected_standing));
+    assert_eq!(locked, Some(expected_locked));
 }

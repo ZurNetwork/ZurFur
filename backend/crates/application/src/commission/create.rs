@@ -13,7 +13,7 @@ use crate::{
     commission::{CommissionResult, CommissionValues, Commissions, act::CommissionAct},
     den::{
         Den, DenType, Handler, Lent, TopLevel,
-        act::{ActShape, ActSpec, Anchor, BornEntry, DenAct, Handled, HandlerError},
+        act::{ActShape, ActSpec, Anchor, BornEntry, DenAct, EntryRule, Handled, HandlerError},
         names, needs, write,
     },
 };
@@ -74,7 +74,7 @@ impl Act {
 impl Handler for Act {
     type Role = Creator;
 
-    const ENTRY: ChangelogEntryKind = ChangelogEntryKind::Created;
+    const ENTRY: EntryRule = EntryRule::Always(ChangelogEntryKind::Created);
 
     /// Creates the commission at the node the gate made, then answers it as the unit holds it.
     async fn handle(&self, lent: &mut Lent<'_, Creator>) -> Result<Handled, HandlerError> {

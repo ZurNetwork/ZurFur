@@ -14,10 +14,10 @@ use domain::elements::{
         CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionRole,
         CommissionStanding, CommissionSummary, CommissionTitle, DeadlineStatus, DirectionStatus,
         ElementId, ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel,
-        LapsedDeadline, LifecycleStep, NewChangelogEntry, NewCommission, NewElement, NewSeat,
-        NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
-        SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
-        declares_surface, derive_deadline_status,
+        LapsedDeadline, LifecycleStep, LockedStanding, NewChangelogEntry, NewCommission,
+        NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink,
+        SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode,
+        declared_tabs, declares_surface, derive_deadline_status,
     },
     did::Did,
     invitation::InvitationState,
@@ -841,40 +841,6 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Rename the commission's node, the one it points at, on this unit's staging
-    /// snapshot; `false` when the node already holds that name, or the commission or its
-    /// node is absent.
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn set_title(
-        &mut self,
-        id: &CommissionId,
-        title: &CommissionTitle,
-    ) -> anyhow::Result<bool> {
-        let bound = self
-            .0
-            .commissions
-            .lock()
-            .expect("MemBackend commissions mutex poisoned")
-            .get(id)
-            .map(|stored| stored.node_id);
-        let Some(node_id) = bound else {
-            return Ok(false);
-        };
-        let mut nodes = self
-            .0
-            .nodes
-            .lock()
-            .expect("MemBackend nodes mutex poisoned");
-        let Some(node) = nodes.get_mut(&node_id) else {
-            return Ok(false);
-        };
-        if node.name.as_str() == title.as_ref() {
-            return Ok(false);
-        }
-        node.name = StoredText::from(title.clone());
-        Ok(true)
-    }
-
     /// Repoint (or clear) the linked-channel pointer, applying only when the
     /// stored value differs — so a repeat, or an absent commission, answers
     /// `false`, which the caller's changelog append keys on.
@@ -1112,14 +1078,15 @@ impl CommissionReads for MemCommissionWrites<'_> {
         MemCommissionStore(self.0.clone()).find(id).await
     }
 
-    /// [`CommissionStore::standing`] over the unit's staged maps; there is no row to lock. A
-    /// commission whose node the unit doesn't hold answers `None`, as the locked join does.
+    /// [`CommissionStore::standing`] over the unit's staged maps, beside the node the commission
+    /// points at; there is no row to lock. A commission whose node the unit doesn't hold
+    /// answers `None`, as the locked join does.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn standing_for_update(
         &mut self,
         commission: &CommissionId,
         user: &UserId,
-    ) -> anyhow::Result<Option<CommissionStanding>> {
+    ) -> anyhow::Result<Option<LockedStanding>> {
         let bound = self
             .0
             .commissions
@@ -1127,19 +1094,20 @@ impl CommissionReads for MemCommissionWrites<'_> {
             .expect("MemBackend commissions mutex poisoned")
             .get(commission)
             .map(|stored| stored.node_id);
-        let has_its_node = bound.is_some_and(|node_id| {
+        let Some(node) = bound.filter(|node_id| {
             self.0
                 .nodes
                 .lock()
                 .expect("MemBackend nodes mutex poisoned")
-                .contains_key(&node_id)
-        });
-        if !has_its_node {
+                .contains_key(node_id)
+        }) else {
             return Ok(None);
-        }
-        MemCommissionStore(self.0.clone())
+        };
+        let standing = MemCommissionStore(self.0.clone())
             .standing(commission, user)
-            .await
+            .await?;
+        let locked = standing.map(|standing| LockedStanding { standing, node });
+        Ok(locked)
     }
 
     #[tracing::instrument(level = "debug", skip_all)]

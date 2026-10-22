@@ -7,9 +7,10 @@ use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use chrono::Utc;
 use domain::{
     elements::{
-        commission::{CommissionBirth, CommissionId, CommissionTitle, NewCommission},
+        commission::{CommissionBirth, CommissionId, NewCommission},
         did::Did,
         level::Level,
+        text::StoredText,
         user::{User, UserId},
     },
     ports::{CommissionStore, Database},
@@ -47,7 +48,7 @@ async fn a_swallowed_statement_failure_fails_the_commit_and_keeps_nothing() {
     let id = seed::seed_titled(&pool, &owner.id, "Before").await;
     let db = PgDatabase::new(pool.clone());
 
-    let renamed_title = "After".parse::<CommissionTitle>().expect("valid title");
+    let renamed_title = StoredText::from("After".to_owned());
     let stranger = UserId::from(Did::from("did:plc:never-provisioned".to_string()));
     let orphan_id = CommissionId::mint();
     let orphan_node = commission_node(orphan_id, Level::Private, "Orphan");
@@ -66,14 +67,21 @@ async fn a_swallowed_statement_failure_fails_the_commit_and_keeps_nothing() {
         .create(&orphan_node)
         .await
         .expect("store the orphan's node");
-    {
-        let mut commissions = uow.commissions();
-        let changed = commissions
-            .set_title(&id, &renamed_title)
-            .await
-            .expect("the rename itself succeeds");
-        assert!(changed, "the rename changed the stored title in the unit");
-    }
+    let locked = uow
+        .commissions()
+        .standing_for_update(&id, &owner.id)
+        .await
+        .expect("the locked read")
+        .expect("the seeded commission stands");
+    let renamed = uow
+        .nodes()
+        .set_name(&locked.node, &renamed_title)
+        .await
+        .expect("the rename itself succeeds");
+    assert!(
+        renamed,
+        "the rename found the commission's node in the unit"
+    );
     let orphan_created = seed::create(&mut *uow, orphan_id, &orphan_birth, &unrated).await;
     assert!(
         orphan_created.is_err(),

@@ -31,8 +31,8 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
         ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
-        CommissionMarkup, CommissionStanding, CommissionTitle, DeadlineStatus, DirectionStatus,
-        ElementId, GrantLevel, LapsedDeadline, NewCommission, NewElement, NewSeat, NewSlot,
+        CommissionMarkup, CommissionTitle, DeadlineStatus, DirectionStatus, ElementId, GrantLevel,
+        LapsedDeadline, LockedStanding, NewCommission, NewElement, NewSeat, NewSlot,
         SeatInvitation, SeatInvitationId, TabId, element::TabRow,
     },
     did::Did,
@@ -317,7 +317,7 @@ impl CommissionReads for FactBearingCommissions<'_> {
         &mut self,
         commission: &CommissionId,
         user: &UserId,
-    ) -> anyhow::Result<Option<CommissionStanding>> {
+    ) -> anyhow::Result<Option<LockedStanding>> {
         self.0.standing_for_update(commission, user).await
     }
 
@@ -403,14 +403,6 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         archived_at: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool> {
         self.0.set_archived(id, archived_at).await
-    }
-
-    async fn set_title(
-        &mut self,
-        id: &CommissionId,
-        title: &CommissionTitle,
-    ) -> anyhow::Result<bool> {
-        self.0.set_title(id, title).await
     }
 
     async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {

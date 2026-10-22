@@ -11,7 +11,12 @@ use adapter_mem::fixture::{alice, bob, old_sketch, untitled};
 use atta::{WriteCaps, WriteError, Writer};
 use chrono::Utc;
 use domain::{
-    elements::{commission::ChangelogEntry, did::Did, level::Level, user::UserId},
+    elements::{
+        commission::{ChangelogEntry, ChangelogEntryKind},
+        did::Did,
+        level::Level,
+        user::UserId,
+    },
     ports::{Database, UnitOfWork},
 };
 use test_support::pg_app::{StatementLog, pg_runtime, pg_runtime_recording};
@@ -22,8 +27,8 @@ use crate::{
     den::{
         Den, DenThing,
         authority::{GrantKind, MINT_AS},
-        probe::{
-            Probe, ProbeHandler, commission_path, create_act, hand_built_create, hand_built_rename,
+        test_acts::{
+            commission_path, create_act, hand_built_create, hand_built_rename, rename_act,
         },
         write::{Command, DenWriteError, WriteResult},
     },
@@ -34,14 +39,23 @@ use spy::{Spy, SpyDatabase};
 /// The title every create here gives its commission, which no entry may carry.
 const TITLE: &str = "A gated piece";
 
-/// A grant on "Untitled" to `actor` in `role`.
-fn existing(actor: &UserId, role: CommissionRole) -> Grant {
+/// The title a rename here gives, which no entry may carry either.
+const NEW_TITLE: &str = "A renamed piece";
+
+/// A grant on "Untitled" to `actor` in `role`, bound to `node`.
+fn existing_on(actor: &UserId, role: CommissionRole, node: NodeId) -> Grant {
     let kind = GrantKind::Existing {
         commission: untitled(),
         role,
         level: Level::Private,
+        node,
     };
     Grant::for_test(actor, kind)
+}
+
+/// A grant on "Untitled" to `actor` in `role`, bound to a node no row holds.
+fn existing(actor: &UserId, role: CommissionRole) -> Grant {
+    existing_on(actor, role, NodeId::mint())
 }
 
 /// A create grant to `actor` under `commission`.
@@ -114,13 +128,13 @@ fn an_owner_capability_is_never_issued_to_a_participant() {
 async fn the_write_host_refuses_another_viewer() {
     let world = test_world::world().await;
     let database = &*world.ports.database;
-    let probe = Probe::rename(untitled(), "Taken over").needing(CommissionRole::Owner);
-    let act = hand_built_rename(commission_path(untitled()), "Taken over", probe);
+    let act = hand_built_rename(commission_path(untitled()), untitled(), "Taken over");
+    let node = top_row(database, untitled()).await.expect("seeded").id;
 
     let applied = through_host(
         database,
         DenHost::viewer_of(&bob()),
-        existing(&alice(), CommissionRole::Owner),
+        existing_on(&alice(), CommissionRole::Owner, node),
         act,
     )
     .await;
@@ -135,7 +149,7 @@ async fn a_create_under_a_directory_passes_through_the_write_host() {
     let world = test_world::world().await;
     let database = &*world.ports.database;
     let minted = made_up();
-    let act = hand_built_create(minted, "Made here", Probe::create("Made here"));
+    let act = hand_built_create(minted, "Made here");
 
     let applied = through_host(
         database,
@@ -214,29 +228,77 @@ async fn spied(spy: &Spy) -> test_world::World {
     world
 }
 
-/// Each creator that drops a failure it got through its view, then answers as if none came.
-const SWALLOWING: [ProbeHandler; 2] =
-    [ProbeHandler::SwallowMiss, ProbeHandler::SwallowStoreFailure];
+/// A creator that drops a failure it got through its lent view, then answers as if none came.
+#[derive(Debug, Clone, Copy)]
+enum Swallowing {
+    /// Reads the commission before it exists and drops that miss, then creates it.
+    Miss,
+    /// Creates the commission and reads it, then creates it again and drops that failure.
+    StoreFailure,
+}
 
-/// Each swallowing creator's act on `ports` by `actor` fails as a store failure, and keeps
-/// neither its node nor its commission.
+impl Handler for Swallowing {
+    type Role = Creator;
+
+    const ENTRY: EntryRule = EntryRule::Always(ChangelogEntryKind::Created);
+
+    async fn handle(&self, lent: &mut Lent<'_, Creator>) -> Result<Handled, HandlerError> {
+        let chosen = NewCommission {
+            maturity: None,
+            deadline: None,
+        };
+        let answer = match self {
+            Self::Miss => {
+                let _dropped = lent.lent().await;
+                lent.create(&chosen).await?;
+                lent.lent().await?
+            }
+            Self::StoreFailure => {
+                lent.create(&chosen).await?;
+                let read = lent.lent().await?;
+                let _dropped = lent.create(&chosen).await;
+                read
+            }
+        };
+        Ok(Handled { answer })
+    }
+}
+
+/// Each swallowing creator, lent a create grant through [`lend_as`] on a unit of `database`
+/// holding its commission's node, fails as a store failure; the unit then keeps neither its
+/// node nor its commission.
 async fn each_swallowed_failure_fails_the_act(ports: &Ports, actor: &UserId) {
-    for handler in SWALLOWING {
+    let database = &*ports.database;
+    for handler in [Swallowing::Miss, Swallowing::StoreFailure] {
         let planted = CommissionId::mint();
-        let act = Probe::create(TITLE).handled(handler.clone()).act();
+        let segment = NodeSegment::try_from(planted.to_string()).expect("an id is a segment");
+        let node = NewNode {
+            id: NodeId::mint(),
+            parent: None,
+            segment,
+            node_type: NodeType::Commission,
+            level: Level::Private,
+            name: StoredText::from(TITLE.to_owned()),
+        };
+        let written = Written {
+            node: node.id,
+            commission: planted,
+            name: None,
+            level: atta::Level::Private,
+            changed: true,
+        };
+        let grant = creating(actor, planted);
+        let mut unit = database.begin().await.expect("begin");
+        unit.nodes()
+            .create(&node)
+            .await
+            .expect("the node row is made");
 
-        let written = MINT_AS
-            .scope(planted, write_at(ports, actor, act, Utc::now()))
-            .await;
+        let landed = lend_as(&handler, &grant, &mut *unit, &written, Utc::now()).await;
+        unit.rollback().await.expect("the unit ends");
 
-        assert!(
-            matches!(written, Err(DenWriteError::Store(_))),
-            "{handler:?}: {written:?}"
-        );
-        assert!(
-            top_row(&*ports.database, planted).await.is_none(),
-            "{handler:?}"
-        );
+        assert!(landed.is_err(), "{handler:?} landed");
+        assert!(top_row(database, planted).await.is_none(), "{handler:?}");
         assert!(stored(ports, planted).await.is_none(), "{handler:?}");
     }
 }
@@ -255,6 +317,33 @@ async fn a_swallowed_store_failure_under_a_handler_fails_the_act_on_postgres() {
     let actor = provision(&*ports.database, "did:plc:gate-swallowing").await;
 
     each_swallowed_failure_fails_the_act(&ports, &actor).await;
+}
+
+// The rename's handler reads its commission through the lent view; the read fails, so the act
+// fails as a store failure and the unit keeps neither the new name nor an entry.
+#[tokio::test]
+async fn a_failed_handler_writes_neither_row_nor_entry() {
+    let spy = Spy::failing_reads();
+    let world = spied(&spy).await;
+    let before = entries(&world.ports, untitled()).await.len();
+
+    let written = write_at(
+        &world.ports,
+        &alice(),
+        rename_act(untitled(), NEW_TITLE),
+        Utc::now(),
+    )
+    .await;
+
+    assert!(
+        matches!(written, Err(DenWriteError::Store(_))),
+        "{written:?}"
+    );
+    let row = top_row(&*world.ports.database, untitled())
+        .await
+        .expect("seeded");
+    assert_eq!(row.name.as_str(), "Untitled");
+    assert_eq!(entries(&world.ports, untitled()).await.len(), before);
 }
 
 // A repo whose read answers another commission's row: the handler answers what it read, and
@@ -353,24 +442,37 @@ async fn a_create_writes_exactly_one_created_entry_on_postgres() {
     one_created_entry(&ports, &actor).await;
 }
 
-/// A create by `actor` on `ports` writes its entry as the gate builds it: on the made
-/// commission, by `actor`, with an empty payload, no note and no title anywhere.
+/// A create and then a rename by `actor` on `ports` write their entries as the gate builds
+/// them: on the made commission, by `actor`, with an empty payload, no note and no title
+/// anywhere.
 async fn the_entry_is_the_gate_s(ports: &Ports, actor: &UserId) {
     let written = write_at(ports, actor, create_act(TITLE), Utc::now())
         .await
         .expect("the create lands");
-
     let minted = made(&written);
+    write_at(ports, actor, rename_act(minted, NEW_TITLE), Utc::now())
+        .await
+        .expect("the rename lands");
+
     let stream = entries(ports, minted).await;
-    let [entry] = stream.as_slice() else {
-        panic!("one entry: {} of them", stream.len());
+    let [created, renamed] = stream.as_slice() else {
+        panic!("two entries: {} of them", stream.len());
     };
     let empty_payload = serde_json::json!({});
-    assert_eq!(entry.commission_id, minted);
-    assert_eq!(entry.actor_id.as_ref(), Some(actor));
-    assert_eq!(entry.payload, empty_payload);
-    assert_eq!(entry.note, None);
-    assert!(!entry.payload.to_string().contains(TITLE));
+    let expected = [
+        (created, ChangelogEntryKind::Created),
+        (renamed, ChangelogEntryKind::Renamed),
+    ];
+    for (entry, kind) in expected {
+        assert_eq!(entry.kind, kind);
+        assert_eq!(entry.commission_id, minted, "{kind}");
+        assert_eq!(entry.actor_id.as_ref(), Some(actor), "{kind}");
+        assert_eq!(entry.payload, empty_payload, "{kind}");
+        assert_eq!(entry.note, None, "{kind}");
+        let payload = entry.payload.to_string();
+        assert!(!payload.contains(TITLE), "{kind}");
+        assert!(!payload.contains(NEW_TITLE), "{kind}");
+    }
 }
 
 #[tokio::test]
@@ -413,25 +515,42 @@ async fn a_failed_create_leaves_no_node() {
     assert!(stored(&world.ports, planted).await.is_none());
 }
 
-// On PostgreSQL, a create writes its seven node rows and reads none: its answer comes from
-// what the gate wrote and the handler's commission read.
-#[tokio::test]
-async fn create_reads_no_node_after_writing() {
-    let statements = StatementLog::default();
-    let pg = pg_runtime_recording(&statements).await;
-    let ports = Ports::from(&pg.runtime);
-    let actor = provision(&*ports.database, "did:plc:gate-no-node-read").await;
-    let mark = statements.mark();
-
-    write_at(&ports, &actor, create_act(TITLE), Utc::now())
-        .await
-        .expect("the create lands");
-
-    let node_statements: Vec<&str> = statements
+/// The node statements PostgreSQL ran since `mark`, by query name.
+fn node_statements(statements: &StatementLog, mark: usize) -> Vec<&'static str> {
+    statements
         .since(mark)
         .iter()
         .filter_map(|statement| statement.query_name())
         .filter(|name| name.starts_with("node/"))
-        .collect();
-    assert_eq!(node_statements, ["node/create"; 7]);
+        .collect()
+}
+
+// On PostgreSQL, a create writes its seven node rows and reads none, and a rename reads its
+// node once on the walk, writes its name, and reads none after: each answer comes from what
+// the gate wrote and the handler's commission read.
+#[tokio::test]
+async fn create_and_rename_read_no_node_after_writing() {
+    let statements = StatementLog::default();
+    let pg = pg_runtime_recording(&statements).await;
+    let ports = Ports::from(&pg.runtime);
+    let actor = provision(&*ports.database, "did:plc:gate-no-node-read").await;
+    let before_create = statements.mark();
+
+    let written = write_at(&ports, &actor, create_act(TITLE), Utc::now())
+        .await
+        .expect("the create lands");
+    let created = node_statements(&statements, before_create);
+    let before_rename = statements.mark();
+    write_at(
+        &ports,
+        &actor,
+        rename_act(made(&written), NEW_TITLE),
+        Utc::now(),
+    )
+    .await
+    .expect("the rename lands");
+    let renamed = node_statements(&statements, before_rename);
+
+    assert_eq!(created, ["node/create"; 7]);
+    assert_eq!(renamed, ["node/at_top", "node/set_name"]);
 }

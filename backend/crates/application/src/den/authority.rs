@@ -8,6 +8,7 @@ use domain::{
     elements::{
         commission::{CommissionId, CommissionRole},
         level::Level,
+        node::NodeId,
         user::UserId,
     },
     ports::{New, Unit},
@@ -19,7 +20,7 @@ use crate::{
     den::{
         Place, TopLevel,
         act::{ActShape, ActSpec, Anchor},
-        write::{DenWriteError, RefusalClass},
+        write::{DenWriteError, RefusalClass, broken},
     },
 };
 
@@ -27,7 +28,8 @@ use crate::{
 /// under an id the den minted.
 #[derive(Debug, PartialEq, Eq)]
 pub(in crate::den) enum GrantKind {
-    /// An existing commission, held in `role`, at the level the locked read answered.
+    /// An existing commission, held in `role`, at the level the locked read answered, bound
+    /// to the node that read joined.
     Existing {
         /// The commission.
         commission: CommissionId,
@@ -35,6 +37,8 @@ pub(in crate::den) enum GrantKind {
         role: CommissionRole,
         /// Its own level, from the locked read.
         level: Level,
+        /// The node it points at, from the locked read: the only node its walk may land on.
+        node: NodeId,
     },
     /// A commission not made yet, under the id the den minted.
     Create {
@@ -83,6 +87,14 @@ impl Grant {
                 role: held,
                 ..
             } => (held >= role).then_some(commission),
+            GrantKind::Create { .. } => None,
+        }
+    }
+
+    /// The node an existing commission's grant is bound to; `None` for a create grant.
+    pub(in crate::den) fn bound_node(&self) -> Option<NodeId> {
+        match self.kind {
+            GrantKind::Existing { node, .. } => Some(node),
             GrantKind::Create { .. } => None,
         }
     }
@@ -195,15 +207,20 @@ pub(in crate::den) async fn grant(
         Anchor::Thing(place) => {
             let needs = needed(spec)?;
             let commission = commission_of(place)?;
-            let standing = unit
+            let locked = unit
                 .commissions()
                 .standing_for_update(&commission, actor)
                 .await?;
+            let standing = locked.map(|locked| locked.standing);
             let facts = answer(verdict(standing, needs))?;
+            let Some(locked) = locked else {
+                return Err(broken("a granted standing holds no node"));
+            };
             let kind = GrantKind::Existing {
                 commission,
                 role: facts.role,
                 level: facts.level,
+                node: locked.node,
             };
             Ok(Grant::granted(actor, kind))
         }

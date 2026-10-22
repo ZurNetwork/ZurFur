@@ -604,7 +604,7 @@
     {
       "page": 29425666,
       "title": "Commission Structural Authority — the Commission Admin Role",
-      "governs": "rename.rs: the title is Admin-capable metadata; with no Admin role yet, only the owner renames, through require_owner"
+      "governs": "rename.rs: the title is Admin-capable metadata; with no Admin role yet, only the owner renames, through the Den's write under the AsOwner capability"
     },
     {
       "page": 30408741,

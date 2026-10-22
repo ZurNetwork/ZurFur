@@ -39,7 +39,7 @@ pub(crate) struct Command {
 pub(crate) struct WriteResult {
     /// The thing written, a new one's id included.
     pub(crate) thing: DenThing,
-    /// The name a create or a rename wrote; `None` for a change.
+    /// The name a create or a rename left on the node.
     pub(crate) name: Option<DenName>,
     /// A made node's settled level, or the level of the node acted on.
     pub(crate) level: Level,
@@ -73,14 +73,12 @@ pub(crate) enum RefusalClass {
     /// Two entries of one act would share a key.
     DuplicateKey,
     /// The grant doesn't fit the act: an existing thing's for a create, a create's for a
-    /// rename or change, or a role below the capability's.
+    /// rename, or a role below the capability's.
     WrongGrant,
     /// A made node would be wider than Private, which nothing may be until 0.6.
     WiderThanPrivate,
     /// Another node already holds the made node's key.
     SegmentTaken,
-    /// The type's handler refused the act.
-    TypeRefused,
 }
 
 /// Atta's refusal under the den's word for it. A function, not `From`: the Atta-exposure
@@ -102,7 +100,6 @@ impl From<DenRefusal> for RefusalClass {
             DenRefusal::WrongGrant => Self::WrongGrant,
             DenRefusal::WiderThanPrivate => Self::WiderThanPrivate,
             DenRefusal::SegmentTaken => Self::SegmentTaken,
-            DenRefusal::TypeRefused => Self::TypeRefused,
         }
     }
 }
@@ -117,7 +114,7 @@ pub(crate) enum DenWriteError {
     /// The actor's role is below what the act needs.
     #[error("the act needs a higher role")]
     Forbidden,
-    /// Atta, the gate or the type refused the act.
+    /// Atta or the gate refused the act.
     #[error("the den refused the act")]
     Refused(RefusalClass),
     /// A store behind the Den failed, or the den broke one of its own rules.
@@ -126,7 +123,7 @@ pub(crate) enum DenWriteError {
 }
 
 /// A store failure, or a rule of the den's own broken, as the write's error.
-fn broken(what: &'static str) -> DenWriteError {
+pub(in crate::den) fn broken(what: &'static str) -> DenWriteError {
     DenWriteError::Store(anyhow::anyhow!(what))
 }
 
@@ -216,9 +213,6 @@ fn build(spec: ActSpec, body: DenAct, grant: &Grant) -> Result<Act<DenAct>, DenW
         ActShape::Rename { name } => Shape::Rename {
             node: granted_node(grant, den_type)?,
             name: names::display_name(&name),
-        },
-        ActShape::Change => Shape::Change {
-            node: granted_node(grant, den_type)?,
         },
     };
     let act = Act {

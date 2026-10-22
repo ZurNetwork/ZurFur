@@ -13,9 +13,9 @@ use domain::elements::{
     account::{Account, AccountId, AccountMembership, ListingScope},
     commission::{
         ChannelPointer, Commission, CommissionBirth, CommissionComposition, CommissionFile,
-        CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary, CommissionTitle,
-        DeadlineStatus, DirectionStatus, ElementId, FileKey, FileSummary, GrantLevel,
-        LapsedDeadline, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
+        CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary, DeadlineStatus,
+        DirectionStatus, ElementId, FileKey, FileSummary, GrantLevel, LapsedDeadline,
+        LockedStanding, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
         SeatInvitationId, Slot, TabId, TabRow,
     },
     did::Did,
@@ -301,15 +301,15 @@ impl UserStore for ScriptedUsers {
     }
 }
 
-/// Scripted standing answers, keyed by commission and viewer.
-type StandingAnswers = HashMap<(CommissionId, UserId), Option<CommissionStanding>>;
+/// Scripted answers, keyed by commission and viewer.
+type ScriptedAnswers<T> = HashMap<(CommissionId, UserId), Option<T>>;
 
 /// What a scripted standing double answers beyond its inner store: the pool's and the unit's
 /// answers apart, so the two can disagree.
 #[derive(Default)]
 struct StandingPlan {
-    standing: StandingAnswers,
-    standing_for_update: StandingAnswers,
+    standing: ScriptedAnswers<CommissionStanding>,
+    standing_for_update: ScriptedAnswers<LockedStanding>,
 }
 
 /// A shared script for [`ScriptedStanding`] and [`ScriptedStandingDatabase`]; every clone
@@ -335,7 +335,7 @@ impl StandingScript {
         &self,
         commission: CommissionId,
         user: UserId,
-        answer: Option<CommissionStanding>,
+        answer: Option<LockedStanding>,
     ) {
         self.plan()
             .standing_for_update
@@ -361,7 +361,7 @@ impl StandingScript {
         &self,
         commission: &CommissionId,
         user: &UserId,
-    ) -> Option<Option<CommissionStanding>> {
+    ) -> Option<Option<LockedStanding>> {
         let pair = (*commission, user.clone());
         self.plan().standing_for_update.get(&pair).copied()
     }
@@ -604,7 +604,7 @@ impl CommissionReads for ScriptedStandingRepo<'_> {
         &mut self,
         commission: &CommissionId,
         user: &UserId,
-    ) -> anyhow::Result<Option<CommissionStanding>> {
+    ) -> anyhow::Result<Option<LockedStanding>> {
         if let Some(scripted) = self.script.standing_for_update(commission, user) {
             return Ok(scripted);
         }
@@ -692,14 +692,6 @@ impl CommissionWrites for ScriptedStandingRepo<'_> {
         archived_at: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool> {
         self.inner.set_archived(id, archived_at).await
-    }
-
-    async fn set_title(
-        &mut self,
-        id: &CommissionId,
-        title: &CommissionTitle,
-    ) -> anyhow::Result<bool> {
-        self.inner.set_title(id, title).await
     }
 
     async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {

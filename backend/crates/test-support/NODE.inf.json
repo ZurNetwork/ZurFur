@@ -27,7 +27,7 @@
     },
     {
       "name": "src/commission_standing_contract.rs",
-      "role": "the shared commission-standing suite: one pub async fn per case over (&dyn Database, &dyn CommissionStore, &dyn ParticipantRows, &dyn CommissionSeeder), seeding its commissions (Listed and Public too) through seeder.rs, checking the pool's standing and a unit's standing_for_update alike; ParticipantRows is each adapter's own write of the participant rows no port writes; commission_standing_contract_tests!(setup) writes one #[tokio::test] per case",
+      "role": "the shared commission-standing suite: one pub async fn per case over (&dyn Database, &dyn CommissionStore, &dyn ParticipantRows, &dyn CommissionSeeder), seeding its commissions (Listed and Public too) through seeder.rs, checking the pool's standing and a unit's standing_for_update alike, and that the locked read answers the commission's own node; ParticipantRows is each adapter's own write of the participant rows no port writes; commission_standing_contract_tests!(setup) writes one #[tokio::test] per case",
       "node": false
     },
     {
@@ -162,7 +162,7 @@
     },
     {
       "name": "src/store_doubles.rs",
-      "role": "scripted wrappers over AccountStore and UserStore: real answers until a shared script makes a listing list a membership the store wouldn't, a read fail, a role read answer a stale role (as a read taken before a concurrent change would), or a user row read as gone; and the standing double: StandingScript scripts the pool's standing (ScriptedStanding over a CommissionStore) and a unit's standing_for_update (ScriptedStandingDatabase over a Database) apart per commission and viewer, so they can disagree; tests seed first, then script",
+      "role": "scripted wrappers over AccountStore and UserStore: real answers until a shared script makes a listing list a membership the store wouldn't, a read fail, a role read answer a stale role (as a read taken before a concurrent change would), or a user row read as gone; and the standing double: StandingScript scripts the pool's standing (ScriptedStanding over a CommissionStore) and a unit's standing_for_update, a LockedStanding with its node (ScriptedStandingDatabase over a Database), apart per commission and viewer, so they can disagree; tests seed first, then script",
       "node": false
     },
     {

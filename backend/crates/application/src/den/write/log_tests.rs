@@ -1,6 +1,6 @@
-//! What the Den's write logs on PostgreSQL, at trace, four ways: the owner's act, a stranger's,
-//! a Participant's below the act's need, and a create on a taken segment. No DID or handle at
-//! info or above, no name anywhere, and nothing of PostgreSQL's detail.
+//! What the Den's write logs on PostgreSQL, at trace, four ways: the owner's rename, a
+//! stranger's, a Participant's (a rename needs the Owner), and a create on a taken segment. No
+//! DID or handle at info or above, no name anywhere, and nothing of PostgreSQL's detail.
 
 use std::sync::Arc;
 
@@ -14,11 +14,11 @@ use test_support::{
     store_doubles::{ScriptedStanding, StandingScript},
 };
 
-use super::tests::{node_name, pg_seed, provision, write};
+use super::tests::{PG_TITLE, node_name, pg_seed, provision, write};
 use super::*;
 use crate::den::{
     authority::MINT_AS,
-    probe::{Probe, create_act},
+    test_acts::{create_act, rename_act},
 };
 
 /// The owner's DID.
@@ -32,9 +32,6 @@ const PARTICIPANT: &str = "did:plc:den-write-log-participant";
 
 /// The new name the owner gives, which no line may carry.
 const SECRET_NAME: &str = "Quiet secret title";
-
-/// The commission's title, which no line may carry.
-const TITLE: &str = "Probed piece";
 
 #[tokio::test]
 async fn the_write_path_logs_no_identity_no_name_and_no_store_detail() {
@@ -59,28 +56,9 @@ async fn the_write_path_logs_no_identity_no_name_and_no_store_detail() {
         .finish();
     let _guard = tracing::subscriber::set_default(subscriber);
 
-    let renamed = write(
-        &ports,
-        &owner,
-        Probe::rename(commission, SECRET_NAME)
-            .needing(CommissionRole::Owner)
-            .act(),
-    )
-    .await;
-    let unseen = write(
-        &ports,
-        &stranger,
-        Probe::rename(commission, SECRET_NAME).act(),
-    )
-    .await;
-    let forbidden = write(
-        &ports,
-        &participant,
-        Probe::rename(commission, SECRET_NAME)
-            .needing(CommissionRole::Owner)
-            .act(),
-    )
-    .await;
+    let renamed = write(&ports, &owner, rename_act(commission, SECRET_NAME)).await;
+    let unseen = write(&ports, &stranger, rename_act(commission, SECRET_NAME)).await;
+    let forbidden = write(&ports, &participant, rename_act(commission, SECRET_NAME)).await;
     let taken = MINT_AS
         .scope(commission, write(&ports, &owner, create_act(SECRET_NAME)))
         .await;
@@ -105,7 +83,7 @@ async fn the_write_path_logs_no_identity_no_name_and_no_store_detail() {
         "the capture saw nothing: {text}"
     );
     for line in text.lines() {
-        for leak in [SECRET_NAME, TITLE, "DETAIL", "Key ("] {
+        for leak in [SECRET_NAME, PG_TITLE, "DETAIL", "Key ("] {
             assert!(!line.contains(leak), "a line carries {leak}: {line}");
         }
         let at_info_or_above = [" INFO ", " WARN ", " ERROR "]

@@ -21,13 +21,13 @@ mod output;
 mod page_token;
 mod place;
 pub(crate) mod post;
-#[cfg(test)]
-pub(crate) mod probe;
 pub(crate) mod read;
 pub mod root;
 mod segment;
 mod soft_delete;
 mod state;
+#[cfg(test)]
+pub(crate) mod test_acts;
 mod thing;
 pub(crate) mod write;
 

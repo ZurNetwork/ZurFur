@@ -7,7 +7,7 @@ use adapter_mem::MemBackend;
 use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::{
-    commission::{ChangelogEntry, ChangelogEntryKind},
+    commission::{ChangelogEntry, ChangelogEntryKind, NewChangelogEntry},
     did::Did,
     name::NodeNameError,
 };
@@ -19,7 +19,7 @@ use domain::ports::{
 use super::*;
 use crate::{
     commission::{CommissionError, create},
-    common_error::NotFoundEntity,
+    common_error::{CommonError, NotFoundEntity},
 };
 
 /// The owner every test's commission belongs to.
@@ -282,8 +282,9 @@ async fn a_participant_who_is_not_the_owner_is_refused() {
     assert_eq!(world.kinds(id).await, [ChangelogEntryKind::Created]);
 }
 
+// A stranger is answered as an id that names nothing is.
 #[tokio::test]
-async fn a_stranger_is_answered_not_a_member() {
+async fn a_stranger_is_answered_not_found() {
     let world = World::new().await;
     let id = world.commission("A ref sheet").await;
     let stranger = UserId::from(Did::from("did:plc:rename-stranger".to_owned()));
@@ -291,7 +292,12 @@ async fn a_stranger_is_answered_not_a_member() {
     let refused = world.rename(stranger, id, "Mine now").await;
 
     assert!(
-        matches!(refused, Err(CommissionError::NotAMember)),
+        matches!(
+            refused,
+            Err(CommissionError::CommonError(CommonError::NotFound(
+                NotFoundEntity::Commission
+            )))
+        ),
         "{refused:?}"
     );
     assert_eq!(world.stored_title(id).await, "A ref sheet");
@@ -428,7 +434,12 @@ async fn a_refused_rename_opens_no_unit() {
 
     let by_stranger = world.rename(stranger, id, "Mine now").await;
     assert!(
-        matches!(by_stranger, Err(CommissionError::NotAMember)),
+        matches!(
+            by_stranger,
+            Err(CommissionError::CommonError(CommonError::NotFound(
+                NotFoundEntity::Commission
+            )))
+        ),
         "{by_stranger:?}"
     );
     assert_eq!(opened.load(Ordering::SeqCst), 0, "a stranger opens no unit");

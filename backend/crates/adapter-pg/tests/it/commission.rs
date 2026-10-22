@@ -15,8 +15,8 @@ use chrono::{SubsecRound, Utc};
 use domain::{
     elements::{
         commission::{
-            ChangelogEntryKind, CommissionBirth, CommissionId, CommissionTitle, LifecycleStep,
-            NewChangelogEntry, NewCommission,
+            ChangelogEntryKind, CommissionBirth, CommissionId, LifecycleStep, NewChangelogEntry,
+            NewCommission,
         },
         did::Did,
         level::Level,
@@ -439,50 +439,6 @@ async fn list_owned_by_is_empty_for_a_user_with_no_commissions() {
         .await
         .expect("list_owned_by");
     assert!(rows.is_empty(), "a user with no commissions lists none");
-}
-
-// set_title answers true only when the stored title changes: a repeat of the
-// stored title and an absent commission both answer false, and the new title
-// is what a later read finds.
-#[tokio::test]
-async fn set_title_reports_only_a_real_change() {
-    let (pool, _container) = fresh_pool().await;
-    let owner = provision(&pool, "did:plc:pg-rename-owner").await;
-    let created = create_commission(&pool, &owner, "A ref sheet").await;
-    let renamed = "A full piece"
-        .parse::<CommissionTitle>()
-        .expect("valid title");
-    let absent = CommissionId::from(uuid::Uuid::now_v7());
-
-    let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin");
-    let first = uow
-        .commissions()
-        .set_title(&created, &renamed)
-        .await
-        .expect("first rename");
-    let repeat = uow
-        .commissions()
-        .set_title(&created, &renamed)
-        .await
-        .expect("repeat rename");
-    let missing = uow
-        .commissions()
-        .set_title(&absent, &renamed)
-        .await
-        .expect("rename of an absent commission");
-    uow.commit().await.expect("commit");
-
-    assert!(first, "a new title is a real change");
-    assert!(!repeat, "the title already stored answers false");
-    assert!(!missing, "an absent commission answers false");
-    let store = adapter_pg::PgCommissionStore::new(pool.clone());
-    let stored = store
-        .find_summary(&created)
-        .await
-        .expect("find_summary")
-        .expect("the commission exists");
-    assert_eq!(stored.title.as_str(), "A full piece");
 }
 
 /// Writes `nodes` on `unit`, in order.

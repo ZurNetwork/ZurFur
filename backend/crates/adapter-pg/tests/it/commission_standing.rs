@@ -164,7 +164,8 @@ async fn an_unreadable_node_level_reads_private_on_both_reads() {
         .standing_for_update(&commission, &owner)
         .await
         .expect("the locked standing read");
-    assert_eq!(locked, Some(expected), "standing_for_update");
+    let locked_standing = locked.map(|locked| locked.standing);
+    assert_eq!(locked_standing, Some(expected), "standing_for_update");
 }
 
 // A stranger's standing on a real commission and a standing on a made-up id each run exactly
@@ -275,7 +276,7 @@ async fn standing_for_update_sees_a_change_committed_while_it_waited() {
             .await
             .expect("the locked standing read");
         unit.rollback().await.expect("end the unit");
-        standing
+        standing.map(|locked| locked.standing)
     });
     wait_for_a_lock_wait(&pool).await;
     evict.commit().await.expect("commit the eviction");

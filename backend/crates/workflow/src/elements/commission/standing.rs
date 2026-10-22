@@ -1,4 +1,4 @@
-use kernel::elements::level::Level;
+use kernel::elements::{level::Level, node::NodeId};
 
 use super::CommissionRole;
 
@@ -13,4 +13,14 @@ pub struct CommissionStanding {
     pub level: Level,
     /// Whether it carries an archive time; the time itself isn't read.
     pub archived: bool,
+}
+
+/// What the locked standing read answers: the standing, and the node the commission points
+/// at, read under the same lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LockedStanding {
+    /// The viewer's standing on the commission.
+    pub standing: CommissionStanding,
+    /// The node the commission points at.
+    pub node: NodeId,
 }

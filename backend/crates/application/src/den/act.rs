@@ -4,7 +4,7 @@
 use std::fmt;
 
 use domain::elements::{
-    commission::{Commission, CommissionRole},
+    commission::{ChangelogEntryKind, Commission, CommissionRole},
     level::Level,
     name::NodeName,
 };
@@ -20,21 +20,11 @@ use crate::{
 pub(crate) enum DenAct {
     /// A commission's act.
     Commission(CommissionAct),
-    /// The test-only probe, whose every knob a test sets.
-    #[cfg(test)]
-    Probe(crate::den::probe::Probe),
 }
 
 /// Where an act is anchored: an existing thing, or a top-level directory a create makes a new
 /// thing in.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "only the test probe builds one until the next slice's acts"
-    )
-)]
 pub(crate) enum Anchor {
     /// An existing thing, at its place.
     Thing(Place),
@@ -56,13 +46,6 @@ pub(crate) struct BornEntry {
 
 /// What an act does to the tree, in the den's own values: the builder turns it into Atta's.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "only the test probe builds one until the next slice's acts"
-    )
-)]
 pub(crate) enum ActShape {
     /// Makes a new thing named `name`, holding `entries`; its key is the id the den mints.
     Create {
@@ -78,8 +61,6 @@ pub(crate) enum ActShape {
         /// Its new name.
         name: NodeName,
     },
-    /// Changes the anchored thing's content.
-    Change,
 }
 
 /// What an act declares about itself: its word, the type it acts on or makes, its anchor, the
@@ -102,10 +83,8 @@ pub(crate) struct ActSpec {
 impl DenAct {
     /// What this act declares about itself.
     pub(crate) fn spec(&self) -> ActSpec {
-        match *self {
-            DenAct::Commission(ref act) => act.spec(),
-            #[cfg(test)]
-            DenAct::Probe(ref probe) => probe.spec(),
+        match self {
+            DenAct::Commission(act) => act.spec(),
         }
     }
 }
@@ -113,10 +92,28 @@ impl DenAct {
 impl fmt::Debug for DenAct {
     /// The act's variant alone; never its body, which may carry a name.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            DenAct::Commission(ref act) => formatter.debug_tuple("Commission").field(act).finish(),
-            #[cfg(test)]
-            DenAct::Probe(_) => formatter.write_str("Probe"),
+        match self {
+            DenAct::Commission(act) => formatter.debug_tuple("Commission").field(act).finish(),
+        }
+    }
+}
+
+/// Which changelog entry the gate writes once an act lands: one of a kind on every landing,
+/// or one only when the act changed its node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EntryRule {
+    /// One entry of this kind, whatever the act changed.
+    Always(ChangelogEntryKind),
+    /// One entry of this kind when the act changed its node; none when it changed nothing.
+    OnChange(ChangelogEntryKind),
+}
+
+impl EntryRule {
+    /// The kind of the one entry an act that `changed` its node writes, or `None`.
+    pub(crate) fn entry(self, changed: bool) -> Option<ChangelogEntryKind> {
+        match self {
+            Self::Always(kind) => Some(kind),
+            Self::OnChange(kind) => changed.then_some(kind),
         }
     }
 }
@@ -145,19 +142,9 @@ impl fmt::Debug for ArmAnswer {
     }
 }
 
-/// Why a type's handler declined: its own refusal, or a store failure under it.
+/// Why a type's handler failed: a store failure under it.
 #[derive(Debug, thiserror::Error)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "only the test probe refuses until the next slice's acts"
-    )
-)]
 pub(crate) enum HandlerError {
-    /// The type refused the act.
-    #[error("the type refused the act")]
-    Refused,
     /// A store under the handler failed.
     #[error("a store under the handler failed")]
     Store(#[from] anyhow::Error),

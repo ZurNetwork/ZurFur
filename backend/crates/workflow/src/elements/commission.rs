@@ -57,5 +57,5 @@ pub use seat::{
 };
 pub use seat_invitation::{SeatInvitation, SeatInvitationId};
 pub use slot::{NewSlot, Slot, SlotTitle, SlotTitleError};
-pub use standing::CommissionStanding;
+pub use standing::{CommissionStanding, LockedStanding};
 pub use title::CommissionTitle;

@@ -1,6 +1,6 @@
 //! A spy over a real database for the gate's tests: its units record each commission create's
-//! birth, can redirect every commission read to another commission, and can refuse every
-//! changelog append; everything else delegates.
+//! birth, can redirect every commission read to another commission or fail it, and can refuse
+//! every changelog append; everything else delegates.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -9,9 +9,9 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
         ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
-        CommissionMarkup, CommissionStanding, CommissionTitle, DeadlineStatus, DirectionStatus,
-        ElementId, GrantLevel, LapsedDeadline, NewChangelogEntry, NewCommission, NewElement,
-        NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId, TabRow,
+        CommissionMarkup, DeadlineStatus, DirectionStatus, ElementId, GrantLevel, LapsedDeadline,
+        LockedStanding, NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot,
+        SeatInvitation, SeatInvitationId, TabId, TabRow,
     },
     maturity::Maturity,
     user::UserId,
@@ -28,6 +28,8 @@ pub(super) struct Spy {
     births: Arc<Mutex<Vec<CommissionBirth>>>,
     /// When set, every unit's commission `find` reads this commission instead.
     answer_as: Option<CommissionId>,
+    /// Whether every unit's commission `find` fails.
+    fail_reads: bool,
     /// Whether every unit's changelog append fails.
     refuse_appends: bool,
 }
@@ -37,6 +39,14 @@ impl Spy {
     pub(super) fn answering_as(other: CommissionId) -> Self {
         Self {
             answer_as: Some(other),
+            ..Self::default()
+        }
+    }
+
+    /// A spy whose units fail every commission read.
+    pub(super) fn failing_reads() -> Self {
+        Self {
+            fail_reads: true,
             ..Self::default()
         }
     }
@@ -168,8 +178,11 @@ struct SpyRepo<'a> {
 
 #[async_trait]
 impl CommissionReads for SpyRepo<'_> {
-    // An interposition: a `find` the spy redirects reads another commission.
+    // An interposition: a `find` the spy fails, or redirects to read another commission.
     async fn find(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
+        if self.spy.fail_reads {
+            return Err(anyhow::anyhow!("the commission read fails"));
+        }
         let read = self.spy.answer_as.as_ref().unwrap_or(id);
         self.inner.find(read).await
     }
@@ -182,7 +195,7 @@ impl CommissionReads for SpyRepo<'_> {
         &mut self,
         commission: &CommissionId,
         user: &UserId,
-    ) -> anyhow::Result<Option<CommissionStanding>> {
+    ) -> anyhow::Result<Option<LockedStanding>> {
         self.inner.standing_for_update(commission, user).await
     }
 
@@ -269,14 +282,6 @@ impl CommissionWrites for SpyRepo<'_> {
         archived_at: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool> {
         self.inner.set_archived(id, archived_at).await
-    }
-
-    async fn set_title(
-        &mut self,
-        id: &CommissionId,
-        title: &CommissionTitle,
-    ) -> anyhow::Result<bool> {
-        self.inner.set_title(id, title).await
     }
 
     async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
