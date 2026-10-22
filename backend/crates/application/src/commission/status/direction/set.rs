@@ -1,11 +1,10 @@
-use crate::LazyUnit;
 use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            CommissionId, CommissionState, DirectionChange, DirectionStatus, NewChangelogEntry,
-            clear_direction, set_direction,
+            AsParticipant, CommissionId, CommissionRefusal, CommissionState, DirectionSet,
+            DirectionStatus, set_direction,
         },
         user::UserId,
     },
@@ -13,62 +12,103 @@ use domain::{
 
 use crate::{
     Ports,
-    commission::{CommissionResult, require_participant, status::direction::Direction},
+    commission::{
+        CommissionResult, act::CommissionAct, den::CommissionPlace, status::direction::Direction,
+    },
+    den::{
+        Den, DenType, Handler, Lent, Place,
+        act::{ActShape, ActSpec, Anchor, DenAct, EntryRule, GatedEntry, Handled, HandlerError},
+        needs, write,
+    },
 };
 
 pub struct Command {
-    pub user_id: UserId,
+    pub actor_id: UserId,
     pub commission_id: CommissionId,
-    pub direction: Option<DirectionStatus>,
+    pub to: DirectionStatus,
 }
+
+/// The act landed, or there was nothing to change.
+#[derive(Debug)]
 pub struct Output;
 
+/// The direction status set: the commission it is anchored on and the status it sets.
+/// The den writes the commission its grant names, never the act's id.
+pub(crate) struct Act {
+    /// The commission it is anchored on.
+    pub(crate) commission: CommissionId,
+    /// The status it sets.
+    pub(crate) to: DirectionStatus,
+}
+
+impl Act {
+    /// A change to the commission's fields; it needs the role its capability's marker needs,
+    /// any Participant.
+    pub(crate) fn spec(&self) -> ActSpec {
+        let place = Place::Commission(CommissionPlace::Commission(self.commission));
+        ActSpec {
+            word: "set_direction_status",
+            den_type: DenType::Commission,
+            anchor: Anchor::Thing(place),
+            needs: needs::<Self>(),
+            shape: ActShape::Change,
+        }
+    }
+}
+
+impl Handler for Act {
+    type Role = AsParticipant;
+
+    type Checked = DirectionSet;
+
+    const ENTRY: EntryRule<DirectionSet> = EntryRule::OnChange(GatedEntry::STATUS_SET);
+
+    /// The direction rule on the stored state: the set, or nothing when the status is held. No
+    /// state refuses it.
+    fn precondition(
+        &self,
+        facts: &CommissionState,
+        _now: DateTimeUtc,
+    ) -> Result<Option<DirectionSet>, CommissionRefusal> {
+        Ok(set_direction(facts, self.to))
+    }
+
+    /// Writes the checked set, then answers the commission as the unit holds it.
+    async fn handle(&self, lent: &mut Lent<'_, Self>) -> Result<Handled, HandlerError> {
+        lent.set_direction_status().await?;
+        let answer = lent.lent().await?;
+        Ok(Handled { answer })
+    }
+}
+
 impl Direction<'_> {
+    /// Set (or replace) the commission's direction status through the Den's write, as any
+    /// Participant. Setting the status it holds writes nothing and records nothing; a real set
+    /// appends a `status_changed` entry in the same unit.
     #[use_case]
     pub async fn set(
         &self,
         #[ports] ports: &Ports,
-        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         now: DateTimeUtc,
     ) -> CommissionResult<Output> {
         let Command {
-            user_id,
+            actor_id,
             commission_id,
-            direction,
+            to,
         } = cmd;
-        // Authorize first, then notice the no-op: answering early would hand an
-        // outsider a different reply than the closed door — an existence oracle.
-        let commission = require_participant(ports, &commission_id, &user_id).await?;
-
-        let state = CommissionState::from(&commission);
-        let (entry, change) = match direction {
-            Some(to) => {
-                let Some(set) = set_direction(&state, to) else {
-                    return Ok(Output);
-                };
-                let entry = NewChangelogEntry::direction_set(commission.id, user_id, &set, now);
-                (entry, DirectionChange::from(set))
-            }
-            None => {
-                let Some(cleared) = clear_direction(&state) else {
-                    return Ok(Output);
-                };
-                let entry =
-                    NewChangelogEntry::direction_cleared(commission.id, user_id, &cleared, now);
-                (entry, DirectionChange::from(cleared))
-            }
+        let act = Act {
+            commission: commission_id,
+            to,
         };
-
-        let uow = uow.open().await?;
-        let mut commissions = uow.commissions();
-        let moved = commissions
-            .set_direction_status(&commission.id, change.after())
-            .await?;
-        drop(commissions);
-        if moved {
-            uow.changelog().append(&entry).await?;
-        }
+        let command = write::Command {
+            actor: actor_id,
+            act: DenAct::Commission(CommissionAct::SetDirection(act)),
+        };
+        Den::from(ports).write(command, now).await?;
         Ok(Output)
     }
 }
+
+#[cfg(test)]
+mod tests;

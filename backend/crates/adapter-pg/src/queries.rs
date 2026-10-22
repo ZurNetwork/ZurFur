@@ -1980,46 +1980,61 @@ pub mod commission {
     }
 
     /// `queries/commission/set_deadline.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Set or clear a commission's deadline by compare-and-set: the row changes only while it still
+    /// holds the deadline the change was checked from, so a stale change matches no row.
     pub async fn set_deadline(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
         deadline: Option<chrono::DateTime<chrono::Utc>>,
+        held_deadline: Option<chrono::DateTime<chrono::Utc>>,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/commission/set_deadline.sql"))
             .bind(id)
             .bind(deadline)
+            .bind(held_deadline)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
     }
 
     /// `queries/commission/set_deadline_status.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Raise or take down a commission's Delayed flag by compare-and-set: the row changes only while
+    /// it still holds the stored flag the change was checked from, so a stale change matches no row.
     pub async fn set_deadline_status(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
         deadline_status: Option<&str>,
+        held_deadline_status: Option<&str>,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!(
             "../queries/commission/set_deadline_status.sql"
         ))
         .bind(id)
         .bind(deadline_status)
+        .bind(held_deadline_status)
         .execute(conn)
         .await
         .map(|r| r.rows_affected())
     }
 
     /// `queries/commission/set_direction_status.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Set or clear a commission's direction status by compare-and-set: the row changes only while
+    /// it still holds the status the change was checked from, so a stale change matches no row.
     pub async fn set_direction_status(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
         direction_status: Option<&str>,
+        held_direction_status: Option<&str>,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!(
             "../queries/commission/set_direction_status.sql"
         ))
         .bind(id)
         .bind(direction_status)
+        .bind(held_direction_status)
         .execute(conn)
         .await
         .map(|r| r.rows_affected())

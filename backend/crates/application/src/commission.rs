@@ -181,35 +181,11 @@ impl From<anyhow::Error> for CommissionError {
         Self::CommonError(err.into())
     }
 }
-/// The closed door: resolve the commission for an actor who must be a
-/// Participant of it. Anyone else is answered
-/// [`NotAMember`](CommissionError::NotAMember), which the drivers render
-/// byte-identically to an absent commission — never `403`.
-pub(crate) async fn require_participant(
-    ports: &crate::Ports,
-    commission_id: &CommissionId,
-    actor_id: &UserId,
-) -> CommissionResult<Commission> {
-    let commission = ports
-        .commissions
-        .find(commission_id)
-        .await?
-        .ok_or(CommonError::NotFound(NotFoundEntity::Commission))?;
-
-    if !ports
-        .commissions
-        .is_participant(&commission.id, actor_id)
-        .await?
-    {
-        return Err(CommissionError::NotAMember);
-    }
-    Ok(commission)
-}
-
 /// Resolve the commission for an act only its owner may perform. The owner
 /// passes; a non-owner Participant gets
 /// [`InsufficientPermissions`](CommissionError::InsufficientPermissions);
-/// everyone else gets the same closed door as [`require_participant`].
+/// everyone else gets [`NotAMember`](CommissionError::NotAMember), which the drivers render
+/// byte-identically to an absent commission.
 pub(crate) async fn require_owner(
     ports: &crate::Ports,
     commission_id: &CommissionId,

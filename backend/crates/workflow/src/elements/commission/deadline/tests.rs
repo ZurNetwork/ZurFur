@@ -208,6 +208,43 @@ fn delayed_needs_a_deadline() {
     assert_eq!((lowered.before(), lowered.deadline()), (None, None));
 }
 
+// A flag left after its deadline was cleared is seen as nothing, yet the row still holds it:
+// the clear carries the stored flag apart from the status it saw, and its write compares
+// against the stored one.
+#[test]
+fn a_dormant_flag_s_clear_compares_against_the_stored_flag() {
+    let lingering = state(LifecycleStep::Active, None, Some(DeadlineStatus::Delayed));
+
+    let lowered = clear_delayed(&lingering, may())
+        .expect("passes")
+        .expect("a real clear");
+    let change = DelayedChange::from(lowered.clone());
+
+    assert_eq!(lowered.before(), None);
+    assert_eq!(lowered.held(), Some(DeadlineStatus::Delayed));
+    assert_eq!(
+        (change.before(), change.held(), change.after()),
+        (None, Some(DeadlineStatus::Delayed), None)
+    );
+}
+
+// A set carries the flag the row held, nothing, beside the status it saw.
+#[test]
+fn a_delayed_set_carries_the_stored_flag() {
+    let dated = state(LifecycleStep::Active, Some(march()), None);
+
+    let raised = set_delayed(&dated, february())
+        .expect("passes")
+        .expect("a real set");
+    let change = DelayedChange::from(raised.clone());
+
+    assert_eq!(raised.held(), None);
+    assert_eq!(
+        (change.held(), change.after()),
+        (None, Some(DeadlineStatus::Delayed))
+    );
+}
+
 // While Disputed the Delayed flag may still be raised and taken down; raising it twice or
 // lowering it when none is stored is a no-op.
 #[test]

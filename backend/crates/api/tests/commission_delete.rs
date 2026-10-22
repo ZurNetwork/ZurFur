@@ -31,9 +31,9 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
         AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
-        CommissionMarkup, CommissionTitle, DeadlineStatus, DirectionStatus, ElementId, GrantLevel,
-        LapsedDeadline, LifecycleMove, LockedStanding, NewCommission, NewElement, NewSeat, NewSlot,
-        SeatInvitation, SeatInvitationId, TabId, element::TabRow,
+        CommissionMarkup, CommissionTitle, DeadlineChange, DelayedChange, DirectionChange,
+        ElementId, GrantLevel, LapsedDeadline, LifecycleMove, LockedStanding, NewCommission,
+        NewElement, NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId, element::TabRow,
     },
     did::Did,
     maturity::Maturity,
@@ -444,26 +444,26 @@ impl CommissionWrites for FactBearingCommissions<'_> {
 
     async fn set_direction_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DirectionStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DirectionChange,
     ) -> anyhow::Result<bool> {
-        self.0.set_direction_status(id, status).await
+        self.0.set_direction_status(capability, change).await
     }
 
     async fn set_deadline(
         &mut self,
-        id: &CommissionId,
-        deadline: Option<DateTimeUtc>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DeadlineChange,
     ) -> anyhow::Result<bool> {
-        self.0.set_deadline(id, deadline).await
+        self.0.set_deadline(capability, change).await
     }
 
     async fn set_deadline_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DeadlineStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DelayedChange,
     ) -> anyhow::Result<bool> {
-        self.0.set_deadline_status(id, status).await
+        self.0.set_deadline_status(capability, change).await
     }
 
     async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {

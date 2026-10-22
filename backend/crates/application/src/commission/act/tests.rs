@@ -122,3 +122,58 @@ fn a_lifecycle_move_needs_a_participant_and_is_a_change() {
     assert_eq!(spec.shape, ActShape::Change);
     assert_eq!(format!("{moved:?}"), "MoveLifecycle");
 }
+
+// Each direction, deadline and Delayed act needs any Participant, read from its capability
+// marker, and changes the commission's fields on its own node; its Debug prints the variant
+// alone, never a value it carries.
+#[test]
+fn each_field_act_needs_a_participant_and_is_a_change() {
+    let deadline = "2099-03-01T00:00:00Z".parse().expect("a timestamp");
+    let commission = untitled();
+    let acts = [
+        CommissionAct::SetDirection(direction::set::Act {
+            commission,
+            to: domain::elements::commission::DirectionStatus::WaitingForInput,
+        }),
+        CommissionAct::ClearDirection(direction::clear::Act { commission }),
+        CommissionAct::SetDeadline(deadline::set::Act {
+            commission,
+            deadline,
+        }),
+        CommissionAct::ClearDeadline(deadline::clear::Act { commission }),
+        CommissionAct::SetDelayed(deadline::status::set::Act { commission }),
+        CommissionAct::ClearDelayed(deadline::status::clear::Act { commission }),
+    ];
+
+    let untitled_place = Place::Commission(CommissionPlace::Commission(untitled()));
+    for act in &acts {
+        let spec = act.spec();
+
+        assert_eq!(spec.needs, Some(CommissionRole::Participant), "{act:?}");
+        assert_eq!(
+            spec.anchor,
+            Anchor::Thing(untitled_place.clone()),
+            "{act:?}"
+        );
+        assert_eq!(spec.den_type, DenType::Commission, "{act:?}");
+        assert_eq!(spec.shape, ActShape::Change, "{act:?}");
+    }
+    let printed: Vec<String> = acts.iter().map(|act| format!("{act:?}")).collect();
+    let variants = [
+        "SetDirection",
+        "ClearDirection",
+        "SetDeadline",
+        "ClearDeadline",
+        "SetDelayed",
+        "ClearDelayed",
+    ];
+    assert_eq!(printed, variants);
+    assert_eq!(
+        needs::<direction::set::Act>(),
+        Some(CommissionRole::Participant)
+    );
+    assert_eq!(
+        needs::<deadline::status::clear::Act>(),
+        Some(CommissionRole::Participant)
+    );
+}

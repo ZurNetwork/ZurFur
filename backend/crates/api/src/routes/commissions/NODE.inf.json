@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/api/src/routes/commissions",
-  "charted": "2026-10-22",
+  "charted": "2026-10-23",
   "short": "The commission JSON API, one file per act",
   "is": "The user-scoped commission API, one file per act, all behind a uniform closed-door 404 for non-participants — each act a thin driver over the matching `application::commission::*` use case.",
   "type": "code",
@@ -41,7 +41,7 @@
     },
     {
       "name": "deadline.rs",
-      "role": "PUT/DELETE deadline + manual Delayed flag → commission::deadline::* and deadline::status::*",
+      "role": "PUT/DELETE deadline + manual Delayed flag → commission::deadline::* and deadline::status::* (a `late` token refused 422 here, before any use case)",
       "node": false
     },
     {

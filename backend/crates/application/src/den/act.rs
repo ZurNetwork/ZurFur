@@ -7,7 +7,8 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            ChangelogEntryKind, Commission, CommissionId, CommissionRole, LifecycleMove,
+            ChangelogEntryKind, Commission, CommissionId, CommissionRole, DeadlineCleared,
+            DeadlineSet, DelayedCleared, DelayedSet, DirectionCleared, DirectionSet, LifecycleMove,
             NewChangelogEntry,
         },
         level::Level,
@@ -188,6 +189,63 @@ impl GatedEntry<LifecycleMove> {
     pub(crate) const LIFECYCLE_MOVED: Self = Self {
         kinds: &[ChangelogEntryKind::LifecycleMoved],
         constructor: EntryConstructor::Change(NewChangelogEntry::lifecycle_moved),
+    };
+}
+
+impl GatedEntry<DirectionSet> {
+    /// A direction status set's entry: kind `StatusChanged`, by
+    /// `NewChangelogEntry::direction_set`, from the set the view wrote.
+    pub(crate) const STATUS_SET: Self = Self {
+        kinds: &[ChangelogEntryKind::StatusChanged],
+        constructor: EntryConstructor::Change(NewChangelogEntry::direction_set),
+    };
+}
+
+impl GatedEntry<DirectionCleared> {
+    /// A direction status clear's entry: kind `StatusChanged`, by
+    /// `NewChangelogEntry::direction_cleared`, from the clear the view wrote.
+    pub(crate) const STATUS_CLEARED: Self = Self {
+        kinds: &[ChangelogEntryKind::StatusChanged],
+        constructor: EntryConstructor::Change(NewChangelogEntry::direction_cleared),
+    };
+}
+
+impl GatedEntry<DeadlineSet> {
+    /// A deadline set's entry: kind `DeadlineSet`, or `DeadlineExtended` for a later deadline,
+    /// by `NewChangelogEntry::deadline_set`, from the set the view wrote.
+    pub(crate) const DEADLINE_SET: Self = Self {
+        kinds: &[
+            ChangelogEntryKind::DeadlineSet,
+            ChangelogEntryKind::DeadlineExtended,
+        ],
+        constructor: EntryConstructor::Change(NewChangelogEntry::deadline_set),
+    };
+}
+
+impl GatedEntry<DeadlineCleared> {
+    /// A deadline clear's entry: kind `DeadlineSet`, by `NewChangelogEntry::deadline_cleared`,
+    /// from the clear the view wrote.
+    pub(crate) const DEADLINE_CLEARED: Self = Self {
+        kinds: &[ChangelogEntryKind::DeadlineSet],
+        constructor: EntryConstructor::Change(NewChangelogEntry::deadline_cleared),
+    };
+}
+
+impl GatedEntry<DelayedSet> {
+    /// A Delayed flag's entry: kind `Delayed`, by `NewChangelogEntry::delayed_set`, from the
+    /// set the view wrote.
+    pub(crate) const DELAYED_SET: Self = Self {
+        kinds: &[ChangelogEntryKind::Delayed],
+        constructor: EntryConstructor::Change(NewChangelogEntry::delayed_set),
+    };
+}
+
+impl GatedEntry<DelayedCleared> {
+    /// A Delayed flag taken down's entry: kind `Delayed`, by
+    /// `NewChangelogEntry::delayed_cleared`, from the clear the view wrote.
+    pub(crate) const DELAYED_CLEARED: Self = Self {
+        kinds: &[ChangelogEntryKind::Delayed],
+        constructor: EntryConstructor::Change(NewChangelogEntry::delayed_cleared),
     };
 }
 

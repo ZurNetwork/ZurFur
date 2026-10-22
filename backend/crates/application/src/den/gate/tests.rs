@@ -31,7 +31,7 @@ use crate::{
         authority::{GrantKind, MINT_AS},
         test_acts::{
             commission_path, create_act, hand_built_create, hand_built_rename, move_act,
-            rename_act, state_at,
+            rename_act, set_deadline_act, state_at,
         },
         write::{Command, DenWriteError, WriteResult},
     },
@@ -581,6 +581,48 @@ async fn the_entry_carries_the_change_the_view_recorded() {
     };
     let payload = serde_json::json!({ "from": "draft", "to": "active" });
     assert_eq!(entry.kind, ChangelogEntryKind::LifecycleMoved);
+    assert_eq!(entry.payload, payload);
+    assert_eq!(entry.actor_id, Some(bob()));
+    assert_eq!(entry.created_at, now);
+    assert_eq!(entry.note, None);
+}
+
+// A deadline moved later records the legacy `deadline_extended` shape the gate built from the
+// set its view wrote: the deadline held and the one set, and nothing else.
+#[tokio::test]
+async fn the_entry_carries_the_legacy_shape_of_the_change_the_view_recorded() {
+    let world = test_world::world().await;
+    let now = Utc::now();
+    let march: DateTimeUtc = "2099-03-01T00:00:00Z".parse().expect("a timestamp");
+    let april: DateTimeUtc = "2099-04-01T00:00:00Z".parse().expect("a timestamp");
+    write_at(
+        &world.ports,
+        &bob(),
+        set_deadline_act(untitled(), march),
+        now,
+    )
+    .await
+    .expect("bob sets the deadline");
+    let before = entries(&world.ports, untitled()).await.len();
+
+    write_at(
+        &world.ports,
+        &bob(),
+        set_deadline_act(untitled(), april),
+        now,
+    )
+    .await
+    .expect("bob extends the deadline");
+
+    let stream = entries(&world.ports, untitled()).await;
+    let [entry] = &stream[before..] else {
+        panic!("one entry: {} of them", stream.len() - before);
+    };
+    let payload = serde_json::json!({
+        "from": "2099-03-01T00:00:00Z",
+        "to": "2099-04-01T00:00:00Z",
+    });
+    assert_eq!(entry.kind, ChangelogEntryKind::DeadlineExtended);
     assert_eq!(entry.payload, payload);
     assert_eq!(entry.actor_id, Some(bob()));
     assert_eq!(entry.created_at, now);

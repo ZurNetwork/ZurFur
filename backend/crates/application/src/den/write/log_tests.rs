@@ -1,8 +1,8 @@
-//! What the Den's write logs on PostgreSQL, at trace, seven ways: the owner's rename, a
+//! What the Den's write logs on PostgreSQL, at trace, nine ways: the owner's rename, a
 //! stranger's, a Participant's (a rename needs the Owner), a create on a taken segment, the
-//! owner's lifecycle move and one its rule refuses, and a create whose store failure the gate
-//! latches. No DID or handle at info or above, no name anywhere, and nothing of PostgreSQL's
-//! detail.
+//! owner's lifecycle move and one its rule refuses, a Delayed flag its rule refuses and a
+//! deadline set, and a create whose store failure the gate latches. No DID or handle at info or
+//! above, no name anywhere, and nothing of PostgreSQL's detail.
 
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ use super::tests::{PG_TITLE, node_name, pg_seed, provision, write};
 use super::*;
 use crate::den::{
     authority::MINT_AS,
-    test_acts::{create_act, move_act, rename_act},
+    test_acts::{create_act, move_act, rename_act, set_deadline_act, set_delayed_act},
 };
 
 /// The owner's DID.
@@ -79,6 +79,9 @@ async fn the_write_path_logs_no_identity_no_name_and_no_store_detail() {
         .await;
     let moved = write(&ports, &owner, move_act(commission, LifecycleStep::Active)).await;
     let refused = write(&ports, &owner, move_act(commission, LifecycleStep::Draft)).await;
+    let undated = write(&ports, &owner, set_delayed_act(commission)).await;
+    let deadline = "2099-03-01T00:00:00Z".parse().expect("a timestamp");
+    let scheduled = write(&ports, &owner, set_deadline_act(commission, deadline)).await;
 
     assert!(renamed.is_ok(), "{renamed:?}");
     assert!(matches!(unseen, Err(DenWriteError::NotFound)), "{unseen:?}");
@@ -103,6 +106,14 @@ async fn the_write_path_logs_no_identity_no_name_and_no_store_detail() {
         ),
         "{refused:?}"
     );
+    assert!(
+        matches!(
+            undated,
+            Err(DenWriteError::Precondition(CommissionRefusal::NoDeadline))
+        ),
+        "{undated:?}"
+    );
+    assert!(scheduled.is_ok(), "{scheduled:?}");
     assert_eq!(node_name(&*ports.database, commission).await, SECRET_NAME);
     let text = log.text();
     assert!(

@@ -7,7 +7,9 @@ use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::{
-    commission::{Commission, CommissionBirth, CommissionId, LifecycleStep, NewCommission},
+    commission::{
+        AsParticipant, Commission, CommissionBirth, CommissionId, LifecycleStep, NewCommission,
+    },
     level::Level,
     user::UserId,
 };
@@ -25,6 +27,11 @@ pub async fn create(
     unit.commissions()
         .create(&capability, birth, commission)
         .await
+}
+
+/// A Participant's capability on `id`, minted here as the den's write gate issues one.
+pub fn participant_on(id: CommissionId) -> WriteCapability<CommissionId, AsParticipant> {
+    WriteCapability::gate_issued(id)
 }
 
 /// The shared suites' [`CommissionSeeder`]: the port's create, under a capability minted here.

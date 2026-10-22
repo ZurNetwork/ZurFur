@@ -8,9 +8,9 @@ use crate::elements::{
     commission::{
         AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
         CommissionFile, CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary,
-        DeadlineStatus, DirectionStatus, ElementId, FileKey, FileSummary, GrantLevel,
-        LapsedDeadline, LifecycleMove, LockedStanding, NewCommission, NewElement, NewSeat, NewSlot,
-        Seat, SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
+        DeadlineChange, DelayedChange, DirectionChange, ElementId, FileKey, FileSummary,
+        GrantLevel, LapsedDeadline, LifecycleMove, LockedStanding, NewCommission, NewElement,
+        NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
     },
     workflow::{Column, ColumnId, WorkflowId},
 };
@@ -151,10 +151,10 @@ pub trait CommissionStore: Send + Sync {
 
 /// The **write** surface of Zurfur's record of commissions — reachable only on an
 /// open `UnitOfWork` (`uow.commissions()`). A create's authority is the den's write
-/// gate's create [`WriteCapability`], which [`create`](Self::create) takes; a lifecycle
-/// move's is a Participant's, which [`set_lifecycle`](Self::set_lifecycle) takes. Every
-/// other method's authority, and the commission's own existence, are the caller's
-/// checks, settled before it is reached.
+/// gate's create [`WriteCapability`], which [`create`](Self::create) takes; a lifecycle move's,
+/// a direction status's, a deadline's and a Delayed flag's is a Participant's, which their
+/// writes take. Every other method's authority, and the commission's own existence, are the
+/// caller's checks, settled before it is reached.
 #[async_trait]
 pub trait CommissionWrites: Send {
     /// Persist a new commission under the id `capability` was issued for, at `birth`'s
@@ -296,39 +296,36 @@ pub trait CommissionWrites: Send {
         to_user: &UserId,
     ) -> anyhow::Result<bool>;
 
-    /// Set (`Some`) or clear (`None`) the commission's direction-axis Status — one
-    /// nullable cell, so a set replaces whatever is held and axis exclusivity
-    /// holds by construction. This is the column's only writer; no system sweep
-    /// may reach for it. Returns `true` iff the stored value changed.
+    /// Set or clear the direction status of the commission `capability` was issued for, from
+    /// `change`'s held status to its new one, by compare-and-set: the row changes only while it
+    /// still holds the held status. Answers `true` only when exactly one row changed.
     async fn set_direction_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DirectionStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DirectionChange,
     ) -> anyhow::Result<bool>;
 
-    /// Set (`Some`) or clear (`None`) the commission's deadline. The caller
-    /// appends the matching changelog entry and owns the axis recompute via
-    /// [`set_deadline_status`](Self::set_deadline_status). Returns `true` iff the
-    /// stored value changed.
+    /// Set or clear the deadline of the commission `capability` was issued for, from
+    /// `change`'s held deadline to its new one, by compare-and-set: the row changes only while
+    /// it still holds the held deadline. Answers `true` only when exactly one row changed.
     async fn set_deadline(
         &mut self,
-        id: &CommissionId,
-        deadline: Option<DateTimeUtc>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DeadlineChange,
     ) -> anyhow::Result<bool>;
 
-    /// Set (`Some`) or clear (`None`) the commission's deadline-axis Status — one
-    /// nullable cell, replaced on each set. Two writers only: the deadline-status
-    /// endpoint and the deadline sweeper's [`Late`](DeadlineStatus::Late) mark.
-    /// The caller must never leave a value on a commission without a deadline.
-    /// Returns `true` iff the stored value changed.
+    /// Raise or take down the Delayed flag of the commission `capability` was issued for, from
+    /// `change`'s held flag to its new one, by compare-and-set: the row changes only while it
+    /// still holds the held flag. Answers `true` only when exactly one row changed.
     async fn set_deadline_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DeadlineStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DelayedChange,
     ) -> anyhow::Result<bool>;
 
     /// The commissions the deadline sweeper must mark Late as of `now`: deadline
-    /// strictly before `now`, not already [`Late`](DeadlineStatus::Late),
+    /// strictly before `now`, not already
+    /// [`Late`](crate::elements::commission::DeadlineStatus::Late),
     /// lifecycle not terminal. Ordered by deadline. A read on the write view so
     /// the sweeper scans and marks in one unit, with no gap between.
     async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>>;

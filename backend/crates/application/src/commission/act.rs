@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::{
-    commission::{create, lifecycle::move_to, rename},
+    commission::{create, deadline, lifecycle::move_to, rename, status::direction},
     den::act::ActSpec,
 };
 
@@ -15,6 +15,18 @@ pub(crate) enum CommissionAct {
     Rename(rename::Act),
     /// Moves a commission's lifecycle step.
     MoveLifecycle(move_to::Act),
+    /// Sets a commission's direction status.
+    SetDirection(direction::set::Act),
+    /// Clears a commission's direction status.
+    ClearDirection(direction::clear::Act),
+    /// Sets or moves a commission's deadline.
+    SetDeadline(deadline::set::Act),
+    /// Clears a commission's deadline.
+    ClearDeadline(deadline::clear::Act),
+    /// Raises a commission's Delayed flag.
+    SetDelayed(deadline::status::set::Act),
+    /// Takes a commission's Delayed flag down.
+    ClearDelayed(deadline::status::clear::Act),
 }
 
 impl CommissionAct {
@@ -24,6 +36,12 @@ impl CommissionAct {
             CommissionAct::Create(act) => act.spec(),
             CommissionAct::Rename(act) => act.spec(),
             CommissionAct::MoveLifecycle(act) => act.spec(),
+            CommissionAct::SetDirection(act) => act.spec(),
+            CommissionAct::ClearDirection(act) => act.spec(),
+            CommissionAct::SetDeadline(act) => act.spec(),
+            CommissionAct::ClearDeadline(act) => act.spec(),
+            CommissionAct::SetDelayed(act) => act.spec(),
+            CommissionAct::ClearDelayed(act) => act.spec(),
         }
     }
 }
@@ -31,11 +49,18 @@ impl CommissionAct {
 impl fmt::Debug for CommissionAct {
     /// The act's variant alone; never its body, which may carry a name.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CommissionAct::Create(_) => formatter.write_str("Create"),
-            CommissionAct::Rename(_) => formatter.write_str("Rename"),
-            CommissionAct::MoveLifecycle(_) => formatter.write_str("MoveLifecycle"),
-        }
+        let variant = match self {
+            CommissionAct::Create(_) => "Create",
+            CommissionAct::Rename(_) => "Rename",
+            CommissionAct::MoveLifecycle(_) => "MoveLifecycle",
+            CommissionAct::SetDirection(_) => "SetDirection",
+            CommissionAct::ClearDirection(_) => "ClearDirection",
+            CommissionAct::SetDeadline(_) => "SetDeadline",
+            CommissionAct::ClearDeadline(_) => "ClearDeadline",
+            CommissionAct::SetDelayed(_) => "SetDelayed",
+            CommissionAct::ClearDelayed(_) => "ClearDelayed",
+        };
+        formatter.write_str(variant)
     }
 }
 

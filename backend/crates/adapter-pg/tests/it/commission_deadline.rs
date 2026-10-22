@@ -13,8 +13,9 @@ use chrono::{DateTime, Utc};
 use domain::{
     elements::{
         commission::{
-            Commission, CommissionState, DeadlineStatus, LateFacts, LifecycleStep,
-            NewChangelogEntry, owes_late,
+            Commission, CommissionId, CommissionState, DeadlineChange, DeadlineStatus,
+            DelayedChange, LateFacts, LifecycleStep, NewChangelogEntry, clear_deadline,
+            clear_delayed, owes_late, schedule_deadline, set_delayed,
         },
         did::Did,
         user::User,
@@ -59,9 +60,15 @@ fn ts(s: &str) -> DateTime<Utc> {
     s.parse().expect("valid timestamp")
 }
 
-/// AC1 (store layer) — the deadline and the deadline-axis status set, replace,
-/// and clear through the unit of work, and `find` reads both back through the
-/// domain gates.
+/// The state `store` holds for `id`.
+async fn state_of(store: &PgCommissionStore, id: &CommissionId) -> CommissionState {
+    let stored = store.find(id).await.expect("find").expect("exists");
+    CommissionState::from(&stored)
+}
+
+/// AC1 (store layer) — the deadline and the Delayed flag set, move and clear through the
+/// unit of work by compare-and-set, and `find` reads both back through the domain gates; a
+/// stale change matches no row, and a dropped unit keeps nothing.
 #[tokio::test]
 async fn deadline_and_status_round_trip_through_the_unit() {
     let (pool, _container) = fresh_pool().await;
@@ -70,33 +77,68 @@ async fn deadline_and_status_round_trip_through_the_unit() {
     let id = commission.id;
     let db = PgDatabase::new(pool.clone());
     let store = PgCommissionStore::new(pool.clone());
+    let capability = seed::participant_on(id);
 
     // Set the deadline and flag Delayed in one unit.
     let deadline = ts("2027-03-01T00:00:00Z");
+    let before_it = ts("2026-01-01T00:00:00Z");
+    let undated = state_of(&store, &id).await;
+    let scheduled = schedule_deadline(&undated, deadline)
+        .expect("allowed")
+        .expect("a real set");
+    let set = DeadlineChange::from(scheduled);
     let mut uow = db.begin().await.expect("begin");
-    {
-        let mut commissions = uow.commissions();
-        commissions
-            .set_deadline(&id, Some(deadline))
-            .await
-            .expect("set deadline");
-        commissions
-            .set_deadline_status(&id, Some(DeadlineStatus::Delayed))
-            .await
-            .expect("set delayed");
-    }
+    let landed = uow
+        .commissions()
+        .set_deadline(&capability, &set)
+        .await
+        .expect("set deadline");
     uow.commit().await.expect("commit");
+    assert!(landed);
+    let dated = state_of(&store, &id).await;
+    let raised = set_delayed(&dated, before_it)
+        .expect("allowed")
+        .expect("a real set");
+    let flag = DelayedChange::from(raised);
+    let mut uow = db.begin().await.expect("begin");
+    let landed = uow
+        .commissions()
+        .set_deadline_status(&capability, &flag)
+        .await
+        .expect("set delayed");
+    uow.commit().await.expect("commit");
+    assert!(landed);
 
     let found = store.find(&id).await.expect("find").expect("exists");
     assert_eq!(found.deadline, Some(deadline));
     assert_eq!(found.delayed_flag, Some(DeadlineStatus::Delayed));
 
+    // A stale set of either matches no row: the deadline from none, the flag from none.
+    let mut uow = db.begin().await.expect("begin");
+    let stale_deadline = uow
+        .commissions()
+        .set_deadline(&capability, &set)
+        .await
+        .expect("a stale set runs");
+    let stale_flag = uow
+        .commissions()
+        .set_deadline_status(&capability, &flag)
+        .await
+        .expect("a stale flag runs");
+    uow.commit().await.expect("commit");
+    assert!(!stale_deadline);
+    assert!(!stale_flag);
+
     // Late is derived, never persisted: a passed deadline reads Late on lookup,
     // superseding the stored Delayed (and the column's CHECK forbids a persisted
-    // `late` outright). Then clear everything; an absent commission is a no-op.
+    // `late` outright).
+    let flagged = state_of(&store, &id).await;
+    let moved = schedule_deadline(&flagged, ts("2020-01-01T00:00:00Z"))
+        .expect("allowed")
+        .expect("a real move");
     let mut uow = db.begin().await.expect("begin");
     uow.commissions()
-        .set_deadline(&id, Some(ts("2020-01-01T00:00:00Z")))
+        .set_deadline(&capability, &DeadlineChange::from(moved))
         .await
         .expect("move deadline into the past");
     uow.commit().await.expect("commit");
@@ -112,26 +154,43 @@ async fn deadline_and_status_round_trip_through_the_unit() {
         "Late is never stored"
     );
 
+    // Clear the deadline: the flag stays, dormant. Its clear compares against the stored flag,
+    // though the act sees no status, and lands.
+    let past = state_of(&store, &id).await;
+    let unscheduled = clear_deadline(&past)
+        .expect("allowed")
+        .expect("a real clear");
     let mut uow = db.begin().await.expect("begin");
-    {
-        let mut commissions = uow.commissions();
-        commissions
-            .set_deadline(&id, None)
-            .await
-            .expect("clear deadline");
-        commissions
-            .set_deadline_status(&id, None)
-            .await
-            .expect("clear status");
-        commissions
-            .set_deadline(
-                &domain::elements::commission::CommissionId::from(uuid::Uuid::now_v7()),
-                Some(deadline),
-            )
-            .await
-            .expect("absent commission is a no-op");
-    }
+    let landed = uow
+        .commissions()
+        .set_deadline(&capability, &DeadlineChange::from(unscheduled))
+        .await
+        .expect("clear deadline");
     uow.commit().await.expect("commit");
+    assert!(landed);
+    let dormant = state_of(&store, &id).await;
+    let lowered = clear_delayed(&dormant, Utc::now())
+        .expect("allowed")
+        .expect("a real clear");
+    let lowered = DelayedChange::from(lowered);
+    let mut uow = db.begin().await.expect("begin");
+    let landed = uow
+        .commissions()
+        .set_deadline_status(&capability, &lowered)
+        .await
+        .expect("clear status");
+    let elsewhere = uow
+        .commissions()
+        .set_deadline(
+            &seed::participant_on(CommissionId::from(uuid::Uuid::now_v7())),
+            &set,
+        )
+        .await
+        .expect("an unknown commission runs");
+    uow.commit().await.expect("commit");
+    assert_eq!(lowered.before(), None, "the act saw no status");
+    assert!(landed);
+    assert!(!elsewhere, "an absent commission matches no row");
     let found = store.find(&id).await.expect("find").expect("exists");
     assert_eq!(found.deadline, None);
     assert_eq!(found.delayed_flag, None);
@@ -140,7 +199,7 @@ async fn deadline_and_status_round_trip_through_the_unit() {
     {
         let mut uow = db.begin().await.expect("begin");
         uow.commissions()
-            .set_deadline(&id, Some(deadline))
+            .set_deadline(&capability, &set)
             .await
             .expect("staged set");
     }
@@ -228,8 +287,15 @@ async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
     {
+        let slipping = CommissionState::from(&delayed);
+        let raised = set_delayed(&slipping, ts("2020-02-15T00:00:00Z"))
+            .expect("allowed before the deadline")
+            .expect("a real set");
         uow.commissions()
-            .set_deadline_status(&delayed.id, Some(DeadlineStatus::Delayed))
+            .set_deadline_status(
+                &seed::participant_on(delayed.id),
+                &DelayedChange::from(raised),
+            )
             .await
             .expect("flag delayed");
         // Late is deduped on the changelog (no persisted Late), staged on the

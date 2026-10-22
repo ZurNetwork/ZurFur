@@ -955,3 +955,57 @@ async fn a_malformed_deadline_body_is_rejected() {
     assert_eq!(commission.deadline, None, "nothing stored");
     assert_eq!(entries(&backend, id).await.len(), 1, "no entry appended");
 }
+
+// D-3 — while Disputed the deadline is frozen: a fresh set, an extension and a clear each
+// answer `409 commission_disputed`, and no entry is written; the deadline stays as it was.
+#[tokio::test]
+async fn a_disputed_commission_s_deadline_is_frozen() {
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
+    let client = client();
+    sign_in(&client, &base, "artist.bsky.social").await;
+    let undated = create_commission(&client, &base, &backend, json!({ "title": "Undated" })).await;
+    let dated = create_commission(
+        &client,
+        &base,
+        &backend,
+        json!({ "title": "Dated", "deadline": "2027-03-01T00:00:00Z" }),
+    )
+    .await;
+    for id in [undated, dated] {
+        backend.seed_lifecycle_step(CommissionId::from(id), LifecycleStep::Disputed);
+    }
+    let undated_log = entries(&backend, undated).await.len();
+    let dated_log = entries(&backend, dated).await.len();
+
+    let set = put_deadline(&client, &base, undated, "2027-03-01T00:00:00Z").await;
+    common::assert_problem(set, 409, "commission_disputed").await;
+    let extended = put_deadline(&client, &base, dated, "2027-04-01T00:00:00Z").await;
+    common::assert_problem(extended, 409, "commission_disputed").await;
+    let cleared = client
+        .delete(format!("{base}/commissions/{dated}/deadline"))
+        .send()
+        .await
+        .expect("DELETE deadline");
+    common::assert_problem(cleared, 409, "commission_disputed").await;
+
+    assert_eq!(stored(&backend, undated).await.deadline, None);
+    assert_eq!(
+        stored(&backend, dated).await.deadline,
+        Some("2027-03-01T00:00:00Z".parse().unwrap()),
+        "the deadline stays"
+    );
+    assert_eq!(
+        entries(&backend, undated).await.len(),
+        undated_log,
+        "no entry"
+    );
+    assert_eq!(entries(&backend, dated).await.len(), dated_log, "no entry");
+}

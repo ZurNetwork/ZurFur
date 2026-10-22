@@ -1,17 +1,28 @@
-//! Test-only acts: the real create, rename and lifecycle-move acts as the den carries them, a
-//! commission's stored state at any step, and Atta's acts built by hand around a real act's
-//! body, for the tests that drive the write host below the den's builder.
+//! Test-only acts: the real create, rename and field acts as the den carries them, each field
+//! act's typed use case called by one value, a commission's stored state at any step and with
+//! any field (and its entries and fields read back), and Atta's acts built by hand around a real
+//! act's body, for the tests that drive the write host below the den's builder.
 
 use atta::{Act, ActName, Born, Placed, RealPath, Shape};
-use domain::elements::{
-    commission::{Commission, CommissionId, CommissionState, LifecycleStep, NewCommission},
-    did::Did,
-    name::NodeName,
-    user::UserId,
+use domain::{
+    datetime::DateTimeUtc,
+    elements::{
+        commission::{
+            Commission, CommissionId, CommissionState, DeadlineStatus, DirectionStatus,
+            LifecycleStep, NewCommission,
+        },
+        did::Did,
+        name::NodeName,
+        user::UserId,
+    },
 };
 
 use crate::{
-    commission::{act::CommissionAct, create, den::CommissionPlace, lifecycle::move_to, rename},
+    Ports,
+    commission::{
+        CommissionError, Commissions, act::CommissionAct, create, deadline, den::CommissionPlace,
+        lifecycle::move_to, rename, status::direction,
+    },
     den::{DenType, Place, act::DenAct, host::type_key, names, write::commission_directory},
 };
 
@@ -47,16 +58,165 @@ pub(crate) fn move_act(commission: CommissionId, to: LifecycleStep) -> DenAct {
     DenAct::Commission(CommissionAct::MoveLifecycle(act))
 }
 
+/// The direction set of the commission `commission` to `to`.
+pub(crate) fn set_direction_act(commission: CommissionId, to: DirectionStatus) -> DenAct {
+    let act = direction::set::Act { commission, to };
+    DenAct::Commission(CommissionAct::SetDirection(act))
+}
+
+/// The direction clear of the commission `commission`.
+pub(crate) fn clear_direction_act(commission: CommissionId) -> DenAct {
+    let act = direction::clear::Act { commission };
+    DenAct::Commission(CommissionAct::ClearDirection(act))
+}
+
+/// The deadline set of the commission `commission` to `deadline`.
+pub(crate) fn set_deadline_act(commission: CommissionId, deadline: DateTimeUtc) -> DenAct {
+    let act = deadline::set::Act {
+        commission,
+        deadline,
+    };
+    DenAct::Commission(CommissionAct::SetDeadline(act))
+}
+
+/// The deadline clear of the commission `commission`.
+pub(crate) fn clear_deadline_act(commission: CommissionId) -> DenAct {
+    let act = deadline::clear::Act { commission };
+    DenAct::Commission(CommissionAct::ClearDeadline(act))
+}
+
+/// The Delayed flag raised on the commission `commission`.
+pub(crate) fn set_delayed_act(commission: CommissionId) -> DenAct {
+    let act = deadline::status::set::Act { commission };
+    DenAct::Commission(CommissionAct::SetDelayed(act))
+}
+
+/// The Delayed flag taken down on the commission `commission`.
+pub(crate) fn clear_delayed_act(commission: CommissionId) -> DenAct {
+    let act = deadline::status::clear::Act { commission };
+    DenAct::Commission(CommissionAct::ClearDelayed(act))
+}
+
+/// One call of a field act's typed use case, by what it carries.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum FieldCall {
+    /// Sets the direction status.
+    SetDirection(DirectionStatus),
+    /// Clears the direction status.
+    ClearDirection,
+    /// Sets or moves the deadline.
+    SetDeadline(DateTimeUtc),
+    /// Clears the deadline.
+    ClearDeadline,
+    /// Raises the Delayed flag.
+    SetDelayed,
+    /// Takes the Delayed flag down.
+    ClearDelayed,
+}
+
+/// `actor`'s `call` on `commission` at `now`, through its typed use case.
+pub(crate) async fn field_call(
+    ports: &Ports,
+    actor: &UserId,
+    commission: CommissionId,
+    call: FieldCall,
+    now: DateTimeUtc,
+) -> Result<(), CommissionError> {
+    let actor_id = actor.clone();
+    let commissions = Commissions::new(ports);
+    match call {
+        FieldCall::SetDirection(to) => {
+            let command = direction::set::Command {
+                actor_id,
+                commission_id: commission,
+                to,
+            };
+            commissions.status().direction().set(command, now).await?;
+        }
+        FieldCall::ClearDirection => {
+            let command = direction::clear::Command {
+                actor_id,
+                commission_id: commission,
+            };
+            commissions.status().direction().clear(command, now).await?;
+        }
+        FieldCall::SetDeadline(deadline) => {
+            let command = deadline::set::Command {
+                actor_id,
+                commission_id: commission,
+                deadline,
+            };
+            commissions.deadline().set(command, now).await?;
+        }
+        FieldCall::ClearDeadline => {
+            let command = deadline::clear::Command {
+                actor_id,
+                commission_id: commission,
+            };
+            commissions.deadline().clear(command, now).await?;
+        }
+        FieldCall::SetDelayed => {
+            let command = deadline::status::set::Command {
+                actor_id,
+                commission_id: commission,
+            };
+            commissions.deadline().status().set(command, now).await?;
+        }
+        FieldCall::ClearDelayed => {
+            let command = deadline::status::clear::Command {
+                actor_id,
+                commission_id: commission,
+            };
+            commissions.deadline().status().clear(command, now).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Every changelog entry of `commission`.
+pub(crate) async fn entries_of(
+    ports: &Ports,
+    commission: CommissionId,
+) -> Vec<domain::elements::commission::ChangelogEntry> {
+    ports
+        .changelog
+        .entries(&commission)
+        .await
+        .expect("the changelog reads")
+}
+
+/// The stored fields of `commission`, as a rule reads them.
+pub(crate) async fn fields_of(ports: &Ports, commission: CommissionId) -> CommissionState {
+    let stored = ports
+        .commissions
+        .find(&commission)
+        .await
+        .expect("the store reads")
+        .expect("the commission is stored");
+    CommissionState::from(&stored)
+}
+
 /// A stored commission's state at `step`, with no deadline, flag, status or rating.
 pub(crate) fn state_at(step: LifecycleStep) -> CommissionState {
+    state_with(step, None, None, None)
+}
+
+/// A stored commission's state at `step`, with `deadline`, the stored Delayed `flag` and the
+/// direction `status`, and no rating.
+pub(crate) fn state_with(
+    step: LifecycleStep,
+    deadline: Option<DateTimeUtc>,
+    flag: Option<DeadlineStatus>,
+    status: Option<DirectionStatus>,
+) -> CommissionState {
     let commission = Commission {
         id: CommissionId::mint(),
         owner_id: UserId::from(Did::from("did:plc:state-owner".to_owned())),
         lifecycle_step: step,
-        deadline: None,
+        deadline,
         maturity: None,
-        direction_status: None,
-        delayed_flag: None,
+        direction_status: status,
+        delayed_flag: flag,
         linked_channel: None,
         archived_at: None,
         created_at: chrono::Utc::now(),

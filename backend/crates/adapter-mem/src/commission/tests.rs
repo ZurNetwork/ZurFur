@@ -1,9 +1,9 @@
 use chrono::Utc;
 use domain::elements::account::AccountId;
 use domain::elements::commission::{
-    CommissionState, CommissionTitle, FileName, LateFacts, NewSlot, SKELETON, SeatInvitation,
-    SeatKind, SlotTitle, clear_deadline, clear_delayed, clear_direction, move_lifecycle, owes_late,
-    schedule_deadline, set_delayed, set_direction,
+    CommissionState, CommissionTitle, DirectionStatus, FileName, LateFacts, NewSlot, SKELETON,
+    SeatInvitation, SeatKind, SlotTitle, clear_deadline, clear_delayed, clear_direction,
+    move_lifecycle, owes_late, schedule_deadline, set_delayed, set_direction,
 };
 use domain::elements::did::Did;
 use domain::elements::workflow::{ColumnName, WorkflowName};
@@ -973,62 +973,81 @@ async fn load_composition_answers_none_for_an_unknown_commission() {
     assert!(composition.elements.is_empty(), "empty is not absent");
 }
 
-// ZMVP-85 (store layer) — the direction status sets, replaces, and clears
-// through the unit of work; a dropped unit discards the staged change (the
-// mem mirror of pg's drop = rollback).
-#[tokio::test]
-async fn direction_status_sets_replaces_and_clears_through_the_unit() {
-    use domain::elements::commission::DirectionStatus;
+/// A Participant's capability on `id`, minted here as the den's write gate issues one.
+fn participant_on(id: CommissionId) -> WriteCapability<CommissionId, AsParticipant> {
+    WriteCapability::gate_issued(id)
+}
 
+/// The state `backend` holds for `id`, committed.
+async fn state_of(backend: &MemBackend, id: CommissionId) -> CommissionState {
+    let stored = backend
+        .find_commission(id)
+        .await
+        .unwrap()
+        .expect("the commission exists");
+    CommissionState::from(&stored)
+}
+
+/// The direction set to `to` on what `backend` holds for `id`, as its rule checks it.
+async fn direction_set(
+    backend: &MemBackend,
+    id: CommissionId,
+    to: DirectionStatus,
+) -> DirectionChange {
+    let state = state_of(backend, id).await;
+    let set = set_direction(&state, to).expect("a real set");
+    DirectionChange::from(set)
+}
+
+// The direction status sets, replaces and clears through the unit by compare-and-set; a
+// dropped unit discards the staged change, and a change checked from a status the row no
+// longer holds, or on no commission, changes nothing and answers `false`.
+#[tokio::test]
+async fn direction_status_sets_replaces_and_clears_by_compare_and_set() {
     let backend = MemBackend::new();
     let database = backend.database();
-    let owner = user_id();
-    let created = commission("Statused", owner);
+    let created = commission("Statused", user_id());
     let id = created.id;
     seed(&backend, &created).await;
-
-    let status_of = |backend: &MemBackend| {
-        let backend = backend.clone();
-        async move {
-            backend
-                .find_commission(id)
-                .await
-                .unwrap()
-                .expect("exists")
-                .direction_status
-        }
-    };
+    let capability = participant_on(id);
+    let status_of = async |backend: &MemBackend| state_of(backend, id).await.direction_status();
     assert_eq!(status_of(&backend).await, None, "born clear");
 
-    // Set, then replace — one nullable cell, so the second set wins whole.
+    let first = direction_set(&backend, id, DirectionStatus::WaitingForInput).await;
     let mut uow = database.begin().await.unwrap();
-    uow.commissions()
-        .set_direction_status(&id, Some(DirectionStatus::WaitingForInput))
+    let landed = uow
+        .commissions()
+        .set_direction_status(&capability, &first)
         .await
         .unwrap();
     uow.commit().await.unwrap();
+    assert!(landed);
     assert_eq!(
         status_of(&backend).await,
         Some(DirectionStatus::WaitingForInput)
     );
 
+    let replaced = direction_set(&backend, id, DirectionStatus::ChangesRequested).await;
     let mut uow = database.begin().await.unwrap();
-    uow.commissions()
-        .set_direction_status(&id, Some(DirectionStatus::ChangesRequested))
+    let landed = uow
+        .commissions()
+        .set_direction_status(&capability, &replaced)
         .await
         .unwrap();
     uow.commit().await.unwrap();
+    assert!(landed);
     assert_eq!(
         status_of(&backend).await,
         Some(DirectionStatus::ChangesRequested),
         "a set replaces the current value"
     );
 
-    // A dropped (uncommitted) unit discards its staged status write.
+    let state = state_of(&backend, id).await;
+    let cleared = DirectionChange::from(clear_direction(&state).expect("a real clear"));
     {
         let mut uow = database.begin().await.unwrap();
         uow.commissions()
-            .set_direction_status(&id, None)
+            .set_direction_status(&capability, &cleared)
             .await
             .unwrap();
     }
@@ -1038,48 +1057,76 @@ async fn direction_status_sets_replaces_and_clears_through_the_unit() {
         "a dropped unit rolls the clear back"
     );
 
-    // Clear commits to NULL; an absent commission is a no-op, not an error.
     let mut uow = database.begin().await.unwrap();
-    uow.commissions()
-        .set_direction_status(&id, None)
+    let stale = uow
+        .commissions()
+        .set_direction_status(&capability, &first)
         .await
         .unwrap();
-    uow.commissions()
+    let elsewhere = uow
+        .commissions()
         .set_direction_status(
-            &CommissionId::from(uuid::Uuid::now_v7()),
-            Some(DirectionStatus::WaitingForApproval),
+            &participant_on(CommissionId::from(uuid::Uuid::now_v7())),
+            &first,
         )
         .await
         .unwrap();
+    let landed = uow
+        .commissions()
+        .set_direction_status(&capability, &cleared)
+        .await
+        .unwrap();
     uow.commit().await.unwrap();
+    assert!(
+        !stale,
+        "a change from a status the row no longer holds matches nothing"
+    );
+    assert!(!elsewhere, "an absent commission matches nothing");
+    assert!(landed);
     assert_eq!(status_of(&backend).await, None, "cleared");
 }
 
-// ZMVP-86 (store layer) — the deadline and the MANUAL Delayed flag set and
-// clear through the unit of work; a dropped unit discards the staged change
-// (the mem mirror of pg's drop = rollback). Late is derived on lookup, never
-// persisted, so it is exercised separately below.
+// The deadline and the MANUAL Delayed flag set and clear through the unit by compare-and-set;
+// a dropped unit discards the staged change, and a stale change matches nothing. Late is
+// derived on lookup, never persisted, so it is exercised separately below.
 #[tokio::test]
-async fn deadline_and_status_set_and_clear_through_the_unit() {
+async fn deadline_and_delayed_set_and_clear_by_compare_and_set() {
     let backend = MemBackend::new();
     let database = backend.database();
-    let owner = user_id();
-    let created = commission("Deadlined", owner);
+    let created = commission("Deadlined", user_id());
     let id = created.id;
     seed(&backend, &created).await;
+    let capability = participant_on(id);
 
     // A FUTURE deadline, so the derived Late never masks the manual flag.
-    let deadline = Utc::now() + chrono::Duration::days(30);
+    let now = Utc::now();
+    let deadline = now + chrono::Duration::days(30);
+    let undated = state_of(&backend, id).await;
+    let scheduled = schedule_deadline(&undated, deadline)
+        .expect("allowed")
+        .expect("a real set");
+    let set = DeadlineChange::from(scheduled);
     let mut uow = database.begin().await.unwrap();
-    {
-        let mut commissions = uow.commissions();
-        commissions.set_deadline(&id, Some(deadline)).await.unwrap();
-        commissions
-            .set_deadline_status(&id, Some(DeadlineStatus::Delayed))
-            .await
-            .unwrap();
-    }
+    let landed = uow
+        .commissions()
+        .set_deadline(&capability, &set)
+        .await
+        .unwrap();
     uow.commit().await.unwrap();
+    assert!(landed);
+    let dated = state_of(&backend, id).await;
+    let raised = set_delayed(&dated, now)
+        .expect("allowed")
+        .expect("a real set");
+    let flag = DelayedChange::from(raised);
+    let mut uow = database.begin().await.unwrap();
+    let landed = uow
+        .commissions()
+        .set_deadline_status(&capability, &flag)
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+    assert!(landed);
     let found = backend.find_commission(id).await.unwrap().expect("exists");
     assert_eq!(found.deadline, Some(deadline));
     assert_eq!(
@@ -1088,65 +1135,165 @@ async fn deadline_and_status_set_and_clear_through_the_unit() {
         "the manual flag persists"
     );
     assert_eq!(
-        found.deadline_status_at(Utc::now()),
+        found.deadline_status_at(now),
         Some(DeadlineStatus::Delayed),
         "a future deadline is not Late"
     );
 
-    // A dropped (uncommitted) unit discards its staged writes.
+    let flagged = state_of(&backend, id).await;
+    let unscheduled = clear_deadline(&flagged)
+        .expect("allowed")
+        .expect("a real clear");
+    let deadline_cleared = DeadlineChange::from(unscheduled);
+    let lowered = clear_delayed(&flagged, now)
+        .expect("allowed")
+        .expect("a real clear");
+    let flag_cleared = DelayedChange::from(lowered);
     {
         let mut uow = database.begin().await.unwrap();
         let mut commissions = uow.commissions();
-        commissions.set_deadline(&id, None).await.unwrap();
-        commissions.set_deadline_status(&id, None).await.unwrap();
+        commissions
+            .set_deadline(&capability, &deadline_cleared)
+            .await
+            .unwrap();
+        commissions
+            .set_deadline_status(&capability, &flag_cleared)
+            .await
+            .unwrap();
     }
     let found = backend.find_commission(id).await.unwrap().expect("exists");
     assert_eq!(found.deadline, Some(deadline), "the clear rolled back");
     assert_eq!(found.delayed_flag, Some(DeadlineStatus::Delayed));
 
-    // Clear commits; an absent commission is a no-op, not an error.
     let mut uow = database.begin().await.unwrap();
-    {
+    let (stale_deadline, stale_flag, cleared_deadline, cleared_flag) = {
         let mut commissions = uow.commissions();
-        commissions.set_deadline(&id, None).await.unwrap();
-        commissions.set_deadline_status(&id, None).await.unwrap();
-        commissions
-            .set_deadline(&CommissionId::from(uuid::Uuid::now_v7()), Some(deadline))
+        let stale_deadline = commissions.set_deadline(&capability, &set).await.unwrap();
+        let stale_flag = commissions
+            .set_deadline_status(&capability, &flag)
             .await
             .unwrap();
-    }
+        let cleared_deadline = commissions
+            .set_deadline(&capability, &deadline_cleared)
+            .await
+            .unwrap();
+        let cleared_flag = commissions
+            .set_deadline_status(&capability, &flag_cleared)
+            .await
+            .unwrap();
+        (stale_deadline, stale_flag, cleared_deadline, cleared_flag)
+    };
     uow.commit().await.unwrap();
+    assert!(
+        !stale_deadline,
+        "a deadline set from none matches a dated row"
+    );
+    assert!(!stale_flag, "a flag raised from none matches a flagged row");
+    assert!(cleared_deadline && cleared_flag);
     let found = backend.find_commission(id).await.unwrap().expect("exists");
     assert_eq!(found.deadline, None);
     assert_eq!(found.delayed_flag, None);
     assert_eq!(
-        found.deadline_status_at(Utc::now()),
+        found.deadline_status_at(now),
         None,
         "no deadline ⇒ no axis status (AC4)"
     );
 }
 
-// ZMVP-86 — Late is DERIVED on lookup from `deadline < now`, never persisted:
-// a past deadline reads Late, and it supersedes a standing manual Delayed
-// without overwriting it in storage.
+// A flag left after its deadline was cleared is seen as nothing at the act's time, yet the row
+// holds it: the clear compares against the stored flag, so it lands.
+#[tokio::test]
+async fn a_dormant_flag_s_clear_compares_against_the_stored_flag() {
+    let backend = MemBackend::new();
+    let database = backend.database();
+    let created = commission("Dormant", user_id());
+    let id = created.id;
+    seed(&backend, &created).await;
+    let capability = participant_on(id);
+    let now = Utc::now();
+    let undated = state_of(&backend, id).await;
+    let scheduled = schedule_deadline(&undated, now + chrono::Duration::days(30))
+        .expect("allowed")
+        .expect("a real set");
+    let mut uow = database.begin().await.unwrap();
+    uow.commissions()
+        .set_deadline(&capability, &DeadlineChange::from(scheduled))
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+    let dated = state_of(&backend, id).await;
+    let raised = set_delayed(&dated, now)
+        .expect("allowed")
+        .expect("a real set");
+    let mut uow = database.begin().await.unwrap();
+    uow.commissions()
+        .set_deadline_status(&capability, &DelayedChange::from(raised))
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+    let flagged = state_of(&backend, id).await;
+    let unscheduled = clear_deadline(&flagged)
+        .expect("allowed")
+        .expect("a real clear");
+    let mut uow = database.begin().await.unwrap();
+    uow.commissions()
+        .set_deadline(&capability, &DeadlineChange::from(unscheduled))
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+
+    let dormant = state_of(&backend, id).await;
+    let lowered = clear_delayed(&dormant, now)
+        .expect("allowed")
+        .expect("a real clear");
+    let change = DelayedChange::from(lowered);
+    let mut uow = database.begin().await.unwrap();
+    let landed = uow
+        .commissions()
+        .set_deadline_status(&capability, &change)
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+
+    assert_eq!(change.before(), None, "the act saw no status");
+    assert!(landed);
+    assert_eq!(state_of(&backend, id).await.delayed_flag(), None);
+}
+
+// Late is DERIVED on lookup from `deadline < now`, never persisted: a past deadline reads
+// Late, and it supersedes a standing manual Delayed without overwriting it in storage.
 #[tokio::test]
 async fn late_is_derived_from_a_passed_deadline() {
     let backend = MemBackend::new();
     let database = backend.database();
-    let owner = user_id();
-    let created = commission("Slipping", owner);
+    let created = commission("Slipping", user_id());
     let id = created.id;
     seed(&backend, &created).await;
+    let capability = participant_on(id);
+    let now = Utc::now();
+    let yesterday = now - chrono::Duration::days(1);
+    let two_days_ago = now - chrono::Duration::days(2);
 
+    let undated = state_of(&backend, id).await;
+    let scheduled = schedule_deadline(&undated, yesterday)
+        .expect("allowed")
+        .expect("a real set");
+    let dated = CommissionState::from(&Commission {
+        deadline: Some(yesterday),
+        ..backend.find_commission(id).await.unwrap().expect("exists")
+    });
+    let raised = set_delayed(&dated, two_days_ago)
+        .expect("allowed before the deadline")
+        .expect("a real set");
     let mut uow = database.begin().await.unwrap();
     {
         let mut commissions = uow.commissions();
         commissions
-            .set_deadline(&id, Some(Utc::now() - chrono::Duration::days(1)))
+            .set_deadline(&capability, &DeadlineChange::from(scheduled))
             .await
             .unwrap();
         commissions
-            .set_deadline_status(&id, Some(DeadlineStatus::Delayed))
+            .set_deadline_status(&capability, &DelayedChange::from(raised))
             .await
             .unwrap();
     }
@@ -1154,7 +1301,7 @@ async fn late_is_derived_from_a_passed_deadline() {
 
     let found = backend.find_commission(id).await.unwrap().expect("exists");
     assert_eq!(
-        found.deadline_status_at(Utc::now()),
+        found.deadline_status_at(now),
         Some(DeadlineStatus::Late),
         "a passed deadline derives Late, superseding the stored Delayed"
     );
@@ -1228,11 +1375,15 @@ async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
         owed: true,
     };
     let mark = owes_late(&already_late_facts, now).expect("a late entry is owed");
+    let slipping_state = state_of(&backend, slipping.id).await;
+    let raised = set_delayed(&slipping_state, past(25))
+        .expect("allowed before the deadline")
+        .expect("a real set");
 
     let mut uow = database.begin().await.unwrap();
     {
         uow.commissions()
-            .set_deadline_status(&slipping.id, Some(DeadlineStatus::Delayed))
+            .set_deadline_status(&participant_on(slipping.id), &DelayedChange::from(raised))
             .await
             .unwrap();
         // Late is deduped on the changelog (no persisted Late), staged on the

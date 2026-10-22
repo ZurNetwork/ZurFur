@@ -9,10 +9,8 @@ use adapter_mem::CommissionSeed;
 use application::commission::{SweepResult, sweep_deadlines};
 use application::transaction;
 use chrono::{DateTime, Utc};
-use domain::elements::commission::{
-    ChangelogEntry, CommissionId, CommissionTitle, DeadlineStatus, LifecycleStep,
-};
-use domain::elements::did::Did;
+use domain::elements::commission::{ChangelogEntry, CommissionId, CommissionTitle, LifecycleStep};
+use domain::elements::{did::Did, user::UserId};
 use domain::ports::{ChangelogStore, CommissionStore, Database, UnitOfWork};
 use test_support::runtime::MemRuntime;
 
@@ -66,15 +64,22 @@ async fn seed(
     seed.id
 }
 
-/// Flags the manual "slipping" status a Participant would set.
-async fn flag(database: &dyn Database, id: CommissionId, status: DeadlineStatus) {
-    transaction(database, async move |uow: &mut dyn UnitOfWork| {
-        uow.commissions()
-            .set_deadline_status(&id, Some(status))
-            .await
-    })
-    .await
-    .expect("flag the deadline axis");
+/// Flags the manual "slipping" status as `owner_did`, a Participant, sets it at `at`: through
+/// the use case.
+async fn flag(fixture: &MemRuntime, id: CommissionId, owner_did: &str, at: DateTime<Utc>) {
+    let command = application::commission::deadline::status::set::Command {
+        actor_id: UserId::from(Did::from(owner_did.to_owned())),
+        commission_id: id,
+    };
+    fixture
+        .runtime
+        .app()
+        .commissions()
+        .deadline()
+        .status()
+        .set(command, at)
+        .await
+        .expect("flag the deadline axis");
 }
 
 /// The deadline status of `id` now (Late derived, else the stored flag), as its
@@ -213,15 +218,19 @@ async fn a_standing_delayed_upgrades_to_late() {
         LifecycleStep::Draft,
     )
     .await;
-    flag(database, id, DeadlineStatus::Delayed).await;
+    flag(&fixture, id, "did:plc:slipping", seeded_at()).await;
 
     assert_eq!(sweep(database, after_past()).await.marked_late, 1);
     let log = entries(&*runtime.changelog, id).await;
-    assert_eq!(log.len(), 1, "the system Late entry");
-    assert_eq!(<&'static str>::from(log[0].kind), "late");
-    assert_eq!(log[0].actor_id, None);
+    let kinds: Vec<&'static str> = log.iter().map(|entry| entry.kind.into()).collect();
     assert_eq!(
-        log[0].payload["from"], "delayed",
+        kinds,
+        ["delayed", "late"],
+        "the owner's flag, then the system Late entry"
+    );
+    assert_eq!(log[1].actor_id, None);
+    assert_eq!(
+        log[1].payload["from"], "delayed",
         "the upgrade records the standing flag it replaced"
     );
 }

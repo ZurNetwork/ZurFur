@@ -2,7 +2,7 @@
 //! envelope field) and `PUT`/`DELETE /commissions/{id}/status/deadline` (the
 //! manual Delayed flag). `Late` is system-derived and never accepted here.
 
-use application::commission::deadline;
+use application::commission::{CommissionError, deadline};
 use axum::{
     Json,
     extract::{State, rejection::JsonRejection},
@@ -97,18 +97,20 @@ pub(super) async fn set_deadline_status(
     body: Result<Json<SetDeadlineStatusBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
-    // `late` parses here; the use case refuses it as the system's word.
+    // `late` parses here, and is refused before any use case as the system's word.
     let status = body.status.parse::<DeadlineStatus>().map_err(|_| {
         Problem::invalid_request(format!(
             "{:?} is not a deadline status; expected: delayed.",
             body.status,
         ))
     })?;
+    if status == DeadlineStatus::Late {
+        return Err(CommissionError::InvalidStateRequested.into());
+    }
 
     let command = deadline::status::set::Command {
         actor_id,
         commission_id,
-        status,
     };
 
     state

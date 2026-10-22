@@ -76,12 +76,9 @@ const COMMISSION_REPOS: [&str; 2] = ["commissions", "changelog"];
 /// The commission repo's field writes the gate doesn't hold yet, by name, each call site in
 /// `application` frozen whether it has one today or not. Each leaves when its method takes a
 /// write capability, until the list is empty.
-const FIELD_WRITES: [&str; 7] = [
+const FIELD_WRITES: [&str; 4] = [
     "set_archived",
     "set_maturity",
-    "set_direction_status",
-    "set_deadline",
-    "set_deadline_status",
     "declare_slots",
     "set_linked_channel",
 ];
@@ -105,26 +102,11 @@ const NODE_TABLE: &str = "node";
 
 /// The ungated commission field writes in `application`, by file, function and method: each
 /// leaves this list when the den's write gate takes it over, until the list is empty.
-const FROZEN_FIELD_WRITES: [(&str, &str, &str); 9] = [
+const FROZEN_FIELD_WRITES: [(&str, &str, &str); 5] = [
     (
         "commission/archive.rs",
         "Commissions::archive",
         "set_archived",
-    ),
-    (
-        "commission/deadline/clear.rs",
-        "Deadline::clear",
-        "set_deadline",
-    ),
-    (
-        "commission/deadline/set.rs",
-        "Deadline::set",
-        "set_deadline",
-    ),
-    (
-        "commission/deadline/status.rs",
-        "apply",
-        "set_deadline_status",
     ),
     ("commission/delete.rs", "Commissions::delete", "delete"),
     (
@@ -136,11 +118,6 @@ const FROZEN_FIELD_WRITES: [(&str, &str, &str); 9] = [
         "commission/slots/declare.rs",
         "Slots::declare",
         "declare_slots",
-    ),
-    (
-        "commission/status/direction/set.rs",
-        "Direction::set",
-        "set_direction_status",
     ),
     (
         "commission/unarchive.rs",
@@ -1208,10 +1185,16 @@ const ENTRY_RULE_VARIANTS: [&str; 2] = ["Always", "OnChange"];
 const HANDLER_TRAIT: &str = "trait Handler";
 
 /// The gated entries today's acts name, each by its file.
-const NAMED_GATED_ENTRIES: [(&str, &str); 3] = [
+const NAMED_GATED_ENTRIES: [(&str, &str); 9] = [
     ("commission/create.rs", "CREATED"),
+    ("commission/deadline/clear.rs", "DEADLINE_CLEARED"),
+    ("commission/deadline/set.rs", "DEADLINE_SET"),
+    ("commission/deadline/status/clear.rs", "DELAYED_CLEARED"),
+    ("commission/deadline/status/set.rs", "DELAYED_SET"),
     ("commission/lifecycle/move_to.rs", "LIFECYCLE_MOVED"),
     ("commission/rename.rs", "RENAMED"),
+    ("commission/status/direction/clear.rs", "STATUS_CLEARED"),
+    ("commission/status/direction/set.rs", "STATUS_SET"),
 ];
 
 /// The variants a gated entry's constructor is written out under: one takes no change, one
@@ -1536,7 +1519,7 @@ fn each_act_names_one_gated_entry_and_constructors_are_unique() {
         .iter()
         .map(|(file, name)| ((*file).to_owned(), (*name).to_owned()))
         .collect();
-    assert_eq!(named, expected, "the scan reads today's three acts");
+    assert_eq!(named, expected, "the scan reads today's nine acts");
     let act_source =
         std::fs::read_to_string(application_src().join(ACT_FILE)).expect("the act file reads");
     let shares_a_constructor = act_source.replacen(
@@ -1757,14 +1740,24 @@ const LENT_READ: &str = "lent";
 
 /// Each act with a write, as the gate file writes its type, and the one write its view holds,
 /// which calls the commission repo's method of the same name and nothing else.
-const ACT_WRITES: [(&str, &str); 2] =
-    [("create::Act", "create"), ("move_to::Act", "set_lifecycle")];
+const ACT_WRITES: [(&str, &str); 8] = [
+    ("create::Act", "create"),
+    ("move_to::Act", "set_lifecycle"),
+    ("direction::set::Act", "set_direction_status"),
+    ("direction::clear::Act", "set_direction_status"),
+    ("deadline::set::Act", "set_deadline"),
+    ("deadline::clear::Act", "set_deadline"),
+    ("deadline::status::set::Act", "set_deadline_status"),
+    ("deadline::status::clear::Act", "set_deadline_status"),
+];
 
-/// The modules the gate file must import each act's module from, so `create::Act` and
-/// `move_to::Act` name the acts they say.
-const ACT_MODULE_HOMES: [(&str, &str); 2] = [
+/// The modules the gate file must import each act's module from, so `create::Act`,
+/// `move_to::Act`, `direction::set::Act` and `deadline::set::Act` name the acts they say.
+const ACT_MODULE_HOMES: [(&str, &str); 4] = [
     ("create", "crate::commission"),
     ("move_to", "crate::commission::lifecycle"),
+    ("direction", "crate::commission::status"),
+    ("deadline", "crate::commission"),
 ];
 
 /// A type as written, its path's segments joined by `::`, generic arguments left out:
@@ -2036,6 +2029,12 @@ fn each_lent_view_holds_its_act_s_one_write() {
     let expected: Vec<(String, String)> = [
         ("create", "create::Act"),
         ("set_lifecycle", "move_to::Act"),
+        ("set_direction_status", "direction::set::Act"),
+        ("set_direction_status", "direction::clear::Act"),
+        ("set_deadline", "deadline::set::Act"),
+        ("set_deadline", "deadline::clear::Act"),
+        ("set_deadline_status", "deadline::status::set::Act"),
+        ("set_deadline_status", "deadline::status::clear::Act"),
         (LENT_READ, EVERY_ACT),
     ]
     .iter()
@@ -2076,8 +2075,20 @@ fn each_lent_view_holds_its_act_s_one_write() {
         ),
         ("impl Lent<'_, move_to::Act> {", "impl Lent<'_, Move> {"),
         (
-            "    commission::{act::CommissionAct, create, lifecycle::move_to, rename},",
-            "    commission::{act::CommissionAct, create as move_to, lifecycle::move_to as create, rename},",
+            "    commission::{\n        act::CommissionAct, create, deadline, lifecycle::move_to, rename, status::direction,\n    },",
+            "    commission::{\n        act::CommissionAct, create as move_to, deadline, lifecycle::move_to as create, rename,\n        status::direction,\n    },",
+        ),
+        (
+            "    commission::{\n        act::CommissionAct, create, deadline, lifecycle::move_to, rename, status::direction,\n    },",
+            "    commission::{\n        act::CommissionAct, create, deadline as direction, lifecycle::move_to, rename,\n        status::direction as deadline,\n    },",
+        ),
+        (
+            "impl Lent<'_, direction::set::Act> {",
+            "impl Lent<'_, direction::clear::Act> {",
+        ),
+        (
+            "impl Lent<'_, direction::set::Act> {",
+            "impl Lent<'_, direction::set::Act> {\n    pub(crate) async fn set_deadline(&mut self) -> anyhow::Result<()> {\n        self.latch.pass(self.view.set_deadline().await)\n    }\n",
         ),
         (AFTER_THE_LENT_VIEW, widened.as_str()),
         (
@@ -2176,8 +2187,36 @@ fn repo_writes(tokens: TokenStream) -> Vec<(String, TokenStream)> {
         .collect()
 }
 
+/// Whether `argument` is the change bound as `change`: the binding itself, or the port's value
+/// built from it by `From`, written `&Value::from(change.clone())`.
+fn is_the_change(argument: &[TokenTree], change: &str) -> bool {
+    if argument.len() == 1 && ident_at(argument, 0).as_deref() == Some(change) {
+        return true;
+    }
+    let built_by_from = argument.len() == 6
+        && punct_at(argument, 0, '&')
+        && ident_at(argument, 1).is_some()
+        && path_separator_at(argument, 2)
+        && ident_at(argument, 4).as_deref() == Some("from");
+    let Some(TokenTree::Group(group)) = argument.get(5) else {
+        return false;
+    };
+    let inner: Vec<TokenTree> = group.stream().into_iter().collect();
+    let cloned = matches!(
+        inner.get(3),
+        Some(TokenTree::Group(call)) if call.delimiter() == Delimiter::Parenthesis && call.stream().is_empty()
+    );
+    let of_the_change = inner.len() == 4
+        && ident_at(&inner, 0).as_deref() == Some(change)
+        && punct_at(&inner, 1, '.')
+        && ident_at(&inner, 2).as_deref() == Some("clone")
+        && cloned;
+    built_by_from && group.delimiter() == Delimiter::Parenthesis && of_the_change
+}
+
 /// Whether `tokens`, an argument list, passes `&self.capability` and the change bound from
-/// `self.change`, which the method's body binds as `let Some(name) = &self.change`.
+/// `self.change`, which the method's body binds as `let Some(name) = &self.change`: as it is,
+/// or as the port's value built from it by `From`.
 fn passes_the_capability_and_the_change(arguments: &TokenStream, change: &str) -> bool {
     let arguments: Vec<Vec<TokenTree>> = comma_separated(arguments.clone());
     let capability = arguments.first().is_some_and(|first| {
@@ -2189,7 +2228,7 @@ fn passes_the_capability_and_the_change(arguments: &TokenStream, change: &str) -
     });
     let change_passed = arguments
         .last()
-        .is_some_and(|last| last.len() == 1 && ident_at(last, 0).as_deref() == Some(change));
+        .is_some_and(|last| is_the_change(last, change));
     capability && change_passed
 }
 
@@ -2279,14 +2318,44 @@ fn each_view_write_calls_its_own_port_method() {
     let writes: Vec<(String, String)> = view_methods(&gate, &views);
     assert_eq!(
         writes.len(),
-        3,
+        9,
         "the scan reads every view method: {writes:?}"
     );
     let source =
         std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
     let move_call = "self.repo.set_lifecycle(&self.capability, change)";
     let create_call = ".create(&self.capability, &birth, commission)";
+    let direction_call =
+        ".set_direction_status(&self.capability, &DirectionChange::from(change.clone()))";
     let broken = [
+        (
+            direction_call,
+            ".set_deadline(&self.capability, &DirectionChange::from(change.clone()))",
+        ),
+        (
+            direction_call,
+            ".set_direction_status(&self.capability, &DirectionChange::from(other.clone()))",
+        ),
+        (
+            direction_call,
+            ".set_direction_status(&self.capability, &DirectionChange::from(change))",
+        ),
+        (
+            direction_call,
+            ".set_direction_status(&self.capability, &DirectionChange::forged(change.clone()))",
+        ),
+        (
+            ".set_deadline(&self.capability, &DeadlineChange::from(change.clone()))",
+            ".set_deadline(&forged, &DeadlineChange::from(change.clone()))",
+        ),
+        (
+            ".set_deadline_status(&self.capability, &DelayedChange::from(change.clone()))",
+            ".set_deadline_status(&self.capability, &DelayedChange::from(change.clone()))\n            .await?;\n        self.repo\n            .set_deadline(&self.capability, &DeadlineChange::from(change.clone()))",
+        ),
+        (
+            "impl View<'_, direction::set::Act> {",
+            "impl View<'_, direction::set::Act> {\n    async fn set_deadline(&mut self) -> anyhow::Result<()> {\n        Ok(())\n    }\n",
+        ),
         (
             move_call,
             "self.repo.set_deadline(&self.capability, change)",
@@ -2397,7 +2466,7 @@ fn every_lent_method_goes_through_the_latch() {
 
     assert_eq!(unlatched, Vec::<String>::new());
     let (methods, _) = lent_surface(&gate);
-    assert_eq!(methods.len(), 3, "the scan reads all three lent methods");
+    assert_eq!(methods.len(), 9, "the scan reads all nine lent methods");
     let source =
         std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
     let widened = format!("{WIDENED_MODULE}{AFTER_THE_LENT_VIEW}");
@@ -2414,6 +2483,18 @@ fn every_lent_method_goes_through_the_latch() {
         (
             "        self.latch.pass(self.view.set_lifecycle().await)",
             "        self.view.set_lifecycle().await",
+        ),
+        (
+            "        self.latch.pass(self.view.set_direction_status().await)",
+            "        self.view.set_direction_status().await",
+        ),
+        (
+            "        self.latch.pass(self.view.set_deadline().await)",
+            "        self.view.set_deadline().await",
+        ),
+        (
+            "        self.latch.pass(self.view.set_deadline_status().await)",
+            "        self.view.set_deadline_status().await",
         ),
         (
             "        self.latch.pass(self.view.lent().await)",
@@ -3933,8 +4014,8 @@ fn the_ungated_field_writes_are_exactly_these() {
         .collect();
     assert_eq!(found, frozen);
     let new_sites = [
-        "impl Deadline<'_> { async fn extend(&self, uow: Unit<'_>) { uow.commissions().set_deadline(&id, Some(at)).await?; } }",
-        "async fn extend(uow: Unit<'_>) { let mut commissions = uow.commissions(); commissions.set_deadline(&id, None).await?; }",
+        "impl Archive<'_> { async fn stamp(&self, uow: Unit<'_>) { uow.commissions().set_archived(&id, Some(at)).await?; } }",
+        "async fn stamp(uow: Unit<'_>) { let mut commissions = uow.commissions(); commissions.set_archived(&id, None).await?; }",
         "async fn copy(uow: Unit<'_>) { uow.commissions().create(&commission).await?; }",
         "async fn copy(uow: Unit<'_>) { let mut repo = uow.commissions(); repo.create(&commission).await?; }",
         "async fn purge(uow: Unit<'_>) { UnitOfWork::commissions(uow).delete(&id).await?; }",
@@ -4595,9 +4676,18 @@ fn every_commission_write_takes_a_capability_or_is_named() {
     let sorted = file_authority(&file, writes[0]);
     assert_eq!(
         sorted.capped,
-        BTreeSet::from(["create".to_owned(), "set_lifecycle".to_owned()]),
-        "create takes the gate's create capability and set_lifecycle a Participant's, each in \
-         place of the id"
+        BTreeSet::from(
+            [
+                "create",
+                "set_deadline",
+                "set_deadline_status",
+                "set_direction_status",
+                "set_lifecycle",
+            ]
+            .map(str::to_owned)
+        ),
+        "create takes the gate's create capability, and the lifecycle, direction, deadline and \
+         Delayed writes a Participant's, each in place of the id"
     );
     let (held, homes) = held_names(&file);
     assert_eq!(homes, Vec::<String>::new());

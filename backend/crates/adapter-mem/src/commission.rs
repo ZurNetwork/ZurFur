@@ -13,11 +13,12 @@ use domain::elements::{
         AsParticipant, Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission,
         CommissionBirth, CommissionComposition, CommissionFile, CommissionId, CommissionMarkup,
         CommissionRole, CommissionStanding, CommissionStart, CommissionSummary, CommissionTitle,
-        DeadlineStatus, DirectionStatus, ElementId, ElementPayload, ElementRow, ElementType,
-        FileKey, FileSummary, GrantLevel, LapsedDeadline, LifecycleMove, LifecycleStep,
-        LockedStanding, NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot, Seat,
-        SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress,
-        SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs, declares_surface,
+        DeadlineChange, DeadlineStatus, DelayedChange, DirectionChange, DirectionStatus, ElementId,
+        ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel, LapsedDeadline,
+        LifecycleMove, LifecycleStep, LockedStanding, NewChangelogEntry, NewCommission, NewElement,
+        NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt,
+        Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
+        declares_surface,
     },
     did::Did,
     invitation::InvitationState,
@@ -927,15 +928,16 @@ impl CommissionWrites for MemCommissionWrites<'_> {
             .is_some())
     }
 
-    /// Repoint (or clear) the direction-axis Status; one slot, so a set replaces
-    /// whole. An absent commission is a no-op.
+    /// Moves the direction status by compare-and-set: only while the stored one is `change`'s
+    /// held status, the mem mirror of the pg write. Otherwise, or with no such commission, it
+    /// changes nothing and answers `false`.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_direction_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DirectionStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DirectionChange,
     ) -> anyhow::Result<bool> {
-        let id = *id;
+        let id = *capability.thing();
         let mut commissions = self
             .0
             .commissions
@@ -944,21 +946,23 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         let Some(stored) = commissions.get_mut(&id) else {
             return Ok(false);
         };
-        if stored.direction_status == status {
+        if stored.direction_status != change.before() {
             return Ok(false);
         }
-        stored.direction_status = status;
+        stored.direction_status = change.after();
         Ok(true)
     }
 
-    /// Repoint (or clear) the stored deadline; an absent commission is a no-op.
+    /// Moves the deadline by compare-and-set: only while the stored one is `change`'s held
+    /// deadline, the mem mirror of the pg write. Otherwise, or with no such commission, it
+    /// changes nothing and answers `false`.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_deadline(
         &mut self,
-        id: &CommissionId,
-        deadline: Option<DateTimeUtc>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DeadlineChange,
     ) -> anyhow::Result<bool> {
-        let id = *id;
+        let id = *capability.thing();
         let mut commissions = self
             .0
             .commissions
@@ -967,22 +971,23 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         let Some(stored) = commissions.get_mut(&id) else {
             return Ok(false);
         };
-        if stored.deadline == deadline {
+        if stored.deadline != change.before() {
             return Ok(false);
         }
-        stored.deadline = deadline;
+        stored.deadline = change.after();
         Ok(true)
     }
 
-    /// Repoint (or clear) the deadline-axis Status; one slot, so a set replaces
-    /// whole. An absent commission is a no-op.
+    /// Moves the stored Delayed flag by compare-and-set: only while the stored flag is the one
+    /// `change` says the row held, the mem mirror of the pg write. Otherwise, or with no such
+    /// commission, it changes nothing and answers `false`.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_deadline_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DeadlineStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DelayedChange,
     ) -> anyhow::Result<bool> {
-        let id = *id;
+        let id = *capability.thing();
         let mut commissions = self
             .0
             .commissions
@@ -991,10 +996,10 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         let Some(stored) = commissions.get_mut(&id) else {
             return Ok(false);
         };
-        if stored.delayed_flag == status {
+        if stored.delayed_flag != change.held() {
             return Ok(false);
         }
-        stored.delayed_flag = status;
+        stored.delayed_flag = change.after();
         Ok(true)
     }
 

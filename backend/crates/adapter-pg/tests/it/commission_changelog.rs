@@ -14,9 +14,9 @@ use domain::{
     elements::{
         commission::{
             ChangelogEntryKind, ChannelPointer, Commission, CommissionId, CommissionState,
-            DeadlineStatus, DirectionStatus, LateFacts, LifecycleStep, NewChangelogEntry,
-            clear_deadline, clear_delayed, clear_direction, move_lifecycle, owes_late,
-            schedule_deadline, set_delayed, set_direction,
+            DeadlineStatus, DirectionChange, DirectionStatus, LateFacts, LifecycleStep,
+            NewChangelogEntry, clear_deadline, clear_delayed, clear_direction, move_lifecycle,
+            owes_late, schedule_deadline, set_delayed, set_direction,
         },
         did::Did,
         user::User,
@@ -475,84 +475,121 @@ async fn find_roundtrips_the_linked_channel() {
     );
 }
 
-// ZMVP-85 — CommissionStore::find round-trips the nullable direction-axis
-// Status set, replaced, and cleared through the write view: one column, so a
-// set REPLACES by construction (ruling E29) and NULL is the cleared state.
-#[tokio::test]
-async fn find_roundtrips_the_direction_status() {
-    use domain::elements::commission::DirectionStatus;
+/// The direction status `store` holds for `id`.
+async fn direction_of(store: &PgCommissionStore, id: &CommissionId) -> Option<DirectionStatus> {
+    store
+        .find(id)
+        .await
+        .expect("find")
+        .expect("exists")
+        .direction_status
+}
 
+/// The direction change `to` on what `store` holds for `id`, as its rule checks it; `None`
+/// clears.
+async fn direction_change(
+    store: &PgCommissionStore,
+    id: &CommissionId,
+    to: Option<DirectionStatus>,
+) -> DirectionChange {
+    let stored = store.find(id).await.expect("find").expect("exists");
+    let state = CommissionState::from(&stored);
+    match to {
+        Some(to) => DirectionChange::from(set_direction(&state, to).expect("a real set")),
+        None => DirectionChange::from(clear_direction(&state).expect("a real clear")),
+    }
+}
+
+// CommissionStore::find round-trips the nullable direction status set, replaced and cleared
+// through the write view by compare-and-set: one column, so a set replaces by construction
+// and NULL is the cleared state; a change checked from a status the row no longer holds, or
+// on no commission, matches no row and answers `false`.
+#[tokio::test]
+async fn find_roundtrips_the_direction_status_by_compare_and_set() {
     let (pool, _container) = fresh_pool().await;
     let commission = seed_commission(&pool, "did:plc:status-owner").await;
     let db = PgDatabase::new(pool.clone());
     let store = PgCommissionStore::new(pool.clone());
-
-    let found = store
-        .find(&commission.id)
-        .await
-        .expect("find")
-        .expect("the commission exists");
-    assert!(
-        found.direction_status.is_none(),
+    let capability = seed::participant_on(commission.id);
+    assert_eq!(
+        direction_of(&store, &commission.id).await,
+        None,
         "born with no direction status"
     );
 
+    let first = direction_change(
+        &store,
+        &commission.id,
+        Some(DirectionStatus::WaitingForInput),
+    )
+    .await;
     let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .set_direction_status(&commission.id, Some(DirectionStatus::WaitingForInput))
+    let landed = uow
+        .commissions()
+        .set_direction_status(&capability, &first)
         .await
         .expect("set status");
     uow.commit().await.expect("commit");
+    assert!(landed);
     assert_eq!(
-        store
-            .find(&commission.id)
-            .await
-            .expect("find")
-            .expect("exists")
-            .direction_status,
+        direction_of(&store, &commission.id).await,
         Some(DirectionStatus::WaitingForInput),
     );
 
     // A second set replaces the value whole — never accumulates.
+    let replaced = direction_change(
+        &store,
+        &commission.id,
+        Some(DirectionStatus::ChangesRequested),
+    )
+    .await;
     let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .set_direction_status(&commission.id, Some(DirectionStatus::ChangesRequested))
+    let landed = uow
+        .commissions()
+        .set_direction_status(&capability, &replaced)
         .await
         .expect("replace status");
+    let stale = uow
+        .commissions()
+        .set_direction_status(&capability, &first)
+        .await
+        .expect("a stale set runs");
     uow.commit().await.expect("commit");
+    assert!(landed);
+    assert!(
+        !stale,
+        "a set from a status the row no longer holds matches no row"
+    );
     assert_eq!(
-        store
-            .find(&commission.id)
-            .await
-            .expect("find")
-            .expect("exists")
-            .direction_status,
+        direction_of(&store, &commission.id).await,
         Some(DirectionStatus::ChangesRequested),
     );
 
     // Clearing writes NULL; the deadline envelope is a separate axis and is
     // untouched throughout (it was None at seed and stays None).
+    let cleared = direction_change(&store, &commission.id, None).await;
     let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .set_direction_status(&commission.id, None)
+    let landed = uow
+        .commissions()
+        .set_direction_status(&capability, &cleared)
         .await
         .expect("clear status");
+    let elsewhere = uow
+        .commissions()
+        .set_direction_status(
+            &seed::participant_on(CommissionId::from(uuid::Uuid::now_v7())),
+            &first,
+        )
+        .await
+        .expect("an unknown commission runs");
     uow.commit().await.expect("commit");
+    assert!(landed);
+    assert!(!elsewhere, "an absent commission matches no row");
     let found = store
         .find(&commission.id)
         .await
         .expect("find")
         .expect("exists");
     assert!(found.direction_status.is_none(), "cleared to NULL");
-
-    // An absent commission is a no-op write, not an error.
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .set_direction_status(
-            &CommissionId::from(uuid::Uuid::now_v7()),
-            Some(DirectionStatus::WaitingForApproval),
-        )
-        .await
-        .expect("no-op on an unknown commission");
-    uow.commit().await.expect("commit");
+    assert!(found.deadline.is_none());
 }

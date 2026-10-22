@@ -10,12 +10,13 @@ use domain::{
         commission::{
             AsParticipant, Band, ChannelPointer, Commission, CommissionBirth,
             CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionRole,
-            CommissionStanding, CommissionStart, CommissionSummary, DeadlineStatus,
-            DirectionStatus, ElementId, ElementPayload, ElementRow, ElementType, FileKey,
-            FileSummary, GrantLevel, LapsedDeadline, LifecycleMove, LifecycleStep, LockedStanding,
-            Markup, MarkupKey, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
-            SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName,
-            TabId, TabName, TabRow, VisibilityMode, declared_tabs, declares_surface,
+            CommissionStanding, CommissionStart, CommissionSummary, DeadlineChange, DeadlineStatus,
+            DelayedChange, DirectionChange, DirectionStatus, ElementId, ElementPayload, ElementRow,
+            ElementType, FileKey, FileSummary, GrantLevel, LapsedDeadline, LifecycleMove,
+            LifecycleStep, LockedStanding, Markup, MarkupKey, NewCommission, NewElement, NewSeat,
+            NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
+            SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
+            declares_surface,
         },
         did::Did,
         invitation::InvitationState,
@@ -537,49 +538,58 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(affected > 0)
     }
 
-    /// Repoints or clears `commission.direction_status`; an absent commission is a
-    /// no-op.
+    /// Moves `commission.direction_status` by compare-and-set; `true` only when exactly one row
+    /// changed.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_direction_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DirectionStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DirectionChange,
     ) -> anyhow::Result<bool> {
         let affected = sql::set_direction_status(
             &mut *self.conn,
-            uuid::Uuid::from(*id),
-            status.map(<&'static str>::from),
+            uuid::Uuid::from(*capability.thing()),
+            change.after().map(<&'static str>::from),
+            change.before().map(<&'static str>::from),
         )
         .await?;
-        Ok(affected > 0)
+        Ok(affected == 1)
     }
 
-    /// Repoints or clears `commission.deadline`; an absent commission is a no-op.
+    /// Moves `commission.deadline` by compare-and-set; `true` only when exactly one row
+    /// changed.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_deadline(
         &mut self,
-        id: &CommissionId,
-        deadline: Option<DateTimeUtc>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DeadlineChange,
     ) -> anyhow::Result<bool> {
-        let affected = sql::set_deadline(&mut *self.conn, uuid::Uuid::from(*id), deadline).await?;
-        Ok(affected > 0)
+        let affected = sql::set_deadline(
+            &mut *self.conn,
+            uuid::Uuid::from(*capability.thing()),
+            change.after(),
+            change.before(),
+        )
+        .await?;
+        Ok(affected == 1)
     }
 
-    /// Repoints or clears `commission.deadline_status` (the manual `Delayed` flag
-    /// only — `Late` is derived fresh at read, never persisted).
+    /// Moves `commission.deadline_status`, the stored Delayed flag, by compare-and-set against
+    /// the flag the row held; `true` only when exactly one row changed. Late is never stored.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_deadline_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DeadlineStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DelayedChange,
     ) -> anyhow::Result<bool> {
         let affected = sql::set_deadline_status(
             &mut *self.conn,
-            uuid::Uuid::from(*id),
-            status.map(<&'static str>::from),
+            uuid::Uuid::from(*capability.thing()),
+            change.after().map(<&'static str>::from),
+            change.held().map(<&'static str>::from),
         )
         .await?;
-        Ok(affected > 0)
+        Ok(affected == 1)
     }
 
     /// The sweeper's candidate scan, on the open transaction: deadline strictly

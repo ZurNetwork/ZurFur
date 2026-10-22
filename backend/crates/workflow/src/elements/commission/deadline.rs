@@ -168,11 +168,12 @@ pub fn clear_deadline(
     Ok(cleared)
 }
 
-/// A Delayed flag a rule passed: the status the act saw, and the deadline it stood against.
-/// Built only by [`set_delayed`].
+/// A Delayed flag a rule passed: the status the act saw, the flag the row held, and the
+/// deadline it stood against. Built only by [`set_delayed`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DelayedSet {
     from: Option<DeadlineStatus>,
+    held: Option<DeadlineStatus>,
     deadline: Option<DateTimeUtc>,
 }
 
@@ -180,6 +181,11 @@ impl DelayedSet {
     /// The deadline-axis status the act saw.
     pub fn before(&self) -> Option<DeadlineStatus> {
         self.from
+    }
+
+    /// The flag the row held when the rule read it.
+    pub fn held(&self) -> Option<DeadlineStatus> {
+        self.held
     }
 
     /// The status it sets: always [`Delayed`](DeadlineStatus::Delayed).
@@ -193,11 +199,12 @@ impl DelayedSet {
     }
 }
 
-/// A Delayed flag taken down, as a rule passed it: the status the act saw, and the deadline.
-/// Built only by [`clear_delayed`]; it carries no new status.
+/// A Delayed flag taken down, as a rule passed it: the status the act saw, the flag the row
+/// held, and the deadline. Built only by [`clear_delayed`]; it carries no new status.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DelayedCleared {
     from: Option<DeadlineStatus>,
+    held: Option<DeadlineStatus>,
     deadline: Option<DateTimeUtc>,
 }
 
@@ -207,17 +214,24 @@ impl DelayedCleared {
         self.from
     }
 
+    /// The flag the row held when the rule read it.
+    pub fn held(&self) -> Option<DeadlineStatus> {
+        self.held
+    }
+
     /// The deadline the flag stood against, if any.
     pub fn deadline(&self) -> Option<DateTimeUtc> {
         self.deadline
     }
 }
 
-/// The value the store's Delayed-flag write takes: the status the act saw, the flag written
-/// (`None` clears) and the deadline. Built only from a passed set or clear.
+/// The value the store's Delayed-flag write takes: the status the act saw, the flag the row
+/// held (what the write compares against), the flag written (`None` clears) and the
+/// deadline. Built only from a passed set or clear.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DelayedChange {
     from: Option<DeadlineStatus>,
+    held: Option<DeadlineStatus>,
     to: Option<DeadlineStatus>,
     deadline: Option<DateTimeUtc>,
 }
@@ -226,6 +240,12 @@ impl DelayedChange {
     /// The deadline-axis status the act saw.
     pub fn before(&self) -> Option<DeadlineStatus> {
         self.from
+    }
+
+    /// The flag the row held when the rule read it: Late derived at the act's time never
+    /// stands here, and a flag left without a deadline does.
+    pub fn held(&self) -> Option<DeadlineStatus> {
+        self.held
     }
 
     /// The flag written, or `None` to clear it.
@@ -244,6 +264,7 @@ impl From<DelayedSet> for DelayedChange {
     fn from(set: DelayedSet) -> Self {
         Self {
             from: set.from,
+            held: set.held,
             to: Some(DeadlineStatus::Delayed),
             deadline: set.deadline,
         }
@@ -255,6 +276,7 @@ impl From<DelayedCleared> for DelayedChange {
     fn from(cleared: DelayedCleared) -> Self {
         Self {
             from: cleared.from,
+            held: cleared.held,
             to: None,
             deadline: cleared.deadline,
         }
@@ -275,11 +297,13 @@ pub fn set_delayed(
     if deadline.is_none() {
         return Err(CommissionRefusal::NoDeadline);
     }
-    if state.delayed_flag() == Some(DeadlineStatus::Delayed) {
+    let held = state.delayed_flag();
+    if held == Some(DeadlineStatus::Delayed) {
         return Ok(None);
     }
     Ok(Some(DelayedSet {
         from: seen,
+        held,
         deadline,
     }))
 }
@@ -294,11 +318,13 @@ pub fn clear_delayed(
     if seen == Some(DeadlineStatus::Late) {
         return Err(CommissionRefusal::CommissionLate);
     }
-    if state.delayed_flag().is_none() {
+    let held = state.delayed_flag();
+    if held.is_none() {
         return Ok(None);
     }
     Ok(Some(DelayedCleared {
         from: seen,
+        held,
         deadline: state.deadline(),
     }))
 }

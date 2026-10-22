@@ -19,7 +19,8 @@ use domain::{
     elements::{
         commission::{
             AsOwner, AsParticipant, Commission, CommissionBirth, CommissionId, CommissionRefusal,
-            CommissionRole, CommissionState, NewChangelogEntry,
+            CommissionRole, CommissionState, DeadlineChange, DelayedChange, DirectionChange,
+            NewChangelogEntry,
         },
         node::{NewNode, NodeId, NodeRow, NodeSegment, NodeType},
         text::StoredText,
@@ -29,7 +30,9 @@ use domain::{
 };
 
 use crate::{
-    commission::{act::CommissionAct, create, lifecycle::move_to, rename},
+    commission::{
+        act::CommissionAct, create, deadline, lifecycle::move_to, rename, status::direction,
+    },
     den::{
         act::{ArmAnswer, DenAct, EntryRule, Handled, HandlerError},
         authority::Grant,
@@ -529,6 +532,18 @@ enum Prepared {
     Rename(Passed<rename::Act>),
     /// A commission's lifecycle move.
     MoveLifecycle(Passed<move_to::Act>),
+    /// A commission's direction status set.
+    SetDirection(Passed<direction::set::Act>),
+    /// A commission's direction status clear.
+    ClearDirection(Passed<direction::clear::Act>),
+    /// A commission's deadline set.
+    SetDeadline(Passed<deadline::set::Act>),
+    /// A commission's deadline clear.
+    ClearDeadline(Passed<deadline::clear::Act>),
+    /// A commission's Delayed flag raised.
+    SetDelayed(Passed<deadline::status::set::Act>),
+    /// A commission's Delayed flag taken down.
+    ClearDelayed(Passed<deadline::status::clear::Act>),
 }
 
 /// `handler`'s rule on the facts `grant` carries for its role, at `now`: the act, passed, or
@@ -557,6 +572,24 @@ fn prepare(act: DenAct, grant: &Grant, now: DateTimeUtc) -> Result<Prepared, Den
         }
         DenAct::Commission(CommissionAct::MoveLifecycle(move_to)) => {
             passed(move_to, grant, now).map(Prepared::MoveLifecycle)
+        }
+        DenAct::Commission(CommissionAct::SetDirection(set)) => {
+            passed(set, grant, now).map(Prepared::SetDirection)
+        }
+        DenAct::Commission(CommissionAct::ClearDirection(clear)) => {
+            passed(clear, grant, now).map(Prepared::ClearDirection)
+        }
+        DenAct::Commission(CommissionAct::SetDeadline(set)) => {
+            passed(set, grant, now).map(Prepared::SetDeadline)
+        }
+        DenAct::Commission(CommissionAct::ClearDeadline(clear)) => {
+            passed(clear, grant, now).map(Prepared::ClearDeadline)
+        }
+        DenAct::Commission(CommissionAct::SetDelayed(set)) => {
+            passed(set, grant, now).map(Prepared::SetDelayed)
+        }
+        DenAct::Commission(CommissionAct::ClearDelayed(clear)) => {
+            passed(clear, grant, now).map(Prepared::ClearDelayed)
         }
     }
 }
@@ -661,6 +694,150 @@ impl View<'_, move_to::Act> {
     }
 }
 
+impl View<'_, direction::set::Act> {
+    /// Sets the capability's commission's direction status as the rule checked, by
+    /// compare-and-set, once; a set that matches no row fails.
+    async fn set_direction_status(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self
+            .repo
+            .set_direction_status(&self.capability, &DirectionChange::from(change.clone()))
+            .await?;
+        if !landed {
+            return Err(facts_lied("the direction set matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
+impl View<'_, direction::clear::Act> {
+    /// Clears the capability's commission's direction status as the rule checked, by
+    /// compare-and-set, once; a clear that matches no row fails.
+    async fn set_direction_status(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self
+            .repo
+            .set_direction_status(&self.capability, &DirectionChange::from(change.clone()))
+            .await?;
+        if !landed {
+            return Err(facts_lied("the direction clear matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
+impl View<'_, deadline::set::Act> {
+    /// Sets the capability's commission's deadline as the rule checked, by compare-and-set,
+    /// once; a set that matches no row fails.
+    async fn set_deadline(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self
+            .repo
+            .set_deadline(&self.capability, &DeadlineChange::from(change.clone()))
+            .await?;
+        if !landed {
+            return Err(facts_lied("the deadline set matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
+impl View<'_, deadline::clear::Act> {
+    /// Clears the capability's commission's deadline as the rule checked, by compare-and-set,
+    /// once; a clear that matches no row fails.
+    async fn set_deadline(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self
+            .repo
+            .set_deadline(&self.capability, &DeadlineChange::from(change.clone()))
+            .await?;
+        if !landed {
+            return Err(facts_lied("the deadline clear matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
+impl View<'_, deadline::status::set::Act> {
+    /// Raises the capability's commission's Delayed flag as the rule checked, by
+    /// compare-and-set on the stored flag, once; a set that matches no row fails.
+    async fn set_deadline_status(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self
+            .repo
+            .set_deadline_status(&self.capability, &DelayedChange::from(change.clone()))
+            .await?;
+        if !landed {
+            return Err(facts_lied("the Delayed set matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
+impl View<'_, deadline::status::clear::Act> {
+    /// Takes the capability's commission's Delayed flag down as the rule checked, by
+    /// compare-and-set on the stored flag, once; a clear that matches no row fails.
+    async fn set_deadline_status(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self
+            .repo
+            .set_deadline_status(&self.capability, &DelayedChange::from(change.clone()))
+            .await?;
+        if !landed {
+            return Err(facts_lied("the Delayed clear matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
 impl<H: Handler> View<'_, H> {
     /// The capability's commission as the unit holds it; no row is a failure.
     async fn lent(&mut self) -> anyhow::Result<Commission> {
@@ -692,6 +869,48 @@ impl Lent<'_, move_to::Act> {
     /// Moves the commission's lifecycle as the rule checked: once, and only a real move.
     pub(crate) async fn set_lifecycle(&mut self) -> anyhow::Result<()> {
         self.latch.pass(self.view.set_lifecycle().await)
+    }
+}
+
+impl Lent<'_, direction::set::Act> {
+    /// Sets the commission's direction status as the rule checked: once, and only a real set.
+    pub(crate) async fn set_direction_status(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_direction_status().await)
+    }
+}
+
+impl Lent<'_, direction::clear::Act> {
+    /// Clears the commission's direction status as the rule checked: once, and only a real clear.
+    pub(crate) async fn set_direction_status(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_direction_status().await)
+    }
+}
+
+impl Lent<'_, deadline::set::Act> {
+    /// Sets the commission's deadline as the rule checked: once, and only a real set.
+    pub(crate) async fn set_deadline(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_deadline().await)
+    }
+}
+
+impl Lent<'_, deadline::clear::Act> {
+    /// Clears the commission's deadline as the rule checked: once, and only a real clear.
+    pub(crate) async fn set_deadline(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_deadline().await)
+    }
+}
+
+impl Lent<'_, deadline::status::set::Act> {
+    /// Raises the commission's Delayed flag as the rule checked: once, and only a real set.
+    pub(crate) async fn set_deadline_status(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_deadline_status().await)
+    }
+}
+
+impl Lent<'_, deadline::status::clear::Act> {
+    /// Takes the commission's Delayed flag down as the rule checked: once, and only a real clear.
+    pub(crate) async fn set_deadline_status(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_deadline_status().await)
     }
 }
 
@@ -808,6 +1027,12 @@ async fn lend(
         Prepared::Create(create) => lend_as(create, grant, unit, written, now).await,
         Prepared::Rename(rename) => lend_as(rename, grant, unit, written, now).await,
         Prepared::MoveLifecycle(move_to) => lend_as(move_to, grant, unit, written, now).await,
+        Prepared::SetDirection(set) => lend_as(set, grant, unit, written, now).await,
+        Prepared::ClearDirection(clear) => lend_as(clear, grant, unit, written, now).await,
+        Prepared::SetDeadline(set) => lend_as(set, grant, unit, written, now).await,
+        Prepared::ClearDeadline(clear) => lend_as(clear, grant, unit, written, now).await,
+        Prepared::SetDelayed(set) => lend_as(set, grant, unit, written, now).await,
+        Prepared::ClearDelayed(clear) => lend_as(clear, grant, unit, written, now).await,
     }
 }
 

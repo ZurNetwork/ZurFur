@@ -14,9 +14,9 @@ use domain::elements::{
     commission::{
         AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
         CommissionFile, CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary,
-        DeadlineStatus, DirectionStatus, ElementId, FileKey, FileSummary, GrantLevel,
-        LapsedDeadline, LifecycleMove, LockedStanding, NewCommission, NewElement, NewSeat, NewSlot,
-        Seat, SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
+        DeadlineChange, DelayedChange, DirectionChange, ElementId, FileKey, FileSummary,
+        GrantLevel, LapsedDeadline, LifecycleMove, LockedStanding, NewCommission, NewElement,
+        NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
     },
     did::Did,
     handle::Handle,
@@ -733,26 +733,26 @@ impl CommissionWrites for ScriptedStandingRepo<'_> {
 
     async fn set_direction_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DirectionStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DirectionChange,
     ) -> anyhow::Result<bool> {
-        self.inner.set_direction_status(id, status).await
+        self.inner.set_direction_status(capability, change).await
     }
 
     async fn set_deadline(
         &mut self,
-        id: &CommissionId,
-        deadline: Option<DateTimeUtc>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DeadlineChange,
     ) -> anyhow::Result<bool> {
-        self.inner.set_deadline(id, deadline).await
+        self.inner.set_deadline(capability, change).await
     }
 
     async fn set_deadline_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DeadlineStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DelayedChange,
     ) -> anyhow::Result<bool> {
-        self.inner.set_deadline_status(id, status).await
+        self.inner.set_deadline_status(capability, change).await
     }
 
     async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
