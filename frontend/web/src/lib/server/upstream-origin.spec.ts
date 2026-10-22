@@ -11,7 +11,8 @@ import { Effect } from 'effect';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { kitEventFetch } from '$lib/testing/kit-fetch';
 import { commissionId } from '$lib/types/brand';
-import { RequestFetch, ZurfurApi, ZurfurApiLive } from './api/zurfur-api';
+import type { BugDescription } from '$lib/types/bug-report-rules';
+import { RequestFetch, ZurfurApi, ZurfurApiLive, type BugReportFiling } from './api/zurfur-api';
 import { countdown, TIME_LIMITS } from './time-limits';
 
 /** Where the local API stand-in listens, once it does. */
@@ -135,6 +136,23 @@ const renameCommission = () => {
 	);
 };
 
+const fileBugReport = () => {
+	const filing: BugReportFiling = {
+		description: 'The tree forgot my folder.' as BugDescription,
+		page: undefined,
+		pageType: undefined,
+		webVersion: undefined,
+		browser: undefined,
+		window: undefined,
+		display: undefined,
+		errorStatus: undefined
+	};
+	return runLive(
+		Effect.flatMap(ZurfurApi, (api) => api.fileBugReport(filing)),
+		requestFetch('/report-a-bug', '/(session)/report-a-bug')
+	);
+};
+
 describe("SvelteKit's server-side writes reach the API carrying the page's origin", () => {
 	it('the page origin differs from the API stand-in’s own', () => {
 		expect(new URL(upstream.origin).origin).not.toBe(PAGE_ORIGIN);
@@ -145,7 +163,8 @@ describe("SvelteKit's server-side writes reach the API carrying the page's origi
 		['createAccount', 'POST', '/accounts', createAccount],
 		['createCommission', 'POST', '/commissions', createCommission],
 		['renameCommission', 'PATCH', `/commissions/${COMMISSION_ID}/title`, renameCommission],
-		['deleteAccount', 'DELETE', `/accounts/${ACCOUNT_ID}`, deleteAccount]
+		['deleteAccount', 'DELETE', `/accounts/${ACCOUNT_ID}`, deleteAccount],
+		['fileBugReport', 'POST', '/bug-reports', fileBugReport]
 	] as const)('%s (%s) arrives with origin set to the page’s', async (_, method, path, send) => {
 		await send();
 
