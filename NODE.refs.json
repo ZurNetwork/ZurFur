@@ -1004,6 +1004,11 @@
       "governs": "ports/changelog.rs x2"
     },
     {
+      "page": 2026093001,
+      "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
+      "governs": "ports/commission.rs CommissionWrites::create: a commission is made only through the den's one write host, so the port takes the gate's create capability (D4, ruling 34)"
+    },
+    {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
       "governs": "ports/commission.rs standing/standing_for_update (an unreadable stored visibility reads Private)"
@@ -1073,7 +1078,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "commission/file/value.rs: FileName refuses a name that starts with a dot (D18), so an ordinary upload never stores a dotfile; a dotfile arrives only through 'Upload configuration', which brings its own name type"
+      "governs": "commission/file/value.rs: FileName refuses a name that starts with a dot (D18), so an ordinary upload never stores a dotfile; a dotfile arrives only through 'Upload configuration', which brings its own name type; commission/title.rs: CommissionTitle wraps kernel's NodeName, the checked value every name type wraps (D19, amended 2026-10-15)"
     },
     {
       "page": 2026101201,

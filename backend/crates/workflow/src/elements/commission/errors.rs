@@ -1,11 +1,3 @@
-/// Why a string was rejected as a commission title.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum CommissionTitleError {
-    /// Empty once trimmed.
-    #[error("commission title must not be empty")]
-    Empty,
-}
-
 /// Why a token failed to resolve to a [`LifecycleStep`]. Surfaced as an error,
 /// never a silent default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]

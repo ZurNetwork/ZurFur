@@ -41,9 +41,7 @@ pub use element::{
     declares_surface,
 };
 pub use entity::Commission;
-pub use errors::{
-    CommissionTitleError, DeadlineStatusError, UnknownDirectionStatus, UnknownLifecycleStep,
-};
+pub use errors::{DeadlineStatusError, UnknownDirectionStatus, UnknownLifecycleStep};
 pub use fact::Fact;
 pub use file::{
     CommissionFile, FileDownload, FileKey, FileMetadata, FileName, FileNameError, FileSummary,
@@ -53,7 +51,7 @@ pub use id::CommissionId;
 pub use lifecycle::LifecycleStep;
 pub use markup::{CommissionMarkup, Markup, MarkupError, MarkupKey, MarkupShape};
 pub use role_marker::{AsOwner, AsParticipant};
-pub use rows::{CommissionSummary, NewCommission};
+pub use rows::{CommissionBirth, CommissionSummary, NewCommission};
 pub use seat::{
     NewSeat, Seat, SeatKind, SeatKindError, SeatLink, SeatLinkError, SeatPrompt, SeatPromptError,
 };

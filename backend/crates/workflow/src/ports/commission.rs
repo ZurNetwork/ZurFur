@@ -6,16 +6,20 @@ use async_trait::async_trait;
 
 use crate::elements::{
     commission::{
-        ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
-        CommissionMarkup, CommissionStanding, CommissionSummary, CommissionTitle, DeadlineStatus,
-        DirectionStatus, ElementId, FileKey, FileSummary, GrantLevel, LapsedDeadline,
-        NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot,
-        TabId, TabRow,
+        ChannelPointer, Commission, CommissionBirth, CommissionComposition, CommissionFile,
+        CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary, CommissionTitle,
+        DeadlineStatus, DirectionStatus, ElementId, FileKey, FileSummary, GrantLevel,
+        LapsedDeadline, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
+        SeatInvitationId, Slot, TabId, TabRow,
     },
     workflow::{Column, ColumnId, WorkflowId},
 };
 use identity::elements::user::UserId;
-use kernel::{datetime::DateTimeUtc, elements::maturity::Maturity};
+use kernel::{
+    datetime::DateTimeUtc,
+    elements::maturity::Maturity,
+    ports::{Creator, New, WriteCapability},
+};
 
 pub use super::errors::{ElementNotFound, UnknownSurface, UnknownTab};
 
@@ -145,16 +149,22 @@ pub trait CommissionStore: Send + Sync {
 }
 
 /// The **write** surface of Zurfur's record of commissions — reachable only on an
-/// open `UnitOfWork` (`uow.commissions()`). Authority
-/// and the commission's own existence are always the caller's checks, settled
-/// before any of these is reached.
+/// open `UnitOfWork` (`uow.commissions()`). A create's authority is the den's write
+/// gate's create [`WriteCapability`], which [`create`](Self::create) takes; every
+/// other method's authority, and the commission's own existence, are the caller's
+/// checks, settled before it is reached.
 #[async_trait]
 pub trait CommissionWrites: Send {
-    /// Persist a freshly created [`NewCommission`], together with its skeleton
-    /// tab rows and its owner's participant row. The title is a checked
-    /// [`CommissionTitle`](crate::elements::commission::CommissionTitle) by type. Both are minted inside the
-    /// implementation, so a tabless or owner-less commission is unrepresentable.
-    async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()>;
+    /// Persist a new commission under the id `capability` was issued for, at `birth`'s
+    /// node, owner and time, with what `commission` chose, in its starting state: Draft,
+    /// no statuses, no linked channel, not archived. Its skeleton tab rows and its owner's
+    /// participant row are written with it, so a tabless or owner-less one can't exist.
+    async fn create(
+        &mut self,
+        capability: &WriteCapability<New<CommissionId>, Creator>,
+        birth: &CommissionBirth,
+        commission: &NewCommission,
+    ) -> anyhow::Result<()>;
 
     /// Declare a [`NewSeat`] into a declared surface, as one element plus one
     /// satellite row sharing the seat's id. Refuses an absent/foreign tab with

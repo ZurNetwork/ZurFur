@@ -1,49 +1,38 @@
-use super::{
-    ChannelPointer, CommissionId, CommissionTitle, DeadlineStatus, DirectionStatus, LifecycleStep,
-};
+use super::CommissionId;
 use identity::elements::user::UserId;
 use kernel::{
     datetime::DateTimeUtc,
-    elements::{level::Level, maturity::Maturity, text::StoredText},
+    elements::{level::Level, maturity::Maturity, node::NodeId, text::StoredText},
 };
 
-/// A freshly created commission, ready to persist through
-/// [`CommissionWrites::create`](crate::ports::CommissionWrites::create). Built by
-/// [`Commission::create`](super::Commission::create). Its title is a checked
-/// [`CommissionTitle`], so no unchecked title can reach the write.
+/// What a create may choose of a new commission: its maturity and its deadline. The store
+/// writes the rest of its starting state, so a create can't choose that.
 ///
-/// ```compile_fail,E0308
-/// use kernel::elements::text::StoredText;
-/// use workflow::elements::commission::NewCommission;
+/// ```compile_fail,E0560
+/// use workflow::elements::commission::{LifecycleStep, NewCommission};
 ///
-/// fn store_unchecked(new: &mut NewCommission) {
-///     new.title = StoredText::from("   ".to_owned()); // refused: not a CommissionTitle
-/// }
+/// let chosen = NewCommission {
+///     maturity: None,
+///     deadline: None,
+///     lifecycle_step: LifecycleStep::Active, // refused: a create can't choose its lifecycle
+/// };
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewCommission {
-    /// The app-private id (UUIDv7, so it sorts by creation time).
-    pub id: CommissionId,
-    /// The checked Title.
-    pub title: CommissionTitle,
-    /// The User who creates the commission and owns it.
-    pub owner_id: UserId,
-    /// The lifecycle state it is born in.
-    pub lifecycle_step: LifecycleStep,
-    /// Who may see it.
-    pub visibility: Level,
-    /// The deadline, or `None`.
-    pub deadline: Option<DateTimeUtc>,
     /// The maturity posture, or `None` while unrated.
     pub maturity: Option<Maturity>,
-    /// The direction-axis Status, or `None`.
-    pub direction_status: Option<DirectionStatus>,
-    /// The deadline-axis Status, or `None`.
-    pub deadline_status: Option<DeadlineStatus>,
-    /// The external linked-channel pointer, or `None`.
-    pub linked_channel: Option<ChannelPointer>,
-    /// When it was archived, or `None` while active.
-    pub archived_at: Option<DateTimeUtc>,
+    /// The deadline, or `None`.
+    pub deadline: Option<DateTimeUtc>,
+}
+
+/// What the den's write gate supplies to a create, beside its capability: the commission's
+/// node, its owner and when it was made. The create itself chooses none of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommissionBirth {
+    /// The Den node the commission stands at.
+    pub node: NodeId,
+    /// The User who creates the commission and owns it.
+    pub owner_id: UserId,
     /// When it was created.
     pub created_at: DateTimeUtc,
 }

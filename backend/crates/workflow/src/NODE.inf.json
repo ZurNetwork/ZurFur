@@ -37,7 +37,7 @@
     },
     {
       "name": "ports/",
-      "role": "trait seams: commission (incl. the standing reads: `standing` on the pool, `standing_for_update` locked in a unit), changelog, workflow, file (FileStore); errors.rs (UnknownTab, UnknownSurface, ElementNotFound)",
+      "role": "trait seams: commission (incl. the standing reads: `standing` on the pool, `standing_for_update` locked in a unit; `CommissionWrites::create` takes the den's write gate's `&WriteCapability<New<CommissionId>, Creator>` and reads the id from it), changelog, workflow, file (FileStore); errors.rs (UnknownTab, UnknownSurface, ElementNotFound)",
       "node": false
     }
   ],
