@@ -246,9 +246,14 @@
       "governs": "the keeper read leaves tombstoned Characters out; empty on PostgreSQL until character storage lands"
     },
     {
+      "page": 2026093001,
+      "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
+      "governs": "migrations/20261022052438_create_node.sql: the node table holds each node's key, real parent, segment, type, level and name (D24); a node is never moved or retyped; tests/it/node.rs and tests/it/node_backfill.rs"
+    },
+    {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "queries/account/list_deactivated_for_owner.sql: deactivated Accounts read by their Owner only; queries/commission/find_summary.sql: the narrow read behind the Den commission node (D21); src/commission.rs stored_level: an unreadable stored visibility counts as Private in find, find_for_update, list_owned_by, list_participating and find_summary (D22, D21)"
+      "governs": "queries/account/list_deactivated_for_owner.sql: deactivated Accounts read by their Owner only; queries/commission/find_summary.sql: the narrow read behind the Den commission node (D21); src/commission.rs stored_level: an unreadable stored visibility counts as Private in find, find_for_update, list_owned_by, list_participating and find_summary (D22, D21); migrations/20261022052438_create_node.sql: each commission's node named by its title (D6), its fixed entries (D9) and its Slots' nodes, every entry and Slot node Private"
     }
   ],
   "backend/crates/api": [

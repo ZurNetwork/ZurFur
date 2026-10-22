@@ -690,10 +690,10 @@ impl From<sql::FindForUpdateRow> for CommissionFields {
     }
 }
 
-impl From<sql::CommissionRow> for CommissionFields {
+impl From<sql::ListOwnedByRow> for CommissionFields {
     /// From `queries/commission/list_owned_by.sql`'s row; the `id` column is
     /// dropped here and lifted separately by the caller.
-    fn from(row: sql::CommissionRow) -> Self {
+    fn from(row: sql::ListOwnedByRow) -> Self {
         Self {
             title: row.title,
             owner_id: row.owner_id,

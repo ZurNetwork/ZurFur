@@ -1123,33 +1123,6 @@ pub mod commission {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
-    pub struct CommissionRow {
-        pub id: uuid::Uuid,
-        pub title: String,
-        pub owner_id: String,
-        pub lifecycle: String,
-        pub visibility: String,
-        pub deadline: Option<chrono::DateTime<chrono::Utc>>,
-        pub maturity: Option<String>,
-        pub graphic: Option<bool>,
-        pub direction_status: Option<String>,
-        pub deadline_status: Option<String>,
-        pub linked_channel: Option<String>,
-        pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
-        pub created_at: chrono::DateTime<chrono::Utc>,
-    }
-
-    /// Row shape read back from the prepared statement's metadata.
-    #[derive(Debug, sqlx::FromRow)]
-    pub struct CommissionSlotRow {
-        pub element_id: uuid::Uuid,
-        pub commission_id: uuid::Uuid,
-        pub title: String,
-        pub notes: Option<String>,
-    }
-
-    /// Row shape read back from the prepared statement's metadata.
-    #[derive(Debug, sqlx::FromRow)]
     pub struct FilesRow {
         pub id: uuid::Uuid,
         pub created_at: chrono::DateTime<chrono::Utc>,
@@ -1203,6 +1176,24 @@ pub mod commission {
         pub id: uuid::Uuid,
         pub deadline: chrono::DateTime<chrono::Utc>,
         pub deadline_status: Option<String>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct ListOwnedByRow {
+        pub id: uuid::Uuid,
+        pub title: String,
+        pub owner_id: String,
+        pub lifecycle: String,
+        pub visibility: String,
+        pub deadline: Option<chrono::DateTime<chrono::Utc>>,
+        pub maturity: Option<String>,
+        pub graphic: Option<bool>,
+        pub direction_status: Option<String>,
+        pub deadline_status: Option<String>,
+        pub linked_channel: Option<String>,
+        pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
+        pub created_at: chrono::DateTime<chrono::Utc>,
     }
 
     /// Row shape read back from the prepared statement's metadata.
@@ -1268,6 +1259,15 @@ pub mod commission {
         pub prompt: Option<String>,
         pub link: Option<String>,
         pub occupant: Option<String>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct SlotsRow {
+        pub element_id: uuid::Uuid,
+        pub commission_id: uuid::Uuid,
+        pub title: String,
+        pub notes: Option<String>,
     }
 
     /// `queries/commission/add_element.sql`, contract inferred from the SQL against the migrated schema.
@@ -1682,7 +1682,7 @@ pub mod commission {
     pub async fn list_owned_by(
         conn: impl sqlx::PgExecutor<'_>,
         owner_id: &str,
-    ) -> sqlx::Result<Vec<CommissionRow>> {
+    ) -> sqlx::Result<Vec<ListOwnedByRow>> {
         sqlx::query_as(include_str!("../queries/commission/list_owned_by.sql"))
             .bind(owner_id)
             .fetch_all(conn)
@@ -2055,7 +2055,7 @@ pub mod commission {
     pub async fn slots(
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,
-    ) -> sqlx::Result<Vec<CommissionSlotRow>> {
+    ) -> sqlx::Result<Vec<SlotsRow>> {
         sqlx::query_as(include_str!("../queries/commission/slots.sql"))
             .bind(commission_id)
             .fetch_all(conn)
