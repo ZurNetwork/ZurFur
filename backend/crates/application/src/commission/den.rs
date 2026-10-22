@@ -275,13 +275,6 @@ pub(crate) async fn mounts(
 /// What a write's standing on a commission answers: the one not-found, a role below the act's
 /// need, or leave to act with the facts the write needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the den's write use case reads it; no driver calls it until the next slice"
-    )
-)]
 pub(crate) enum Verdict {
     /// No such commission, or the actor holds no standing on it, whatever its level.
     NotFound,
@@ -294,13 +287,6 @@ pub(crate) enum Verdict {
 /// The facts a granted standing hands the write: the actor's role, the commission's own level
 /// and whether it is archived. No id: the write already names its commission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the den's write use case reads it; no driver calls it until the next slice"
-    )
-)]
 pub(crate) struct StandingFacts {
     /// The actor's role, at or above what the act needs.
     pub(crate) role: CommissionRole,
@@ -313,13 +299,6 @@ pub(crate) struct StandingFacts {
 /// The verdict on one standing for an act that needs `needs`: no commission or no role is the
 /// one not-found, a lower role is forbidden, and at or above is granted. The pool's read and the
 /// locked read both answer through it.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the den's write use case calls it; no driver calls that until the next slice"
-    )
-)]
 pub(crate) fn verdict(standing: Option<CommissionStanding>, needs: CommissionRole) -> Verdict {
     let Some(standing) = standing else {
         return Verdict::NotFound;
@@ -340,13 +319,6 @@ pub(crate) fn verdict(standing: Option<CommissionStanding>, needs: CommissionRol
 
 /// The verdict on `actor`'s standing on `commission` from the pool, for an act that needs
 /// `needs`: one statement, the same for a stranger and an id nothing is stored under.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the den's write use case calls it; no driver calls that until the next slice"
-    )
-)]
 pub(crate) async fn pool_verdict(
     ports: &Ports,
     commission: &CommissionId,

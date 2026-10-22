@@ -8,7 +8,6 @@ use domain::{
     elements::{
         commission::{CommissionId, CommissionRole},
         level::Level,
-        node::NodeId,
         user::UserId,
     },
     ports::{New, Unit},
@@ -27,13 +26,6 @@ use crate::{
 /// What a grant leaves its actor to write: an existing commission in a role, or a new one
 /// under an id the den minted.
 #[derive(Debug, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "only the den's write use case makes one; no driver calls it until the next slice"
-    )
-)]
 pub(in crate::den) enum GrantKind {
     /// An existing commission, held in `role`, at the level the locked read answered.
     Existing {
@@ -53,25 +45,11 @@ pub(in crate::den) enum GrantKind {
 
 /// Leave for one write: who acts and what on. Its fields are private, it is neither `Clone`
 /// nor `Default`, and only this module makes one.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "only the den's write use case makes one; no driver calls it until the next slice"
-    )
-)]
-pub(in crate::den) struct Grant {
+pub(crate) struct Grant {
     actor: UserId,
     kind: GrantKind,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "only the den's write use case reads a grant; no driver calls it until the next slice"
-    )
-)]
 impl Grant {
     /// The grant's one constructor.
     fn granted(actor: &UserId, kind: GrantKind) -> Self {
@@ -134,33 +112,17 @@ tokio::task_local! {
     pub(in crate::den) static MINT_AS: CommissionId;
 }
 
-/// A fresh v7 commission id, through the kernel's v7 node-key mint: this crate doesn't depend
-/// on `uuid`.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "only the den's write use case mints; no driver calls it until the next slice"
-    )
-)]
+/// A fresh v7 commission id.
 fn mint() -> CommissionId {
     #[cfg(test)]
     if let Ok(planted) = MINT_AS.try_with(|planted| *planted) {
         return planted;
     }
-    let key = NodeId::mint();
-    CommissionId::from(*key.as_ref())
+    CommissionId::mint()
 }
 
 /// The commission an anchor's place stands for; any other place has no arm in the den's
 /// write yet and is the one not-found.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "only the den's write use case reads an anchor; no driver calls it until the next slice"
-    )
-)]
 fn commission_of(place: &Place) -> Result<CommissionId, DenWriteError> {
     let Place::Commission(CommissionPlace::Commission(commission)) = place else {
         return Err(DenWriteError::NotFound);
@@ -168,15 +130,14 @@ fn commission_of(place: &Place) -> Result<CommissionId, DenWriteError> {
     Ok(*commission)
 }
 
+/// The role a thing anchor's act needs; an act that needs none, a create's, fails closed.
+fn needed(spec: &ActSpec) -> Result<CommissionRole, DenWriteError> {
+    spec.needs
+        .ok_or(DenWriteError::Refused(RefusalClass::WrongGrant))
+}
+
 /// The rule for a top-level anchor: only a create carries one, and only `/commission` has an
 /// arm for it.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "only the den's write use case reads an anchor; no driver calls it until the next slice"
-    )
-)]
 fn top_level_create(top_level: TopLevel, shape: &ActShape) -> Result<(), DenWriteError> {
     if !matches!(shape, ActShape::Create { .. }) {
         return Err(DenWriteError::Refused(RefusalClass::WrongGrant));
@@ -188,13 +149,6 @@ fn top_level_create(top_level: TopLevel, shape: &ActShape) -> Result<(), DenWrit
 }
 
 /// A verdict as the write's answer: granted, or the one not-found, or forbidden.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "only the den's write use case reads a verdict; no driver calls it until the next slice"
-    )
-)]
 fn answer(verdict: Verdict) -> Result<crate::commission::den::StandingFacts, DenWriteError> {
     match verdict {
         Verdict::NotFound => Err(DenWriteError::NotFound),
@@ -204,14 +158,7 @@ fn answer(verdict: Verdict) -> Result<crate::commission::den::StandingFacts, Den
 }
 
 /// The pool's verdict on `spec` for `actor`, before any unit opens: a top-level anchor answers
-/// by rule alone, and a thing's by one standing statement.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the den's write use case calls it; no driver calls that until the next slice"
-    )
-)]
+/// by rule alone, and a thing's by one standing statement, once its act names a role.
 pub(in crate::den) async fn admit(
     ports: &Ports,
     spec: &ActSpec,
@@ -220,8 +167,9 @@ pub(in crate::den) async fn admit(
     match &spec.anchor {
         Anchor::TopLevel(top_level) => top_level_create(*top_level, &spec.shape),
         Anchor::Thing(place) => {
+            let needs = needed(spec)?;
             let commission = commission_of(place)?;
-            let verdict = pool_verdict(ports, &commission, actor, spec.needs).await?;
+            let verdict = pool_verdict(ports, &commission, actor, needs).await?;
             answer(verdict)?;
             Ok(())
         }
@@ -231,13 +179,6 @@ pub(in crate::den) async fn admit(
 /// The grant for `spec`, made inside the unit from the locked standing, under the same rules as
 /// [`admit`]: a standing lost since the pool read answers as the pool would have. A create's
 /// grant names an id minted here, never one from the act.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the den's write use case calls it; no driver calls that until the next slice"
-    )
-)]
 pub(in crate::den) async fn grant(
     unit: Unit<'_>,
     spec: &ActSpec,
@@ -252,12 +193,13 @@ pub(in crate::den) async fn grant(
             Ok(Grant::granted(actor, kind))
         }
         Anchor::Thing(place) => {
+            let needs = needed(spec)?;
             let commission = commission_of(place)?;
             let standing = unit
                 .commissions()
                 .standing_for_update(&commission, actor)
                 .await?;
-            let facts = answer(verdict(standing, spec.needs))?;
+            let facts = answer(verdict(standing, needs))?;
             let kind = GrantKind::Existing {
                 commission,
                 role: facts.role,
@@ -267,3 +209,6 @@ pub(in crate::den) async fn grant(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

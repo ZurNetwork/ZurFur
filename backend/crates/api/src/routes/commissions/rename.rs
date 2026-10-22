@@ -8,9 +8,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use domain::elements::commission::{CommissionTitle, CommissionTitleError};
+use domain::elements::commission::CommissionTitle;
 
-use super::{title_refused, title_write_problem, wire_timestamp};
+use super::{title_refused, wire_timestamp};
 use crate::generated::{RenameCommissionRequest, RenameCommissionResponse};
 use crate::{
     AppState,
@@ -44,8 +44,9 @@ impl From<CommissionValues> for RenameCommissionResponse {
 /// Renames the commission the path names; an `id` in the body is ignored.
 ///
 /// `200` with the commission as stored; `422 invalid_request` for a malformed body, or with
-/// a field error at `#/title` for a title that is blank or the name rule refuses; `403` for
-/// a Participant who isn't the owner; `404` for anyone else and for an id that names nothing.
+/// a field error at `#/title` for a title that is blank or the name rule refuses, checked
+/// before anyone's standing, so a Participant who isn't the owner gets it too; `403` for a
+/// Participant who isn't the owner; `404` for anyone else and for an id that names nothing.
 pub(super) async fn rename_commission(
     State(state): State<AppState>,
     CallingUser(actor_id): CallingUser,
@@ -53,8 +54,10 @@ pub(super) async fn rename_commission(
     body: Result<Json<RenameCommissionRequest>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
-    let title = CommissionTitle::try_from(body.title)
-        .map_err(|CommissionTitleError::Empty| title_refused(FieldCode::NameEmpty))?;
+    let title = body
+        .title
+        .parse::<CommissionTitle>()
+        .map_err(|rule| title_refused(FieldCode::from(rule)))?;
 
     let command = rename::Command {
         actor_id,
@@ -66,7 +69,7 @@ pub(super) async fn rename_commission(
         .commissions()
         .rename(command, Utc::now())
         .await
-        .map_err(title_write_problem)?;
+        .map_err(Problem::from)?;
 
     let body = RenameCommissionResponse::from(renamed);
     let response = (StatusCode::OK, Json(body)).into_response();

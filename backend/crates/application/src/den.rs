@@ -45,6 +45,7 @@ pub use thing::DenThing;
 
 pub(crate) use atta::Segment;
 pub(crate) use context::{DenContext, RootNaming};
+pub(crate) use gate::{Handler, Lent, needs};
 pub(crate) use name::showable_refusal;
 pub(crate) use place::STANDING;
 pub(crate) use place::{DenMount, Node, Place, TopLevel};

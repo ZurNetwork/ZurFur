@@ -12,13 +12,11 @@ use chrono::Utc;
 use domain::{
     elements::{
         commission::{
-            ChangelogEntry, ChangelogEntryKind, Commission, CommissionId, CommissionRole,
-            CommissionStanding, CommissionTitle,
+            ChangelogEntry, ChangelogEntryKind, CommissionId, CommissionRole, CommissionStanding,
         },
         did::Did,
         level::Level,
-        node::{NewNode, NodeId, NodeRow, NodeSegment, NodeType},
-        text::StoredText,
+        node::{NodeId, NodeRow, NodeSegment, NodeType},
     },
     ports::{
         AccountRepo, ActorIdentityWrites, BugReportWrites, ChangelogWrites, CharacterWrites,
@@ -34,12 +32,14 @@ use test_support::{
 
 use super::*;
 use crate::{
+    commission::{Commissions, create},
     den::{
-        act::{Anchor, BornEntry},
+        act::Anchor,
         authority::{GrantKind, MINT_AS},
         gate::{DenApplied, DenRefusal},
         probe::{
-            Probe, ProbeHandler, commission_path, draft, hand_built_create, hand_built_rename, name,
+            Probe, ProbeHandler, commission_path, create_act, hand_built_create,
+            hand_built_create_of, hand_built_rename,
         },
     },
     test_world, transaction,
@@ -63,41 +63,6 @@ fn made_up() -> CommissionId {
 /// A node segment from a commission's id.
 fn segment_of(commission: CommissionId) -> NodeSegment {
     NodeSegment::try_from(commission.to_string()).expect("an id is a segment")
-}
-
-/// The commission node for `commission`, named `title` at `level`, with its `products` entry.
-pub(super) async fn seed_node(
-    database: &dyn Database,
-    commission: CommissionId,
-    title: &str,
-    level: Level,
-) -> NodeId {
-    let node = NewNode {
-        id: NodeId::mint(),
-        parent: None,
-        segment: segment_of(commission),
-        node_type: NodeType::Commission,
-        level,
-        name: StoredText::from(title.to_owned()),
-    };
-    let products = NewNode {
-        id: NodeId::mint(),
-        parent: Some(node.id),
-        segment: NodeSegment::try_from("products").expect("a segment"),
-        node_type: NodeType::CommissionProducts,
-        level: Level::Private,
-        name: StoredText::from("products".to_owned()),
-    };
-    let id = node.id;
-    transaction(database, async move |uow: &mut dyn UnitOfWork| {
-        let mut rows = uow.nodes();
-        rows.create(&node).await?;
-        rows.create(&products).await?;
-        Ok(())
-    })
-    .await
-    .expect("the commission's node seeds");
-    id
 }
 
 /// The top-level node row of `commission`, read back on a unit that keeps nothing.
@@ -154,13 +119,9 @@ pub(super) async fn write(
     Den::from(ports).write(command, Utc::now()).await
 }
 
-/// The fixture world with "Untitled" and "Old sketch" given their nodes.
+/// The fixture world, whose "Untitled" and "Old sketch" stand bound to their nodes.
 async fn world() -> test_world::World {
-    let world = test_world::world().await;
-    let database = &*world.ports.database;
-    seed_node(database, untitled(), "Untitled", Level::Private).await;
-    seed_node(database, old_sketch(), "Old sketch", Level::Private).await;
-    world
+    test_world::world().await
 }
 
 /// Records `begin`, `commit` and `rollback` on `ports`' database from here on.
@@ -174,12 +135,6 @@ fn record_units(ports: &mut Ports) -> CallLog {
 /// The owner's rename of "Untitled", needing the Owner.
 fn owner_s_rename() -> Probe {
     Probe::rename(untitled(), NEW_NAME).needing(CommissionRole::Owner)
-}
-
-/// A draft the probe's handler hands back.
-fn renamed_draft() -> ProbeHandler {
-    let payload = serde_json::json!({ "probe": 1 });
-    ProbeHandler::Draft(draft(ChangelogEntryKind::Renamed, payload))
 }
 
 /// Runs a hand-built act through a write host for `grant` on a fresh unit, as `viewer`,
@@ -262,7 +217,7 @@ async fn a_stranger_s_act_and_one_on_a_made_up_id_answer_the_same_not_found_on_p
     let statements = StatementLog::default();
     let pg = pg_runtime_recording(&statements).await;
     let ports = Ports::from(&pg.runtime);
-    let (owner, commission) = pg_seed(&*ports.database, "did:plc:den-write-pg-owner").await;
+    let (owner, commission) = pg_seed(&ports, "did:plc:den-write-pg-owner").await;
     let stranger = provision(&*ports.database, STRANGER).await;
     let cases = [
         ("a stranger", stranger, commission),
@@ -291,7 +246,7 @@ async fn a_stranger_s_act_and_one_on_a_made_up_id_answer_the_same_not_found_on_p
 async fn a_participant_below_the_act_s_role_is_forbidden_and_writes_nothing() {
     let mut world = world().await;
     let log = record_units(&mut world.ports);
-    let act = owner_s_rename().handled(renamed_draft()).act();
+    let act = owner_s_rename().act();
     let before = entries(&world.ports, untitled()).await.len();
 
     let written = write(&world.ports, &bob(), act).await;
@@ -385,7 +340,7 @@ async fn standing_lost_after_the_pool_read_refuses_inside_the_unit() {
         world.ports.commissions = Arc::new(pool);
         world.ports.database = Arc::new(units);
         let log = record_units(&mut world.ports);
-        let act = owner_s_rename().handled(renamed_draft()).act();
+        let act = owner_s_rename().act();
 
         let written = write(&world.ports, &alice(), act).await;
 
@@ -431,10 +386,7 @@ async fn the_locked_standing_s_level_wins() {
 async fn a_walked_row_whose_type_differs_is_a_store_error_and_writes_nothing() {
     let world = world().await;
     let before = entries(&world.ports, untitled()).await.len();
-    let act = owner_s_rename()
-        .typed(DenType::CommissionProducts)
-        .handled(renamed_draft())
-        .act();
+    let act = owner_s_rename().typed(DenType::CommissionProducts).act();
 
     let written = write(&world.ports, &alice(), act).await;
 
@@ -449,12 +401,26 @@ async fn a_walked_row_whose_type_differs_is_a_store_error_and_writes_nothing() {
     assert_eq!(entries(&world.ports, untitled()).await.len(), before);
 }
 
-// A commission with no node row is the den's facts lying, not a miss.
+// A standing on a commission with no node row is the den's facts lying, not a miss.
 #[tokio::test]
 async fn a_walked_row_that_is_missing_is_a_store_error() {
-    let world = test_world::world().await;
-    let before = entries(&world.ports, untitled()).await.len();
-    let act = owner_s_rename().handled(renamed_draft()).act();
+    let mut world = world().await;
+    let nowhere = made_up();
+    let owner = CommissionStanding {
+        role: Some(CommissionRole::Owner),
+        level: Level::Private,
+        archived: false,
+    };
+    let script = StandingScript::default();
+    script.answer_standing(nowhere, alice(), Some(owner));
+    script.answer_standing_for_update(nowhere, alice(), Some(owner));
+    let pool = ScriptedStanding::new(world.ports.commissions.clone(), script.clone());
+    let units = ScriptedStandingDatabase::new(world.ports.database.clone(), script);
+    world.ports.commissions = Arc::new(pool);
+    world.ports.database = Arc::new(units);
+    let act = Probe::rename(nowhere, NEW_NAME)
+        .needing(CommissionRole::Owner)
+        .act();
 
     let written = write(&world.ports, &alice(), act).await;
 
@@ -462,8 +428,8 @@ async fn a_walked_row_that_is_missing_is_a_store_error() {
         matches!(written, Err(DenWriteError::Store(_))),
         "{written:?}"
     );
-    assert!(top_row(&*world.ports.database, untitled()).await.is_none());
-    assert_eq!(entries(&world.ports, untitled()).await.len(), before);
+    assert!(top_row(&*world.ports.database, nowhere).await.is_none());
+    assert_eq!(entries(&world.ports, nowhere).await.len(), 0);
 }
 
 // A grant naming another commission than the act: the write lands on the grant's, both when
@@ -535,7 +501,10 @@ async fn a_grant_of_the_wrong_kind_fails_closed() {
         .await
         .expect("the host answers");
 
-    assert_eq!(created, Err(DenRefusal::WrongGrant));
+    assert!(
+        matches!(created, Err(DenRefusal::WrongGrant)),
+        "{created:?}"
+    );
     assert!(top_row(database, fresh).await.is_none());
 
     let create_kind = GrantKind::Create {
@@ -548,7 +517,10 @@ async fn a_grant_of_the_wrong_kind_fails_closed() {
         .await
         .expect("the host answers");
 
-    assert_eq!(renamed, Err(DenRefusal::WrongGrant));
+    assert!(
+        matches!(renamed, Err(DenRefusal::WrongGrant)),
+        "{renamed:?}"
+    );
     assert_eq!(node_name(database, untitled()).await, "Untitled");
 }
 
@@ -581,12 +553,12 @@ async fn a_create_names_an_id_the_den_minted() {
     let world = world().await;
     let database = &*world.ports.database;
 
-    let first = write(&world.ports, &stranger(), Probe::create(NEW_NAME).act())
+    let first = write(&world.ports, &alice(), create_act(NEW_NAME))
         .await
-        .expect("anyone signed in creates");
-    let second = write(&world.ports, &stranger(), Probe::create(NEW_NAME).act())
+        .expect("alice creates");
+    let second = write(&world.ports, &bob(), create_act(NEW_NAME))
         .await
-        .expect("anyone signed in creates");
+        .expect("bob creates");
 
     let DenThing::Commission(first_id) = first.thing else {
         panic!("a create names a commission: {first:?}");
@@ -600,54 +572,67 @@ async fn a_create_names_an_id_the_den_minted() {
         let row = top_row(database, minted)
             .await
             .expect("its node is written");
+        assert_eq!(row.segment.as_ref(), minted.to_string());
         assert_eq!(row.name.as_str(), NEW_NAME);
     }
 }
 
+// The real create's body, in an act built by hand that picks a level wider than Private: Atta
+// passes it under the Public `/commission`, and the gate refuses it until 0.6.
 #[tokio::test]
 async fn a_create_that_picks_a_wider_level_is_refused_in_0_2() {
     let world = world().await;
     let database = &*world.ports.database;
 
-    for picked in [Level::Listed, Level::Public] {
+    for picked in [atta::Level::Listed, atta::Level::Public] {
         let planted = made_up();
-        let act = Probe::create(NEW_NAME).picking(Some(picked)).act();
-        let written = MINT_AS
-            .scope(planted, write(&world.ports, &alice(), act))
-            .await;
+        let kind = GrantKind::Create {
+            commission: New::from(planted),
+        };
+        let grant = Grant::for_test(&alice(), kind);
+        let act = hand_built_create_of(
+            planted,
+            NEW_NAME,
+            DenType::Commission,
+            Some(picked),
+            create_act(NEW_NAME),
+        );
+
+        let applied = through_host(database, DenHost::viewer_of(&alice()), grant, act)
+            .await
+            .expect("Atta passes it");
 
         assert!(
-            matches!(
-                written,
-                Err(DenWriteError::Refused(RefusalClass::WiderThanPrivate))
-            ),
-            "{picked:?}: {written:?}"
+            matches!(applied, Err(DenRefusal::WiderThanPrivate)),
+            "{picked:?}: {applied:?}"
         );
         assert!(top_row(database, planted).await.is_none(), "{picked:?}");
+        let stored = world
+            .ports
+            .commissions
+            .find(&planted)
+            .await
+            .expect("the store reads");
+        assert!(stored.is_none(), "{picked:?}");
     }
 }
 
+/// The six entries a commission is made with: each word, its stored type, its name.
+const SIX_ENTRIES: [(&str, NodeType); 6] = [
+    ("attachments", NodeType::CommissionAttachments),
+    ("brief", NodeType::CommissionBrief),
+    ("changelog", NodeType::CommissionChangelog),
+    ("participants", NodeType::CommissionParticipants),
+    ("products", NodeType::CommissionProducts),
+    ("slots", NodeType::CommissionSlots),
+];
+
 #[tokio::test]
-async fn a_create_writes_the_levels_atta_settled() {
+async fn a_create_writes_its_node_and_six_entries_private() {
     let world = world().await;
     let database = &*world.ports.database;
-    let entries = vec![
-        BornEntry {
-            word: names::PRODUCTS,
-            den_type: DenType::CommissionProducts,
-            name: name("products"),
-            level: None,
-        },
-        BornEntry {
-            word: names::SLOTS,
-            den_type: DenType::CommissionSlots,
-            name: name("slots"),
-            level: Some(Level::Private),
-        },
-    ];
-    let act = Probe::create(NEW_NAME).holding(entries).act();
 
-    let written = write(&world.ports, &alice(), act)
+    let written = write(&world.ports, &alice(), create_act(NEW_NAME))
         .await
         .expect("the create lands");
 
@@ -657,20 +642,35 @@ async fn a_create_writes_the_levels_atta_settled() {
     let node = top_row(database, minted)
         .await
         .expect("its node is written");
-    let made = rows_under(database, node.id).await;
-    let levels: Vec<Level> = std::iter::once(&node)
-        .chain(&made)
-        .map(|row| row.level)
+    let mut made: Vec<(String, NodeType, String, Level)> = rows_under(database, node.id)
+        .await
+        .into_iter()
+        .map(|row| {
+            let segment = row.segment.as_ref().to_owned();
+            let name = row.name.as_str().to_owned();
+            (segment, row.node_type, name, row.level)
+        })
         .collect();
+    made.sort_by(|left, right| left.0.cmp(&right.0));
+    let expected: Vec<(String, NodeType, String, Level)> = SIX_ENTRIES
+        .iter()
+        .map(|(word, node_type)| {
+            let word = (*word).to_owned();
+            (word.clone(), *node_type, word, Level::Private)
+        })
+        .collect();
+    assert_eq!(node.node_type, NodeType::Commission);
+    assert_eq!(node.level, Level::Private);
+    assert_eq!(node.name.as_str(), NEW_NAME);
     assert_eq!(written.level, Level::Private);
-    assert_eq!(levels, [Level::Private; 3]);
+    assert_eq!(made, expected);
 }
 
 #[tokio::test]
 async fn the_entry_lands_on_the_granted_commission_with_the_grant_s_actor() {
     let world = world().await;
     let now = Utc::now();
-    let act = owner_s_rename().handled(renamed_draft()).act();
+    let act = owner_s_rename().act();
     let command = Command {
         actor: alice(),
         act,
@@ -686,7 +686,8 @@ async fn the_entry_lands_on_the_granted_commission_with_the_grant_s_actor() {
     assert_eq!(entry.commission_id, untitled());
     assert_eq!(entry.actor_id, Some(alice()));
     assert_eq!(entry.kind, ChangelogEntryKind::Renamed);
-    assert_eq!(entry.payload, serde_json::json!({ "probe": 1 }));
+    assert_eq!(entry.payload, serde_json::json!({}));
+    assert_eq!(entry.note, None);
     assert_eq!(entry.created_at, now);
 }
 
@@ -695,13 +696,9 @@ async fn the_owner_s_act_lands_whole() {
     let world = world().await;
     let before = entries(&world.ports, untitled()).await.len();
 
-    let written = write(
-        &world.ports,
-        &alice(),
-        owner_s_rename().handled(renamed_draft()).act(),
-    )
-    .await
-    .expect("the owner renames");
+    let written = write(&world.ports, &alice(), owner_s_rename().act())
+        .await
+        .expect("the owner renames");
 
     let expected_name = DenName::try_from(NEW_NAME).expect("a name");
     assert_eq!(written.name, Some(expected_name));
@@ -717,11 +714,10 @@ async fn the_owner_s_act_lands_whole() {
 async fn the_owner_s_act_lands_whole_on_postgres() {
     let pg = pg_runtime().await;
     let ports = Ports::from(&pg.runtime);
-    let (owner, commission) = pg_seed(&*ports.database, "did:plc:den-write-pg-whole").await;
+    let (owner, commission) = pg_seed(&ports, "did:plc:den-write-pg-whole").await;
     let before = entries(&ports, commission).await.len();
     let act = Probe::rename(commission, NEW_NAME)
         .needing(CommissionRole::Owner)
-        .handled(renamed_draft())
         .act();
 
     write(&ports, &owner, act).await.expect("the owner renames");
@@ -738,7 +734,7 @@ async fn a_failed_entry_append_leaves_the_node_unrenamed() {
     let mut world = world().await;
     let refusing = RefusingChangelogDatabase(world.ports.database.clone());
     world.ports.database = Arc::new(refusing);
-    let act = owner_s_rename().handled(renamed_draft()).act();
+    let act = owner_s_rename().act();
 
     let written = write(&world.ports, &alice(), act).await;
 
@@ -780,20 +776,15 @@ async fn a_failed_handler_writes_neither_row_nor_entry() {
     }
 }
 
-/// A create holding one entry, whose minted id is planted on `taken`.
-async fn create_on(
+/// The real create, its minted id planted on `taken`.
+pub(super) async fn create_on(
     ports: &Ports,
     actor: &UserId,
     taken: CommissionId,
 ) -> Result<WriteResult, DenWriteError> {
-    let entries = vec![BornEntry {
-        word: names::PRODUCTS,
-        den_type: DenType::CommissionProducts,
-        name: name("products"),
-        level: None,
-    }];
-    let act = Probe::create(NEW_NAME).holding(entries).act();
-    MINT_AS.scope(taken, write(ports, actor, act)).await
+    MINT_AS
+        .scope(taken, write(ports, actor, create_act(NEW_NAME)))
+        .await
 }
 
 #[tokio::test]
@@ -813,14 +804,14 @@ async fn a_create_on_a_taken_segment_leaves_as_an_error_and_keeps_nothing() {
     );
     let after = top_row(database, untitled()).await.expect("still there");
     assert!(after == before);
-    assert_eq!(rows_under(database, after.id).await.len(), 1);
+    assert_eq!(rows_under(database, after.id).await.len(), 6);
 }
 
 #[tokio::test]
 async fn a_create_on_a_taken_segment_leaves_as_an_error_and_keeps_nothing_on_postgres() {
     let pg = pg_runtime().await;
     let ports = Ports::from(&pg.runtime);
-    let (owner, commission) = pg_seed(&*ports.database, "did:plc:den-write-pg-taken").await;
+    let (owner, commission) = pg_seed(&ports, "did:plc:den-write-pg-taken").await;
     let before = top_row(&*ports.database, commission).await.expect("seeded");
 
     let written = create_on(&ports, &owner, commission).await;
@@ -836,7 +827,7 @@ async fn a_create_on_a_taken_segment_leaves_as_an_error_and_keeps_nothing_on_pos
         .await
         .expect("still there");
     assert!(after == before);
-    assert_eq!(rows_under(&*ports.database, after.id).await.len(), 1);
+    assert_eq!(rows_under(&*ports.database, after.id).await.len(), 6);
 }
 
 // Archiving refuses nothing yet: a later ruling flips this one test.
@@ -868,20 +859,20 @@ pub(super) async fn provision(database: &dyn Database, did: &str) -> UserId {
     .expect("the user is recognized")
 }
 
-/// The owner `owner_did`, recognized, and a commission of theirs with its node.
-pub(super) async fn pg_seed(database: &dyn Database, owner_did: &str) -> (UserId, CommissionId) {
-    let owner = provision(database, owner_did).await;
-    let title: CommissionTitle = "Probed piece".parse().expect("a title");
-    let commission = Commission::create(title, owner.clone(), Utc::now(), None);
-    let id = commission.id;
-    transaction(database, async move |uow: &mut dyn UnitOfWork| {
-        uow.commissions().create(&commission).await?;
-        Ok(())
-    })
-    .await
-    .expect("the commission seeds");
-    seed_node(database, id, "Probed piece", Level::Private).await;
-    (owner, id)
+/// The owner `owner_did`, recognized, and a commission of theirs, made by the create use case.
+pub(super) async fn pg_seed(ports: &Ports, owner_did: &str) -> (UserId, CommissionId) {
+    let owner = provision(&*ports.database, owner_did).await;
+    let command = create::Command {
+        actor_id: owner.clone(),
+        title: "Probed piece".parse().expect("a title"),
+        maturity: None,
+        deadline: None,
+    };
+    let created = Commissions::new(ports)
+        .create(command, Utc::now())
+        .await
+        .expect("the commission seeds");
+    (owner, created.id)
 }
 
 /// A [`Database`] whose units refuse every changelog append.

@@ -1755,6 +1755,17 @@ impl MemBackend {
             .title = StoredText::from(title.to_owned());
     }
 
+    /// Overwrite a stored commission's lifecycle step (test-only seeder): a create is born
+    /// Draft, and no use case moves it yet. Panics if `commission` is not stored.
+    pub fn seed_lifecycle_step(&self, commission: CommissionId, step: LifecycleStep) {
+        self.commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned")
+            .get_mut(&commission)
+            .expect("seed_lifecycle_step: no such commission")
+            .lifecycle_step = step;
+    }
+
     /// The commission's tabs, in declared order (inspect helper) — how a test
     /// learns the tab id its element writes must address.
     pub async fn tabs_of(&self, commission: CommissionId) -> anyhow::Result<Vec<TabRow>> {

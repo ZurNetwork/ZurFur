@@ -1,11 +1,12 @@
 //! The den's write host and its gate: the one place a write reaches the node rows, the one
-//! issuer of a write capability, and the one appender of a write's changelog entry.
-//!
-//! The gate reads the node rows it writes outside Atta's resolver, to tie the write to them;
-//! it serves nothing it reads. Create and rename answer from what the gate wrote, never from
-//! a second read of the node.
+//! issuer of a write capability, the one lender of a handler's view, and the one builder of a
+//! write's changelog entry. Create and rename answer from what the gate wrote and the view
+//! read, never from a second read of the node.
 
-use std::sync::{Mutex, PoisonError};
+use std::{
+    fmt,
+    sync::{Mutex, PoisonError},
+};
 
 use atta::{
     Access, Admission, Born, Checked, DisplayName, Found, Host, HostError, Kind, Metadata, Mount,
@@ -14,31 +15,31 @@ use atta::{
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{AsOwner, AsParticipant, CommissionId, CommissionRole, NewChangelogEntry},
+        commission::{
+            AsOwner, AsParticipant, ChangelogEntryKind, Commission, CommissionBirth, CommissionId,
+            CommissionRole, NewChangelogEntry, NewCommission,
+        },
         node::{NewNode, NodeId, NodeRow, NodeSegment, NodeType},
         text::StoredText,
+        user::UserId,
     },
-    ports::{Creator, New, NodeRepo, SegmentTaken, Unit, WriteCapability},
+    ports::{CommissionRepo, Creator, New, NodeRepo, SegmentTaken, Unit, WriteCapability},
 };
 
-use crate::den::{
-    act::{DenAct, EntryDraft, HandlerError},
-    authority::Grant,
-    host::{DenHost, host_error, type_kind},
-    level::den_level,
-    names,
-    write::commission_directory,
+use crate::{
+    commission::act::CommissionAct,
+    den::{
+        act::{ArmAnswer, DenAct, Handled, HandlerError},
+        authority::Grant,
+        host::{DenHost, host_error, type_kind},
+        level::den_level,
+        names,
+        write::commission_directory,
+    },
 };
 
 /// Why the gate refused an act it was handed; it carries nothing of the act.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 pub(in crate::den) enum DenRefusal {
     /// The grant doesn't fit the act, or its role is below the capability's.
     WrongGrant,
@@ -50,16 +51,8 @@ pub(in crate::den) enum DenRefusal {
     TypeRefused,
 }
 
-/// What the gate wrote: the commission written, the name Atta checked, and a made node's
-/// settled level or the acted-on node's level.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
+/// What the gate wrote: the commission written, the name Atta checked, a made node's settled
+/// level or the acted-on node's level, and what the type's handler answered.
 pub(in crate::den) struct DenApplied {
     /// The commission written.
     pub(in crate::den) commission: CommissionId,
@@ -67,6 +60,20 @@ pub(in crate::den) struct DenApplied {
     pub(in crate::den) name: Option<DisplayName>,
     /// A made node's settled level, or the level of the node acted on.
     pub(in crate::den) level: atta::Level,
+    /// The thing the handler acted on, as its lent view read it.
+    pub(in crate::den) answer: ArmAnswer,
+}
+
+impl fmt::Debug for DenApplied {
+    /// The commission, the level and the answer's id; never the name, nor the owner's DID.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DenApplied")
+            .field("commission", &self.commission)
+            .field("level", &self.level)
+            .field("answer", &self.answer)
+            .finish_non_exhaustive()
+    }
 }
 
 /// What a gate step answers: a store failure as `Err`, the gate's refusal inside it.
@@ -74,13 +81,6 @@ type Gated<T> = anyhow::Result<Result<T, DenRefusal>>;
 
 /// The host Atta hands a checked act to, for one write: it serves no read and applies acts
 /// only through the gate. Built once, by the den's write.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 pub(in crate::den) struct DenWriteHost<'u> {
     viewer: Viewer,
     unit: Mutex<Unit<'u>>,
@@ -88,13 +88,6 @@ pub(in crate::den) struct DenWriteHost<'u> {
     now: DateTimeUtc,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 impl<'u> DenWriteHost<'u> {
     /// A host over `unit` for the grant's actor, applying acts under `grant` at `now`. The
     /// unit sits in a `Mutex` only because the engine's host must be `Sync`.
@@ -111,13 +104,6 @@ impl<'u> DenWriteHost<'u> {
 /// The host's refusal of an act Atta passed for another viewer: a broken rule, never a miss.
 #[derive(Debug, thiserror::Error)]
 #[error("the write host applies acts for its own viewer only")]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 struct AnotherViewer;
 
 #[async_trait::async_trait]
@@ -185,21 +171,17 @@ impl Host for DenWriteHost<'_> {
 /// Which grant a capability's role needs, and the commission its thing names: the gate's role
 /// table. A den trait because the markers are workflow's and kernel's, with no trait of their
 /// own, and only this gate may read it.
-pub(in crate::den) trait RoleTable: Sized {
+pub(crate) trait RoleTable: Sized {
     /// What the capability is over.
     type Thing;
+
+    /// The least role on an existing commission this role needs; `None` for a creator's.
+    const NEEDS: Option<CommissionRole>;
 
     /// The thing `grant` leaves this role to write, or `None` when it doesn't.
     fn granted(grant: &Grant) -> Option<Self::Thing>;
 
     /// The commission `thing` names.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "only the test probe's handler is lent a capability until the next slice"
-        )
-    )]
     fn commission(thing: &Self::Thing) -> CommissionId;
 }
 
@@ -207,8 +189,10 @@ impl RoleTable for AsParticipant {
     type Thing = CommissionId;
 
     /// Any Participant, the Owner included.
+    const NEEDS: Option<CommissionRole> = Some(CommissionRole::Participant);
+
     fn granted(grant: &Grant) -> Option<CommissionId> {
-        grant.existing_at_least(CommissionRole::Participant)
+        Self::NEEDS.and_then(|needs| grant.existing_at_least(needs))
     }
 
     fn commission(thing: &CommissionId) -> CommissionId {
@@ -220,8 +204,10 @@ impl RoleTable for AsOwner {
     type Thing = CommissionId;
 
     /// The Owner only.
+    const NEEDS: Option<CommissionRole> = Some(CommissionRole::Owner);
+
     fn granted(grant: &Grant) -> Option<CommissionId> {
-        grant.existing_at_least(CommissionRole::Owner)
+        Self::NEEDS.and_then(|needs| grant.existing_at_least(needs))
     }
 
     fn commission(thing: &CommissionId) -> CommissionId {
@@ -232,7 +218,9 @@ impl RoleTable for AsOwner {
 impl RoleTable for Creator {
     type Thing = New<CommissionId>;
 
-    /// A create grant only.
+    /// No role: a create needs a create grant, never a standing.
+    const NEEDS: Option<CommissionRole> = None;
+
     fn granted(grant: &Grant) -> Option<New<CommissionId>> {
         grant.minted()
     }
@@ -242,16 +230,27 @@ impl RoleTable for Creator {
     }
 }
 
+/// A den act's handler: the role of the capability the gate issues it, the entry its act
+/// writes, and what it does with the view the gate lends it.
+pub(crate) trait Handler {
+    /// The role of its capability; the act's needed role is read from it, never written apart.
+    type Role: RoleTable;
+
+    /// The kind of the one changelog entry the gate writes when the act lands.
+    const ENTRY: ChangelogEntryKind;
+
+    /// Acts through `lent` alone, and answers the thing it acted on as `lent` read it.
+    async fn handle(&self, lent: &mut Lent<'_, Self::Role>) -> Result<Handled, HandlerError>;
+}
+
+/// The role an act handled by `H` needs on an existing commission: its capability's role's.
+pub(crate) fn needs<H: Handler>() -> Option<CommissionRole> {
+    <H::Role as RoleTable>::NEEDS
+}
+
 /// The write capability in role `R` that `grant` leaves, or `None`; the one issuer in the
 /// workspace. A function, not `TryFrom<&Grant>`: the seam scan refuses any impl on the
 /// capability outside its own file, and allows the one `gate_issued` call only in `issue`.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 pub(in crate::den) fn issue<R: RoleTable>(grant: &Grant) -> Option<WriteCapability<R::Thing, R>> {
     let thing = R::granted(grant)?;
     #[expect(
@@ -263,37 +262,16 @@ pub(in crate::den) fn issue<R: RoleTable>(grant: &Grant) -> Option<WriteCapabili
 }
 
 /// Whether `error`, from the node port, says another node already holds the segment.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 fn segment_taken(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| cause.is::<SegmentTaken>())
 }
 
 /// A failure of the den's own rules: the facts the act was built from don't match the rows.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 fn facts_lied(what: &'static str) -> anyhow::Error {
     anyhow::anyhow!(what)
 }
 
 /// The node type a den type is stored as; a type the node rows don't hold is a broken rule.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 fn node_type(typ: &Type) -> anyhow::Result<NodeType> {
     typ.as_ref()
         .parse::<NodeType>()
@@ -301,13 +279,6 @@ fn node_type(typ: &Type) -> anyhow::Result<NodeType> {
 }
 
 /// A segment as the node rows hold it.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 fn node_segment(segment: &Segment) -> anyhow::Result<NodeSegment> {
     NodeSegment::try_from(segment.as_ref()).map_err(anyhow::Error::new)
 }
@@ -315,13 +286,6 @@ fn node_segment(segment: &Segment) -> anyhow::Result<NodeSegment> {
 /// The row of the existing node the act acts on, walked in the unit from the grant's
 /// commission: `/commission/<the grant's id>`, then each deeper step of `placed`'s path. A
 /// row missing, or of another type than `placed`'s, means the facts lied.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 async fn walk(rows: &mut dyn NodeRepo, grant: &Grant, placed: &Placed) -> anyhow::Result<NodeRow> {
     let commission = grant
         .existing_at_least(CommissionRole::Participant)
@@ -355,13 +319,6 @@ async fn walk(rows: &mut dyn NodeRepo, grant: &Grant, placed: &Placed) -> anyhow
 }
 
 /// A node row to create from a born node and the level Atta settled.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 fn new_node(parent: Option<NodeId>, born: &Born, settled: atta::Level) -> anyhow::Result<NewNode> {
     let node = NewNode {
         id: NodeId::mint(),
@@ -375,13 +332,6 @@ fn new_node(parent: Option<NodeId>, born: &Born, settled: atta::Level) -> anyhow
 }
 
 /// Creates `node` in the unit; another node holding its segment is the gate's refusal.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 async fn create(rows: &mut dyn NodeRepo, node: &NewNode) -> Gated<()> {
     match rows.create(node).await {
         Ok(()) => Ok(Ok(())),
@@ -390,21 +340,27 @@ async fn create(rows: &mut dyn NodeRepo, node: &NewNode) -> Gated<()> {
     }
 }
 
+/// What the gate wrote to the node rows: the node acted on or made, the commission the grant
+/// names, the name Atta checked, and a made node's settled level or the acted-on node's.
+struct Written {
+    /// The node acted on, or the node a create made.
+    node: NodeId,
+    /// The grant's commission: an existing one, or the id the den minted.
+    commission: CommissionId,
+    /// The name a create or a rename wrote.
+    name: Option<DisplayName>,
+    /// A made node's settled level, or the level of the node acted on.
+    level: atta::Level,
+}
+
 /// Writes a create's rows: its node at the top under the grant's minted id, then its entries
 /// under it, each at the level Atta settled. `/commission` is a rule, not a row.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 async fn write_create(
     rows: &mut dyn NodeRepo,
     grant: &Grant,
     parent: &Placed,
     born: &[(Born, atta::Level)],
-) -> Gated<DenApplied> {
+) -> Gated<Written> {
     let minted = grant
         .minted()
         .ok_or_else(|| facts_lied("a create holds no create grant"))?;
@@ -428,29 +384,23 @@ async fn write_create(
             return Ok(Err(refusal));
         }
     }
-    let applied = DenApplied {
+    let written = Written {
+        node: made.id,
         commission,
         name: Some(node.name.clone()),
         level: *level,
     };
-    Ok(Ok(applied))
+    Ok(Ok(written))
 }
 
 /// Writes the rows of `shape` from Atta's checked act: a create's node and entries, a
 /// rename's new name on the walked row; a change writes no row yet.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 async fn write_rows(
     rows: &mut dyn NodeRepo,
     grant: &Grant,
     shape: &Shape,
     born: &[(Born, atta::Level)],
-) -> Gated<DenApplied> {
+) -> Gated<Written> {
     match shape {
         Shape::Create { parent, .. } => write_create(rows, grant, parent, born).await,
         Shape::Rename { node, name } => {
@@ -459,33 +409,28 @@ async fn write_rows(
             if !rows.set_name(&row.id, &stored).await? {
                 return Err(facts_lied("a walked row is gone"));
             }
-            let applied = DenApplied {
+            let written = Written {
+                node: row.id,
                 commission: *row_commission(grant)?,
                 name: Some(name.clone()),
                 level: node.level,
             };
-            Ok(Ok(applied))
+            Ok(Ok(written))
         }
         Shape::Change { node } => {
-            walk(rows, grant, node).await?;
-            let applied = DenApplied {
+            let row = walk(rows, grant, node).await?;
+            let written = Written {
+                node: row.id,
                 commission: *row_commission(grant)?,
                 name: None,
                 level: node.level,
             };
-            Ok(Ok(applied))
+            Ok(Ok(written))
         }
     }
 }
 
 /// The existing commission a rename's or change's grant names.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 fn row_commission(grant: &Grant) -> anyhow::Result<&CommissionId> {
     match grant.kind() {
         crate::den::authority::GrantKind::Existing { commission, .. } => Ok(commission),
@@ -495,77 +440,180 @@ fn row_commission(grant: &Grant) -> anyhow::Result<&CommissionId> {
     }
 }
 
-/// What a handler lent its capability drafted, with the commission its capability names.
-type Lent = Option<(EntryDraft, CommissionId)>;
+/// The view's failure that its handler doesn't see: a lent call failed, and the act fails.
+#[derive(Debug, thiserror::Error)]
+#[error("a call under the lent view failed; the act fails")]
+struct Tripped;
 
-/// A handler's answer as the gate's: its refusal a refusal, its store failure a failure.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
-fn handled(handled: Result<Option<EntryDraft>, HandlerError>) -> Gated<Option<EntryDraft>> {
-    match handled {
-        Ok(draft) => Ok(Ok(draft)),
-        Err(HandlerError::Refused) => Ok(Err(DenRefusal::TypeRefused)),
-        Err(HandlerError::Store(error)) => Err(error),
+/// The first failure under a lent view, kept by the gate: once tripped, the act fails whatever
+/// its handler answers, so a dropped `Err` still rolls the unit back.
+#[derive(Default)]
+struct Latch(Option<anyhow::Error>);
+
+impl Latch {
+    /// `result` as the handler gets it: its failure kept here, the handler handed [`Tripped`].
+    fn pass<T>(&mut self, result: anyhow::Result<T>) -> anyhow::Result<T> {
+        result.map_err(|failure| {
+            self.0.get_or_insert(failure);
+            anyhow::Error::new(Tripped)
+        })
+    }
+
+    /// The first failure kept, if the latch tripped.
+    fn tripped(self) -> Option<anyhow::Error> {
+        self.0
     }
 }
 
-/// Issues the probe's capability in role `R` and lends it, with the commission repo alone, to
-/// the probe's handler.
+/// The lent view's own calls, unlatched: the commission repo, the capability, the node the gate
+/// wrote, the grant's actor and the gate's time. Only [`Lent`] reaches it.
+struct View<'a, R: RoleTable> {
+    repo: Box<dyn CommissionRepo + 'a>,
+    capability: WriteCapability<R::Thing, R>,
+    node: NodeId,
+    actor: UserId,
+    now: DateTimeUtc,
+}
+
+impl View<'_, Creator> {
+    /// Creates the capability's commission at the gate's node, owned by the grant's actor, at
+    /// the gate's time, with what `commission` chose.
+    async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {
+        let birth = CommissionBirth {
+            node: self.node,
+            owner_id: self.actor.clone(),
+            created_at: self.now,
+        };
+        self.repo.create(&self.capability, &birth, commission).await
+    }
+}
+
+impl<R: RoleTable> View<'_, R> {
+    /// The capability's commission as the unit holds it; no row is a failure.
+    async fn lent(&mut self) -> anyhow::Result<Commission> {
+        let commission = R::commission(self.capability.thing());
+        self.repo
+            .find(&commission)
+            .await?
+            .ok_or_else(|| facts_lied("the lent commission has no row"))
+    }
+}
+
+/// What a handler is lent for one act: a view that writes only what its act may, each call
+/// through the gate's latch. Its fields are private, so only the gate makes one.
+pub(crate) struct Lent<'a, R: RoleTable> {
+    view: View<'a, R>,
+    latch: Latch,
+}
+
+impl Lent<'_, Creator> {
+    /// Creates the commission the gate minted, at the node it made, for the grant's actor, at
+    /// the gate's time, with what `commission` chose.
+    pub(crate) async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {
+        self.latch.pass(self.view.create(commission).await)
+    }
+}
+
+impl<R: RoleTable> Lent<'_, R> {
+    /// The capability's commission as the unit holds it, read after the act's writes.
+    pub(crate) async fn lent(&mut self) -> anyhow::Result<Commission> {
+        self.latch.pass(self.view.lent().await)
+    }
+}
+
+/// What a lent handler answered, checked by the gate: the commission it acted on, and the
+/// kind of the entry its act writes.
+struct Landed {
+    answer: Commission,
+    entry: ChangelogEntryKind,
+}
+
+/// Issues `H`'s capability and lends it, in a view over the commission repo, to `handler`.
+/// A tripped latch fails the act whatever the handler answered; an answer naming another
+/// commission than the grant's is a broken rule.
+async fn lend_as<H: Handler>(
+    handler: &H,
+    grant: &Grant,
+    unit: Unit<'_>,
+    written: &Written,
+    now: DateTimeUtc,
+) -> Gated<Landed> {
+    let Some(capability) = issue::<H::Role>(grant) else {
+        return Ok(Err(DenRefusal::WrongGrant));
+    };
+    let view = View {
+        repo: unit.commissions(),
+        capability,
+        node: written.node,
+        actor: grant.actor().clone(),
+        now,
+    };
+    let mut lent = Lent {
+        view,
+        latch: Latch::default(),
+    };
+    let handled = handler.handle(&mut lent).await;
+    let Lent { view, latch } = lent;
+    drop(view);
+    if let Some(failure) = latch.tripped() {
+        return Err(failure);
+    }
+    let Handled { answer } = match handled {
+        Ok(handled) => handled,
+        Err(HandlerError::Refused) => return Ok(Err(DenRefusal::TypeRefused)),
+        Err(HandlerError::Store(failure)) => return Err(failure),
+    };
+    if answer.id != written.commission {
+        return Err(facts_lied(
+            "the handler answered another commission than the grant's",
+        ));
+    }
+    let landed = Landed {
+        answer,
+        entry: H::ENTRY,
+    };
+    Ok(Ok(landed))
+}
+
+/// Lends the probe in the role its act needs, through [`lend_as`].
 #[cfg(test)]
-async fn lend_probe<R: RoleTable>(
+async fn lend_probe(
     probe: &crate::den::probe::Probe,
     grant: &Grant,
     unit: Unit<'_>,
-) -> Gated<Lent> {
-    let Some(capability) = issue::<R>(grant) else {
-        return Ok(Err(DenRefusal::WrongGrant));
-    };
-    let mut repo = unit.commissions();
-    let draft = match handled(probe.handle(&mut *repo, &capability).await)? {
-        Ok(draft) => draft,
-        Err(refusal) => return Ok(Err(refusal)),
-    };
-    let commission = R::commission(capability.thing());
-    Ok(Ok(draft.map(|draft| (draft, commission))))
+    written: &Written,
+    now: DateTimeUtc,
+) -> Gated<Landed> {
+    use crate::den::probe::{ProbeAsOwner, ProbeAsParticipant, ProbeCreating, ProbeRole};
+    match probe.role() {
+        ProbeRole::Participant => {
+            lend_as(&ProbeAsParticipant(probe), grant, unit, written, now).await
+        }
+        ProbeRole::Owner => lend_as(&ProbeAsOwner(probe), grant, unit, written, now).await,
+        ProbeRole::Creator => lend_as(&ProbeCreating(probe), grant, unit, written, now).await,
+    }
 }
 
-/// Issues the act's capability and lends it, with the commission repo alone, to the type's
-/// handler: an exhaustive match over the den's acts.
-#[cfg_attr(
-    not(test),
-    expect(
-        unused_variables,
-        reason = "no act but the test probe exists until the next slice"
-    )
-)]
-async fn lend(act: DenAct, grant: &Grant, unit: Unit<'_>) -> Gated<Lent> {
+/// Lends each act to its type's handler: an exhaustive match over the den's acts, one
+/// [`lend_as`] per leaf act.
+async fn lend(
+    act: DenAct,
+    grant: &Grant,
+    unit: Unit<'_>,
+    written: &Written,
+    now: DateTimeUtc,
+) -> Gated<Landed> {
     match act {
-        #[cfg(test)]
-        DenAct::Probe(probe) => {
-            use crate::den::probe::ProbeRole;
-            match probe.role() {
-                ProbeRole::Participant => lend_probe::<AsParticipant>(&probe, grant, unit).await,
-                ProbeRole::Owner => lend_probe::<AsOwner>(&probe, grant, unit).await,
-                ProbeRole::Creator => lend_probe::<Creator>(&probe, grant, unit).await,
-            }
+        DenAct::Commission(CommissionAct::Create(create)) => {
+            lend_as(&create, grant, unit, written, now).await
         }
+        #[cfg(test)]
+        DenAct::Probe(probe) => lend_probe(&probe, grant, unit, written, now).await,
     }
 }
 
 /// Whether `grant` is the kind `shape` needs: a create grant for a create, an existing
 /// thing's for a rename or a change.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
 fn grant_fits(grant: &Grant, shape: &Shape) -> bool {
     let creates = grant.minted().is_some();
     match shape {
@@ -574,25 +622,10 @@ fn grant_fits(grant: &Grant, shape: &Shape) -> bool {
     }
 }
 
-/// The gate, run once per act from the write host's apply, in this order: the grant's kind
-/// against the act; no made node wider than Private until 0.6; the node rows walked and
-/// written under the unit's one node-port binding; the capability issued and lent to the
-/// type's handler; and the handler's draft appended as the changelog entry, on the
-/// capability's commission, by the grant's actor, at `now`.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no driver calls the den's write until the next slice"
-    )
-)]
-#[cfg_attr(
-    not(test),
-    expect(
-        unused_variables,
-        reason = "with no act but the test probe, the checked act is uninhabited outside tests"
-    )
-)]
+/// The gate, run once per act from the write host's apply: the grant's kind against the act;
+/// no made node wider than Private until 0.6; the node rows, under the unit's one node-port
+/// binding; the act lent to its handler; then the act's one entry, built here with an empty
+/// payload and no note, on the grant's commission, by the grant's actor, at `now`.
 pub(in crate::den) async fn gate(
     unit: Unit<'_>,
     grant: &Grant,
@@ -618,20 +651,29 @@ pub(in crate::den) async fn gate(
     let mut rows = unit.nodes();
     let written = write_rows(&mut *rows, grant, &act.shape, &born).await;
     drop(rows);
-    let applied = match written? {
-        Ok(applied) => applied,
+    let written = match written? {
+        Ok(written) => written,
         Err(refusal) => return Ok(Err(refusal)),
     };
 
-    let lent = match lend(act.body, grant, &mut *unit).await? {
-        Ok(lent) => lent,
+    let landed = match lend(act.body, grant, &mut *unit, &written, now).await? {
+        Ok(landed) => landed,
         Err(refusal) => return Ok(Err(refusal)),
     };
-    if let Some((draft, commission)) = lent {
-        let EntryDraft { kind, payload } = draft;
-        let entry = NewChangelogEntry::event(commission, kind, grant.actor().clone(), payload, now);
-        unit.changelog().append(&entry).await?;
-    }
+    let entry = NewChangelogEntry::event(
+        written.commission,
+        landed.entry,
+        grant.actor().clone(),
+        serde_json::json!({}),
+        now,
+    );
+    unit.changelog().append(&entry).await?;
+    let applied = DenApplied {
+        commission: written.commission,
+        name: written.name,
+        level: written.level,
+        answer: ArmAnswer::Commission(landed.answer),
+    };
     Ok(Ok(applied))
 }
 

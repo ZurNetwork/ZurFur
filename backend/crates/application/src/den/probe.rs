@@ -3,11 +3,13 @@
 
 use domain::{
     elements::{
-        commission::{ChangelogEntryKind, CommissionId, CommissionRole},
-        level::Level,
+        commission::{
+            AsOwner, AsParticipant, ChangelogEntryKind, Commission, CommissionId, CommissionRole,
+            NewCommission,
+        },
         name::NodeName,
     },
-    ports::{CommissionRepo, WriteCapability},
+    ports::Creator,
 };
 
 use atta::{Act, ActName, Born, Placed, RealPath, Shape};
@@ -15,25 +17,29 @@ use atta::{Act, ActName, Born, Placed, RealPath, Shape};
 use crate::{
     commission::den::CommissionPlace,
     den::{
-        DenType, Place, TopLevel,
-        act::{ActShape, ActSpec, Anchor, BornEntry, DenAct, EntryDraft, HandlerError},
+        DenType, Handler, Lent, Place, TopLevel,
+        act::{ActShape, ActSpec, Anchor, DenAct, Handled, HandlerError},
         host::type_key,
-        names,
+        names, needs,
         write::commission_directory,
     },
 };
 
-/// What the probe's handler does once lent its capability.
+/// What the probe's handler does once lent its view.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ProbeHandler {
-    /// Succeeds and drafts no entry.
+    /// Succeeds: a creator's creates the commission; each answers the lent commission.
     Succeed,
     /// Refuses the act as its type.
     Refuse,
     /// Fails as a store under it would.
     Fail,
-    /// Succeeds and drafts this entry.
-    Draft(EntryDraft),
+    /// A creator's reads the commission before it exists and drops that miss, then creates it
+    /// and answers it.
+    SwallowMiss,
+    /// A creator's creates the commission and reads it, creates it again and drops that
+    /// store failure, then answers what it read.
+    SwallowStoreFailure,
 }
 
 /// Which capability the probe is lent: the role marker its act needs, or a create's.
@@ -65,11 +71,6 @@ pub(crate) struct Probe {
 /// A name from test text.
 pub(crate) fn name(text: &str) -> NodeName {
     NodeName::try_from(text).expect("a valid test name")
-}
-
-/// A draft entry of `kind` with `payload`.
-pub(crate) fn draft(kind: ChangelogEntryKind, payload: serde_json::Value) -> EntryDraft {
-    EntryDraft { kind, payload }
 }
 
 impl Probe {
@@ -132,44 +133,23 @@ impl Probe {
         Self { handler, ..self }
     }
 
-    /// The same create, its node at the level `level` picked.
-    pub(crate) fn picking(self, picked: Option<Level>) -> Self {
-        let ActShape::Create { name, entries, .. } = self.shape else {
-            return self;
-        };
-        let shape = ActShape::Create {
-            name,
-            level: picked,
-            entries,
-        };
-        Self { shape, ..self }
-    }
-
-    /// The same create, holding `entries`.
-    pub(crate) fn holding(self, entries: Vec<BornEntry>) -> Self {
-        let ActShape::Create { name, level, .. } = self.shape else {
-            return self;
-        };
-        let shape = ActShape::Create {
-            name,
-            level,
-            entries,
-        };
-        Self { shape, ..self }
-    }
-
     /// The probe as the den's act.
     pub(crate) fn act(self) -> DenAct {
         DenAct::Probe(self)
     }
 
-    /// What it declares about itself.
+    /// What it declares about itself; the role it needs is its lent capability's.
     pub(crate) fn spec(&self) -> ActSpec {
+        let needs = match self.role() {
+            ProbeRole::Participant => needs::<ProbeAsParticipant<'_>>(),
+            ProbeRole::Owner => needs::<ProbeAsOwner<'_>>(),
+            ProbeRole::Creator => needs::<ProbeCreating<'_>>(),
+        };
         ActSpec {
             word: "probe",
             den_type: self.den_type,
             anchor: self.anchor.clone(),
-            needs: self.needs,
+            needs,
             shape: self.shape.clone(),
         }
     }
@@ -185,18 +165,79 @@ impl Probe {
         }
     }
 
-    /// Its handler, lent the commission repo and the capability as a real one is.
-    pub(crate) async fn handle<T, R>(
-        &self,
-        _repo: &mut dyn CommissionRepo,
-        _capability: &WriteCapability<T, R>,
-    ) -> Result<Option<EntryDraft>, HandlerError> {
-        match &self.handler {
-            ProbeHandler::Succeed => Ok(None),
+    /// Its handler's answer from what its view read: a refusal or a failure as set, else the
+    /// commission read.
+    fn answer(&self, read: anyhow::Result<Commission>) -> Result<Handled, HandlerError> {
+        match self.handler {
             ProbeHandler::Refuse => Err(HandlerError::Refused),
             ProbeHandler::Fail => Err(HandlerError::Store(anyhow::anyhow!("the probe failed"))),
-            ProbeHandler::Draft(draft) => Ok(Some(draft.clone())),
+            ProbeHandler::Succeed
+            | ProbeHandler::SwallowMiss
+            | ProbeHandler::SwallowStoreFailure => {
+                let answer = read?;
+                Ok(Handled { answer })
+            }
         }
+    }
+}
+
+/// The probe lent a Participant's capability.
+pub(crate) struct ProbeAsParticipant<'p>(pub(crate) &'p Probe);
+
+impl Handler for ProbeAsParticipant<'_> {
+    type Role = AsParticipant;
+
+    const ENTRY: ChangelogEntryKind = ChangelogEntryKind::Renamed;
+
+    async fn handle(&self, lent: &mut Lent<'_, AsParticipant>) -> Result<Handled, HandlerError> {
+        let read = lent.lent().await;
+        self.0.answer(read)
+    }
+}
+
+/// The probe lent the Owner's capability.
+pub(crate) struct ProbeAsOwner<'p>(pub(crate) &'p Probe);
+
+impl Handler for ProbeAsOwner<'_> {
+    type Role = AsOwner;
+
+    const ENTRY: ChangelogEntryKind = ChangelogEntryKind::Renamed;
+
+    async fn handle(&self, lent: &mut Lent<'_, AsOwner>) -> Result<Handled, HandlerError> {
+        let read = lent.lent().await;
+        self.0.answer(read)
+    }
+}
+
+/// The probe lent a creator's capability.
+pub(crate) struct ProbeCreating<'p>(pub(crate) &'p Probe);
+
+impl Handler for ProbeCreating<'_> {
+    type Role = Creator;
+
+    const ENTRY: ChangelogEntryKind = ChangelogEntryKind::Created;
+
+    async fn handle(&self, lent: &mut Lent<'_, Creator>) -> Result<Handled, HandlerError> {
+        let chosen = NewCommission {
+            maturity: None,
+            deadline: None,
+        };
+        match self.0.handler {
+            ProbeHandler::SwallowMiss => {
+                let _dropped = lent.lent().await;
+                lent.create(&chosen).await?;
+            }
+            ProbeHandler::SwallowStoreFailure => {
+                lent.create(&chosen).await?;
+                let read = lent.lent().await;
+                let _dropped = lent.create(&chosen).await;
+                return self.0.answer(read);
+            }
+            ProbeHandler::Succeed => lent.create(&chosen).await?,
+            ProbeHandler::Refuse | ProbeHandler::Fail => {}
+        }
+        let read = lent.lent().await;
+        self.0.answer(read)
     }
 }
 
@@ -224,7 +265,20 @@ pub(crate) fn hand_built_rename(path: RealPath, text: &str, probe: Probe) -> Act
 /// Atta's act for `probe` built by hand, creating a commission keyed `commission` in
 /// `/commission`: for the tests that drive the write host below the den's builder.
 pub(crate) fn hand_built_create(commission: CommissionId, text: &str, probe: Probe) -> Act<DenAct> {
-    let typ = type_key(probe.den_type);
+    let typ = probe.den_type;
+    hand_built_create_of(commission, text, typ, None, probe.act())
+}
+
+/// Atta's act built by hand around `body`, creating a node of `den_type` keyed `commission` in
+/// `/commission`, named `text`, at the level `picked`, holding no entries.
+pub(crate) fn hand_built_create_of(
+    commission: CommissionId,
+    text: &str,
+    den_type: DenType,
+    picked: Option<atta::Level>,
+    body: DenAct,
+) -> Act<DenAct> {
+    let typ = type_key(den_type);
     let parent = Placed {
         path: commission_directory().expect("`commission` is a segment"),
         typ: type_key(DenType::TopLevel),
@@ -234,7 +288,7 @@ pub(crate) fn hand_built_create(commission: CommissionId, text: &str, probe: Pro
         key: names::id_segment(commission).expect("an id is a key"),
         typ: typ.clone(),
         name: names::display_name(&name(text)),
-        level: None,
+        level: picked,
     };
     let shape = Shape::Create {
         parent,
@@ -245,8 +299,20 @@ pub(crate) fn hand_built_create(commission: CommissionId, text: &str, probe: Pro
         name: ActName::from("probe".to_owned()),
         typ,
         shape,
-        body: probe.act(),
+        body,
     }
+}
+
+/// The create act for a commission titled `text`, choosing no maturity and no deadline.
+pub(crate) fn create_act(text: &str) -> DenAct {
+    let act = crate::commission::create::Act {
+        title: text.parse().expect("a valid test title"),
+        chosen: NewCommission {
+            maturity: None,
+            deadline: None,
+        },
+    };
+    DenAct::Commission(crate::commission::act::CommissionAct::Create(act))
 }
 
 /// The real path of the commission `commission`.

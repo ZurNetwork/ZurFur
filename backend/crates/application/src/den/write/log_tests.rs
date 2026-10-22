@@ -17,9 +17,8 @@ use test_support::{
 use super::tests::{node_name, pg_seed, provision, write};
 use super::*;
 use crate::den::{
-    act::BornEntry,
     authority::MINT_AS,
-    probe::{Probe, name},
+    probe::{Probe, create_act},
 };
 
 /// The owner's DID.
@@ -41,7 +40,7 @@ const TITLE: &str = "Probed piece";
 async fn the_write_path_logs_no_identity_no_name_and_no_store_detail() {
     let pg = pg_runtime().await;
     let mut ports = Ports::from(&pg.runtime);
-    let (owner, commission) = pg_seed(&*ports.database, OWNER).await;
+    let (owner, commission) = pg_seed(&ports, OWNER).await;
     let stranger = provision(&*ports.database, STRANGER).await;
     let participant = provision(&*ports.database, PARTICIPANT).await;
     let script = StandingScript::default();
@@ -82,15 +81,8 @@ async fn the_write_path_logs_no_identity_no_name_and_no_store_detail() {
             .act(),
     )
     .await;
-    let entries = vec![BornEntry {
-        word: names::PRODUCTS,
-        den_type: DenType::CommissionProducts,
-        name: name("products"),
-        level: None,
-    }];
-    let taken_act = Probe::create(SECRET_NAME).holding(entries).act();
     let taken = MINT_AS
-        .scope(commission, write(&ports, &owner, taken_act))
+        .scope(commission, write(&ports, &owner, create_act(SECRET_NAME)))
         .await;
 
     assert!(renamed.is_ok(), "{renamed:?}");

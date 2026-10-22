@@ -6,10 +6,13 @@ use std::{
     time::Duration,
 };
 
-use adapter_mem::fixture::{alice, bob, old_sketch, supreme_arts, untitled, untitled_files};
+use adapter_mem::{
+    CommissionSeed,
+    fixture::{alice, bob, old_sketch, supreme_arts, untitled, untitled_files},
+};
 use domain::{
     elements::{
-        commission::{Commission, CommissionFile, CommissionTitle, FileName},
+        commission::{CommissionFile, CommissionTitle, FileName},
         did::Did,
         level::Level,
         profile::Profile,
@@ -48,26 +51,22 @@ fn not_found(answer: &Result<Opens, DenError>) -> bool {
     matches!(answer, Err(DenError::NotFound))
 }
 
-/// Seeds a commission of alice's at `visibility`, which no one else takes part in.
+/// Seeds a commission of alice's at `visibility`, bound to its node, which no one else takes
+/// part in.
 async fn seed_alice_s(world: &World, title: &str, visibility: Level) -> CommissionId {
     let title = title
         .parse::<CommissionTitle>()
         .expect("a valid test title");
-    let mut commission = Commission::create(title, alice(), chrono::Utc::now(), None);
-    commission.visibility = visibility;
-    let id = commission.id;
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "test seeding creates the commission directly, beneath the den's write gate"
-    )]
+    let seed = CommissionSeed {
+        level: visibility,
+        ..CommissionSeed::private(title, alice())
+    };
     world
-        .runtime
-        .transaction(async move |uow: &mut dyn UnitOfWork| {
-            uow.commissions().create(&commission).await
-        })
+        .backend
+        .seed_bound_commission(&seed)
         .await
         .expect("the commission seeds");
-    id
+    seed.id
 }
 
 /// Seeds a file into "Old sketch", whose key is no file of "Untitled".
@@ -236,12 +235,15 @@ async fn a_public_commission_opens_for_a_stranger_but_its_private_changelog_does
 
 /// The fixture world with its commission and file stores recording every read.
 async fn recorded() -> (World, CallLog) {
-    let World { runtime, mut ports } = test_world::world().await;
+    let mut world = test_world::world().await;
     let log = CallLog::default();
-    let commissions = RecordingCommissionStore::new(ports.commissions.clone(), log.clone());
-    ports.commissions = Arc::new(commissions);
-    ports.files = Arc::new(RecordingFileStore::new(ports.files.clone(), log.clone()));
-    (World { runtime, ports }, log)
+    let commissions = RecordingCommissionStore::new(world.ports.commissions.clone(), log.clone());
+    world.ports.commissions = Arc::new(commissions);
+    world.ports.files = Arc::new(RecordingFileStore::new(
+        world.ports.files.clone(),
+        log.clone(),
+    ));
+    (world, log)
 }
 
 /// The reads the check runs for `viewer` and `node`, alone.
@@ -380,7 +382,9 @@ impl ProfileSource for SilentPds {
 
 #[tokio::test(start_paused = true)]
 async fn the_check_names_a_cold_root_without_starting_or_waiting_on_a_lookup() {
-    let World { mut ports, runtime } = test_world::world().await;
+    let World {
+        mut ports, runtime, ..
+    } = test_world::world().await;
     let carol = Did::from("did:plc:den-access-carol".to_owned());
     let provisioned = carol.clone();
     runtime

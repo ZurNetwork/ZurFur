@@ -10,7 +10,7 @@ use domain::{
 
 use crate::{
     Ports,
-    commission::{CommissionResult, CommissionValues, Commissions, den_title, require_owner},
+    commission::{CommissionResult, CommissionValues, Commissions, require_owner},
     common_error::CommonError,
 };
 
@@ -22,8 +22,8 @@ pub struct Command {
 
 impl Commissions<'_> {
     /// Rename the commission and answer it as stored. Owner-only through `require_owner`; the
-    /// title passes the Den's name rule. A rename to the stored title writes nothing, and a
-    /// real one appends a `renamed` entry naming neither title, in the same unit.
+    /// title passed the Den's name rule when it was parsed. A rename to the stored title writes
+    /// nothing, and a real one appends a `renamed` entry naming neither title, in the same unit.
     #[use_case]
     pub async fn rename(
         &self,
@@ -38,7 +38,6 @@ impl Commissions<'_> {
             title,
         } = cmd;
         let commission = require_owner(ports, &commission_id, &actor_id).await?;
-        let title = den_title(&title)?;
 
         let uow = uow.open().await?;
         let mut commissions = uow.commissions();

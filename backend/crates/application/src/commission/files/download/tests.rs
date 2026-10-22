@@ -225,9 +225,8 @@ impl FileStore for FailingFilename {
 
 #[tokio::test]
 async fn a_store_failure_inside_den_s_check_is_a_store_failure_not_a_miss() {
-    let World { runtime, mut ports } = test_world::world().await;
-    ports.files = Arc::new(FailingFilename(ports.files.clone()));
-    let world = World { runtime, ports };
+    let mut world = test_world::world().await;
+    world.ports.files = Arc::new(FailingFilename(world.ports.files.clone()));
     let [_, sketch_01] = untitled_files();
 
     let answer = download(&world, &bob(), untitled(), sketch_01).await;

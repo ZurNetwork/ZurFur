@@ -17,9 +17,10 @@ use application::{
 };
 use chrono::Utc;
 use domain::elements::{
-    commission::{SurfaceAddress, TabId},
+    commission::{CommissionTitle, SurfaceAddress, TabId},
     did::Did,
     handle::{Handle, HandleDomain},
+    name::NodeNameError,
 };
 use test_support::recording::{CallLog, RecordingDidMinter};
 use uuid::Uuid;
@@ -60,26 +61,13 @@ async fn world() -> composition::Runtime {
     built.runtime
 }
 
-#[tokio::test]
-async fn a_commission_titled_with_a_joiner_alone_is_refused_as_empty() {
-    let runtime = world().await;
-    let command = create::Command {
-        actor_id: alice(),
-        title: JOINER_ALONE.parse().expect("the title rule keeps a joiner"),
-        maturity: None,
-        deadline: None,
-    };
+// A commission title is the Den's name rule's from its parse on, so a create never carries a
+// refused one: the driver refuses it before any use case runs.
+#[test]
+fn a_commission_titled_with_a_joiner_alone_is_refused_as_empty() {
+    let title = JOINER_ALONE.parse::<CommissionTitle>();
 
-    let created = runtime
-        .app()
-        .commissions()
-        .create(command, Utc::now())
-        .await;
-
-    assert!(matches!(
-        created,
-        Err(CommissionError::InvalidName(DenNameError::Empty))
-    ));
+    assert_eq!(title, Err(NodeNameError::Empty));
 }
 
 #[tokio::test]

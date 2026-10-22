@@ -10,37 +10,33 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
-use application::{
-    commission::{
-        CommissionError,
-        files::{download, upload},
-    },
-    transaction,
+use adapter_mem::{CommissionSeed, MemBackend};
+use application::commission::{
+    CommissionError,
+    files::{download, upload},
 };
 use chrono::Utc;
-use domain::{
-    elements::{
-        commission::{Commission, CommissionId, CommissionTitle, FileKey, FileNameError},
-        did::Did,
-    },
-    ports::{Database, UnitOfWork},
+use domain::elements::{
+    commission::{CommissionId, CommissionTitle, FileKey, FileNameError},
+    did::Did,
 };
 use test_support::recording::{CallLog, RecordingDatabase, RecordingFileStore};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-/// Seeds a committed commission owned by a freshly provisioned `owner_did`.
-async fn seed_commission(database: &dyn Database, owner_did: &Did, title: &str) -> CommissionId {
+/// Seeds a commission owned by a freshly provisioned `owner_did`, bound to its node as the
+/// den's write makes one, with no changelog entry.
+async fn seed_commission(backend: &MemBackend, owner_did: &Did, title: &str) -> CommissionId {
+    let owner = backend
+        .provision(owner_did)
+        .await
+        .expect("provision the owner");
     let title: CommissionTitle = title.parse().expect("valid title");
-    let owner_did = owner_did.clone();
-    transaction(database, async move |uow: &mut dyn UnitOfWork| {
-        let owner = uow.users().provision(&owner_did).await?;
-        let commission = Commission::create(title, owner.id, Utc::now(), None);
-        let id = commission.id;
-        uow.commissions().create(&commission).await?;
-        Ok(id)
-    })
-    .await
-    .expect("seed a commission")
+    let seed = CommissionSeed::private(title, owner.id);
+    backend
+        .seed_bound_commission(&seed)
+        .await
+        .expect("seed a commission");
+    seed.id
 }
 
 /// Drains a downloaded reader into a `Vec<u8>` for a byte-equality assertion.
@@ -60,7 +56,7 @@ async fn a_participant_uploads_then_downloads_the_exact_bytes() {
     let owner_did = Did::from("did:plc:artist".to_string());
     let fixture = test_support::runtime::mem(&owner_did).build();
     let runtime = fixture.runtime;
-    let commission_id = seed_commission(&*runtime.database, &owner_did, "Ref sheet").await;
+    let commission_id = seed_commission(&fixture.backend, &owner_did, "Ref sheet").await;
     let owner = runtime
         .users
         .find_by_did(&owner_did)
@@ -117,7 +113,7 @@ async fn upload_records_a_file_added_changelog_entry_with_byte_size() {
     let owner_did = Did::from("did:plc:changelog-artist".to_string());
     let fixture = test_support::runtime::mem(&owner_did).build();
     let runtime = fixture.runtime;
-    let commission_id = seed_commission(&*runtime.database, &owner_did, "Ref").await;
+    let commission_id = seed_commission(&fixture.backend, &owner_did, "Ref").await;
     let owner = runtime
         .users
         .find_by_did(&owner_did)
@@ -161,7 +157,7 @@ async fn a_non_participant_upload_is_rejected_before_any_store_write() {
     let owner_did = Did::from("did:plc:owner".to_string());
     let fixture = test_support::runtime::mem(&owner_did).build();
     let runtime = fixture.runtime;
-    let commission_id = seed_commission(&*runtime.database, &owner_did, "Private").await;
+    let commission_id = seed_commission(&fixture.backend, &owner_did, "Private").await;
 
     let outsider = fixture
         .backend
@@ -205,7 +201,7 @@ async fn an_over_cap_upload_is_rejected_and_its_blob_is_deleted() {
     let owner_did = Did::from("did:plc:cap-artist".to_string());
     let fixture = test_support::runtime::mem(&owner_did).build();
     let runtime = fixture.runtime;
-    let commission_id = seed_commission(&*runtime.database, &owner_did, "Ref").await;
+    let commission_id = seed_commission(&fixture.backend, &owner_did, "Ref").await;
     let owner = runtime
         .users
         .find_by_did(&owner_did)
@@ -243,7 +239,7 @@ async fn an_empty_upload_is_rejected_and_its_blob_is_deleted() {
     let owner_did = Did::from("did:plc:empty-artist".to_string());
     let fixture = test_support::runtime::mem(&owner_did).build();
     let runtime = fixture.runtime;
-    let commission_id = seed_commission(&*runtime.database, &owner_did, "Ref").await;
+    let commission_id = seed_commission(&fixture.backend, &owner_did, "Ref").await;
     let owner = runtime
         .users
         .find_by_did(&owner_did)
@@ -282,7 +278,7 @@ async fn an_invalid_filename_is_rejected() {
     let owner_did = Did::from("did:plc:filename-artist".to_string());
     let fixture = test_support::runtime::mem(&owner_did).build();
     let runtime = fixture.runtime;
-    let commission_id = seed_commission(&*runtime.database, &owner_did, "Ref").await;
+    let commission_id = seed_commission(&fixture.backend, &owner_did, "Ref").await;
     let owner = runtime
         .users
         .find_by_did(&owner_did)
@@ -321,8 +317,9 @@ async fn an_invalid_filename_is_rejected() {
 #[tokio::test]
 async fn an_upload_named_with_a_leading_dot_is_refused_before_any_write() {
     let owner_did = Did::from("did:plc:dotfile-artist".to_string());
-    let mut runtime = test_support::runtime::mem(&owner_did).build().runtime;
-    let commission_id = seed_commission(&*runtime.database, &owner_did, "Ref").await;
+    let fixture = test_support::runtime::mem(&owner_did).build();
+    let mut runtime = fixture.runtime;
+    let commission_id = seed_commission(&fixture.backend, &owner_did, "Ref").await;
     let owner = runtime
         .users
         .find_by_did(&owner_did)
@@ -376,7 +373,7 @@ async fn downloading_an_unknown_key_is_file_not_found() {
     let owner_did = Did::from("did:plc:downloader".to_string());
     let fixture = test_support::runtime::mem(&owner_did).build();
     let runtime = fixture.runtime;
-    let commission_id = seed_commission(&*runtime.database, &owner_did, "Ref").await;
+    let commission_id = seed_commission(&fixture.backend, &owner_did, "Ref").await;
     let owner = runtime
         .users
         .find_by_did(&owner_did)

@@ -6,16 +6,17 @@
 
 use std::sync::Arc;
 
+use adapter_mem::{CommissionSeed, MemBackend};
 use application::{commission::files::download, transaction, user::me::MeQuery};
 use async_trait::async_trait;
-use chrono::Utc;
+use composition::Runtime;
 use domain::elements::{
-    commission::{Commission, CommissionId, CommissionTitle, FileKey},
+    commission::{CommissionId, CommissionTitle, FileKey},
     did::Did,
     level::Level,
     user::{User, UserId},
 };
-use domain::ports::{Database, UnitOfWork, UserStore};
+use domain::ports::{UnitOfWork, UserStore};
 use test_support::log_capture::CapturedLog;
 use uuid::Uuid;
 
@@ -28,20 +29,29 @@ const STRANGER: &str = "did:plc:dencheckstranger";
 /// A commission id nothing is stored under.
 const ABSENT: Uuid = Uuid::from_u128(0x01a0_0000_0000_7000_8000_0000_0000_0c01);
 
-/// The owner, recognized, and a commission of theirs seeded at `visibility`.
-async fn seed(database: &dyn Database, visibility: Level) -> (UserId, CommissionId) {
+/// The owner, recognized, and a commission of theirs seeded bound to its node at `visibility`.
+async fn seed(
+    runtime: &Runtime,
+    backend: &MemBackend,
+    visibility: Level,
+) -> (UserId, CommissionId) {
     let owner_did = Did::from(OWNER.to_owned());
-    transaction(database, async move |uow: &mut dyn UnitOfWork| {
+    let owner = transaction(&*runtime.database, async move |uow: &mut dyn UnitOfWork| {
         let owner = uow.users().provision(&owner_did).await?;
-        let title: CommissionTitle = "Listed piece".parse()?;
-        let mut commission = Commission::create(title, owner.id.clone(), Utc::now(), None);
-        commission.visibility = visibility;
-        let id = commission.id;
-        uow.commissions().create(&commission).await?;
-        Ok((owner.id, id))
+        Ok(owner.id)
     })
     .await
-    .expect("the owner and their commission seed")
+    .expect("the owner is recognized");
+    let title: CommissionTitle = "Listed piece".parse().expect("a valid title");
+    let seed = CommissionSeed {
+        level: visibility,
+        ..CommissionSeed::private(title, owner.clone())
+    };
+    backend
+        .seed_bound_commission(&seed)
+        .await
+        .expect("the commission seeds");
+    (owner, seed.id)
 }
 
 /// A user store whose every read fails.
@@ -70,8 +80,9 @@ fn stranger_s_download(commission: CommissionId) -> download::Query {
 #[tokio::test]
 async fn each_answer_is_logged_by_its_node_kind_and_class_and_never_an_id() {
     let owner_did = Did::from(OWNER.to_owned());
-    let runtime = test_support::runtime::mem(&owner_did).build().runtime;
-    let (owner, listed) = seed(&*runtime.database, Level::Listed).await;
+    let built = test_support::runtime::mem(&owner_did).build();
+    let runtime = built.runtime;
+    let (owner, listed) = seed(&runtime, &built.backend, Level::Listed).await;
     let mut failing = runtime.clone();
     failing.users = Arc::new(FailingUsers);
     let log = CapturedLog::default();
