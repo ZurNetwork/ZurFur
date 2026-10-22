@@ -132,13 +132,15 @@ impl Runtime {
         let root_key_bytes = base64::engine::general_purpose::STANDARD
             .decode(config.did_key_root_key.trim())
             .map_err(|e| anyhow::anyhow!("ZURFUR_DID_KEY_ROOT_KEY must be valid base64: {e}"))?;
-        let did_custody = crate::custody::did_custody_sealer(
+        let seal_handles = crate::custody::seal_handles(
             &root_key_bytes,
             &config.env,
             config.plc_directory_submit,
         )?;
-        let key_store = Arc::new(adapter_pg::PgKeyStore::new(pool.clone(), did_custody));
-        let oauth_vault = adapter_atproto::SecretVault::from_bytes(&root_key_bytes)?;
+        let key_store = Arc::new(adapter_pg::PgKeyStore::new(
+            pool.clone(),
+            seal_handles.did_custody,
+        ));
         let op_log = Arc::new(adapter_pg::PgPlcOperationLog::new(pool.clone()));
         let directory =
             adapter_atproto::plc_directory_from_config(&adapter_atproto::DirectoryConfig {
@@ -155,7 +157,7 @@ impl Runtime {
             auth: Arc::new(adapter_atproto::AtprotoAuthenticator::new(
                 redirect_uri,
                 pool.clone(),
-                oauth_vault,
+                seal_handles.signin_secrets,
                 identity_resolver.clone(),
             )),
             users: Arc::new(adapter_pg::PgUserStore::new(pool.clone())),

@@ -1,11 +1,13 @@
 //! Round-trips `AtprotoAuthStore` against a throwaway PostgreSQL container,
 //! proving the migration-created `atproto_oauth.*` tables persist OAuth state —
 //! and, critically, that the `#[serde(flatten)]`-heavy `ClientSessionData` and
-//! `AuthRequestData` survive the JSON encode/decode this store relies on.
+//! `AuthRequestData` survive the JSON encode/decode this store relies on — and
+//! that every stored blob is sealed under the sign-in-secrets key, bound to its row.
 //! Requires a container runtime socket (DOCKER_HOST honored).
-use adapter_atproto::{AtprotoAuthStore, SecretVault};
+use adapter_atproto::AtprotoAuthStore;
+use domain::elements::custody::{CustodyError, CustodySubject};
 use fluent_uri::Uri;
-use jacquard_common::types::did::Did;
+use jacquard_common::{session::SessionStoreError, types::did::Did};
 use jacquard_oauth::{
     authstore::ClientAuthStore,
     scopes::Scopes,
@@ -15,21 +17,23 @@ use jacquard_oauth::{
 };
 use smol_str::SmolStr;
 use sqlx::PgPool;
+use test_support::custody::{
+    LEGACY_ALICE_BLOB_HEX, LEGACY_ALICE_BLOB_STARTING_0X01_HEX, hex_bytes, test_custody,
+};
 
-/// A fixed 32-byte root key for the test vault. Real deployments source this from
-/// `ZURFUR_DID_KEY_ROOT_KEY` (the same key the custody store uses); tests only
-/// need *a* valid key so seal/open round-trips.
-fn test_vault() -> SecretVault {
-    SecretVault::from_bytes(&[7u8; 32]).expect("32-byte test root key")
-}
+/// The version byte every stored envelope starts with.
+const ENVELOPE_VERSION: u8 = 0x01;
+
+/// How every sign-in-secrets key id starts.
+const SIGNIN_KEY_ID_PREFIX: &str = "hkdf:signin_secrets:";
 
 /// A store on a fresh, fully migrated private database (a clone of the shared
 /// template, which the real migrations gave the `atproto_oauth` schema — see
-/// `test_support::pg`). The second element keeps the shared container alive
-/// for the test's duration.
+/// `test_support::pg`), sealing with the test custodian's sign-in handle. The
+/// second element keeps the shared container alive for the test's duration.
 async fn fresh_store() -> (AtprotoAuthStore, impl Sized) {
-    let (pool, db) = test_support::pg::fresh_pool().await;
-    (AtprotoAuthStore::new(pool, test_vault()), db)
+    let (store, _pool, db) = fresh_store_and_pool().await;
+    (store, db)
 }
 
 /// Like [`fresh_store`], but also hands back the pool so a test can read the raw
@@ -37,7 +41,72 @@ async fn fresh_store() -> (AtprotoAuthStore, impl Sized) {
 /// what actually landed on disk.
 async fn fresh_store_and_pool() -> (AtprotoAuthStore, PgPool, impl Sized) {
     let (pool, db) = test_support::pg::fresh_pool().await;
-    (AtprotoAuthStore::new(pool.clone(), test_vault()), pool, db)
+    let sealer = test_custody().signin_secrets;
+    (AtprotoAuthStore::new(pool.clone(), sealer), pool, db)
+}
+
+/// The key id a stored envelope's header names: the version byte, the key id's
+/// length byte, then the key id.
+fn stored_key_id(data: &[u8]) -> String {
+    let [_version, key_id_length, rest @ ..] = data else {
+        panic!("a stored envelope has a header");
+    };
+    let key_id = &rest[..usize::from(*key_id_length)];
+    String::from_utf8(key_id.to_vec()).expect("a key id is text")
+}
+
+/// The custodian's refusal behind a failed read: the blob didn't open, rather
+/// than opening and failing to decode. `None` for any other failure.
+fn custody_refusal(error: &SessionStoreError) -> Option<&CustodyError> {
+    let SessionStoreError::Other(source) = error else {
+        return None;
+    };
+    source.downcast_ref::<CustodyError>()
+}
+
+/// The raw `data` of the session stored under `did` and `session_id`.
+async fn raw_session(pool: &PgPool, did: &str, session_id: &str) -> Vec<u8> {
+    sqlx::query_scalar(
+        "SELECT data FROM atproto_oauth.client_session WHERE account_did = $1 AND session_id = $2",
+    )
+    .bind(did)
+    .bind(session_id)
+    .fetch_one(pool)
+    .await
+    .expect("the session row is present")
+}
+
+/// The raw `data` of the auth request stored under `state`.
+async fn raw_auth_request(pool: &PgPool, state: &str) -> Vec<u8> {
+    sqlx::query_scalar("SELECT data FROM atproto_oauth.auth_request WHERE state = $1")
+        .bind(state)
+        .fetch_one(pool)
+        .await
+        .expect("the auth request row is present")
+}
+
+/// Write `data` straight into a session row, bypassing the store.
+async fn plant_session(pool: &PgPool, did: &str, session_id: &str, data: &[u8]) {
+    sqlx::query(
+        "INSERT INTO atproto_oauth.client_session (account_did, session_id, data) \
+         VALUES ($1, $2, $3)",
+    )
+    .bind(did)
+    .bind(session_id)
+    .bind(data)
+    .execute(pool)
+    .await
+    .expect("insert the planted session row");
+}
+
+/// Write `data` straight into an auth request row, bypassing the store.
+async fn plant_auth_request(pool: &PgPool, state: &str, data: &[u8]) {
+    sqlx::query("INSERT INTO atproto_oauth.auth_request (state, data) VALUES ($1, $2)")
+        .bind(state)
+        .bind(data)
+        .execute(pool)
+        .await
+        .expect("insert the planted auth request row");
 }
 
 fn client_session(did: &'static str, session_id: &'static str) -> ClientSessionData {
@@ -365,4 +434,158 @@ async fn sealed_session_is_bound_to_its_row_key() {
             .is_some(),
         "the legitimate row still opens"
     );
+}
+
+/// Every blob the store writes, in either table, is a version-1 envelope under a
+/// sign-in-secrets key: the purpose is in the stored bytes.
+#[tokio::test]
+async fn every_stored_blob_is_sealed_under_the_sign_in_key() {
+    let (store, pool, _container) = fresh_store_and_pool().await;
+    let session = client_session("did:plc:alice", "session-1");
+    store.upsert_session(session).await.expect("upsert");
+    let request = auth_request("state-xyz");
+    store.save_auth_req_info(&request).await.expect("save");
+
+    let session_data = raw_session(&pool, "did:plc:alice", "session-1").await;
+    let request_data = raw_auth_request(&pool, "state-xyz").await;
+
+    for data in [session_data, request_data] {
+        assert_eq!(
+            data.first(),
+            Some(&ENVELOPE_VERSION),
+            "a version-1 envelope"
+        );
+        let key_id = stored_key_id(&data);
+        assert!(
+            key_id.starts_with(SIGNIN_KEY_ID_PREFIX),
+            "sealed under a sign-in-secrets key, not {key_id:?}"
+        );
+    }
+}
+
+/// A 0.1 blob (`24-byte nonce ‖ ciphertext`) left in either table fails closed on
+/// read: an error naming no row key, never plaintext, never "no session". One of
+/// the fixtures starts with the version byte.
+#[tokio::test]
+async fn a_legacy_row_fails_closed() {
+    let (store, pool, _container) = fresh_store_and_pool().await;
+    let did: Did = Did::new_static("did:plc:alice").expect("valid did");
+    let legacy_blobs = [
+        ("session-1", "state-1", hex_bytes(LEGACY_ALICE_BLOB_HEX)),
+        (
+            "session-2",
+            "state-2",
+            hex_bytes(LEGACY_ALICE_BLOB_STARTING_0X01_HEX),
+        ),
+    ];
+
+    for (session_id, state, legacy_blob) in legacy_blobs {
+        plant_session(&pool, "did:plc:alice", session_id, &legacy_blob).await;
+        plant_auth_request(&pool, state, &legacy_blob).await;
+
+        let session_error = store
+            .get_session(&did, session_id)
+            .await
+            .expect_err("a legacy session row fails closed");
+        let request_error = store
+            .get_auth_req_info(state)
+            .await
+            .expect_err("a legacy auth request row fails closed");
+
+        for error in [&session_error, &request_error] {
+            assert!(
+                custody_refusal(error).is_some(),
+                "the legacy blob is refused by the custodian: {error}"
+            );
+        }
+        for error in [session_error.to_string(), request_error.to_string()] {
+            for hidden in ["did:plc:alice", session_id, state, "hkdf"] {
+                assert!(
+                    !error.contains(hidden),
+                    "the error names {hidden:?}: {error}"
+                );
+            }
+        }
+    }
+}
+
+/// A session's sealed blob copied into an auth request row whose `state` is the
+/// session's id (jacquard keys a sign-in's session by its `state`) doesn't open:
+/// the table is part of the subject.
+#[tokio::test]
+async fn a_session_blob_wont_open_as_an_auth_request() {
+    let (store, pool, _container) = fresh_store_and_pool().await;
+    let session = client_session("did:plc:alice", "state-xyz");
+    store.upsert_session(session).await.expect("upsert");
+    let session_data = raw_session(&pool, "did:plc:alice", "state-xyz").await;
+
+    plant_auth_request(&pool, "state-xyz", &session_data).await;
+    let read_error = store
+        .get_auth_req_info("state-xyz")
+        .await
+        .expect_err("a session blob is no auth request");
+
+    let refusal = custody_refusal(&read_error);
+    assert_eq!(
+        refusal,
+        Some(&CustodyError::Unauthentic),
+        "a session blob doesn't open as an auth request: {read_error}"
+    );
+}
+
+/// An envelope sealed under the DID-custody key, to the very subject a session
+/// row's blob is sealed to, doesn't open through the store: its handle opens
+/// sign-in secrets only.
+#[tokio::test]
+async fn the_sign_in_handle_cannot_open_did_custody() {
+    let (store, pool, _container) = fresh_store_and_pool().await;
+    let session = client_session("did:plc:alice", "session-1");
+    let plaintext = serde_json::to_vec(&session).expect("json");
+    let parts: [&[u8]; 3] = [b"client_session", b"did:plc:alice", b"session-1"];
+    let subject = CustodySubject::try_from(parts.as_slice()).expect("the parts encode");
+    let did_custody_envelope = test_custody()
+        .did_custody
+        .seal(&subject, &plaintext)
+        .await
+        .expect("the did-custody key seals");
+
+    plant_session(
+        &pool,
+        "did:plc:alice",
+        "session-1",
+        did_custody_envelope.as_ref(),
+    )
+    .await;
+    let did: Did = Did::new_static("did:plc:alice").expect("valid did");
+    let read_error = store
+        .get_session(&did, "session-1")
+        .await
+        .expect_err("a did-custody envelope is no session");
+
+    assert!(
+        custody_refusal(&read_error).is_some(),
+        "a did-custody envelope doesn't open as a session: {read_error}"
+    );
+}
+
+/// The store's `Debug` shows the sealer's purpose, never a key or a key id.
+#[tokio::test]
+async fn the_stores_debug_shows_no_key() {
+    let (store, pool, _container) = fresh_store_and_pool().await;
+    let session = client_session("did:plc:alice", "session-1");
+    store.upsert_session(session).await.expect("upsert");
+    let key_id = stored_key_id(&raw_session(&pool, "did:plc:alice", "session-1").await);
+
+    let shown = format!("{store:?}");
+
+    assert!(
+        shown.contains("ScopedSealer { purpose: SigninSecrets }"),
+        "the sealer shows its purpose: {shown}"
+    );
+    for hidden in [key_id.as_str(), "hkdf", "94, 94", "5e5e"] {
+        assert!(
+            !shown.contains(hidden),
+            "the Debug shows {hidden:?}: {shown}"
+        );
+    }
 }

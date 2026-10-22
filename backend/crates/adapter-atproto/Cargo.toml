@@ -46,10 +46,8 @@ derive_more = { workspace = true }
 sqlx = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-# Envelope-encrypts the OAuth store's at-rest secrets (DPoP private key, refresh/
-# access tokens, PKCE verifier) under the one custody root key — a faithful mirror
-# of adapter-pg's key_vault (same AEAD, same root key). See `secret_vault`.
-chacha20poly1305 = { workspace = true }
+# Wipes the OAuth store's transient plaintext (DPoP key, tokens, PKCE verifier)
+# once it is sealed.
 zeroize = { workspace = true }
 # The guarded client's transport (and the TLS backend jacquard leaves to the
 # consumer: jacquard-common enables only json/charset on reqwest). Only

@@ -37,7 +37,7 @@
     },
     {
       "name": "src/custody.rs",
-      "role": "custody fixtures: the three 0.1 legacy rows (alice, bob, alice starting 0x01) with LEGACY_ROOT [9; 32], legacy_keys and hex_bytes; test_custody() → TestCustody, an HkdfKeyCustodian's scoped handles over a fixed test root; LyingCustodian and lying_did_custody(), whose open answers other bytes than were sealed",
+      "role": "custody fixtures: the three 0.1 legacy rows (alice, bob, alice starting 0x01) with LEGACY_ROOT [9; 32], legacy_keys and hex_bytes; test_custodian() → Arc<dyn KeyCustodian>, an HkdfKeyCustodian holding every purpose over a fixed test root, and test_custody() → TestCustody, its scoped handles; LyingCustodian and lying_did_custody(), whose open answers other bytes than were sealed",
       "node": false
     },
     {

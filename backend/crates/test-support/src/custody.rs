@@ -64,11 +64,17 @@ pub struct TestCustody {
     pub den_mac: ScopedMac,
 }
 
-/// The handles of an `HkdfKeyCustodian` holding every purpose, over the fixed test root.
-pub fn test_custody() -> TestCustody {
+/// An `HkdfKeyCustodian` holding every purpose over the fixed test root, whole: for a
+/// test that builds a handle the scoped ones can't.
+pub fn test_custodian() -> Arc<dyn KeyCustodian> {
     let root = Zeroizing::new(TEST_CUSTODY_ROOT);
     let derived = HkdfKeyCustodian::derive(root, Purpose::VARIANTS);
-    let custodian: Arc<dyn KeyCustodian> = Arc::new(derived);
+    Arc::new(derived)
+}
+
+/// The handles of [`test_custodian`].
+pub fn test_custody() -> TestCustody {
+    let custodian = test_custodian();
     TestCustody {
         did_custody: ScopedSealer::from(Arc::clone(&custodian)),
         signin_secrets: ScopedSealer::from(Arc::clone(&custodian)),

@@ -37,7 +37,7 @@
     },
     {
       "name": "src/custody.rs",
-      "role": "the one custody function: the boot guard on the raw root, then the HKDF derivation, then the scoped handles (today the DID-custody sealer `PgKeyStore` holds); tests in src/custody/tests.rs",
+      "role": "the one custody function, `seal_handles`: the boot guard on the raw root, then one HKDF derivation of both seal purposes, then `SealHandles` (the DID-custody sealer `PgKeyStore` holds, the sign-in-secrets sealer the atproto authenticator holds); tests in src/custody/tests.rs",
       "node": false
     },
     {
