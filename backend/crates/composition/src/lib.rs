@@ -8,6 +8,7 @@
 //! cookies are the driver's.
 
 mod config;
+mod custody;
 pub mod logging;
 pub mod ports;
 pub(crate) mod runtime;

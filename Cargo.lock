@@ -98,6 +98,7 @@ dependencies = [
  "sqlx-rust-codegen",
  "strum",
  "test-support",
+ "thiserror 2.0.20",
  "time",
  "tokio",
  "tower-sessions-core",
@@ -1060,6 +1061,7 @@ name = "composition"
 version = "0.1.0"
 dependencies = [
  "adapter-atproto",
+ "adapter-hkdf",
  "adapter-pg",
  "anyhow",
  "application",
@@ -1073,6 +1075,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "zeroize",
 ]
 
 [[package]]
@@ -5924,6 +5927,7 @@ checksum = "8f50febec83f5ee1df3015341d8bd429f2d1cc62bcba7ea2076759d315084683"
 name = "test-support"
 version = "0.1.0"
 dependencies = [
+ "adapter-hkdf",
  "adapter-mem",
  "adapter-pg",
  "anyhow",
@@ -5952,6 +5956,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

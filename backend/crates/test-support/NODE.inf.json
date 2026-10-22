@@ -22,7 +22,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers, base64 for pg_app's dev-profile root key, application for pg_app::den_world's Workflows (made through the create use case), reqwest multipart for its uploads, strum for pg_app::ProfileCacheState and node_contract's NodeType::VARIANTS",
+      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers, base64 for pg_app's dev-profile root key, application for pg_app::den_world's Workflows (made through the create use case), reqwest multipart for its uploads, strum for pg_app::ProfileCacheState and node_contract's NodeType::VARIANTS, adapter-hkdf + zeroize for custody's test custodian, data-encoding for its hex fixtures",
       "node": false
     },
     {
@@ -33,6 +33,11 @@
     {
       "name": "src/contract.rs",
       "role": "the generic PublicRecords conformance suite (mem + atproto)",
+      "node": false
+    },
+    {
+      "name": "src/custody.rs",
+      "role": "custody fixtures: the three 0.1 legacy rows (alice, bob, alice starting 0x01) with LEGACY_ROOT [9; 32], legacy_keys and hex_bytes; test_custody() → TestCustody, an HkdfKeyCustodian's scoped handles over a fixed test root; LyingCustodian and lying_did_custody(), whose open answers other bytes than were sealed",
       "node": false
     },
     {

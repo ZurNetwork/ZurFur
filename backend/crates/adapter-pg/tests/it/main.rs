@@ -28,6 +28,7 @@ mod commission_seat_invitation;
 mod commission_slot;
 mod commission_standing;
 mod custody_envelope;
+mod custody_migrator;
 mod delete_inflight_signin_rows;
 mod delete_stored_oauth_sessions;
 mod key_store;

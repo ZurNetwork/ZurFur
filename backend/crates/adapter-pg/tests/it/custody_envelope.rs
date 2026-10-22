@@ -1,11 +1,10 @@
 //! The custody envelope column: seed `account_keys` on the schema just before
 //! it, run it and nothing after it, and check the kept 0.1 ciphertext, the new
 //! column and the rule that every row holds one of the two; then the custody
-//! queries on either side of it, and the store's read of a row with no 0.1
-//! ciphertext. Requires a container runtime socket (DOCKER_HOST honored).
+//! queries on either side of it. Requires a container runtime socket
+//! (DOCKER_HOST honored).
 
-use adapter_pg::{PgKeyStore, PgPool, RootKey, queries::key_store};
-use domain::{elements::did::Did, ports::KeyStore};
+use adapter_pg::{PgPool, queries::key_store};
 
 use crate::migration_steps::{bare_pool, run_migrations_before, run_migrations_through};
 
@@ -241,28 +240,5 @@ async fn the_sealed_envelope_is_written_once() {
     assert_eq!(
         stored, expected,
         "the first envelope stays, the 0.1 one too"
-    );
-}
-
-#[tokio::test]
-async fn the_store_reads_a_row_with_only_sealed_keys_as_an_error() {
-    let (pool, _container) = through_the_envelope().await;
-    try_insert(
-        &pool,
-        "did:plc:custodysealed",
-        None,
-        Some(b"sealed".as_slice()),
-    )
-    .await
-    .expect("store a sealed-only row");
-    let root = RootKey::from_bytes(&[9u8; 32]).expect("a root key");
-    let store = PgKeyStore::new(pool, root);
-    let did = Did::from("did:plc:custodysealed".to_owned());
-
-    let read = store.get(&did).await;
-
-    assert!(
-        read.is_err(),
-        "a row with no wrapped keys is an error, not None"
     );
 }

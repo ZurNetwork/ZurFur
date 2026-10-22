@@ -27,6 +27,7 @@ mod bug_report;
 mod character;
 mod commission;
 mod commission_changelog;
+mod custody_migrator;
 mod file_store;
 mod key_store;
 mod key_vault;
@@ -45,9 +46,10 @@ pub use commission::{
     COMMISSION_FACT_TABLES, COMMISSION_NON_FACT_TABLES, PgCommissionStore, PgCommissionWrites,
 };
 pub use commission_changelog::{PgChangelogStore, PgChangelogWrites};
+pub use custody_migrator::{CustodyCheck, CustodyMigrationError, CustodyMigrator};
 pub use file_store::PgFileStore;
-pub use key_store::PgKeyStore;
-pub use key_vault::RootKey;
+pub use key_store::{PgKeyStore, ResealError, RewrapError};
+pub use key_vault::LegacyRootKey;
 pub use node::{PgNodeStore, PgNodeWrites};
 pub use plc_operation_log::PgPlcOperationLog;
 pub use profile::PgProfileCache;
@@ -80,17 +82,16 @@ pub fn lazy_pool(database_url: &str) -> Result<PgPool, sqlx::Error> {
     PgPoolOptions::new().connect_lazy(database_url)
 }
 
-/// Runs all migrations embedded from this crate's `migrations/` directory,
-/// compiled in at build time. Safe to call on every boot — already-applied
-/// migrations are skipped. Returns `Err` on a failed migration or a checksum
-/// mismatch against the recorded history.
-pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
+/// Runs every embedded migration on a fresh database: the test template, query
+/// codegen and this crate's tests. It skips the custody probe and re-wrap, so a
+/// driver migrates through [`CustodyMigrator`] instead.
+pub async fn migrate_fresh(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
     migrator().run(pool).await
 }
 
-/// The embedded migration set itself — the same one [`migrate`] runs. Tests
+/// The embedded migration set itself — the same one [`migrate_fresh`] runs. Tests
 /// that need to stop between migrations can truncate the returned set at a
-/// target version and run that subset, then let [`migrate`] catch up;
+/// target version and run that subset, then let [`migrate_fresh`] catch up;
 /// production code always runs the full set.
 pub fn migrator() -> Migrator {
     let migrations: Vec<Migration> = EMBEDDED_MIGRATIONS
@@ -158,29 +159,42 @@ pub async fn schema_status(pool: &PgPool) -> Result<SchemaStatus, sqlx::Error> {
 }
 
 /// Apply every pending embedded migration and report how many ran and the
-/// latest embedded version. The CLI's `migrate`; `api` uses [`migrate`].
+/// latest embedded version; it re-wraps nothing. The CLI's `migrate`.
 pub async fn migrate_reporting(pool: &PgPool) -> Result<MigrationReport, sqlx::Error> {
-    let before = match schema_status(pool).await? {
-        SchemaStatus::Behind { pending } => pending,
-        SchemaStatus::Unknown => EMBEDDED_MIGRATIONS.len(),
-        SchemaStatus::Current | SchemaStatus::Ahead { .. } => 0,
-    };
+    let applied = pending_migrations(pool).await?;
     migrator().run(pool).await?;
-    let latest = EMBEDDED_MIGRATIONS.last().map(|(v, _, _)| *v);
     let report = MigrationReport {
-        applied: before,
-        version: latest,
+        applied,
+        version: latest_embedded_version(),
+        rows_rewrapped: 0,
     };
     Ok(report)
 }
 
-/// What [`migrate_reporting`] did.
+/// How many embedded migrations the database hasn't applied.
+pub(crate) async fn pending_migrations(pool: &PgPool) -> Result<usize, sqlx::Error> {
+    let pending = match schema_status(pool).await? {
+        SchemaStatus::Behind { pending } => pending,
+        SchemaStatus::Unknown => EMBEDDED_MIGRATIONS.len(),
+        SchemaStatus::Current | SchemaStatus::Ahead { .. } => 0,
+    };
+    Ok(pending)
+}
+
+/// The latest embedded migration version.
+pub(crate) fn latest_embedded_version() -> Option<i64> {
+    EMBEDDED_MIGRATIONS.last().map(|(version, _, _)| *version)
+}
+
+/// What a migration run did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MigrationReport {
     /// Migrations applied by this run (`0` when already current).
     pub applied: usize,
     /// The latest embedded migration version — the schema the binary expects.
     pub version: Option<i64>,
+    /// Custody rows re-wrapped into the envelope by this run.
+    pub rows_rewrapped: usize,
 }
 
 /// Liveness probe: `true` when a trivial `SELECT 1` round-trips within 2s.

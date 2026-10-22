@@ -83,7 +83,9 @@ async fn migration_backfills_one_identity_per_projection_row() {
     .expect("seed pre-backfill account");
 
     // Catch up: backfill + composite FK + drop the projection did columns.
-    adapter_pg::migrate(&pool).await.expect("catch-up migrates");
+    adapter_pg::migrate_fresh(&pool)
+        .await
+        .expect("catch-up migrates");
 
     let (kind, did, state, handle, first_seen): (
         String,
@@ -187,7 +189,7 @@ async fn backfill_aborts_loudly_when_a_did_is_shared_across_tables() {
     .await
     .expect("seed account sharing the did");
 
-    let result = adapter_pg::migrate(&pool).await;
+    let result = adapter_pg::migrate_fresh(&pool).await;
     let err = result.expect_err("a DID shared across users+accounts must abort the backfill");
     let message = format!("{err:#}");
     assert!(

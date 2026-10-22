@@ -13,7 +13,7 @@ use domain::ports::{
 };
 use fluent_uri::Uri;
 
-use crate::{Config, ensure_custody_hardened};
+use crate::Config;
 
 /// The composition root's bag of dependencies — every live port behind an
 /// `Arc<dyn Trait>`, so the live adapter is picked once here and drivers stay
@@ -102,12 +102,12 @@ impl Runtime {
 
 impl Runtime {
     /// Wire the live adapters over `config`: a Postgres pool (connected here —
-    /// migrations are NOT run, the caller calls [`adapter_pg::migrate`]), the
+    /// migrations are NOT run, the driver runs them), the
     /// atproto [`Authenticator`], the `did:plc` custody chain, and every
     /// pg-backed store.
     ///
     /// Fails if the pool cannot connect, `public_url` or the root key will not
-    /// parse, [`ensure_custody_hardened`] refuses the configuration, or the
+    /// parse, [`ensure_custody_hardened`](crate::ensure_custody_hardened) refuses the configuration, or the
     /// system DNS configuration cannot be read; the error messages never echo
     /// the secrets themselves.
     pub async fn connect(config: Config) -> Result<Self, ConnectError> {
@@ -132,9 +132,12 @@ impl Runtime {
         let root_key_bytes = base64::engine::general_purpose::STANDARD
             .decode(config.did_key_root_key.trim())
             .map_err(|e| anyhow::anyhow!("ZURFUR_DID_KEY_ROOT_KEY must be valid base64: {e}"))?;
-        ensure_custody_hardened(&config.env, &root_key_bytes, config.plc_directory_submit)?;
-        let root_key = adapter_pg::RootKey::from_bytes(&root_key_bytes)?;
-        let key_store = Arc::new(adapter_pg::PgKeyStore::new(pool.clone(), root_key));
+        let did_custody = crate::custody::did_custody_sealer(
+            &root_key_bytes,
+            &config.env,
+            config.plc_directory_submit,
+        )?;
+        let key_store = Arc::new(adapter_pg::PgKeyStore::new(pool.clone(), did_custody));
         let oauth_vault = adapter_atproto::SecretVault::from_bytes(&root_key_bytes)?;
         let op_log = Arc::new(adapter_pg::PgPlcOperationLog::new(pool.clone()));
         let directory =

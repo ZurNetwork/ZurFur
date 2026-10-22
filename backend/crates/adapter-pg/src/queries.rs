@@ -2232,6 +2232,9 @@ pub mod key_store {
     }
 
     /// `queries/key_store/get.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// A row's sealed envelope, by DID: NULL until the row is re-wrapped. Never
+    /// reads the 0.1 ciphertext.
     pub async fn get(
         conn: impl sqlx::PgExecutor<'_>,
         did: &str,
@@ -2267,21 +2270,34 @@ pub mod key_store {
     }
 
     /// `queries/key_store/put.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Store a newly minted DID's sealed envelope. Writes no 0.1 ciphertext;
+    /// key_version keeps its default.
     pub async fn put(
         conn: impl sqlx::PgExecutor<'_>,
         did: &str,
-        wrapped_keys: Option<&[u8]>,
-        key_version: i32,
+        sealed_keys: Option<&[u8]>,
         created_at: chrono::DateTime<chrono::Utc>,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/key_store/put.sql"))
             .bind(did)
-            .bind(wrapped_keys)
-            .bind(key_version)
+            .bind(sealed_keys)
             .bind(created_at)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
+    }
+
+    /// `queries/key_store/sealed_column_exists.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Whether the custody table has its sealed-envelope column yet, so a read can
+    /// run on the schema before the custody envelope.
+    pub async fn sealed_column_exists(conn: impl sqlx::PgExecutor<'_>) -> sqlx::Result<bool> {
+        sqlx::query_scalar(include_str!(
+            "../queries/key_store/sealed_column_exists.sql"
+        ))
+        .fetch_one(conn)
+        .await
     }
 
     /// `queries/key_store/store_sealed.sql`, contract inferred from the SQL against the migrated schema.

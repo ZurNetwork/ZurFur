@@ -13,6 +13,10 @@ domain = { path = "../domain" }
 application = { path = "../application" }
 adapter-pg = { path = "../adapter-pg" }
 adapter-atproto = { path = "../adapter-atproto" }
+# The dev key custodian the custody root is derived into.
+adapter-hkdf = { path = "../adapter-hkdf" }
+# The custody root, wiped once the custodian has derived its keys.
+zeroize = { workspace = true }
 figment = { workspace = true }
 serde = { workspace = true }
 anyhow = { workspace = true }

@@ -77,7 +77,7 @@ async fn profile_app(config: Config) -> anyhow::Result<http_stack::Stacked> {
 
     // Migrations are the driver's explicit call, so one never runs by accident.
     let app_state: AppState = composition::Runtime::connect(config).await?;
-    adapter_pg::migrate(&app_state.pool).await?;
+    adapter_pg::migrate_fresh(&app_state.pool).await?;
     tracing::info!("migrations applied");
 
     let store = adapter_pg::PgSessionStore::new(app_state.pool.clone());
