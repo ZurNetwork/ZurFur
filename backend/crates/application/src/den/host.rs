@@ -314,8 +314,8 @@ impl Host for DenHost<'_> {
         let Some(folder) = self.folder(parent) else {
             return Ok(Vec::new());
         };
-        let nodes = self.children_at(&folder).await.map_err(host_error)?;
-        let found = nodes
+        let children = self.children_at(&folder).await.map_err(host_error)?;
+        let found = children
             .into_iter()
             .filter_map(|node| self.found(parent, &folder, node))
             .collect();

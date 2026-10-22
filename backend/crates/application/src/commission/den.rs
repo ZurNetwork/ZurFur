@@ -142,7 +142,7 @@ async fn attachments(
     only: Option<&Segment>,
 ) -> anyhow::Result<Vec<Node>> {
     let files = context.ports.commissions.files(&commission).await?;
-    let mut nodes = Vec::new();
+    let mut children = Vec::new();
     for file in files {
         let place = CommissionPlace::File(commission, file.id);
         if only.is_some_and(|key| names::id_segment(file.id).as_ref() != Some(key)) {
@@ -150,9 +150,9 @@ async fn attachments(
         }
         let stored = context.ports.files.filename(file.id).await?;
         let name = stored.map_or(names::Name::Fixed(names::UNNAMED), names::Name::Stored);
-        nodes.extend(entry(place, name));
+        children.extend(entry(place, name));
     }
-    Ok(nodes)
+    Ok(children)
 }
 
 /// The commission's slots, from its own slot list, each named by its title.
@@ -162,7 +162,7 @@ async fn slots(
     only: Option<&Segment>,
 ) -> anyhow::Result<Vec<Node>> {
     let slots = context.ports.commissions.slots(&commission).await?;
-    let nodes = slots
+    let children = slots
         .into_iter()
         .filter(|slot| {
             only.is_none_or(|key| names::id_segment(slot.element_id).as_ref() == Some(key))
@@ -172,7 +172,7 @@ async fn slots(
             entry(place, names::Name::Stored(slot.title))
         })
         .collect();
-    Ok(nodes)
+    Ok(children)
 }
 
 /// The commission at `/commission/<commission>`, for the session's viewer. Always reads the
@@ -197,7 +197,7 @@ pub(crate) async fn child(
     key: &Segment,
 ) -> anyhow::Result<Option<Node>> {
     let only = Some(key);
-    let nodes = match place {
+    let candidates = match place {
         CommissionPlace::Commission(commission) => fixed_entries(*commission),
         CommissionPlace::Attachments(commission) => attachments(context, *commission, only).await?,
         CommissionPlace::Slots(commission) => slots(context, *commission, only).await?,
@@ -208,7 +208,7 @@ pub(crate) async fn child(
         | CommissionPlace::Slot(..)
         | CommissionPlace::File(..) => Vec::new(),
     };
-    let found = nodes
+    let found = candidates
         .into_iter()
         .find(|node| node.place.key().as_ref() == Some(key));
     Ok(found)

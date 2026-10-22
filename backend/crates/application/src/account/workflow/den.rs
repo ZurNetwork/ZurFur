@@ -50,7 +50,7 @@ async fn workflows(
     only: Option<&Segment>,
 ) -> anyhow::Result<Vec<Node>> {
     let summaries = context.ports.workflows.list_for_account(account).await?;
-    let nodes = summaries
+    let children = summaries
         .into_iter()
         .filter(|summary| {
             only.is_none_or(|key| names::id_segment(summary.id).as_ref() == Some(key))
@@ -66,7 +66,7 @@ async fn workflows(
             Some(node)
         })
         .collect();
-    Ok(nodes)
+    Ok(children)
 }
 
 /// The Workflow at `key` in an Account's `workflows` folder, from that Account's own list.

@@ -255,6 +255,7 @@ dependencies = [
  "composition",
  "derive_more 2.1.1",
  "domain",
+ "proc-macro2",
  "proptest",
  "quote",
  "serde_json",

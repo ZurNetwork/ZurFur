@@ -208,7 +208,7 @@ async fn an_unknown_type_key_is_a_file() {
     let alice = alice();
     let host = DenHost::new(&ports, &alice, false);
 
-    let unknown = host.kind(&Type::from("commission.participants".to_owned()));
+    let unknown = host.kind(&Type::from("not a den type".to_owned()));
     let changelog = host.kind(&Type::from("commission.changelog".to_owned()));
     let user = host.kind(&Type::from("user".to_owned()));
 
