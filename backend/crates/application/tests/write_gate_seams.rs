@@ -7,6 +7,7 @@
 //! the den, in commission's acts (derived: every file implementing the gate's handler) or on
 //! the modules above them, every method of the commission write view taking kernel's write
 //! capability in place of the commission's id or named, and none with a default body, the
+//! named writes clippy holds exactly the ones `application`'s clippy settings ban, the
 //! commission field writes not yet gated, frozen, and the commission tables written only by
 //! the commission write view in each adapter, whatever port a write is called through: in
 //! PostgreSQL, every statement writing a commission table in the commission's query folder,
@@ -69,15 +70,17 @@ const API: &str = "api";
 /// The unit of work's commission repo and changelog: no driver but [`API`] calls either.
 const COMMISSION_REPOS: [&str; 2] = ["commissions", "changelog"];
 
-/// The commission repo's field writes the gate doesn't hold yet, by name. Each leaves when its
-/// method takes a write capability, until the list is empty.
-const FIELD_WRITES: [&str; 6] = [
+/// The commission repo's field writes the gate doesn't hold yet, by name, each call site in
+/// `application` frozen whether it has one today or not. Each leaves when its method takes a
+/// write capability, until the list is empty.
+const FIELD_WRITES: [&str; 7] = [
     "set_archived",
     "set_maturity",
     "set_direction_status",
     "set_deadline",
     "set_deadline_status",
     "declare_slots",
+    "set_linked_channel",
 ];
 
 /// The commission repo's writes counted only on a commission repo: their names are common.
@@ -3177,27 +3180,139 @@ fn the_ungated_field_writes_are_exactly_these() {
 
 // The interim guard: every method of the commission write view takes a capability or is named.
 
-/// The commission write view's hard delete: it takes no write capability, and clippy's ban on
-/// `CommissionWrites::delete` holds its one call. It leaves when its method takes one.
-const BANNED_WRITES: [&str; 1] = ["delete"];
-
-/// The commission write view's other methods that take no write capability yet: seats,
-/// elements, files, markups, the linked channel, view grants, and two reads on the write view.
-/// Each leaves when its method takes one.
-const OTHER_UNCAPPED: [&str; 12] = [
+/// The commission write view's methods that take no write capability and that clippy bans in
+/// `application`, exactly the ones its settings ban: the hard delete, the view grants and the
+/// seat writes. Clippy's ban holds each call; each leaves when its method takes a capability.
+const BANNED_WRITES: [&str; 6] = [
+    "delete",
+    "grant_view",
+    "revoke_view",
     "declare_seat",
     "create_seat_invitation",
     "revoke_seat_invitation",
-    "add_element",
-    "remove_element",
-    "add_file",
-    "add_markup",
-    "set_linked_channel",
-    "grant_view",
-    "revoke_view",
-    "commission_has_facts",
-    "lapsed_deadlines",
 ];
+
+/// The commission write view's other methods that take no write capability yet: elements,
+/// files and markups. Each leaves when its method takes one.
+const OTHER_UNCAPPED: [&str; 4] = ["add_element", "remove_element", "add_file", "add_markup"];
+
+/// The reads on the commission write view: they take no write capability, and never will.
+const WRITE_VIEW_READS: [&str; 2] = ["commission_has_facts", "lapsed_deadlines"];
+
+/// The use-case layer's clippy settings.
+fn clippy_settings() -> PathBuf {
+    crates().join("application/clippy.toml")
+}
+
+/// Every quoted string in `settings`, a TOML text, in either quote, past its comments.
+fn quoted_strings(settings: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut chars = settings.chars();
+    while let Some(character) = chars.next() {
+        match character {
+            '#' => {
+                chars.by_ref().find(|next| *next == '\n');
+            }
+            '"' | '\'' => {
+                let mut text = String::new();
+                while let Some(next) = chars.next() {
+                    if next == character {
+                        break;
+                    }
+                    if next == '\\' && character == '"' {
+                        chars.next();
+                        continue;
+                    }
+                    text.push(next);
+                }
+                out.push(text);
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Whether `text` is a path and nothing else: identifiers joined by `::`.
+fn is_path(text: &str) -> bool {
+    text.split("::").all(|segment| {
+        !segment.is_empty()
+            && segment
+                .chars()
+                .all(|character| character == '_' || character.is_ascii_alphanumeric())
+    })
+}
+
+/// What breaks the tie between `settings`, a clippy.toml's text, and `listed`: a listed name
+/// it doesn't ban, a write-view method it bans that isn't listed, and a ban by any path but
+/// `domain::ports::CommissionWrites::<name>`.
+fn clippy_tie_findings(settings: &str, listed: &[&str]) -> Vec<String> {
+    let banned: Vec<(String, String)> = quoted_strings(settings)
+        .into_iter()
+        .filter(|text| is_path(text))
+        .filter_map(|path| {
+            let mut segments = path.rsplit("::");
+            let name = segments.next()?.to_owned();
+            let on_the_view = segments.next() == Some(COMMISSION_WRITES);
+            on_the_view.then_some((path, name))
+        })
+        .collect();
+    let banned_names: BTreeSet<&str> = banned.iter().map(|(_, name)| name.as_str()).collect();
+    let listed_names: BTreeSet<&str> = listed.iter().copied().collect();
+    let unbanned = listed_names.difference(&banned_names).map(|name| {
+        format!("{COMMISSION_WRITES}::{name} is on the banned list, but clippy.toml doesn't ban it")
+    });
+    let unlisted = banned_names.difference(&listed_names).map(|name| {
+        format!("clippy.toml bans {COMMISSION_WRITES}::{name}, which isn't on the banned list")
+    });
+    let misplaced = banned.iter().filter_map(|(path, name)| {
+        let home = format!("domain::ports::{COMMISSION_WRITES}::{name}");
+        (*path != home).then(|| format!("clippy.toml bans `{path}`, not `{home}`"))
+    });
+    unbanned.chain(unlisted).chain(misplaced).collect()
+}
+
+#[test]
+fn clippy_bans_exactly_the_banned_writes() {
+    let settings =
+        std::fs::read_to_string(clippy_settings()).expect("application's clippy.toml is readable");
+
+    let findings = clippy_tie_findings(&settings, &BANNED_WRITES);
+
+    assert_eq!(findings, Vec::<String>::new());
+    let grant_line = settings
+        .lines()
+        .find(|line| line.contains("CommissionWrites::grant_view\""))
+        .expect("clippy.toml bans grant_view on its own line");
+    let unbanned_grant =
+        "CommissionWrites::grant_view is on the banned list, but clippy.toml doesn't ban it";
+    let unlisted_file =
+        "clippy.toml bans CommissionWrites::add_file, which isn't on the banned list";
+    let file_ban = "{ path = \"domain::ports::CommissionWrites::add_file\", reason = \"later\" },";
+    let closing = settings.rfind(']').expect("clippy.toml's list closes");
+    let with_ban = |ban: &str| format!("{}{ban}\n{}", &settings[..closing], &settings[closing..]);
+    let elsewhere = grant_line.replacen("domain::ports", "workflow::ports", 1);
+    let misplaced_grant = "clippy.toml bans `workflow::ports::CommissionWrites::grant_view`, not `domain::ports::CommissionWrites::grant_view`";
+    let commented_out = settings.replacen(grant_line, &format!("# {grant_line}"), 1);
+    let planted = [
+        (settings.replacen(grant_line, "", 1), unbanned_grant),
+        (commented_out, unbanned_grant),
+        (with_ban(file_ban), unlisted_file),
+        (
+            with_ban("'domain::ports::CommissionWrites::add_file',"),
+            unlisted_file,
+        ),
+        (
+            settings.replacen(grant_line, &elsewhere, 1),
+            misplaced_grant,
+        ),
+    ];
+    for (planted_settings, expected) in planted {
+        let planted_findings = clippy_tie_findings(&planted_settings, &BANNED_WRITES);
+
+        assert_eq!(planted_findings, [expected], "{planted_settings}");
+    }
+}
 
 /// The write view of a commission unit.
 const COMMISSION_WRITES: &str = "CommissionWrites";
@@ -3222,12 +3337,13 @@ fn commission_port_file() -> PathBuf {
     crates().join("workflow/src/ports/commission.rs")
 }
 
-/// Every name the three lists of uncapped methods hold.
+/// Every name the four lists of uncapped methods hold.
 fn listed_uncapped() -> BTreeSet<String> {
     FIELD_WRITES
         .into_iter()
         .chain(BANNED_WRITES)
         .chain(OTHER_UNCAPPED)
+        .chain(WRITE_VIEW_READS)
         .map(str::to_owned)
         .collect()
 }
@@ -3705,7 +3821,8 @@ fn every_commission_write_takes_a_capability_or_is_named() {
         );
     }
     assert_eq!(default_body_findings(writes[0]), Vec::<String>::new());
-    let list_lengths = FIELD_WRITES.len() + BANNED_WRITES.len() + OTHER_UNCAPPED.len();
+    let list_lengths =
+        FIELD_WRITES.len() + BANNED_WRITES.len() + OTHER_UNCAPPED.len() + WRITE_VIEW_READS.len();
     assert_eq!(listed.len(), list_lengths, "no name sits on two lists");
 }
 

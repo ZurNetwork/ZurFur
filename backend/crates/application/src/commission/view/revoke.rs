@@ -65,6 +65,10 @@ impl View<'_> {
         // Keyed on a real revocation: revoking a grant nobody holds records
         // nothing.
         let mut commissions = uow.commissions();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the ungated view-revoke site, held until its slice routes it through the den's write gate"
+        )]
         let revoked = commissions
             .revoke_view(&commission.id, &target_user.id)
             .await?;

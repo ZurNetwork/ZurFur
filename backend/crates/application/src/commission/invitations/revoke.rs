@@ -62,6 +62,10 @@ impl Invitations<'_> {
             .revoke(now)
             .map_err(|_| CommissionError::InvalidStateRequested)?;
         let uow = uow.open().await?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the ungated seat-invitation revoke site, held until its slice routes it through the den's write gate"
+        )]
         uow.commissions()
             .revoke_seat_invitation(&invitation.id)
             .await?;

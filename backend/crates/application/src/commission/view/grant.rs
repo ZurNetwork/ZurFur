@@ -66,6 +66,10 @@ impl View<'_> {
             now,
         );
 
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the ungated view-grant site, held until its slice routes it through the den's write gate"
+        )]
         uow.commissions()
             .grant_view(&commission.id, &target_user.id, level)
             .await?;
