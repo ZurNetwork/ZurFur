@@ -120,7 +120,7 @@
     },
     {
       "name": "src/ports/",
-      "role": "node.rs = NodeStore (pool reads: at_top by type, child, children bytewise), NodeReads (the same on a unit), NodeWrites (create, set_name -> bool, delete -> bool; a refusal ends the unit), NodeRepo; errors.rs = SegmentTaken; capability.rs = WriteCapability<T, R> (private thing and PhantomData role; no Clone, Copy, Default, From or serde; a hand-written Debug that prints nothing of the thing; its surface is exactly gate_issued, banned by path in application, api and test-support, and thing()), New<T> (a thing not yet made: From and AsRef, no Default) and the marker Creator; R carries no bound, the role table lives with the gate; capability/tests.rs",
+      "role": "node.rs = NodeStore (pool reads: at_top by type, child, children bytewise), NodeReads (the same on a unit), NodeWrites (create, set_name -> bool, delete -> bool; a refusal ends the unit), NodeRepo; errors.rs = SegmentTaken; capability.rs = WriteCapability<T, R> (defined once, in capability.rs: no other production source in the workspace binds the name; a gated port method takes it in place of its id; private thing and PhantomData role; no Clone, Copy, Default, From or serde; a hand-written Debug that prints nothing of the thing; its surface is exactly gate_issued, banned by path in application, api and test-support, and thing()), New<T> (a thing not yet made: From and AsRef, no Default) and the marker Creator; R carries no bound, the role table lives with the gate; capability/tests.rs",
       "node": false
     },
     {

@@ -1,11 +1,12 @@
 //! The den's write gate is the only way to write a commission's node or fields. These scans
-//! hold its seams: the write capability's surface, its one issuer across the workspace and the
-//! issuer's callers in the den, the lent view's surface and its latch, nothing else in the gate
-//! file reaching the lent view's fields, no compiled source the scans can't read, the write
-//! host and the gate named once each, the write use case kept inside the crate, nothing of it
-//! (and no raw SQL or in-memory seeder) in a driver, no lint silencer in the den, in
-//! commission's acts (derived: every file implementing the gate's handler) or on the modules
-//! above them, every method of the commission write view taking a capability or named, the
+//! hold its seams: the write capability's surface, its one definition and its one issuer across
+//! the workspace and the issuer's callers in the den, the lent view's surface and its latch,
+//! nothing else in the gate file reaching the lent view's fields, no compiled source the scans
+//! can't read, the write host and the gate named once each, the write use case kept inside the
+//! crate, nothing of it (and no raw SQL or in-memory seeder) in a driver, no lint silencer in
+//! the den, in commission's acts (derived: every file implementing the gate's handler) or on
+//! the modules above them, every method of the commission write view taking kernel's write
+//! capability in place of the commission's id or named, and none with a default body, the
 //! commission field writes not yet gated, frozen, and the commission tables written only by
 //! the commission write view in each adapter, whatever port a write is called through: in
 //! PostgreSQL, every statement writing a commission table in the commission's query folder,
@@ -19,6 +20,7 @@ mod seams;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 
 use proc_macro2::{Delimiter, Spacing, TokenStream, TokenTree};
@@ -28,7 +30,7 @@ use seams::{
     item_name, members_of, metadata, under_cfg_test, walk, with_aliases, workspace_production,
     workspace_sources,
 };
-use syn::{ImplItem, Item, TraitItem, Type, Visibility, ext::IdentExt};
+use syn::{ImplItem, Item, TraitItem, Type, UseTree, Visibility, ext::IdentExt};
 
 /// The write capability's one constructor, named only at its definition and in [`ISSUE`].
 const GATE_ISSUED: &str = "gate_issued";
@@ -547,6 +549,275 @@ fn the_capability_s_surface_is_gate_issued_and_thing() {
         let findings = capability_surface_findings(&file);
 
         assert!(!findings.is_empty(), "{to}");
+    }
+}
+
+// One definition, workspace-wide.
+
+/// The keywords whose next name an item binds: a type, a trait, a module, a function, a
+/// static, a macro, a crate, or a rename (`use … as`, `extern crate … as`).
+const BINDERS: [&str; 11] = [
+    "struct", "enum", "union", "type", "trait", "mod", "fn", "static", "macro", "crate", "as",
+];
+
+/// The item keywords whose name a generic parameter list follows.
+const GENERIC_HOLDERS: [&str; 6] = ["fn", "struct", "enum", "union", "trait", "type"];
+
+/// The expression keywords a negation's `!(…)` may follow, which no macro call does.
+const NEGATED_AFTER: [&str; 6] = ["if", "while", "return", "match", "in", "break"];
+
+/// Whether the `>` at `at` closes angle brackets: an arrow's (`->`, `=>`) does not.
+fn closes_angle_at(level: &[TokenTree], at: usize) -> bool {
+    let arrow = at.checked_sub(1).is_some_and(|previous| {
+        matches!(
+            level.get(previous),
+            Some(TokenTree::Punct(punct))
+                if matches!(punct.as_char(), '-' | '=') && punct.spacing() == Spacing::Joint
+        )
+    });
+    punct_at(level, at, '>') && !arrow
+}
+
+/// Whether the `<` at `at` opens a generic parameter list: after `impl` or `for`, or after the
+/// name a `fn`, `struct`, `enum`, `union`, `trait` or `type` gives.
+fn opens_generic_parameters(level: &[TokenTree], at: usize) -> bool {
+    let before = at
+        .checked_sub(1)
+        .and_then(|previous| ident_at(level, previous));
+    let keyword = at
+        .checked_sub(2)
+        .and_then(|previous| ident_at(level, previous));
+    let directly = matches!(before.as_deref(), Some("impl" | "for"));
+    let after_a_name =
+        before.is_some() && keyword.is_some_and(|keyword| GENERIC_HOLDERS.contains(&&*keyword));
+    punct_at(level, at, '<') && (directly || after_a_name)
+}
+
+/// The index of each generic parameter's name `level` declares, a const parameter's included.
+fn generic_parameter_names(level: &[TokenTree]) -> BTreeSet<usize> {
+    let mut out = BTreeSet::new();
+    for open in (0..level.len()).filter(|at| opens_generic_parameters(level, *at)) {
+        let mut depth = 0usize;
+        let mut starts = false;
+        for at in open..level.len() {
+            if punct_at(level, at, '<') {
+                depth += 1;
+                starts = depth == 1;
+            } else if closes_angle_at(level, at) {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    break;
+                }
+            } else if depth == 1 && punct_at(level, at, ',') {
+                starts = true;
+            } else if depth == 1 && starts {
+                let name = ident_at(level, at);
+                let is_const = name.as_deref() == Some("const");
+                if name.is_some() && !is_const {
+                    out.insert(at);
+                }
+                starts = is_const;
+            }
+        }
+    }
+    out
+}
+
+/// What binds the name at `at`, if anything does: the keyword before it (`const` too, but not
+/// a raw pointer's), `macro_rules!`, or the generic parameter list it sits in.
+fn binder_at(level: &[TokenTree], at: usize, generic: &BTreeSet<usize>) -> Option<String> {
+    let before = at
+        .checked_sub(1)
+        .and_then(|previous| ident_at(level, previous));
+    let two_before = at
+        .checked_sub(2)
+        .and_then(|previous| ident_at(level, previous));
+    if let Some(keyword) = &before
+        && BINDERS.contains(&keyword.as_str())
+    {
+        return Some(format!("`{keyword}`"));
+    }
+    let pointer = at
+        .checked_sub(2)
+        .is_some_and(|previous| punct_at(level, previous, '*'))
+        || two_before.as_deref() == Some("raw");
+    if before.as_deref() == Some("const") && !pointer {
+        return Some("`const`".to_owned());
+    }
+    let bang = at
+        .checked_sub(1)
+        .is_some_and(|previous| punct_at(level, previous, '!'));
+    if bang && two_before.as_deref() == Some("macro_rules") {
+        return Some("`macro_rules!`".to_owned());
+    }
+    generic
+        .contains(&at)
+        .then(|| "a generic parameter list".to_owned())
+}
+
+/// Whether the group at `at` is a macro call's input (`name!(…)`, `name![…]`, `name! {…}`) or
+/// an attribute's (`#[…]`, `#![…]`).
+fn macro_input_at(level: &[TokenTree], at: usize) -> bool {
+    let Some(before) = at.checked_sub(1) else {
+        return false;
+    };
+    let caller = before
+        .checked_sub(1)
+        .and_then(|previous| ident_at(level, previous));
+    let called = punct_at(level, before, '!')
+        && caller.is_some_and(|caller| !NEGATED_AFTER.contains(&caller.as_str()));
+    let attribute = punct_at(level, before, '#')
+        || (punct_at(level, before, '!')
+            && before
+                .checked_sub(1)
+                .is_some_and(|previous| punct_at(level, previous, '#')));
+    matches!(level.get(at), Some(TokenTree::Group(_))) && (called || attribute)
+}
+
+/// One binding a scan found: what binds it, and the name.
+type Binding = (String, String);
+
+/// Each binding of one of `names` in `tokens`, at any depth, function and macro bodies included.
+/// A name inside a macro call's or an attribute's input counts as bound: the macro may bind it.
+fn bindings(tokens: TokenStream, names: &BTreeSet<String>) -> Vec<Binding> {
+    let mut out = Vec::new();
+    bindings_in(tokens, names, false, &mut out);
+    out
+}
+
+fn bindings_in(
+    tokens: TokenStream,
+    names: &BTreeSet<String>,
+    in_macro: bool,
+    out: &mut Vec<Binding>,
+) {
+    let level: Vec<TokenTree> = tokens.into_iter().collect();
+    let generic = generic_parameter_names(&level);
+    for (at, tree) in level.iter().enumerate() {
+        match tree {
+            TokenTree::Group(group) => {
+                let inside = in_macro || macro_input_at(&level, at);
+                bindings_in(group.stream(), names, inside, out);
+            }
+            TokenTree::Ident(ident) => {
+                let name = ident.unraw().to_string();
+                if !names.contains(&name) {
+                    continue;
+                }
+                let binder = binder_at(&level, at, &generic)
+                    .or_else(|| in_macro.then(|| "a macro's or an attribute's input".to_owned()));
+                if let Some(binder) = binder {
+                    out.push((binder, name));
+                }
+            }
+            TokenTree::Punct(_) | TokenTree::Literal(_) => {}
+        }
+    }
+}
+
+/// Each binding of [`WRITE_CAPABILITY`] in `source`, the file at `path`, past the one `struct`
+/// the capability file defines. A `use` that doesn't rename binds no new item.
+fn capability_definition_findings(path: &Path, source: &str) -> Vec<String> {
+    let file = syn::parse_file(source).expect("the source parses");
+    let names = BTreeSet::from([WRITE_CAPABILITY.to_owned()]);
+    let mut found = bindings(file.to_token_stream(), &names);
+    if path == capability_file()
+        && let Some(definition) = found.iter().position(|(binder, _)| binder == "`struct`")
+    {
+        found.remove(definition);
+    }
+    let shown = relative(path, &crates());
+    found
+        .into_iter()
+        .map(|(binder, name)| format!("{shown}: `{name}` bound by {binder}"))
+        .collect()
+}
+
+#[test]
+fn the_write_capability_is_defined_once_workspace_wide() {
+    let everywhere = workspace_production();
+
+    let offenders: Vec<String> = everywhere
+        .iter()
+        .flat_map(|path| {
+            let source = std::fs::read_to_string(path).expect("a readable source");
+            capability_definition_findings(path, &source)
+        })
+        .collect();
+
+    assert_eq!(offenders, Vec::<String>::new());
+    assert!(
+        everywhere.contains(&capability_file()),
+        "the scan reads kernel's capability"
+    );
+    let names = BTreeSet::from([WRITE_CAPABILITY.to_owned()]);
+    let defined = bindings(parse(&capability_file()).to_token_stream(), &names);
+    let one_struct = vec![("`struct`".to_owned(), WRITE_CAPABILITY.to_owned())];
+    assert_eq!(defined, one_struct, "capability.rs defines it once");
+    let fact = crates().join("workflow/src/elements/commission/fact.rs");
+    let fact_source = std::fs::read_to_string(&fact).expect("fact.rs reads");
+    let look_alike = format!(
+        "{fact_source}\npub struct WriteCapability<T, R>(pub T, pub core::marker::PhantomData<R>);\n"
+    );
+    let planted = capability_definition_findings(&fact, &look_alike);
+    assert_eq!(
+        planted,
+        ["workflow/src/elements/commission/fact.rs: `WriteCapability` bound by `struct`"]
+    );
+    let capability_source =
+        std::fs::read_to_string(capability_file()).expect("capability.rs reads");
+    let second_in_kernel =
+        format!("{capability_source}\nmod more {{ pub struct WriteCapability; }}\n");
+    let elsewhere = crates().join("workflow/src/elements/commission/capability.rs");
+    let refused = [
+        "pub enum WriteCapability {}",
+        "pub union WriteCapability { thing: u8 }",
+        "pub type WriteCapability<T, R> = (T, R);",
+        "pub trait WriteCapability {}",
+        "pub mod WriteCapability {}",
+        "use kernel::ports::Creator as WriteCapability;",
+        "pub use kernel::ports::{Creator, New as WriteCapability};",
+        "extern crate kernel as WriteCapability;",
+        "trait Gate { type WriteCapability; }",
+        "impl Gate for Den { type WriteCapability = u8; }",
+        "fn forge<WriteCapability>(thing: WriteCapability) {}",
+        "impl<F: Fn() -> u8, WriteCapability> Holder for F {}",
+        "struct Holder<const WriteCapability: usize>;",
+        "pub const WriteCapability: u8 = 0;",
+        "pub static WriteCapability: u8 = 0;",
+        "pub fn WriteCapability() {}",
+        "fn lend() { struct WriteCapability<T, R>(pub T, pub PhantomData<R>); }",
+        "mod inner { mod deeper { pub struct r#WriteCapability; } }",
+        "macro_rules! forge { () => { pub struct WriteCapability<T, R>(pub T, pub PhantomData<R>); }; }",
+        "macro_rules! named { ($name:ident) => { pub struct $name; }; }\nnamed!(WriteCapability);",
+        "macro_rules! WriteCapability { () => {}; }",
+        "#[make_type(WriteCapability)]\nfn lend() {}",
+    ];
+    let mut planted_files: Vec<(PathBuf, String)> = refused
+        .into_iter()
+        .map(|source| (elsewhere.clone(), source.to_owned()))
+        .collect();
+    planted_files.push((capability_file(), second_in_kernel));
+    for (path, source) in planted_files {
+        let found = capability_definition_findings(&path, &source);
+
+        assert!(!found.is_empty(), "{}: {source}", path.display());
+    }
+    let kept = [
+        "pub use kernel::ports::WriteCapability;",
+        "use kernel::{ports::{Creator, New, WriteCapability}};",
+        "pub use kernel::ports::*;",
+        "fn take(capability: &WriteCapability<CommissionId, AsOwner>) -> Vec<WriteCapability<u8, Creator>> { todo!() }",
+        "impl<T, R, F: Fn() -> WriteCapability<T, R>> Holder<T, R> for Vec<WriteCapability<T, R>> where T: Fn(u8) -> WriteCapability<T, R> {}",
+        "struct Holder<T = WriteCapability<u8, Creator>>(T);",
+        "type Lent<'a> = &'a WriteCapability<u8, Creator>;",
+        "fn raw(capability: *const WriteCapability<u8, Creator>) {}",
+        "fn check(capability: &WriteCapability<u8, Creator>) -> bool { if !(WriteCapability::thing(capability) == &0) { return false; } true }",
+    ];
+    for source in kept {
+        let found = capability_definition_findings(&elsewhere, source);
+
+        assert_eq!(found, Vec::<String>::new(), "{source}");
     }
 }
 
@@ -2972,24 +3243,247 @@ fn traits_named<'a>(file: &'a syn::File, name: &str) -> Vec<&'a syn::ItemTrait> 
         .collect()
 }
 
-/// Whether `ty` is a reference to a path whose last name is [`WRITE_CAPABILITY`]: an alias, a
-/// generic and a capability by value are not.
-fn is_capability_reference(ty: &Type) -> bool {
-    let Type::Reference(reference) = ty else {
-        return false;
-    };
-    let Type::Path(path) = reference.elem.as_ref() else {
-        return false;
-    };
-    let last = path.path.segments.last();
-    path.qself.is_none() && last.is_some_and(|segment| segment.ident == WRITE_CAPABILITY)
+/// The commission's id.
+const COMMISSION_ID: &str = "CommissionId";
+
+/// A thing not yet made, the thing a create's capability is over.
+const NEW: &str = "New";
+
+/// The role of whoever makes a new thing.
+const CREATOR: &str = "Creator";
+
+/// The role of a write only the commission's Owner may make.
+const AS_OWNER: &str = "AsOwner";
+
+/// The role of a write any Participant of the commission may make.
+const AS_PARTICIPANT: &str = "AsParticipant";
+
+/// Each name a capped method's capability is spelled with, and the module the port file must
+/// import it from.
+const CAPABILITY_HOMES: [(&str, &str); 6] = [
+    (WRITE_CAPABILITY, "kernel::ports"),
+    (NEW, "kernel::ports"),
+    (CREATOR, "kernel::ports"),
+    (COMMISSION_ID, "crate::elements::commission"),
+    (AS_OWNER, "crate::elements::commission"),
+    (AS_PARTICIPANT, "crate::elements::commission"),
+];
+
+/// Each role a capped method's capability may name, with the thing it must be over: a write on
+/// a commission is over its id, a create over a new one.
+const BOUND_ROLES: [(&str, &str); 3] = [
+    (AS_OWNER, "CommissionId"),
+    (AS_PARTICIPANT, "CommissionId"),
+    (CREATOR, "New<CommissionId>"),
+];
+
+/// What a parameter beside the capability may not name, since each could stand for an id: an
+/// opaque type, a qualified-self path, or `Self`.
+const OPAQUE: [&str; 4] = ["impl", "dyn", "as", "Self"];
+
+/// Each name the `use` items in `file` bind without a rename, at any depth, with the path it
+/// comes from: `use a::{b::C}` binds `C` from `a::b`, and `use a::b::{self}` binds `b` from `a`.
+fn imports(file: &syn::File) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for item in every_item(&file.items) {
+        if let Item::Use(item_use) = item {
+            let root = if item_use.leading_colon.is_some() {
+                vec![String::new()]
+            } else {
+                Vec::new()
+            };
+            imported(&item_use.tree, root, &mut out);
+        }
+    }
+    out
 }
 
-/// Whether one of `signature`'s parameters is a write capability by reference.
-fn takes_a_capability(signature: &syn::Signature) -> bool {
-    signature.inputs.iter().any(
-        |input| matches!(input, syn::FnArg::Typed(typed) if is_capability_reference(&typed.ty)),
-    )
+fn imported(tree: &UseTree, path: Vec<String>, out: &mut Vec<(String, String)>) {
+    match tree {
+        UseTree::Path(step) => {
+            let mut longer = path;
+            longer.push(unraw(&step.ident));
+            imported(&step.tree, longer, out);
+        }
+        UseTree::Name(name) if name.ident == "self" => {
+            if let Some((last, from)) = path.split_last() {
+                out.push((last.clone(), from.join("::")));
+            }
+        }
+        UseTree::Name(name) => out.push((unraw(&name.ident), path.join("::"))),
+        UseTree::Group(group) => {
+            for item in &group.items {
+                imported(item, path.clone(), out);
+            }
+        }
+        UseTree::Rename(_) | UseTree::Glob(_) => {}
+    }
+}
+
+/// The capability's names `file` holds to their homes, each bound once, by a `use` of its home,
+/// and by nothing else; and a finding for every other binding of one. A name the file never
+/// binds is not held, and is no finding.
+fn held_names(file: &syn::File) -> (BTreeSet<String>, Vec<String>) {
+    let names: BTreeSet<String> = CAPABILITY_HOMES
+        .iter()
+        .map(|(name, _)| (*name).to_owned())
+        .collect();
+    let bound = bindings(file.to_token_stream(), &names);
+    let imported = imports(file);
+    let mut held = BTreeSet::new();
+    let mut findings = Vec::new();
+    for (name, home) in CAPABILITY_HOMES {
+        let binders: Vec<&String> = bound
+            .iter()
+            .filter(|(_, bound_name)| bound_name == name)
+            .map(|(binder, _)| binder)
+            .collect();
+        let from: Vec<&str> = imported
+            .iter()
+            .filter(|(imported_name, _)| imported_name == name)
+            .map(|(_, path)| path.as_str())
+            .collect();
+        findings.extend(
+            binders
+                .iter()
+                .map(|binder| format!("the port file binds `{name}` by {binder}")),
+        );
+        if from.len() > 1 || from.iter().any(|path| *path != home) {
+            findings.push(format!(
+                "the port file imports `{name}` from {from:?}, not once from `{home}`"
+            ));
+        }
+        if binders.is_empty() && from == [home] {
+            held.insert(name.to_owned());
+        }
+    }
+    (held, findings)
+}
+
+/// The names that stand for a commission's id in `file`: [`COMMISSION_ID`] and every alias of
+/// it the workspace or `file` makes.
+fn commission_id_names(file: &syn::File) -> BTreeSet<String> {
+    static WORKSPACE: OnceLock<BTreeSet<String>> = OnceLock::new();
+    let workspace = WORKSPACE.get_or_init(|| with_aliases(&[COMMISSION_ID], &workspace_sources()));
+    let seeds: Vec<&str> = workspace.iter().map(String::as_str).collect();
+    aliases_in_file(&seeds, file)
+}
+
+/// The name and arguments of `ty` when it is a path of one segment, with no leading `::` and
+/// no qualified self.
+fn one_segment(ty: &Type) -> Option<(String, &syn::PathArguments)> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    let segments = &path.path.segments;
+    let plain = path.qself.is_none() && path.path.leading_colon.is_none() && segments.len() == 1;
+    let segment = segments.first().filter(|_| plain)?;
+    Some((unraw(&segment.ident), &segment.arguments))
+}
+
+/// The one bare name `ty` is: a one-segment path with no arguments.
+fn bare_name(ty: &Type) -> Option<String> {
+    let (name, arguments) = one_segment(ty)?;
+    arguments.is_none().then_some(name)
+}
+
+/// `ty` as a capability's thing is written: a bare name, or a bare name over one bare name
+/// (`New<CommissionId>`).
+fn thing_shape(ty: &Type) -> Option<String> {
+    let (name, arguments) = one_segment(ty)?;
+    let syn::PathArguments::AngleBracketed(angled) = arguments else {
+        return arguments.is_none().then_some(name);
+    };
+    let inner: Vec<&syn::GenericArgument> = angled.args.iter().collect();
+    let [syn::GenericArgument::Type(inner)] = inner.as_slice() else {
+        return None;
+    };
+    let inner = bare_name(inner)?;
+    Some(format!("{name}<{inner}>"))
+}
+
+/// The thing and the role of `ty` when it is `&WriteCapability<Thing, Role>`: a shared
+/// reference to a one-segment path with two type arguments, its role a bare name.
+fn capability_arguments(ty: &Type) -> Option<(String, String)> {
+    let Type::Reference(reference) = ty else {
+        return None;
+    };
+    let (name, arguments) = one_segment(&reference.elem)?;
+    let syn::PathArguments::AngleBracketed(angled) = arguments else {
+        return None;
+    };
+    let shared = reference.mutability.is_none() && name == WRITE_CAPABILITY;
+    let types: Vec<&Type> = angled
+        .args
+        .iter()
+        .map(|argument| match argument {
+            syn::GenericArgument::Type(ty) => Some(ty),
+            _ => None,
+        })
+        .collect::<Option<_>>()?;
+    let [thing, role] = types.as_slice() else {
+        return None;
+    };
+    let thing = thing_shape(thing).filter(|_| shared)?;
+    Some((thing, bare_name(role)?))
+}
+
+/// Whether `role` is a concrete role and `thing` the one it is bound to, with the capability's
+/// name and every name they spell held to its home.
+fn bound_to(thing: &str, role: &str, held: &BTreeSet<String>) -> bool {
+    let paired = BOUND_ROLES
+        .iter()
+        .any(|(bound_role, bound_thing)| *bound_role == role && *bound_thing == thing);
+    let thing_names = thing.split(['<', '>']).filter(|part| !part.is_empty());
+    let mut spelled = [WRITE_CAPABILITY, role].into_iter().chain(thing_names);
+    paired && spelled.all(|name| held.contains(name))
+}
+
+/// Whether `ty`, a parameter beside the capability, can't carry a commission's id: it names
+/// none of `ids`, nothing [`OPAQUE`], and no macro.
+fn carries_no_id(ty: &Type, ids: &BTreeSet<String>) -> bool {
+    let tokens = ty.to_token_stream();
+    let named = identifiers(tokens.clone())
+        .iter()
+        .any(|ident| ids.contains(ident) || OPAQUE.contains(&ident.as_str()));
+    let macro_call = levels(tokens)
+        .iter()
+        .flatten()
+        .any(|tree| matches!(tree, TokenTree::Punct(punct) if punct.as_char() == '!'));
+    !named && !macro_call
+}
+
+/// Whether `signature` is capped: exactly one parameter names [`WRITE_CAPABILITY`], and it is
+/// `&WriteCapability<Thing, Role>`, its role concrete and its thing the role's, held to their
+/// homes; no other parameter could carry a commission's id (`ids`), so the capability stands in
+/// place of the id; and the method has no generics but lifetimes and no where clause.
+fn is_capped(signature: &syn::Signature, held: &BTreeSet<String>, ids: &BTreeSet<String>) -> bool {
+    let generics = &signature.generics;
+    let generic = generics.where_clause.is_some()
+        || generics
+            .params
+            .iter()
+            .any(|param| !matches!(param, syn::GenericParam::Lifetime(_)));
+    let typed: Vec<&Type> = signature
+        .inputs
+        .iter()
+        .filter_map(|input| match input {
+            syn::FnArg::Typed(typed) => Some(typed.ty.as_ref()),
+            syn::FnArg::Receiver(_) => None,
+        })
+        .collect();
+    let (capabilities, others): (Vec<&Type>, Vec<&Type>) = typed.into_iter().partition(|ty| {
+        identifiers(ty.to_token_stream())
+            .iter()
+            .any(|ident| ident == WRITE_CAPABILITY)
+    });
+    let [capability] = capabilities.as_slice() else {
+        return false;
+    };
+    let bound =
+        capability_arguments(capability).is_some_and(|(thing, role)| bound_to(&thing, &role, held));
+    let free = others.iter().all(|ty| carries_no_id(ty, ids));
+    !generic && bound && free
 }
 
 /// The name a finding gives a trait item: a method's name, an associated item's kind and name,
@@ -3003,19 +3497,20 @@ fn trait_item_name(item: &TraitItem) -> String {
     }
 }
 
-/// A trait's items sorted by authority: each method with a write capability by reference, and
-/// everything else, an item that isn't a method included.
+/// A trait's items sorted by authority: each capped method (see [`is_capped`]), and everything
+/// else, an item that isn't a method included.
 #[derive(Debug, Default)]
 struct Authority {
     capped: BTreeSet<String>,
     uncapped: BTreeSet<String>,
 }
 
-/// `tr`'s items, sorted by authority.
-fn authority(tr: &syn::ItemTrait) -> Authority {
+/// `tr`'s items, sorted by authority, with `held` the capability's names its file holds to
+/// their homes and `ids` the names that stand for a commission's id there.
+fn authority(tr: &syn::ItemTrait, held: &BTreeSet<String>, ids: &BTreeSet<String>) -> Authority {
     let mut sorted = Authority::default();
     for item in &tr.items {
-        let capped = matches!(item, TraitItem::Fn(method) if takes_a_capability(&method.sig));
+        let capped = matches!(item, TraitItem::Fn(method) if is_capped(&method.sig, held, ids));
         let name = trait_item_name(item);
         if capped {
             sorted.capped.insert(name);
@@ -3026,8 +3521,29 @@ fn authority(tr: &syn::ItemTrait) -> Authority {
     sorted
 }
 
-/// The port scan's findings in `file`: anything but one [`COMMISSION_WRITES`], each of its
-/// uncapped items `listed` lacks, and each name in `listed` that isn't an uncapped item.
+/// The items of `tr`, a trait in `file`, sorted by authority.
+fn file_authority(file: &syn::File, tr: &syn::ItemTrait) -> Authority {
+    let (held, _) = held_names(file);
+    authority(tr, &held, &commission_id_names(file))
+}
+
+/// Each method of `tr` with a default body: a body could reach any write on any id.
+fn default_body_findings(tr: &syn::ItemTrait) -> Vec<String> {
+    tr.items
+        .iter()
+        .filter_map(|item| match item {
+            TraitItem::Fn(method) if method.default.is_some() => Some(format!(
+                "{COMMISSION_WRITES}::{} has a default body",
+                unraw(&method.sig.ident)
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The port scan's findings in `file`: anything but one [`COMMISSION_WRITES`], each binding of
+/// the capability's names other than the one `use` of each's home, each uncapped item `listed`
+/// lacks, each name in `listed` that isn't an uncapped item, and each default body.
 fn port_findings(file: &syn::File, listed: &BTreeSet<String>) -> Vec<String> {
     let found = traits_named(file, COMMISSION_WRITES);
     let [writes] = found.as_slice() else {
@@ -3036,7 +3552,8 @@ fn port_findings(file: &syn::File, listed: &BTreeSet<String>) -> Vec<String> {
             "{count} `trait {COMMISSION_WRITES}` found, not one"
         )];
     };
-    let sorted = authority(writes);
+    let (held, homes) = held_names(file);
+    let sorted = authority(writes, &held, &commission_id_names(file));
     let unlisted = sorted.uncapped.difference(listed).map(|name| {
         format!("{COMMISSION_WRITES}::{name} takes no write capability and is on no list")
     });
@@ -3047,7 +3564,13 @@ fn port_findings(file: &syn::File, listed: &BTreeSet<String>) -> Vec<String> {
             format!("{COMMISSION_WRITES}::{name} is listed but gone from the trait")
         }
     });
-    unlisted.chain(stale).collect()
+    let defaults = default_body_findings(writes);
+    homes
+        .into_iter()
+        .chain(unlisted)
+        .chain(stale)
+        .chain(defaults)
+        .collect()
 }
 
 /// Each bound in `tr`'s supertraits, as written.
@@ -3092,9 +3615,8 @@ fn pinned_trait_findings(
         return vec![format!("{count} `trait {name}` found, not one")];
     };
     let mut findings = trait_shape_findings(tr, name, bounds);
-    let sorted = authority(tr);
     let pinned: BTreeSet<String> = items.iter().map(|item| (*item).to_owned()).collect();
-    let all: BTreeSet<String> = sorted.capped.union(&sorted.uncapped).cloned().collect();
+    let all: BTreeSet<String> = tr.items.iter().map(trait_item_name).collect();
     findings.extend(
         all.difference(&pinned)
             .map(|item| format!("{name}::{item} is not one of its pinned items")),
@@ -3125,6 +3647,37 @@ fn side_door_findings(file: &syn::File) -> Vec<String> {
     repo.into_iter().chain(reads).chain(write_shape).collect()
 }
 
+/// The imports a planted port trait's capability is spelled with, each from its home.
+const PORT_PRELUDE: &str = "use crate::elements::commission::{AsOwner, AsParticipant, CommissionId};\nuse kernel::ports::{Creator, New, WriteCapability};\n";
+
+/// A security review's plant on the write view: a look-alike capability by a longer path, and
+/// a create's capability beside a free id, each with a default body.
+const HERON_S_PORT_PLANT: &str = r"
+    /// Moves the commission's lifecycle step.
+    async fn set_lifecycle(
+        &mut self,
+        capability: &crate::elements::commission::fact::WriteCapability<
+            CommissionId,
+            crate::elements::commission::AsOwner,
+        >,
+        step: crate::elements::commission::LifecycleStep,
+    ) -> anyhow::Result<bool> {
+        let _ = (capability.0, step);
+        Ok(false)
+    }
+
+    /// Sets any commission's maturity under a creator's capability.
+    async fn set_maturity_under(
+        &mut self,
+        capability: &WriteCapability<New<CommissionId>, Creator>,
+        id: &CommissionId,
+        maturity: Maturity,
+    ) -> anyhow::Result<()> {
+        let _ = capability;
+        self.set_maturity(id, maturity).await
+    }
+";
+
 #[test]
 fn every_commission_write_takes_a_capability_or_is_named() {
     let file = parse(&commission_port_file());
@@ -3137,11 +3690,21 @@ fn every_commission_write_takes_a_capability_or_is_named() {
     assert_eq!(side_doors, Vec::<String>::new());
     let writes = traits_named(&file, COMMISSION_WRITES);
     assert_eq!(writes.len(), 1, "the scan finds trait {COMMISSION_WRITES}");
-    let sorted = authority(writes[0]);
-    assert!(
-        sorted.capped.contains("create"),
-        "create takes the gate's create capability: {sorted:?}"
+    let sorted = file_authority(&file, writes[0]);
+    assert_eq!(
+        sorted.capped,
+        BTreeSet::from(["create".to_owned()]),
+        "only create takes the gate's create capability, in place of the id"
     );
+    let (held, homes) = held_names(&file);
+    assert_eq!(homes, Vec::<String>::new());
+    for name in [WRITE_CAPABILITY, NEW, CREATOR, COMMISSION_ID] {
+        assert!(
+            held.contains(name),
+            "the port file imports {name} from its home"
+        );
+    }
+    assert_eq!(default_body_findings(writes[0]), Vec::<String>::new());
     let list_lengths = FIELD_WRITES.len() + BANNED_WRITES.len() + OTHER_UNCAPPED.len();
     assert_eq!(listed.len(), list_lengths, "no name sits on two lists");
 }
@@ -3169,42 +3732,201 @@ fn the_port_scan_names_each_planted_write() {
         ["CommissionWrites::set_lifecycle takes no write capability and is on no list"]
     );
     let none = BTreeSet::new();
+    let unlisted_lifecycle =
+        "CommissionWrites::set_lifecycle takes no write capability and is on no list";
+    let lifecycle_by_owner = "\n    async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, step: LifecycleStep) -> anyhow::Result<bool>;\n";
+    let errors_line = "pub use super::errors";
+    assert!(
+        source.contains(errors_line),
+        "the port file holds `{errors_line}`"
+    );
+    let owner_import = format!("use crate::elements::commission::AsOwner;\n\n{errors_line}");
+    let owner_planted = source.replacen(errors_line, &owner_import, 1).replacen(
+        writes_header,
+        &format!("{writes_header}{lifecycle_by_owner}"),
+        1,
+    );
     let capped = [
-        "trait CommissionWrites: Send { async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, step: LifecycleStep) -> anyhow::Result<bool>; }",
-        "trait CommissionWrites: Send { async fn set_lifecycle(&mut self, step: LifecycleStep, capability: &kernel::ports::WriteCapability<CommissionId, AsOwner>); }",
+        (owner_planted, &listed),
+        (
+            format!(
+                "{PORT_PRELUDE}trait CommissionWrites: Send {{ async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, step: LifecycleStep) -> anyhow::Result<bool>; }}"
+            ),
+            &none,
+        ),
+        (
+            format!(
+                "{PORT_PRELUDE}trait CommissionWrites: Send {{ async fn set_lifecycle<'a>(&mut self, note: &str, capability: &'a WriteCapability<CommissionId, AsParticipant>); }}"
+            ),
+            &none,
+        ),
+        (
+            format!(
+                "{PORT_PRELUDE}trait CommissionWrites: Send {{ async fn set_lifecycle(&mut self, capability: &WriteCapability<New<CommissionId>, Creator>, birth: &CommissionBirth, commission: &NewCommission) -> anyhow::Result<()>; }}"
+            ),
+            &none,
+        ),
     ];
-    for planted in capped {
-        let file = syn::parse_file(planted).expect("the planted trait parses");
+    for (planted, listed) in capped {
+        let file = syn::parse_file(&planted).expect("the planted trait parses");
 
-        let findings = port_findings(&file, &none);
+        let findings = port_findings(&file, listed);
 
         assert_eq!(findings, Vec::<String>::new(), "{planted}");
-        let sorted = authority(traits_named(&file, COMMISSION_WRITES)[0]);
+        let sorted = file_authority(&file, traits_named(&file, COMMISSION_WRITES)[0]);
         assert!(
             sorted.capped.contains("set_lifecycle"),
             "{planted}: {sorted:?}"
         );
     }
     let uncapped = [
-        "trait CommissionWrites: Send { async fn set_lifecycle(&mut self, capability: WriteCapability<CommissionId, AsOwner>); }",
-        "type Cap = WriteCapability<CommissionId, AsOwner>;\ntrait CommissionWrites: Send { async fn set_lifecycle(&mut self, capability: &Cap); }",
-        "trait CommissionWrites: Send { async fn set_lifecycle<C>(&mut self, capability: &C); }",
-        "trait CommissionWrites: Send { async fn set_lifecycle(&mut self, capability: &impl AsRef<WriteCapability<CommissionId, AsOwner>>); }",
-        "trait CommissionWrites: Send { async fn set_lifecycle(&mut self, capability: &<Gate as Issue>::WriteCapability); }",
-        "trait CommissionWrites: Send { async fn set_lifecycle(&mut self, id: &CommissionId) { let _ = WriteCapability::thing; } }",
+        "async fn set_lifecycle(&mut self, capability: WriteCapability<CommissionId, AsOwner>);",
+        "async fn set_lifecycle(&mut self, capability: &Cap);",
+        "async fn set_lifecycle<C>(&mut self, capability: &C);",
+        "async fn set_lifecycle(&mut self, capability: &impl AsRef<WriteCapability<CommissionId, AsOwner>>);",
+        "async fn set_lifecycle(&mut self, capability: &<Gate as Issue>::WriteCapability);",
+        "async fn set_lifecycle(&mut self, step: LifecycleStep, capability: &kernel::ports::WriteCapability<CommissionId, AsOwner>);",
+        "async fn set_lifecycle(&mut self, capability: &crate::elements::commission::fact::WriteCapability<CommissionId, crate::elements::commission::AsOwner>, step: LifecycleStep);",
+        "async fn set_lifecycle(&mut self, capability: &::kernel::ports::WriteCapability<CommissionId, AsOwner>);",
+        "async fn set_lifecycle(&mut self, capability: &mut WriteCapability<CommissionId, AsOwner>);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, R>);",
+        "async fn set_lifecycle<R>(&mut self, capability: &WriteCapability<CommissionId, R>);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, Creator>);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<New<CommissionId>, AsOwner>);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<New<CommissionId>, AsParticipant>);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<New<New<CommissionId>>, Creator>);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, crate::elements::commission::AsOwner>);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner, AsOwner>);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId>);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<(CommissionId), AsOwner>);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, again: &WriteCapability<CommissionId, AsParticipant>);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, again: Option<WriteCapability<CommissionId, AsOwner>>);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<New<CommissionId>, Creator>, id: &CommissionId, maturity: Maturity);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, id: Option<&CommissionId>);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, id: CommissionId);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, ids: &[CommissionId]);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, pair: (u8, CommissionId));",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, id: &Id);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, id: impl Into<Uuid>);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, id: &dyn Any);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, id: &<AsOwner as RoleTable>::Thing);",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, id: id_type!());",
+        "async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>) where Self: Sized;",
     ];
-    for planted in uncapped {
-        let file = syn::parse_file(planted).expect("the planted trait parses");
+    for method in uncapped {
+        let planted = format!(
+            "{PORT_PRELUDE}type Cap = WriteCapability<CommissionId, AsOwner>;\ntype Id = CommissionId;\ntrait CommissionWrites: Send {{ {method} }}"
+        );
+        let file = syn::parse_file(&planted).expect("the planted trait parses");
 
         let findings = port_findings(&file, &none);
 
-        assert_eq!(
-            findings,
-            ["CommissionWrites::set_lifecycle takes no write capability and is on no list"],
-            "{planted}"
-        );
+        assert_eq!(findings, [unlisted_lifecycle], "{method}");
     }
+    let by_owner = "trait CommissionWrites: Send { async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>); }";
+    let homes = [
+        (
+            format!(
+                "{PORT_PRELUDE}pub struct WriteCapability<T, R>(pub T, pub PhantomData<R>);\n{by_owner}"
+            ),
+            vec!["the port file binds `WriteCapability` by `struct`"],
+        ),
+        (
+            format!("{PORT_PRELUDE}type WriteCapability<T, R> = (T, R);\n{by_owner}"),
+            vec!["the port file binds `WriteCapability` by `type`"],
+        ),
+        (
+            format!(
+                "use crate::elements::commission::{{AsOwner, CommissionId}};\nuse kernel::ports::Creator as WriteCapability;\n{by_owner}"
+            ),
+            vec!["the port file binds `WriteCapability` by `as`"],
+        ),
+        (
+            format!(
+                "use crate::elements::commission::{{AsOwner, CommissionId}};\nuse crate::elements::commission::fact::WriteCapability;\n{by_owner}"
+            ),
+            vec![
+                "the port file imports `WriteCapability` from [\"crate::elements::commission::fact\"], not once from `kernel::ports`",
+            ],
+        ),
+        (
+            format!(
+                "{PORT_PRELUDE}mod inner {{ use kernel::ports::WriteCapability; }}\n{by_owner}"
+            ),
+            vec![
+                "the port file imports `WriteCapability` from [\"kernel::ports\", \"kernel::ports\"], not once from `kernel::ports`",
+            ],
+        ),
+        (
+            format!(
+                "use crate::elements::commission::{{fact::AsOwner, CommissionId}};\nuse kernel::ports::WriteCapability;\n{by_owner}"
+            ),
+            vec![
+                "the port file imports `AsOwner` from [\"crate::elements::commission::fact\"], not once from `crate::elements::commission`",
+            ],
+        ),
+        (
+            format!(
+                "{PORT_PRELUDE}trait CommissionWrites: Send {{ async fn set_lifecycle<AsOwner>(&mut self, capability: &WriteCapability<CommissionId, AsOwner>); }}"
+            ),
+            vec!["the port file binds `AsOwner` by a generic parameter list"],
+        ),
+    ];
+    for (planted, home_findings) in homes {
+        let file = syn::parse_file(&planted).expect("the planted port parses");
+
+        let findings = port_findings(&file, &none);
+
+        let mut expected: Vec<&str> = home_findings;
+        expected.push(unlisted_lifecycle);
+        assert_eq!(findings, expected, "{planted}");
+    }
+    let lifecycle_default = "CommissionWrites::set_lifecycle has a default body";
+    let default_bodies = [
+        (
+            format!(
+                "{PORT_PRELUDE}trait CommissionWrites: Send {{ async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, step: LifecycleStep) -> anyhow::Result<bool> {{ let _ = (capability, step); Ok(false) }} }}"
+            ),
+            vec![lifecycle_default],
+        ),
+        (
+            format!(
+                "{PORT_PRELUDE}trait CommissionWrites: Send {{ async fn set_lifecycle(&mut self, id: &CommissionId) {{ let _ = WriteCapability::thing; }} }}"
+            ),
+            vec![unlisted_lifecycle, lifecycle_default],
+        ),
+    ];
+    for (planted, expected) in default_bodies {
+        let file = syn::parse_file(&planted).expect("the planted trait parses");
+
+        let findings = port_findings(&file, &none);
+
+        assert_eq!(findings, expected, "{planted}");
+    }
+    let last_write = "    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>>;\n";
+    assert!(
+        source.contains(last_write),
+        "the port file holds `{last_write}`"
+    );
+    let heron_s_plant = format!("{last_write}{HERON_S_PORT_PLANT}");
+    let heron_planted = source.replacen(last_write, &heron_s_plant, 1);
+    let heron_file = syn::parse_file(&heron_planted).expect("the planted port parses");
+
+    let heron_findings = port_findings(&heron_file, &listed);
+
+    assert_eq!(
+        heron_findings,
+        [
+            "CommissionWrites::set_lifecycle takes no write capability and is on no list",
+            "CommissionWrites::set_maturity_under takes no write capability and is on no list",
+            "CommissionWrites::set_lifecycle has a default body",
+            "CommissionWrites::set_maturity_under has a default body",
+        ]
+    );
     let set_archived: BTreeSet<String> = BTreeSet::from(["set_archived".to_owned()]);
+    let leaves_its_list = format!(
+        "{PORT_PRELUDE}trait CommissionWrites: Send {{ async fn set_archived(&mut self, capability: &WriteCapability<CommissionId, AsOwner>); }}"
+    );
     let named_findings = [
         (
             "trait CommissionWrites: Send { writes!(); }",
@@ -3222,7 +3944,7 @@ fn the_port_scan_names_each_planted_write() {
             vec!["CommissionWrites::set_archived is listed but gone from the trait"],
         ),
         (
-            "trait CommissionWrites: Send { async fn set_archived(&mut self, capability: &WriteCapability<CommissionId, AsOwner>); }",
+            leaves_its_list.as_str(),
             &set_archived,
             vec!["CommissionWrites::set_archived takes a write capability: it leaves its list"],
         ),
