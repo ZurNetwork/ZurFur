@@ -1,9 +1,9 @@
 //! Clock times of each pair of not-found causes on PostgreSQL, for the security review: every
 //! read pair the statement suite runs, each cause timed over many runs from a warm and a cold
-//! profile cache, printed as a Markdown table; then the write pairs, the rename's and each new
-//! field write's, each interleaved and warm, with each cause's median, p10 and p90 and the
-//! pass rule's verdict. Not gated, as clock times
-//! are too noisy for CI: run it with `just den-timing`. Requires a container runtime socket.
+//! profile cache, printed as a Markdown table; then the call pairs, the rename's, each new
+//! field write's and the commission read's, each interleaved and warm, with each cause's
+//! median, p10 and p90 and the pass rule's verdict. Not gated, as clock times are too noisy
+//! for CI: run it with `just den-timing`. Requires a container runtime socket.
 
 use std::time::{Duration, Instant};
 
@@ -14,12 +14,12 @@ use test_support::{
         self, CommissionCall, DenWorld, MissPair, ProfileCacheState, archived_participant_pairs,
         commission_read_live_pairs, commission_read_stranger_pairs, den_account_pair,
         den_character_pair, den_participant_pairs, den_stranger_pairs, den_stranger_targets,
-        download_participant_pair, new_write_calls, rename_call, rename_stranger_pair,
+        download_participant_pair, new_write_calls, read_call, rename_call, rename_stranger_pair,
         stranger_targets,
     },
 };
 
-/// Timed runs of each read cause per cache state, and timed pairs of the write's causes,
+/// Timed runs of each read cause per cache state, and timed pairs of each call's causes,
 /// unless `DEN_TIMING_RUNS` says otherwise.
 const DEFAULT_RUNS: usize = 200;
 
@@ -27,7 +27,7 @@ const DEFAULT_RUNS: usize = 200;
 /// statement prepared.
 const WARM_UP_RUNS: usize = 5;
 
-/// The most the two causes' medians may differ by, as a share of the smaller, for the write
+/// The most the two causes' medians may differ by, as a share of the smaller, for a call
 /// pair to pass.
 const MEDIAN_TOLERANCE: f64 = 0.05;
 
@@ -144,13 +144,13 @@ impl Timer<'_> {
     }
 }
 
-/// The write pair's two causes, each over the same interleaved runs, and the pass rule.
-struct WritePair {
+/// A call pair's two causes, each over the same interleaved runs, and the pass rule.
+struct CallPair {
     absent: Spread,
     not_yours: Spread,
 }
 
-impl WritePair {
+impl CallPair {
     /// Times `pair` as `viewer` through `call`: in each iteration both causes run, in
     /// alternating order, so drift lands on both alike.
     async fn time(
@@ -215,7 +215,7 @@ impl WritePair {
         };
         vec![
             format!(
-                "Write pair, {label}: bob, absent against not yours, {runs} interleaved pairs, warm"
+                "Call pair, {label}: bob, absent against not yours, {runs} interleaved pairs, warm"
             ),
             String::new(),
             "| Cause | Median µs | p10 µs | p90 µs |".to_owned(),
@@ -233,7 +233,7 @@ impl WritePair {
                 MEDIAN_TOLERANCE * 100.0,
                 self.median_gap() < MEDIAN_TOLERANCE,
             ),
-            format!("Write pair verdict ({label}): {verdict}"),
+            format!("Call pair verdict ({label}): {verdict}"),
         ]
     }
 }
@@ -278,14 +278,15 @@ async fn clock_times_of_each_pair_s_causes() {
     world.set_profile_cache(ProfileCacheState::Warm).await;
     let rename_pair = rename_stranger_pair(&world);
     let rename = rename_call();
-    let mut write_pairs = vec![(
+    let mut call_pairs = vec![(
         rename.label,
-        WritePair::time(&world, &world.bob, &rename, &rename_pair, runs).await,
+        CallPair::time(&world, &world.bob, &rename, &rename_pair, runs).await,
     )];
-    for call in new_write_calls() {
+    // bob takes no part in the Private "Old sketch" yet, so each call there is his 404.
+    for call in new_write_calls().into_iter().chain([read_call()]) {
         let pair = call.pair(&world.old_sketch);
-        let timed = WritePair::time(&world, &world.bob, &call, &pair, runs).await;
-        write_pairs.push((call.label, timed));
+        let timed = CallPair::time(&world, &world.bob, &call, &pair, runs).await;
+        call_pairs.push((call.label, timed));
     }
     let mut timer = Timer {
         world: &world,
@@ -348,8 +349,8 @@ async fn clock_times_of_each_pair_s_causes() {
         println!("{}", row.line());
     }
     println!();
-    for (label, write_pair) in &write_pairs {
-        for line in write_pair.report(label, runs) {
+    for (label, call_pair) in &call_pairs {
+        for line in call_pair.report(label, runs) {
             println!("{line}");
         }
         println!();

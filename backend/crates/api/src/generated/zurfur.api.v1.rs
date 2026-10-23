@@ -320,8 +320,10 @@ pub struct GetCommissionRequest {
 }
 /// `GET .../{id}` succeeds `200` with the commission as anyone who may open it sees it.
 /// It carries only what every such viewer may see: never the owner and never the linked
-/// channel. Field numbers match the other commission answers where they carry the same fact;
-/// 9 is left unused because it holds the linked channel there.
+/// channel. Field numbers match the other commission answers where they carry the same fact.
+/// Number 9 and the name `linked_channel`, the linked channel's in those answers, are
+/// reserved here: this answer never carries the linked channel, and no other field may take
+/// either.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetCommissionResponse {
     /// Opaque commission id (R6).

@@ -34,7 +34,7 @@
     },
     {
       "name": "commission.proto",
-      "role": "CreateCommission (owner POV), RenameCommission (PATCH /commissions/{id}/title, owner-only, answers the commission as stored), GetCommission (GET /commissions/{id}: the fields every opener may see, never the owner nor the linked channel, the deadline status at the request's time, the viewer's acts by word and lifecycle targets, empty for someone with no role), MoveCommissionLifecycle (PUT …/lifecycle, 204, a bad step a 422 at #/to), and the direction, deadline and Delayed sets and clears (PUT/DELETE …/status/direction, …/deadline, …/status/deadline, 204, today's bodies), each with its own empty response message and its answers in its comment; Maturity; google.protobuf.Timestamp; CommissionService. The owner's list (ListCommissions) is retired.",
+      "role": "CreateCommission (owner POV), RenameCommission (PATCH /commissions/{id}/title, owner-only, answers the commission as stored), GetCommission (GET /commissions/{id}: the fields every opener may see, never the owner nor the linked channel, whose number 9 and name `linked_channel` its answer reserves, the deadline status at the request's time, the viewer's acts by word and lifecycle targets, empty for someone with no role), MoveCommissionLifecycle (PUT …/lifecycle, 204, a bad step a 422 at #/to), and the direction, deadline and Delayed sets and clears (PUT/DELETE …/status/direction, …/deadline, …/status/deadline, 204, today's bodies), each with its own empty response message and its answers in its comment; Maturity; google.protobuf.Timestamp; CommissionService. The owner's list (ListCommissions) is retired.",
       "node": false
     },
     {
