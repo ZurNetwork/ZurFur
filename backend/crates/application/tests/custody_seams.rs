@@ -6,6 +6,8 @@
 //! custodian, and of the driver crates only composition's custody file names the custodian,
 //! where the boot guard runs before the one derivation. No custody file formats a value
 //! through `Debug`, logs a field with the `?` sigil, or instruments a span with its fields.
+//! No driver builds a `Command` without removing the root's variable from the child's
+//! environment in the same chain, nor links a browser-opener crate.
 //! The scans read production sources token by token, macro bodies included, and match whole
 //! identifiers, aliases too.
 
@@ -19,8 +21,8 @@ use std::{
 use proc_macro2::{Delimiter, Spacing, TokenStream, TokenTree};
 use quote::ToTokens;
 use seams::{
-    crates, drivers, identifiers, members_of, metadata, walk, with_aliases, workspace_production,
-    workspace_sources,
+    Member, crates, drivers, identifiers, members_of, metadata, walk, with_aliases,
+    workspace_production, workspace_sources,
 };
 use syn::{Expr, Item, Stmt};
 
@@ -631,6 +633,16 @@ fn driver_files() -> Vec<(String, PathBuf)> {
         .collect()
 }
 
+/// Asserts `files` hold production files of each of composition, api and cli.
+fn assert_reads_every_driver(files: &[(String, PathBuf)]) {
+    for driver in ["composition", "api", "cli"] {
+        let read_it = files
+            .iter()
+            .any(|(file, _)| file.starts_with(&format!("{driver}/src/")));
+        assert!(read_it, "the scan reads {driver}");
+    }
+}
+
 #[test]
 fn only_the_custody_file_names_the_custodian() {
     let names = with_aliases(&CUSTODIAN_NAMES, &workspace_sources());
@@ -644,12 +656,7 @@ fn only_the_custody_file_names_the_custodian() {
     assert_eq!(offenders, Vec::<String>::new());
     let read_the_custody_file = files.iter().any(|(file, _)| file == CUSTODY_FILE);
     assert!(read_the_custody_file, "the scan reads {CUSTODY_FILE}");
-    for driver in ["composition", "api", "cli"] {
-        let read_it = files
-            .iter()
-            .any(|(file, _)| file.starts_with(&format!("{driver}/src/")));
-        assert!(read_it, "the scan reads {driver}");
-    }
+    assert_reads_every_driver(&files);
 }
 
 #[test]
@@ -1103,4 +1110,176 @@ fn the_logging_scan_refuses_each_planted_print() {
 
         assert_eq!(found, Vec::<String>::new(), "{source}");
     }
+}
+
+// No child inherits the root.
+
+/// The process builder: a child it spawns inherits the parent's environment, the custody
+/// root's variable included.
+const COMMAND: &str = "Command";
+
+/// The builder's constructor.
+const NEW: &str = "new";
+
+/// The builder call that keeps a variable out of the child's environment.
+const ENV_REMOVE: &str = "env_remove";
+
+/// The custody root's environment variable, as composition names it.
+const ROOT_KEY_ENV: &str = "ROOT_KEY_ENV";
+
+/// The browser-opener crates: each spawns a process whose environment its caller can't strip.
+const BROWSER_OPENERS: [&str; 3] = ["open", "opener", "webbrowser"];
+
+/// The method calls chained on `level` from `at`, each as its name and arguments, through
+/// any `?` and `.await` between them, and the index past the chain.
+fn chain_from(level: &[TokenTree], at: usize) -> (Vec<(String, TokenStream)>, usize) {
+    let mut calls = Vec::new();
+    let mut index = at;
+    loop {
+        if punct_at(level, index, '?') {
+            index += 1;
+            continue;
+        }
+        if !punct_at(level, index, '.') {
+            break;
+        }
+        let Some(method) = ident_at(level, index + 1) else {
+            break;
+        };
+        if method == "await" {
+            index += 2;
+            continue;
+        }
+        let turbofish = path_separator_at(level, index + 2) && punct_at(level, index + 4, '<');
+        let open = if turbofish {
+            past_generics(level, index + 4)
+        } else {
+            index + 2
+        };
+        let Some(arguments) = group_at(level, open, Delimiter::Parenthesis) else {
+            break;
+        };
+        calls.push((method, arguments));
+        index = open + 1;
+    }
+    (calls, index)
+}
+
+/// Each `Command::new` in `source`, the driver file `file`, whose own method chain never
+/// calls `env_remove(ROOT_KEY_ENV)`; `commands` is `Command` and its aliases. A builder
+/// split over statements, or a `Command::new` not called in place, is refused. It fails
+/// closed: any other type's `Command::new` (clap's, say) is refused too.
+fn spawn_findings(file: &str, source: &str, commands: &BTreeSet<String>) -> Vec<String> {
+    let tokens = parse(file, source).to_token_stream();
+    let mut out = Vec::new();
+    for level in levels(tokens) {
+        for at in 0..level.len() {
+            let Some(name) = ident_at(&level, at) else {
+                continue;
+            };
+            let constructs = commands.contains(&name)
+                && path_separator_at(&level, at + 1)
+                && ident_at(&level, at + 3).as_deref() == Some(NEW);
+            if !constructs {
+                continue;
+            }
+            let called = group_at(&level, at + 4, Delimiter::Parenthesis).is_some();
+            let (calls, end) = if called {
+                chain_from(&level, at + 5)
+            } else {
+                (Vec::new(), at + 4)
+            };
+            let strips_the_root = calls.iter().any(|(method, arguments)| {
+                method == ENV_REMOVE && holds_ident(arguments.clone(), ROOT_KEY_ENV)
+            });
+            if !strips_the_root {
+                let chain: TokenStream = level[at..end].iter().cloned().collect();
+                out.push(format!(
+                    "{file}: `{chain}` never calls `{ENV_REMOVE}({ROOT_KEY_ENV})`"
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// Each normal dependency of `members` on a browser opener.
+fn opener_findings(members: &[Member]) -> Vec<String> {
+    members
+        .iter()
+        .flat_map(|member| {
+            BROWSER_OPENERS
+                .iter()
+                .filter(|opener| member.depends_normally_on(opener))
+                .map(|opener| format!("{} depends on `{opener}`", member.name))
+        })
+        .collect()
+}
+
+#[test]
+fn no_driver_spawns_a_process_that_inherits_the_root() {
+    let commands = with_aliases(&[COMMAND], &workspace_sources());
+    let files = driver_files();
+
+    let offenders: Vec<String> = files
+        .iter()
+        .flat_map(|(file, path)| spawn_findings(file, &read(path), &commands))
+        .collect();
+
+    assert_eq!(offenders, Vec::<String>::new());
+    assert_reads_every_driver(&files);
+}
+
+#[test]
+fn no_driver_links_a_browser_opener() {
+    let found = opener_findings(&drivers());
+
+    assert_eq!(found, Vec::<String>::new());
+}
+
+#[test]
+fn the_spawn_scan_refuses_each_planted_spawn() {
+    let refused = [
+        "fn spawn() { let _child = std::process::Command::new(\"sh\").spawn(); }",
+        "async fn run() { let _output = tokio::process::Command::new(\"x\").arg(\"y\").output().await; }",
+        "use std::process::Command as Shell;\nfn run() { let _status = Shell::new(\"x\").status(); }",
+        "fn run(x: &str) { let mut c = Command::new(x); c.env_remove(ROOT_KEY_ENV); }",
+        "fn run() { let _child = std::process::Command::new(\"x\").env_remove(\"PATH\").spawn(); }",
+        "fn run() { let _commands = vec![std::process::Command::new(\"x\")]; }",
+        "fn run(names: &[&str]) { let _commands: Vec<Command> = names.iter().map(Command::new).collect(); }",
+    ];
+    for source in refused {
+        let commands = with_aliases(&[COMMAND], &[source.to_owned()]);
+
+        let found = spawn_findings("cli/src/lib.rs", source, &commands);
+
+        assert!(!found.is_empty(), "{source}");
+    }
+
+    let allowed = [
+        "fn spawn() { let _child = std::process::Command::new(\"x\").env_remove(ROOT_KEY_ENV).spawn(); }",
+        "async fn run() -> std::io::Result<()> { let _output = tokio::process::Command::new(\"x\").arg(\"a\").env_remove(composition::ROOT_KEY_ENV).output().await?; Ok(()) }",
+        "fn spawn() { let _child = std::process::Command::new(\"x\").arg(\"a\").current_dir(\"/\").env_remove(ROOT_KEY_ENV).spawn(); }",
+        "use std::process::Command as Shell;\nfn run() { let _status = Shell::new(\"x\").env_remove(ROOT_KEY_ENV).status(); }",
+    ];
+    for source in allowed {
+        let commands = with_aliases(&[COMMAND], &[source.to_owned()]);
+
+        let found = spawn_findings("cli/src/lib.rs", source, &commands);
+
+        assert_eq!(found, Vec::<String>::new(), "{source}");
+    }
+
+    let linked = Member {
+        name: "cli".to_owned(),
+        folder: PathBuf::from("cli"),
+        dependencies: vec![("webbrowser".to_owned(), None)],
+    };
+    let tested_only = Member {
+        name: "api".to_owned(),
+        folder: PathBuf::from("api"),
+        dependencies: vec![("open".to_owned(), Some("dev".to_owned()))],
+    };
+    assert!(!opener_findings(&[linked]).is_empty());
+    assert_eq!(opener_findings(&[tested_only]), Vec::<String>::new());
 }
