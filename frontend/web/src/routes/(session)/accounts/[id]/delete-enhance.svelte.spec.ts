@@ -37,7 +37,7 @@ const data = {
 		avatarUrl: undefined
 	},
 	account: aliceOwner,
-	trail: [{ step: 'named' as const, label: 'Accounts', href: '/accounts' }]
+	trail: [{ step: 'named' as const, label: 'Accounts', ordinal: undefined, href: '/accounts' }]
 };
 
 /** What the delete action says when the DELETE wasn't answered (the server spec pins it). */
@@ -47,7 +47,8 @@ const MAY_HAVE_DELETED: Problem = {
 	title: 'Service unavailable',
 	detail:
 		"Zurfur didn't answer in time. The Account may have been deleted: check your Accounts before you try again.",
-	status: 503
+	status: 503,
+	errors: []
 };
 
 /** The page inside a frame whose tree memory knows `~` and `accounts`, its `form` as given. */

@@ -6,16 +6,20 @@
 use application::commission::slots::declare::{self, SlotBody};
 use axum::{
     Json,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{State, rejection::JsonRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use domain::elements::commission::{CommissionId, SlotTitle, TabId};
+use domain::elements::commission::{SlotTitle, TabId};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{AppState, extract::CallingUser, problem::Problem};
+use crate::{
+    AppState,
+    extract::{CallingUser, CommissionPath},
+    problem::Problem,
+};
 
 /// `POST /commissions/{id}/slots`'s `201` body: the id of each newly declared
 /// slot's carrying element, in request order — see [`declare_slots`].
@@ -42,8 +46,8 @@ pub(super) struct DeclareSlotBody {
 /// `{"ids": ["…", …]}` in request order.
 pub(super) async fn declare_slots(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(user_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
     body: Result<Json<Vec<DeclareSlotBody>>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;

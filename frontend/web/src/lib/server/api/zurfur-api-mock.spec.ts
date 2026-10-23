@@ -1,7 +1,8 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Effect } from 'effect';
 import { fetchStub } from '$lib/testing/http';
-import { handleFromTrusted } from '$lib/types/brand';
+import { commissionId, fieldPointer, handleFromTrusted, type CommissionId } from '$lib/types/brand';
+import { segmentPath } from '../path-builder';
 import { accountsOutcome, createAccountOutcome, deleteAccountOutcome } from '../accounts';
 import type { BugDescription } from '$lib/types/bug-report-rules';
 import { optionalSession, signinOutcome, signoutOutcome } from '../session';
@@ -20,6 +21,23 @@ const DID_PLC_SHAPE = /^did:plc:[a-z2-7]{24}$/;
 function runOn<A, E>(store: MockStore, program: Effect.Effect<A, E, ZurfurApi>): Promise<A> {
 	return Effect.runPromise(program.pipe(Effect.provide(zurfurApiMock(store))));
 }
+
+/** The raw create call. */
+const createCommission = (title: string) =>
+	Effect.flatMap(ZurfurApi, (api) => api.createCommission(title));
+
+/** The raw rename call. */
+const renameCommission = (id: CommissionId, title: string) =>
+	Effect.flatMap(ZurfurApi, (api) => api.renameCommission(id, title));
+
+/** The names the mock Den lists in `commissions`. */
+const commissionNames = Effect.gen(function* () {
+	const api = yield* ZurfurApi;
+	const path = segmentPath(['commissions']);
+	if (path === undefined) return [];
+	const read = yield* api.denNode(path, { includeDeleted: false, pageToken: undefined });
+	return read.content.content === 'listing' ? read.content.entries.map((node) => node.name) : [];
+});
 
 /** The one raw `api.me` case this file keeps — {@link optionalSession} folds `NotAuthenticated` to `undefined`, so the tag itself is only observable below the outcome helper. */
 const me = Effect.gen(function* () {
@@ -145,6 +163,122 @@ describe('zurfurApiMock', () => {
 			}
 		});
 	});
+
+	it('createCommission stores the created commission, its title trimmed', async () => {
+		const store = createMockStore();
+
+		const created = await runOn(store, createCommission('  Fox in the snow  '));
+
+		expect(created.title).toBe('Fox in the snow');
+		expect(store.commissions).toEqual([
+			{ segment: created.id, id: created.id, title: 'Fox in the snow' }
+		]);
+	});
+
+	it.each([
+		['a blank title', '', 'name_empty', "This can't be blank."],
+		['a title of spaces', '   ', 'name_empty', "This can't be blank."],
+		[
+			'a title holding U+202E',
+			'Fox\u202Ein the snow',
+			'name_invisible',
+			'Leave out invisible and direction-changing characters.'
+		]
+	])(
+		'createCommission refuses %s as invalid_request at #/title',
+		async (_, title, code, detail) => {
+			const store = createMockStore();
+
+			const failure = await runOn(store, Effect.flip(createCommission(title)));
+
+			expect(failure._tag).toBe('ApiProblem');
+			if (failure._tag !== 'ApiProblem') return;
+			expect(failure.problem.code).toBe('invalid_request');
+			expect(failure.problem.status).toBe(422);
+			expect(failure.problem.errors).toEqual([{ pointer: fieldPointer('#/title'), code, detail }]);
+			expect(store.commissions).toEqual([]);
+		}
+	);
+
+	it('createCommission fails not-authenticated when nobody is signed in', async () => {
+		const store = createMockStore();
+		store.session = undefined;
+
+		const failure = await runOn(store, Effect.flip(createCommission('Fox in the snow')));
+
+		expect(failure).toMatchObject({ problem: { code: 'not_authenticated' } });
+		expect(store.commissions).toEqual([]);
+	});
+
+	it('renameCommission renames a created commission, and the Den lists the new title', async () => {
+		const store = createMockStore();
+		const created = await runOn(store, createCommission('Fox in the snow'));
+
+		const renamed = await runOn(store, renameCommission(created.id, '  Winter fox  '));
+
+		expect(renamed).toEqual({ id: created.id, title: 'Winter fox' });
+		const names = await runOn(store, commissionNames);
+		expect(names).toContain('Winter fox');
+		expect(names).not.toContain('Fox in the snow');
+	});
+
+	it.each([
+		['a blank title', '', 'name_empty', "This can't be blank."],
+		['a title of spaces', '   ', 'name_empty', "This can't be blank."],
+		[
+			'a title holding U+202E',
+			'Fox\u202Ein the snow',
+			'name_invisible',
+			'Leave out invisible and direction-changing characters.'
+		]
+	])(
+		'renameCommission refuses %s as invalid_request at #/title',
+		async (_, title, code, detail) => {
+			const store = createMockStore();
+			const created = await runOn(store, createCommission('Fox in the snow'));
+
+			const failure = await runOn(store, Effect.flip(renameCommission(created.id, title)));
+
+			expect(failure._tag).toBe('ApiProblem');
+			if (failure._tag !== 'ApiProblem') return;
+			expect(failure.problem.code).toBe('invalid_request');
+			expect(failure.problem.status).toBe(422);
+			expect(failure.problem.errors).toEqual([{ pointer: fieldPointer('#/title'), code, detail }]);
+			expect(store.commissions.map((commission) => commission.title)).toEqual(['Fox in the snow']);
+		}
+	);
+
+	it.each([
+		['an id it does not hold', 'c-unknown'],
+		[
+			'the card "Some commission", which it shows but not open',
+			'0192c0de-7a11-7000-8000-00000000ca7d'
+		]
+	])('renameCommission answers %s with the commission not-found', async (_, raw) => {
+		const store = createMockStore();
+		const id = commissionId(raw);
+		if (id === undefined) throw new Error('bad test id');
+
+		const failure = await runOn(store, Effect.flip(renameCommission(id, 'Winter fox')));
+
+		expect(failure).toMatchObject({ problem: { code: 'commission_not_found', status: 404 } });
+	});
+
+	it.each([
+		['the fixed fixture "Untitled"', '01a0ef9c-5b2e-7c41-9d3a-6f1e2b7c8d90'],
+		['the archived fixture "Winter YCH"', '0192b7e0-0aa0-7000-8000-00000000a7c1']
+	])(
+		'renameCommission answers %s, which it shows open but never created, 403 forbidden',
+		async (_, raw) => {
+			const store = createMockStore();
+			const id = commissionId(raw);
+			if (id === undefined) throw new Error('bad test id');
+
+			const failure = await runOn(store, Effect.flip(renameCommission(id, 'Winter fox')));
+
+			expect(failure).toMatchObject({ problem: { code: 'forbidden', status: 403 } });
+		}
+	);
 
 	it('deleteAccount removes a known row and reports the outcome', async () => {
 		const store = createMockStore();

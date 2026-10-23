@@ -13,6 +13,7 @@ function open(href: string, name: string, extra: Partial<OpenEntry> = {}): OpenE
 		view: 'open',
 		href: denHref(href),
 		name: denName(name),
+		ordinal: undefined,
 		type: denType('folder'),
 		kind: 'directory',
 		mounted: false,
@@ -25,7 +26,13 @@ function open(href: string, name: string, extra: Partial<OpenEntry> = {}): OpenE
 
 /** A card named `name`. */
 function card(name: string): CardEntry {
-	return { view: 'card', name: denName(name), type: denType('commission'), mounted: true };
+	return {
+		view: 'card',
+		name: denName(name),
+		ordinal: undefined,
+		type: denType('commission'),
+		mounted: true
+	};
 }
 
 /** A loaded folder state. */

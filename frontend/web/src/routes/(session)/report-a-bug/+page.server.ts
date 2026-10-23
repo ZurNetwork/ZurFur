@@ -10,7 +10,9 @@ import { runApi } from '$lib/server/runtime';
 import { parseBrowser } from '$lib/types/bug-report-rules';
 
 /** The path bar on the report page: just "Report a bug". */
-const REPORT_TRAIL: Trail = [{ step: 'named', label: 'Report a bug', href: undefined }];
+const REPORT_TRAIL: Trail = [
+	{ step: 'named', label: 'Report a bug', ordinal: undefined, href: undefined }
+];
 
 /**
  * What the page offers to send: the page the reporter came from when the

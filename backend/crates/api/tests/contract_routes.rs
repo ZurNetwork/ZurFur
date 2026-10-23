@@ -145,6 +145,7 @@ fn every_declared_route_is_served() {
         ("DELETE", "/accounts/{id}"),
         ("PATCH", "/accounts/{id}/handle"),
         ("POST", "/commissions"),
+        ("PATCH", "/commissions/{id}/title"),
         ("GET", "/den"),
         ("GET", "/den/{*path}"),
         ("POST", "/bug-reports"),
@@ -169,12 +170,13 @@ fn every_declared_route_is_served() {
         );
     }
 
-    // And the declared set covers the whole v1 surface — eleven endpoints.
+    // And the declared set covers the whole v1 surface — twelve endpoints.
     assert_eq!(
         declared.len(),
-        11,
-        "the v1 corpus declares eleven endpoints: eight after the owner's commission \
-         list retired, the two den reads, and filing a bug report; got {declared:?}"
+        12,
+        "the v1 corpus declares twelve endpoints: eight after the owner's commission \
+         list retired, the two den reads, the commission rename, and filing a bug \
+         report; got {declared:?}"
     );
 }
 

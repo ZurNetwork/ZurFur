@@ -16,27 +16,40 @@ import { Effect, Layer } from 'effect';
 import type { AccountMembership, CreatedAccount, DeleteOutcome } from '$lib/api/account';
 import {
 	ACCOUNT_NOT_FOUND_PROBLEM,
+	COMMISSION_NOT_FOUND_PROBLEM,
+	FORBIDDEN_PROBLEM,
+	invalidFieldsProblem,
 	invalidRequestProblem,
-	NOT_AUTHENTICATED_PROBLEM
+	NOT_AUTHENTICATED_PROBLEM,
+	type FieldError
 } from '$lib/api/problem';
 import type { Session } from '$lib/api/session';
 import { SESSION_COOKIE, signInBindingCookieName } from '$lib/server/cookies';
 import {
 	accountId,
 	bugReference,
+	commissionId,
 	did,
+	fieldPointer,
 	handle,
 	handleFromTrusted,
+	type CommissionId,
 	type Did
 } from '$lib/types/brand';
-import { mockDenRead } from './den-mock';
+import { isOpenFixtureCommission, mockDenRead, type MockCommission } from './den-mock';
 import { ApiProblem, ContractViolation, NotAuthenticated } from './errors';
-import { ZurfurApi, type ZurfurApiShape } from './zurfur-api';
+import {
+	ZurfurApi,
+	type CreatedCommission,
+	type RenamedCommission,
+	type ZurfurApiShape
+} from './zurfur-api';
 
-/** The mock world's mutable state: who is signed in, and which accounts they hold roles in. */
+/** The mock world's mutable state: who is signed in, which accounts they hold roles in, and the commissions created. */
 export interface MockStore {
 	session: Session | undefined;
 	accounts: AccountMembership[];
+	commissions: MockCommission[];
 }
 
 /**
@@ -100,6 +113,27 @@ function nextMockDid(): Did {
 	return fixtureDid(`mock${toBase32(mockDidCounter)}`);
 }
 
+/** The millisecond the last mock commission id was minted at: each later one is minted later. */
+let lastCommissionMillis = 0;
+
+/** Lowercase hex for `bytes`, two digits a byte. */
+function hexOf(bytes: Uint8Array): string {
+	return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * A fresh UUIDv7-shaped commission id, time-ordered like the backend's: a
+ * later create always sorts after an earlier one, even within one millisecond.
+ */
+function nextMockCommissionId(): string {
+	lastCommissionMillis = Math.max(Date.now(), lastCommissionMillis + 1);
+	const millis = lastCommissionMillis.toString(16).padStart(12, '0');
+	const random = hexOf(crypto.getRandomValues(new Uint8Array(10)));
+	const variant = ((Number.parseInt(random.slice(3, 4), 16) & 0x3) | 0x8).toString(16);
+	const timeLow = `${millis.slice(0, 8)}-${millis.slice(8, 12)}`;
+	return `${timeLow}-7${random.slice(0, 3)}-${variant}${random.slice(4, 7)}-${random.slice(7, 19)}`;
+}
+
 /** The fixture visitor mock mode boots signed in as. */
 const FIXTURE_SESSION: Session = {
 	did: fixtureDid('mockalice'),
@@ -128,7 +162,11 @@ const FIXTURE_MEMBERSHIP: AccountMembership = {
  * fixture (`sharedStore` included).
  */
 export function createMockStore(): MockStore {
-	return { session: { ...FIXTURE_SESSION }, accounts: [{ ...FIXTURE_MEMBERSHIP }] };
+	return {
+		session: { ...FIXTURE_SESSION },
+		accounts: [{ ...FIXTURE_MEMBERSHIP }],
+		commissions: []
+	};
 }
 
 /**
@@ -275,6 +313,89 @@ function mockDeleteAccount(
 	});
 }
 
+/** The bidirectional controls: embedding, override and isolate marks. */
+const BIDI_CONTROL = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u;
+
+/** The backend's refusal of a blank title. */
+const TITLE_EMPTY: FieldError = {
+	pointer: fieldPointer('#/title'),
+	code: 'name_empty',
+	detail: "This can't be blank."
+};
+
+/** The backend's refusal of a title holding a bidirectional control. */
+const TITLE_INVISIBLE: FieldError = {
+	pointer: fieldPointer('#/title'),
+	code: 'name_invisible',
+	detail: 'Leave out invisible and direction-changing characters.'
+};
+
+/** Why the backend would refuse `title`, or `undefined` when it would take it. */
+function titleRefusal(title: string): FieldError | undefined {
+	if (title.trim() === '') return TITLE_EMPTY;
+	if (BIDI_CONTROL.test(title)) return TITLE_INVISIBLE;
+	return undefined;
+}
+
+/**
+ * `createCommission`: refuses a blank title and one holding a bidirectional
+ * control as the backend does, at `#/title`; otherwise stores the trimmed
+ * title under a fresh time-ordered id, which is also its segment in
+ * `commissions`, so a later twin sorts after an earlier one.
+ */
+function mockCreateCommission(
+	store: MockStore,
+	title: string
+): ReturnType<ZurfurApiShape['createCommission']> {
+	return Effect.suspend((): ReturnType<ZurfurApiShape['createCommission']> => {
+		if (store.session === undefined)
+			return Effect.fail(new ApiProblem({ problem: NOT_AUTHENTICATED_PROBLEM }));
+		const refusal = titleRefusal(title);
+		if (refusal !== undefined)
+			return Effect.fail(new ApiProblem({ problem: invalidFieldsProblem([refusal]) }));
+		const raw = nextMockCommissionId();
+		const id = commissionId(raw);
+		if (id === undefined)
+			return Effect.fail(
+				new ContractViolation({ path: '/commissions', status: 201, detail: 'an empty id' })
+			);
+		const created: CreatedCommission = { id, title: title.trim() };
+		store.commissions.push({ segment: raw, ...created });
+		return Effect.succeed(created);
+	});
+}
+
+/**
+ * `renameCommission`: renames a commission the mock created, refusing a
+ * title the way `createCommission` does; a fixed commission the mock Den
+ * shows open answers 403, as the backend answers a Participant who isn't the
+ * owner, and any other id the store doesn't hold the commission not-found.
+ */
+function mockRenameCommission(
+	store: MockStore,
+	id: CommissionId,
+	title: string
+): ReturnType<ZurfurApiShape['renameCommission']> {
+	return Effect.suspend((): ReturnType<ZurfurApiShape['renameCommission']> => {
+		if (store.session === undefined)
+			return Effect.fail(new ApiProblem({ problem: NOT_AUTHENTICATED_PROBLEM }));
+		const index = store.commissions.findIndex((commission) => commission.id === id);
+		const held = store.commissions[index];
+		if (held === undefined) {
+			const problem = isOpenFixtureCommission(id)
+				? FORBIDDEN_PROBLEM
+				: COMMISSION_NOT_FOUND_PROBLEM;
+			return Effect.fail(new ApiProblem({ problem }));
+		}
+		const refusal = titleRefusal(title);
+		if (refusal !== undefined)
+			return Effect.fail(new ApiProblem({ problem: invalidFieldsProblem([refusal]) }));
+		const renamed: RenamedCommission = { id, title: title.trim() };
+		store.commissions[index] = { ...held, title: renamed.title };
+		return Effect.succeed(renamed);
+	});
+}
+
 /**
  * `fileBugReport`: keeps nothing; answers a made-up eight-character reference
  * for a signed-in visitor, `NotAuthenticated` for anyone else.
@@ -297,7 +418,7 @@ function mockFileBugReport(store: MockStore): ZurfurApiShape['fileBugReport'] {
  * The dev-mode Layer: the full {@link ZurfurApiShape} over `store` (the
  * shared singleton by default): the `mock*`-named entries, plus the Den
  * reads over the mock Den world (`den-mock.ts`), which reads this store's
- * session and accounts. Callers
+ * session, accounts and commissions. Callers
  * that run in a real server hold this Layer for the whole process
  * (`runtime.ts` builds it once at module scope) rather than
  * rebuilding it per request — safe because every entry below is already
@@ -314,8 +435,10 @@ export function zurfurApiMock(store: MockStore = sharedStore): Layer.Layer<Zurfu
 		listAccounts: mockListAccounts(store),
 		createAccount: (name, requestedHandle) => mockCreateAccount(store, name, requestedHandle),
 		deleteAccount: (id) => mockDeleteAccount(store, id),
-		denRoot: (query) => mockDenRead(store.session, store.accounts, [], query),
-		denNode: (path, query) => mockDenRead(store.session, store.accounts, path, query),
+		createCommission: (title) => mockCreateCommission(store, title),
+		renameCommission: (id, title) => mockRenameCommission(store, id, title),
+		denRoot: (query) => mockDenRead(store, [], query),
+		denNode: (path, query) => mockDenRead(store, path, query),
 		fileBugReport: mockFileBugReport(store)
 	};
 	return Layer.succeed(ZurfurApi, shape);

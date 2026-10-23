@@ -1,0 +1,174 @@
+/**
+ * Commission programs over the {@link import('./api/zurfur-api').ZurfurApi}
+ * port. Creating one lands on its entry in the folder it was created from,
+ * found by the thing the entry names in that folder's listing; the link is
+ * the one the listing gives, never one built from the id. Renaming one says
+ * only whether it went through. Pages run these through
+ * {@link import('./runtime').runApi}.
+ */
+
+import { Effect } from 'effect';
+import {
+	COMMISSION_NOT_FOUND_PROBLEM,
+	FORBIDDEN_PROBLEM,
+	NODE_NOT_FOUND_PROBLEM,
+	ProblemKind,
+	serviceUnavailableProblem,
+	type Problem
+} from '$lib/api/problem';
+import { pageToken, type CommissionId, type DenHref, type PageToken } from '$lib/types/brand';
+import type { DenRead, DenReadNode } from './api/den-read';
+import type { ContractViolation } from './api/errors';
+import { ZurfurApi } from './api/zurfur-api';
+import { denHrefOf, denPathFromSegments, PLAIN_QUERY } from './den/den-path';
+import type { SegmentPath } from './path-builder';
+
+/** At most this many pages of the folder are read looking for a new commission's entry. */
+export const COMMISSION_SEARCH_PAGES = 4;
+
+/** What the create form says when the page's own address isn't found: the closed door, under its code. */
+export const CREATE_NODE_NOT_FOUND_PROBLEM: Problem = {
+	...NODE_NOT_FOUND_PROBLEM,
+	detail: 'Nothing here'
+};
+
+/** What the form says when creating wasn't answered: it may have gone through. */
+export const CREATE_COMMISSION_UNANSWERED_PROBLEM: Problem = serviceUnavailableProblem(
+	"Zurfur didn't answer in time. Your commission may have been created: check your commissions before you try again."
+);
+
+/** How creating comes back: where to land, or a problem to show on the form. */
+export type CreateCommissionOutcome = { readonly landing: DenHref } | { readonly problem: Problem };
+
+/** Whether `node` is the open entry for the commission `id`. */
+function isEntryFor(node: DenReadNode, id: CommissionId): boolean {
+	if (node.access.access !== 'open') return false;
+	const { thing } = node.access;
+	return thing?.thing === 'commission' && thing.id === id;
+}
+
+/** One page of `folder`, or `undefined` when it doesn't read. */
+function folderPage(
+	folder: SegmentPath,
+	token: PageToken | undefined
+): Effect.Effect<DenRead | undefined, never, ZurfurApi> {
+	const query = { includeDeleted: false, pageToken: token };
+	return Effect.gen(function* () {
+		const api = yield* ZurfurApi;
+		return yield* folder.length === 0 ? api.denRoot(query) : api.denNode(folder, query);
+	}).pipe(Effect.catchAll(() => Effect.succeed(undefined)));
+}
+
+/**
+ * The link `folder`'s listing gives the commission `id`, reading at most
+ * {@link COMMISSION_SEARCH_PAGES} pages; `undefined` when it isn't there,
+ * the folder doesn't read, or the builder refuses the entry's path.
+ */
+function entryHrefIn(
+	folder: SegmentPath,
+	id: CommissionId
+): Effect.Effect<DenHref | undefined, never, ZurfurApi> {
+	return Effect.gen(function* () {
+		let token: PageToken | undefined = undefined;
+		for (let page = 0; page < COMMISSION_SEARCH_PAGES; page += 1) {
+			const read: DenRead | undefined = yield* folderPage(folder, token);
+			if (read?.content.content !== 'listing') return undefined;
+			const entry = read.content.entries.find((node) => isEntryFor(node, id));
+			if (entry !== undefined) {
+				const path = denPathFromSegments(entry.segments);
+				return path === undefined ? undefined : denHrefOf(path, PLAIN_QUERY);
+			}
+			const next: string | undefined = read.content.nextPageToken;
+			token = next === undefined ? undefined : pageToken(next);
+			if (token === undefined) return undefined;
+		}
+		return undefined;
+	});
+}
+
+/**
+ * Create a commission titled `title` from `folder`, then land on its entry
+ * there, or on the folder when the entry isn't found. A refused title, or
+ * any other problem, comes back as the problem; a backend that doesn't
+ * answer is {@link CREATE_COMMISSION_UNANSWERED_PROBLEM}.
+ */
+export function createCommissionOutcome(
+	folder: SegmentPath,
+	title: string
+): Effect.Effect<CreateCommissionOutcome, ContractViolation, ZurfurApi> {
+	const folderHref = denHrefOf(folder, PLAIN_QUERY);
+	if (folderHref === undefined) return Effect.succeed({ problem: CREATE_NODE_NOT_FOUND_PROBLEM });
+	const created = Effect.gen(function* () {
+		const api = yield* ZurfurApi;
+		const commission = yield* api.createCommission(title);
+		const found = yield* entryHrefIn(folder, commission.id);
+		return { landing: found ?? folderHref } satisfies CreateCommissionOutcome;
+	});
+	return created.pipe(
+		Effect.catchTags({
+			ApiProblem: ({ problem }) => Effect.succeed<CreateCommissionOutcome>({ problem }),
+			NetworkFailure: () =>
+				Effect.succeed<CreateCommissionOutcome>({ problem: CREATE_COMMISSION_UNANSWERED_PROBLEM })
+		})
+	);
+}
+
+/** What the form says when the backend refuses a rename to someone who isn't the owner. */
+export const RENAME_COMMISSION_FORBIDDEN_PROBLEM: Problem = {
+	...FORBIDDEN_PROBLEM,
+	detail: "Only the commission's owner can rename it."
+};
+
+/** What the form says when the commission isn't found: the closed door, under the backend's code. */
+export const RENAME_COMMISSION_NOT_FOUND_PROBLEM: Problem = {
+	...COMMISSION_NOT_FOUND_PROBLEM,
+	detail: 'Nothing here'
+};
+
+/** What the form says when the page's own address isn't found: the same closed door. */
+export const RENAME_NODE_NOT_FOUND_PROBLEM: Problem = {
+	...NODE_NOT_FOUND_PROBLEM,
+	detail: 'Nothing here'
+};
+
+/** What the form says when renaming wasn't answered. */
+export const RENAME_COMMISSION_UNANSWERED_PROBLEM: Problem = serviceUnavailableProblem(
+	"Zurfur isn't answering right now."
+);
+
+/** How renaming comes back: done, or a problem to show on the form. */
+export type RenameCommissionOutcome = { readonly renamed: true } | { readonly problem: Problem };
+
+/** The backend's problem as the rename form shows it: the owner-only words, the closed door, or as it came. */
+function renameProblem(problem: Problem): Problem {
+	if (problem.code === ProblemKind.Forbidden.code) return RENAME_COMMISSION_FORBIDDEN_PROBLEM;
+	if (problem.code === ProblemKind.CommissionNotFound.code)
+		return RENAME_COMMISSION_NOT_FOUND_PROBLEM;
+	return problem;
+}
+
+/**
+ * Rename the commission `id` to `title`. A refusal to someone who isn't the
+ * owner is {@link RENAME_COMMISSION_FORBIDDEN_PROBLEM}, a not-found is
+ * {@link RENAME_COMMISSION_NOT_FOUND_PROBLEM}; a refused title, or any other
+ * problem, comes back as the backend's problem; a backend that doesn't
+ * answer is {@link RENAME_COMMISSION_UNANSWERED_PROBLEM}.
+ */
+export function renameCommissionOutcome(
+	id: CommissionId,
+	title: string
+): Effect.Effect<RenameCommissionOutcome, ContractViolation, ZurfurApi> {
+	const renamed = Effect.gen(function* () {
+		const api = yield* ZurfurApi;
+		yield* api.renameCommission(id, title);
+		return { renamed: true } satisfies RenameCommissionOutcome;
+	});
+	return renamed.pipe(
+		Effect.catchTags({
+			ApiProblem: ({ problem }) =>
+				Effect.succeed<RenameCommissionOutcome>({ problem: renameProblem(problem) }),
+			NetworkFailure: () =>
+				Effect.succeed<RenameCommissionOutcome>({ problem: RENAME_COMMISSION_UNANSWERED_PROBLEM })
+		})
+	);
+}

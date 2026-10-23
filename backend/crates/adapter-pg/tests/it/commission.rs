@@ -355,9 +355,9 @@ async fn every_commission_referencing_table_is_classified_as_fact_or_non_fact() 
 
 // --- ZMVP-157: `list_owned_by` against real SQL. ---
 //
-// `WHERE owner_id = $1 AND archived_at IS NULL` scopes `commission::list`, whose
-// only caller is create's read-back of the row it just made. These tests prove
-// the owner scoping and the active filter hold in postgres.
+// `WHERE owner_id = $1 AND archived_at IS NULL` scopes the owner's active
+// listing. These tests prove the owner scoping and the active filter hold in
+// postgres.
 
 /// Create a commission owned by `owner` in its own committed unit of work.
 async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> NewCommission {
@@ -375,7 +375,7 @@ async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> NewCommi
 }
 
 // The listing is owner-scoped and active-only: another user's commission never
-// appears (the containment property `commission::list` rests on), and an
+// appears (the containment property an owner's listing rests on), and an
 // archived one of the caller's own is filtered out — the active-view filtering
 // `Commission::archived_at` documents as belonging to listing projections.
 #[tokio::test]
@@ -437,7 +437,7 @@ async fn list_owned_by_returns_only_the_callers_active_commissions_in_id_order()
 }
 
 // A user with nothing owns nothing: the empty listing is a plain empty vec, not
-// an error — what `commission::list` returns for a new account.
+// an error — what an owner's listing answers for a new account.
 #[tokio::test]
 async fn list_owned_by_is_empty_for_a_user_with_no_commissions() {
     let (pool, _container) = fresh_pool().await;
@@ -449,4 +449,48 @@ async fn list_owned_by_is_empty_for_a_user_with_no_commissions() {
         .await
         .expect("list_owned_by");
     assert!(rows.is_empty(), "a user with no commissions lists none");
+}
+
+// set_title answers true only when the stored title changes: a repeat of the
+// stored title and an absent commission both answer false, and the new title
+// is what a later read finds.
+#[tokio::test]
+async fn set_title_reports_only_a_real_change() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:pg-rename-owner").await;
+    let created = create_commission(&pool, &owner, "A ref sheet").await;
+    let renamed = "A full piece"
+        .parse::<CommissionTitle>()
+        .expect("valid title");
+    let absent = CommissionId::from(uuid::Uuid::now_v7());
+
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let first = uow
+        .commissions()
+        .set_title(&created.id, &renamed)
+        .await
+        .expect("first rename");
+    let repeat = uow
+        .commissions()
+        .set_title(&created.id, &renamed)
+        .await
+        .expect("repeat rename");
+    let missing = uow
+        .commissions()
+        .set_title(&absent, &renamed)
+        .await
+        .expect("rename of an absent commission");
+    uow.commit().await.expect("commit");
+
+    assert!(first, "a new title is a real change");
+    assert!(!repeat, "the title already stored answers false");
+    assert!(!missing, "an absent commission answers false");
+    let store = adapter_pg::PgCommissionStore::new(pool.clone());
+    let stored = store
+        .find(&created.id)
+        .await
+        .expect("find")
+        .expect("the commission exists");
+    assert_eq!(stored.title.as_str(), "A full piece");
 }

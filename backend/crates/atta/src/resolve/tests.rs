@@ -431,3 +431,146 @@ fn standing_wins_a_tie_with_a_grant() {
         expected_access(Level::Public, Via::Standing)
     );
 }
+
+/// A number the tests expect.
+fn ordinal(number: u32) -> Option<NameOrdinal> {
+    let ordinal = NameOrdinal::try_from(number).expect("a valid test ordinal");
+    Some(ordinal)
+}
+
+/// alice's root holds two folders named "Twin"; the second holds two files named "Doc" and a
+/// mount of a commission named "Doc", whose real parent holds another "Doc" before it.
+fn twin_world() -> FakeHost {
+    FakeHost::default()
+        .top_level()
+        .file_type("file")
+        .node("/user/alice", "user", Level::Private, &[STANDING])
+        .node("/user/alice/f1", "folder", Level::Private, &[])
+        .named("/user/alice/f1", "Twin")
+        .node("/user/alice/f2", "folder", Level::Private, &[])
+        .named("/user/alice/f2", "Twin")
+        .node("/user/alice/f2/d1", "file", Level::Private, &[])
+        .named("/user/alice/f2/d1", "Doc")
+        .node("/user/alice/f2/d2", "file", Level::Private, &[])
+        .named("/user/alice/f2/d2", "Doc")
+        .mount("/user/alice/f2", "m", "/commission/c1")
+        .node("/commission/c0", "commission", Level::Private, &[STANDING])
+        .named("/commission/c0", "Doc")
+        .node("/commission/c1", "commission", Level::Private, &[STANDING])
+        .named("/commission/c1", "Doc")
+}
+
+/// The node at `pieces` below alice's root, told apart from its twins.
+async fn told_apart(host: &FakeHost, pieces: &[&str]) -> Resolved {
+    let resolver = resolver(host);
+    let resolved = resolver
+        .resolve_path(&root(), &den(pieces))
+        .await
+        .expect("the path resolves");
+    resolver
+        .tell_apart(resolved)
+        .await
+        .expect("the path's folders list")
+}
+
+/// The numbers of a resolved node's crumbs, then of the node.
+fn numbers(resolved: &Resolved) -> Vec<Option<NameOrdinal>> {
+    let crumbs = resolved.crumbs().iter().map(|crumb| crumb.ordinal);
+    crumbs.chain([resolved.node().ordinal]).collect()
+}
+
+/// The folders whose children the host was asked for, in order.
+fn listed_folders(host: &FakeHost) -> Vec<RealPath> {
+    let listed = |call: Call| match call {
+        Call::Children { parent } => Some(parent),
+        _ => None,
+    };
+    host.calls().into_iter().filter_map(listed).collect()
+}
+
+#[tokio::test]
+async fn a_twin_s_node_and_crumbs_carry_their_parent_listing_s_number() {
+    let host = twin_world();
+
+    let file = told_apart(&host, &["f2", "d2"]).await;
+    let mount = told_apart(&host, &["f2", "m"]).await;
+
+    assert_eq!(numbers(&file), [None, ordinal(2), ordinal(2)]);
+    assert_eq!(numbers(&mount), [None, ordinal(2), ordinal(3)]);
+}
+
+#[tokio::test]
+async fn the_first_twin_and_its_crumbs_stay_plain() {
+    let host = twin_world();
+
+    let resolved = told_apart(&host, &["f1"]).await;
+
+    assert_eq!(numbers(&resolved), [None, None]);
+}
+
+#[tokio::test]
+async fn a_path_with_no_equal_names_carries_no_number() {
+    let host = world();
+
+    let resolved = told_apart(&host, &["commissions", "c1", "attachments", "f1"]).await;
+
+    assert_eq!(numbers(&resolved), [None, None, None, None, None]);
+}
+
+#[tokio::test]
+async fn the_root_never_gets_a_number() {
+    let host = twin_world();
+
+    let resolved = told_apart(&host, &[]).await;
+
+    assert_eq!(numbers(&resolved), [None]);
+    assert!(listed_folders(&host).is_empty());
+}
+
+#[tokio::test]
+async fn a_node_its_parent_s_listing_hides_gets_no_number() {
+    let host = twin_world().refuse("/user/alice/f2/d1", Reach::Listing);
+
+    let hidden = told_apart(&host, &["f2", "d1"]).await;
+    let twin = told_apart(&host, &["f2", "d2"]).await;
+
+    assert_eq!(hidden.node().ordinal, None);
+    assert_eq!(twin.node().ordinal, None);
+}
+
+#[tokio::test]
+async fn the_plain_walk_makes_no_children_call() {
+    let host = twin_world();
+
+    let resolved = resolve(&host, &["f2", "d2"])
+        .await
+        .expect("the path resolves");
+
+    assert!(listed_folders(&host).is_empty());
+    assert_eq!(numbers(&resolved), [None, None, None]);
+}
+
+#[tokio::test]
+async fn telling_apart_lists_each_folder_on_the_path_once() {
+    let host = twin_world();
+
+    told_apart(&host, &["f2", "d2"]).await;
+
+    let expected = [root(), path("/user/alice/f2")];
+    assert_eq!(listed_folders(&host), expected);
+}
+
+#[tokio::test]
+async fn a_node_resolved_for_another_viewer_is_not_told_apart() {
+    let host = twin_world();
+    let resolved = resolve(&host, &["f2"]).await.expect("the path resolves");
+    let bob = Resolver {
+        host: &host,
+        viewer: Viewer::from("bob".to_owned()),
+        caps: Caps::default(),
+    };
+
+    let told_apart = bob.tell_apart(resolved).await;
+
+    assert!(matches!(told_apart, Err(Error::NotFound)), "{told_apart:?}");
+}

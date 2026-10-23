@@ -11,7 +11,7 @@ import { UNKNOWN_BUILD_ID } from '$lib/types/bug-report-rules';
 import type { Trail } from '$lib/api/trail';
 
 /** The frame's path on this page; the page itself doesn't render it. */
-const trail: Trail = [{ step: 'named', label: 'Accounts', href: '/accounts' }];
+const trail: Trail = [{ step: 'named', label: 'Accounts', ordinal: undefined, href: '/accounts' }];
 
 /** Every accounts-group page requires a session (the layout gate) — the group's layout passes it through untouched, so every render here carries one. */
 const alice: Session = {
@@ -37,7 +37,8 @@ const notFoundProblem: Problem = {
 	code: 'account_not_found',
 	title: 'Account not found',
 	detail: 'No such account.',
-	status: 404
+	status: 404,
+	errors: []
 };
 
 function accountData(account: AccountMembership) {

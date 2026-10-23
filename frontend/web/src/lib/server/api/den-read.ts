@@ -6,7 +6,7 @@
  * web's own view, building every link through the path builder.
  */
 
-import type { PageToken } from '$lib/types/brand';
+import type { CommissionId, Did, NameOrdinal, PageToken } from '$lib/types/brand';
 
 /** What a Den read asks for besides the path. */
 export interface DenQuery {
@@ -15,6 +15,11 @@ export interface DenQuery {
 	/** Where a later page starts; absent for the first page. */
 	readonly pageToken: PageToken | undefined;
 }
+
+/** The thing an open node stands for: a commission by its id or an Account by its DID. */
+export type DenReadThing =
+	| { readonly thing: 'commission'; readonly id: CommissionId }
+	| { readonly thing: 'account'; readonly did: Did };
 
 /**
  * The viewer's access to a node. Only exactly `open` opens: any other value,
@@ -28,6 +33,8 @@ export type DenReadAccess =
 			readonly contentNotShown: boolean;
 			/** `archived` | `deactivated` when soft-deleted; absent otherwise. */
 			readonly removed: string | undefined;
+			/** What the node stands for; absent on kinds that name no thing, or when the answer names none this build knows. */
+			readonly thing: DenReadThing | undefined;
 	  }
 	| { readonly access: 'card' };
 
@@ -35,7 +42,10 @@ export type DenReadAccess =
 export interface DenReadNode {
 	/** Its Den path from the viewer's root; empty on a card. */
 	readonly segments: readonly string[];
+	/** Its own name, never carrying its number. */
 	readonly name: string;
+	/** Its number among the equal names its folder shows this viewer; absent when it needs none. */
+	readonly ordinal: NameOrdinal | undefined;
 	readonly type: string;
 	/** `directory` | `file` | `symlink`; empty on a card. */
 	readonly kind: string;
@@ -47,6 +57,10 @@ export interface DenReadNode {
 export interface DenReadCrumb {
 	readonly segments: readonly string[];
 	readonly name: string;
+	/** Its number in its parent's listing; the root never has one. */
+	readonly ordinal: NameOrdinal | undefined;
+	/** The type of the node the crumb stands for; empty when the answer gives none. */
+	readonly type: string;
 }
 
 /** What an open node holds. */

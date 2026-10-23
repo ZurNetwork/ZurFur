@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { decodeContract } from './zurfur-api';
 import { GetMeResponseSchema } from './generated/zurfur/api/v1/session_pb';
+import { ProblemSchema } from './generated/zurfur/api/v1/problem_pb';
 
 describe('the contract decode path (tolerant reader, §6)', () => {
 	it('ignores unknown fields — an additive server change must not break this client', () => {
@@ -21,6 +22,32 @@ describe('the contract decode path (tolerant reader, §6)', () => {
 
 		expect(message.did).toBe('did:plc:tolerant');
 		expect(message.handle).toBe('tolerant.bsky.social');
+	});
+
+	it('decodes a field error carrying a member from the future', () => {
+		const body = {
+			type: 'urn:zurfur:error:invalid-request',
+			code: 'invalid_request',
+			title: 'Invalid request',
+			detail: 'Some fields need changing; each one says why.',
+			status: 422,
+			errors: [
+				{
+					pointer: '#/title',
+					code: 'name_empty',
+					detail: "This can't be blank.",
+					aFieldFromTheFuture: 'added in a later additive release'
+				}
+			]
+		};
+
+		const message = decodeContract(ProblemSchema, body);
+
+		const [item] = message.errors;
+		expect(message.errors).toHaveLength(1);
+		expect(item?.pointer).toBe('#/title');
+		expect(item?.code).toBe('name_empty');
+		expect(item?.detail).toBe("This can't be blank.");
 	});
 
 	it('still rejects a malformed body — tolerance is for unknown keys, not garbage', () => {

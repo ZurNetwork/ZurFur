@@ -3,20 +3,24 @@
 
 use axum::{
     Json,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{State, rejection::JsonRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
 use domain::{
-    elements::commission::{ChangelogEntryKind, ChannelPointer, CommissionId, NewChangelogEntry},
+    elements::commission::{ChangelogEntryKind, ChannelPointer, NewChangelogEntry},
     ports::UnitOfWork,
 };
 use serde::Deserialize;
 use serde_json::json;
 
 use super::require_owner;
-use crate::{AppState, extract::CallingUser, problem::Problem};
+use crate::{
+    AppState,
+    extract::{CallingUser, CommissionPath},
+    problem::Problem,
+};
 
 /// The `PUT /commissions/{id}/channel` request body: the raw pointer text.
 #[derive(Deserialize)]
@@ -30,8 +34,8 @@ pub(super) struct LinkChannelBody {
 #[deprecated(note = "Moving completely to a plugin")]
 pub(super) async fn link_channel(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
     body: Result<Json<LinkChannelBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     // TODO(engineer): no use case exists yet, so this still authorizes and
@@ -69,8 +73,8 @@ pub(super) async fn link_channel(
 /// entry is appended if there was nothing to clear. Returns `204 No Content`.
 pub(super) async fn clear_channel(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(actor_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
 ) -> Result<Response, Problem> {
     // TODO(engineer): unmigrated for the same reason as link_channel (no use case yet).
     let found = require_owner(&state, &commission_id, &actor_id).await?;

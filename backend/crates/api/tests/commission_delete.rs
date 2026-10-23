@@ -377,6 +377,14 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         self.0.set_archived(id, archived_at).await
     }
 
+    async fn set_title(
+        &mut self,
+        id: &CommissionId,
+        title: &CommissionTitle,
+    ) -> anyhow::Result<bool> {
+        self.0.set_title(id, title).await
+    }
+
     async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
         self.0.set_maturity(id, maturity).await
     }

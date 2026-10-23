@@ -4,7 +4,8 @@
  * `.` and `..` pieces (raw or percent-encoded), anything outside the segment
  * allowlist, and more than 16 pieces; it decodes each piece exactly once;
  * and it carries only allowlisted query parameters, never the incoming query
- * string. Used only by the den page's load and the den program it runs.
+ * string. Used only by the den page (its load, the den program it runs
+ * and its create and rename actions).
  */
 
 import { DEN_ROOT } from '$lib/api/den-route';

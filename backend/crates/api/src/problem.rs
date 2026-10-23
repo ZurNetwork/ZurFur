@@ -1,12 +1,17 @@
 //! The RFC 9457 problem-document type served as `application/problem+json` for
 //! every JSON API error; success responses stay bare resources with the status
 //! line as outcome. Construct via the named registry below, never field-by-field.
+//! A `422` that refuses request fields names them in `errors`, built only by
+//! [`Problem::invalid_fields`].
 
 use axum::{
     Json,
     http::{HeaderValue, StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response},
 };
+
+mod fields;
+pub use fields::{FieldCode, FieldPointer, FieldRefusal};
 
 /// The generated RFC 9457 problem type. Construct only via the
 /// named registry methods below — never field by field — so `type`/`code`/
@@ -35,6 +40,7 @@ impl Problem {
             title: title.to_owned(),
             detail,
             status: i32::from(status),
+            errors: Vec::new(),
         }
     }
 
@@ -73,16 +79,16 @@ impl Problem {
         )
     }
 
-    /// `403` — a state-changing request arrived with a non-first-party `Origin`
-    /// (CSRF defense-in-depth on top of `SameSite=Lax`). Non-browser callers (no
-    /// `Origin` header) are never rejected here.
+    /// `403` — a state-changing request on the cookie surface carried no
+    /// first-party signal: neither the configured `Origin` nor, with no `Origin`,
+    /// `Sec-Fetch-Site: same-origin` (CSRF, on top of `SameSite=Lax`).
     pub fn cross_origin() -> Self {
         Self::new(
             "urn:zurfur:error:cross-origin",
             "cross_origin",
             "Cross-origin request blocked",
             403,
-            "This state-changing request came from an untrusted origin.",
+            "This state-changing request didn't come from Zurfur's own pages.",
         )
     }
 

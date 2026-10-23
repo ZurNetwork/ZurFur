@@ -1,7 +1,8 @@
 {
   "crumbs": [
     {
-      "name": "bob.test"
+      "name": "bob.test",
+      "type": "user"
     }
   ],
   "listing": {

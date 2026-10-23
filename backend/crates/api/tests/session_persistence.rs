@@ -76,11 +76,8 @@ async fn a_signed_in_user_is_still_signed_in_after_a_server_restart() {
 
     // --- First boot: sign in, leaving a real session row in Postgres. ---
     let base = serve(pool.clone(), did, backend.clone()).await;
-    let client = reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
-        .build()
-        .expect("client builds");
+    // Sends `Origin: {base}`, as the app's own pages do, so its sign-in passes the CSRF guard.
+    let client = test_support::http::client_with_origin(&base);
 
     client
         .post(format!("{base}/signin"))

@@ -1,13 +1,15 @@
 {
   "crumbs": [
     {
-      "name": "Alice"
+      "name": "Alice",
+      "type": "user"
     },
     {
       "name": "characters",
       "segments": [
         "characters"
-      ]
+      ],
+      "type": "user.characters"
     }
   ],
   "listing": {},

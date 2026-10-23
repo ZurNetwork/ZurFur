@@ -11,6 +11,7 @@ mod list;
 mod metadata;
 mod name;
 mod ordering;
+mod ordinal;
 mod page;
 mod path;
 mod resolve;
@@ -29,6 +30,7 @@ pub use name::{
     MAX_NAME_BYTES, NodeName, NodeNameError, ShowableName, ShowableNameError, is_default_ignorable,
     is_format,
 };
+pub use ordinal::{NameOrdinal, NameOrdinalError};
 pub use page::{Listing, PageToken, PageTokenError};
 pub use path::RealPath;
 pub use resolve::{Caps, Entry, Error, Resolved, Resolver, View};

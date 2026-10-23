@@ -396,6 +396,7 @@ fn card(name: &str, den_type: &str, mount: bool) -> DenNode {
         r#type: den_type.to_owned(),
         kind: String::new(),
         mount,
+        name_ordinal: None,
         access: Some(den_node::Access::Card(DenCard {})),
     }
 }

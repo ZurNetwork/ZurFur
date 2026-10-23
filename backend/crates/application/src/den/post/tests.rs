@@ -61,6 +61,7 @@ async fn the_stub_opens_named_posts_public_with_its_content_not_shown_and_an_emp
         own_level: NodeLevel::Public,
         content_not_shown: true,
         soft_delete: None,
+        thing: None,
     };
     assert_eq!(read.node.name.to_string(), POSTS);
     assert_eq!(read.node.den_type, DenType::Posts);

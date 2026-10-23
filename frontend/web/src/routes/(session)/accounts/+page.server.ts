@@ -33,7 +33,9 @@ const DELETE_OUTCOMES = { soft: 'soft', hard: 'hard', unknown: 'unknown' } as co
 const DELETE_OUTCOME_BY_PARAM = new Map<string, DeleteOutcome>(Object.entries(DELETE_OUTCOMES));
 
 /** The path bar on the listing: just "Accounts". */
-const ACCOUNTS_TRAIL: Trail = [{ step: 'named', label: 'Accounts', href: undefined }];
+const ACCOUNTS_TRAIL: Trail = [
+	{ step: 'named', label: 'Accounts', ordinal: undefined, href: undefined }
+];
 
 /**
  * The caller's account listing, plus the `?deleted=` flash a completed delete

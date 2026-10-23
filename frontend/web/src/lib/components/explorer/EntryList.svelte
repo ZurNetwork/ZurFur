@@ -48,6 +48,7 @@
 					<TreeItem
 						look={entry.kind}
 						name={entry.name}
+						ordinal={entry.ordinal}
 						mounted={entry.mounted}
 						removed={entry.removed}
 					/>
@@ -58,6 +59,7 @@
 					<TreeItem
 						look="cantOpen"
 						name={entry.name}
+						ordinal={entry.ordinal}
 						mounted={entry.mounted}
 						typeWord={cardTypeWord(entry.type)}
 						sayCantOpen={false}

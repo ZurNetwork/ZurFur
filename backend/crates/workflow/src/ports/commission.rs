@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use crate::elements::{
     commission::{
         ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
-        CommissionMarkup, CommissionSummary, DeadlineStatus, DirectionStatus, ElementId, FileKey,
-        FileSummary, GrantLevel, LapsedDeadline, NewCommission, NewElement, NewSeat, NewSlot, Seat,
-        SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
+        CommissionMarkup, CommissionSummary, CommissionTitle, DeadlineStatus, DirectionStatus,
+        ElementId, FileKey, FileSummary, GrantLevel, LapsedDeadline, NewCommission, NewElement,
+        NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
     },
     workflow::{Column, ColumnId, WorkflowId},
 };
@@ -224,6 +224,15 @@ pub trait CommissionWrites: Send {
         &mut self,
         id: &CommissionId,
         archived_at: Option<DateTimeUtc>,
+    ) -> anyhow::Result<bool>;
+
+    /// Replace the commission's title. Returns whether the stored title actually
+    /// changed, so the caller keys its `renamed` append on a real change in this
+    /// same unit. A no-op on an absent commission, answering `false`.
+    async fn set_title(
+        &mut self,
+        id: &CommissionId,
+        title: &CommissionTitle,
     ) -> anyhow::Result<bool>;
 
     /// Set or replace the commission's maturity posture. Replace-only by

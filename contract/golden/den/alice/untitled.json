@@ -1,13 +1,15 @@
 {
   "crumbs": [
     {
-      "name": "Alice"
+      "name": "Alice",
+      "type": "user"
     },
     {
       "name": "commissions",
       "segments": [
         "commissions"
-      ]
+      ],
+      "type": "user.commissions"
     }
   ],
   "listing": {
@@ -72,6 +74,7 @@
     "mount": true,
     "name": "Untitled",
     "open": {
+      "commissionId": "01a0ef9c-4e00-7a00-8000-000000000001",
       "ownLevel": "private"
     },
     "segments": [

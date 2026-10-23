@@ -7,8 +7,9 @@ use atta::{Caps, Entry, Host, Kind, Level, RealPath, Resolved, Resolver, Segment
 use domain::elements::user::UserId;
 
 use crate::den::{
-    DenAccess, DenContent, DenCrumb, DenError, DenListing, DenName, DenNode, DenSegment, DenType,
-    NodeKind, NodeLevel, PageToken, SoftDelete, TopLevel, host::DenHost, names,
+    DenAccess, DenContent, DenCrumb, DenError, DenListing, DenName, DenNode, DenSegment, DenThing,
+    DenType, NameOrdinal, NodeKind, NodeLevel, PageToken, SoftDelete, TopLevel, host::DenHost,
+    names,
 };
 
 /// The engine's read error as the Den's: every miss is the one not-found.
@@ -72,43 +73,54 @@ fn segments(view: &View) -> Vec<DenSegment> {
     }
 }
 
-/// One crumb above a node.
-pub(crate) fn crumb(entry: &Entry) -> DenCrumb {
-    DenCrumb {
+/// One crumb above a node, with the type its entry carries; a type the host never answers
+/// with is a broken host.
+pub(crate) fn crumb(entry: &Entry) -> Result<DenCrumb, DenError> {
+    let crumb = DenCrumb {
         segments: segments(&entry.view),
         name: DenName::new(entry.name.clone()),
-    }
+        name_ordinal: entry.ordinal.map(NameOrdinal::new),
+        den_type: den_type(entry)?,
+    };
+    Ok(crumb)
 }
 
-/// Where a Den read finds the soft-deleted word of a node the host answered for; `Sync`, so a
+/// What the host recorded about a node it answered for: its soft-deleted word and the thing
+/// it stands for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecordedFacts {
+    /// Its soft-deleted word; `None` when live.
+    pub(crate) soft_delete: Option<SoftDelete>,
+    /// The thing it stands for; `None` for a node that stands for none.
+    pub(crate) thing: Option<DenThing>,
+}
+
+/// Where a Den read finds what the host recorded about a node it answered for; `Sync`, so a
 /// read's future can cross threads.
-pub(crate) trait SoftDeleteLookup: Sync {
-    /// The word for the node at `path`, `None` when live; the outer `None` when the host
-    /// never answered for that path.
-    fn soft_delete(&self, path: &RealPath) -> Option<Option<SoftDelete>>;
+pub(crate) trait RecordLookup: Sync {
+    /// The facts recorded for the node at `path`; `None` when the host never answered for
+    /// that path.
+    fn recorded(&self, path: &RealPath) -> Option<RecordedFacts>;
 }
 
 /// A Den read for one request: the engine's resolver over a host, and where the host keeps
-/// its soft-deleted words.
+/// its record.
 pub(crate) struct Reader<'h> {
     resolver: Resolver<'h>,
-    soft_deletes: &'h dyn SoftDeleteLookup,
+    records: &'h dyn RecordLookup,
 }
 
 impl<'h> Reader<'h> {
     /// A reader over any `host` for `viewer` within `caps`, marking open nodes from
-    /// `soft_deletes`; the den Queries use [`Reader::over`].
+    /// `records`; the den Queries use [`Reader::over`].
     pub(crate) fn new(
         host: &'h dyn Host,
         viewer: Viewer,
-        soft_deletes: &'h dyn SoftDeleteLookup,
+        records: &'h dyn RecordLookup,
         caps: Caps,
     ) -> Self {
         let resolver = Resolver { host, viewer, caps };
-        Self {
-            resolver,
-            soft_deletes,
-        }
+        Self { resolver, records }
     }
 
     /// A reader over Zurfur's host for the viewer it was built for, marking open nodes from
@@ -129,8 +141,17 @@ impl<'h> Reader<'h> {
             .map_err(engine_error)
     }
 
-    /// One entry as the Den shows it; an open entry is marked with its soft-deleted word, read
-    /// from the host's record for its real path.
+    /// The walked node and its crumbs, each numbered among its twins in the listing of the
+    /// folder it was reached through. Lists each folder on the path once more.
+    pub(crate) async fn tell_apart(&self, resolved: Resolved) -> Result<Resolved, DenError> {
+        self.resolver
+            .tell_apart(resolved)
+            .await
+            .map_err(engine_error)
+    }
+
+    /// One entry as the Den shows it; an open entry is marked with its soft-deleted word and
+    /// the thing it stands for, read from the host's record for its real path.
     pub(crate) fn node(&self, entry: &Entry) -> Result<DenNode, DenError> {
         let den_type = den_type(entry)?;
         let access = match &entry.view {
@@ -141,21 +162,24 @@ impl<'h> Reader<'h> {
                 kind,
                 ..
             } => {
-                let soft_delete = self.soft_deletes.soft_delete(real_path).ok_or_else(|| {
-                    let unrecorded = anyhow::anyhow!("an open den node has no host record");
-                    DenError::Store(unrecorded)
-                })?;
+                let RecordedFacts { soft_delete, thing } =
+                    self.records.recorded(real_path).ok_or_else(|| {
+                        let unrecorded = anyhow::anyhow!("an open den node has no host record");
+                        DenError::Store(unrecorded)
+                    })?;
                 DenAccess::Open {
                     kind: node_kind(*kind),
                     own_level: node_level(*own_level),
                     content_not_shown: den_type.content_not_shown(),
                     soft_delete,
+                    thing,
                 }
             }
         };
         let node = DenNode {
             segments: segments(&entry.view),
             name: DenName::new(entry.name.clone()),
+            name_ordinal: entry.ordinal.map(NameOrdinal::new),
             den_type,
             mount: entry.mount,
             access,

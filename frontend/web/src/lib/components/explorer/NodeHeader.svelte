@@ -4,10 +4,12 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import type { IconName } from '$lib/components/ui/icons';
 	import { removedWord } from '$lib/components/ui/removed-word';
+	import ShownName from '$lib/components/ui/ShownName.svelte';
 	import VisibilityMarker from '$lib/components/ui/VisibilityMarker.svelte';
 
 	/**
-	 * The pane's title for the open node: its kind marker and name, then a
+	 * The pane's title for the open node: its kind marker and name with its
+	 * number among equal names, then a
 	 * line with its kind word, its own visibility, the mounted marker and the
 	 * soft-delete word. A card shows only its name, its type as a word when
 	 * this build knows it, and "Can't open" — never a level, which only
@@ -39,7 +41,6 @@
 		unknown: 'box'
 	} as const satisfies Record<DenKind, IconName>;
 
-	const title = $derived(root ? 'My Den' : node.name);
 	const icon: IconName = $derived(node.view === 'open' ? KIND_ICONS[node.kind] : 'lock');
 	const typeWord = $derived(node.view === 'card' ? cardTypeWord(node.type) : undefined);
 </script>
@@ -47,7 +48,12 @@
 <header class="node-header" data-testid="node-header">
 	<h1 class="node-header__title" tabindex="-1" bind:this={heading}>
 		<Icon name={icon} />
-		<span class="node-header__name"><bdi>{title}</bdi></span>
+		<span class="node-header__name"
+			>{#if root}<bdi>My Den</bdi>{:else}<ShownName
+					name={node.name}
+					ordinal={node.ordinal}
+				/>{/if}</span
+		>
 		{#if node.mounted}
 			<span class="node-header__mounted" title="Mounted"><Icon name="corner-down-right" /></span>
 		{/if}

@@ -11,7 +11,7 @@ import { formStub } from '$lib/testing/superforms';
 import type { Trail } from '$lib/api/trail';
 
 /** The frame's path on this page; the page itself doesn't render it. */
-const trail: Trail = [{ step: 'named', label: 'Accounts', href: undefined }];
+const trail: Trail = [{ step: 'named', label: 'Accounts', ordinal: undefined, href: undefined }];
 
 /** Every accounts-group page requires a session (the layout gate) — the group's layout passes it through untouched, so every render here carries one. */
 const alice: Session = {
@@ -42,7 +42,8 @@ const rateLimitedProblem: Problem = {
 	code: 'rate_limited',
 	title: 'rate_limited',
 	detail: 'Slow down.',
-	status: 429
+	status: 429,
+	errors: []
 };
 
 const handleTakenProblem: Problem = {
@@ -50,7 +51,8 @@ const handleTakenProblem: Problem = {
 	code: 'handle_taken',
 	title: 'handle_taken',
 	detail: 'That handle is already claimed.',
-	status: 409
+	status: 409,
+	errors: []
 };
 
 /** Thin wrapper over the shared {@link formStub}: this page's field defaults. */

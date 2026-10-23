@@ -25,7 +25,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file zurfur/api/v1/den.proto.
  */
 export const file_zurfur_api_v1_den: GenFile = /*@__PURE__*/
-  fileDesc("Chd6dXJmdXIvYXBpL3YxL2Rlbi5wcm90bxINenVyZnVyLmFwaS52MSJAChFHZXREZW5Sb290UmVxdWVzdBIXCg9pbmNsdWRlX2RlbGV0ZWQYASABKAgSEgoKcGFnZV90b2tlbhgCIAEoCSJzChJHZXREZW5Sb290UmVzcG9uc2USJAoEbm9kZRgBIAEoCzIWLnp1cmZ1ci5hcGkudjEuRGVuTm9kZRIsCgdsaXN0aW5nGAIgASgLMhkuenVyZnVyLmFwaS52MS5EZW5MaXN0aW5nSABCCQoHY29udGVudCJOChFHZXREZW5Ob2RlUmVxdWVzdBIMCgRwYXRoGAEgASgJEhcKD2luY2x1ZGVfZGVsZXRlZBgCIAEoCBISCgpwYWdlX3Rva2VuGAMgASgJIuwBChJHZXREZW5Ob2RlUmVzcG9uc2USJAoEbm9kZRgBIAEoCzIWLnp1cmZ1ci5hcGkudjEuRGVuTm9kZRInCgZjcnVtYnMYAiADKAsyFy56dXJmdXIuYXBpLnYxLkRlbkNydW1iEiwKB2xpc3RpbmcYAyABKAsyGS56dXJmdXIuYXBpLnYxLkRlbkxpc3RpbmdIABImCgRmaWxlGAQgASgLMhYuenVyZnVyLmFwaS52MS5EZW5GaWxlSAASJgoEbGluaxgFIAEoCzIWLnp1cmZ1ci5hcGkudjEuRGVuTGlua0gAQgkKB2NvbnRlbnQirgEKB0Rlbk5vZGUSEAoIc2VnbWVudHMYASADKAkSDAoEbmFtZRgCIAEoCRIMCgR0eXBlGAMgASgJEgwKBGtpbmQYBCABKAkSDQoFbW91bnQYBSABKAgSJgoEb3BlbhgGIAEoCzIWLnp1cmZ1ci5hcGkudjEuRGVuT3BlbkgAEiYKBGNhcmQYByABKAsyFi56dXJmdXIuYXBpLnYxLkRlbkNhcmRIAEIICgZhY2Nlc3MiTAoHRGVuT3BlbhIRCglvd25fbGV2ZWwYASABKAkSGQoRY29udGVudF9ub3Rfc2hvd24YAiABKAgSEwoLc29mdF9kZWxldGUYAyABKAkiCQoHRGVuQ2FyZCIJCgdEZW5GaWxlIgkKB0RlbkxpbmsiKgoIRGVuQ3J1bWISEAoIc2VnbWVudHMYASADKAkSDAoEbmFtZRgCIAEoCSJOCgpEZW5MaXN0aW5nEicKB2VudHJpZXMYASADKAsyFi56dXJmdXIuYXBpLnYxLkRlbk5vZGUSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJMuYBCgpEZW5TZXJ2aWNlEmYKCkdldERlblJvb3QSIC56dXJmdXIuYXBpLnYxLkdldERlblJvb3RSZXF1ZXN0GiEuenVyZnVyLmFwaS52MS5HZXREZW5Sb290UmVzcG9uc2UiE4LT5JMCDRILL2FwaS92MS9kZW4ScAoKR2V0RGVuTm9kZRIgLnp1cmZ1ci5hcGkudjEuR2V0RGVuTm9kZVJlcXVlc3QaIS56dXJmdXIuYXBpLnYxLkdldERlbk5vZGVSZXNwb25zZSIdgtPkkwIXEhUvYXBpL3YxL2Rlbi97cGF0aD0qKn1iBnByb3RvMw", [file_google_api_annotations]);
+  fileDesc("Chd6dXJmdXIvYXBpL3YxL2Rlbi5wcm90bxINenVyZnVyLmFwaS52MSJAChFHZXREZW5Sb290UmVxdWVzdBIXCg9pbmNsdWRlX2RlbGV0ZWQYASABKAgSEgoKcGFnZV90b2tlbhgCIAEoCSJzChJHZXREZW5Sb290UmVzcG9uc2USJAoEbm9kZRgBIAEoCzIWLnp1cmZ1ci5hcGkudjEuRGVuTm9kZRIsCgdsaXN0aW5nGAIgASgLMhkuenVyZnVyLmFwaS52MS5EZW5MaXN0aW5nSABCCQoHY29udGVudCJOChFHZXREZW5Ob2RlUmVxdWVzdBIMCgRwYXRoGAEgASgJEhcKD2luY2x1ZGVfZGVsZXRlZBgCIAEoCBISCgpwYWdlX3Rva2VuGAMgASgJIuwBChJHZXREZW5Ob2RlUmVzcG9uc2USJAoEbm9kZRgBIAEoCzIWLnp1cmZ1ci5hcGkudjEuRGVuTm9kZRInCgZjcnVtYnMYAiADKAsyFy56dXJmdXIuYXBpLnYxLkRlbkNydW1iEiwKB2xpc3RpbmcYAyABKAsyGS56dXJmdXIuYXBpLnYxLkRlbkxpc3RpbmdIABImCgRmaWxlGAQgASgLMhYuenVyZnVyLmFwaS52MS5EZW5GaWxlSAASJgoEbGluaxgFIAEoCzIWLnp1cmZ1ci5hcGkudjEuRGVuTGlua0gAQgkKB2NvbnRlbnQi2gEKB0Rlbk5vZGUSEAoIc2VnbWVudHMYASADKAkSDAoEbmFtZRgCIAEoCRIMCgR0eXBlGAMgASgJEgwKBGtpbmQYBCABKAkSDQoFbW91bnQYBSABKAgSJgoEb3BlbhgGIAEoCzIWLnp1cmZ1ci5hcGkudjEuRGVuT3BlbkgAEiYKBGNhcmQYByABKAsyFi56dXJmdXIuYXBpLnYxLkRlbkNhcmRIABIZCgxuYW1lX29yZGluYWwYCCABKA1IAYgBAUIICgZhY2Nlc3NCDwoNX25hbWVfb3JkaW5hbCKFAQoHRGVuT3BlbhIRCglvd25fbGV2ZWwYASABKAkSGQoRY29udGVudF9ub3Rfc2hvd24YAiABKAgSEwoLc29mdF9kZWxldGUYAyABKAkSFQoLYWNjb3VudF9kaWQYBCABKAlIABIXCg1jb21taXNzaW9uX2lkGAUgASgJSABCBwoFdGhpbmciCQoHRGVuQ2FyZCIJCgdEZW5GaWxlIgkKB0RlbkxpbmsiZAoIRGVuQ3J1bWISEAoIc2VnbWVudHMYASADKAkSDAoEbmFtZRgCIAEoCRIMCgR0eXBlGAMgASgJEhkKDG5hbWVfb3JkaW5hbBgEIAEoDUgAiAEBQg8KDV9uYW1lX29yZGluYWwiTgoKRGVuTGlzdGluZxInCgdlbnRyaWVzGAEgAygLMhYuenVyZnVyLmFwaS52MS5EZW5Ob2RlEhcKD25leHRfcGFnZV90b2tlbhgCIAEoCTLmAQoKRGVuU2VydmljZRJmCgpHZXREZW5Sb290EiAuenVyZnVyLmFwaS52MS5HZXREZW5Sb290UmVxdWVzdBohLnp1cmZ1ci5hcGkudjEuR2V0RGVuUm9vdFJlc3BvbnNlIhOC0+STAg0SCy9hcGkvdjEvZGVuEnAKCkdldERlbk5vZGUSIC56dXJmdXIuYXBpLnYxLkdldERlbk5vZGVSZXF1ZXN0GiEuenVyZnVyLmFwaS52MS5HZXREZW5Ob2RlUmVzcG9uc2UiHYLT5JMCFxIVL2FwaS92MS9kZW4ve3BhdGg9Kip9YgZwcm90bzM", [file_google_api_annotations]);
 
 /**
  * `GET /api/v1/den`: the viewer's own root; the session is the argument.
@@ -252,6 +252,17 @@ export type DenNode = Message<"zurfur.api.v1.DenNode"> & {
     value: DenCard;
     case: "card";
   } | { case: undefined; value?: undefined };
+
+  /**
+   * Set, from 2 up, on each entry after the first of those with the same name
+   * that this viewer sees in the same folder, in a fixed order (open entries by
+   * key, so commissions oldest first; then cards). Clients show it after the
+   * name, as "Test 1 (2)". Unset otherwise. Computed for this viewer at read
+   * time, never stored.
+   *
+   * @generated from field: optional uint32 name_ordinal = 8;
+   */
+  nameOrdinal?: number | undefined;
 };
 
 /**
@@ -292,6 +303,32 @@ export type DenOpen = Message<"zurfur.api.v1.DenOpen"> & {
    * @generated from field: string soft_delete = 3;
    */
   softDelete: string;
+
+  /**
+   * The thing this node stands for, for a typed write call to act on. It names the
+   * thing, never the node, and is set only in the cases below. A mount carries its
+   * target's; a symlink carries none until links open. A client that finds no case
+   * it knows, or an empty value, acts on nothing.
+   *
+   * @generated from oneof zurfur.api.v1.DenOpen.thing
+   */
+  thing: {
+    /**
+     * An Account's DID.
+     *
+     * @generated from field: string account_did = 4;
+     */
+    value: string;
+    case: "accountDid";
+  } | {
+    /**
+     * A commission's opaque id.
+     *
+     * @generated from field: string commission_id = 5;
+     */
+    value: string;
+    case: "commissionId";
+  } | { case: undefined; value?: undefined };
 };
 
 /**
@@ -361,11 +398,29 @@ export type DenCrumb = Message<"zurfur.api.v1.DenCrumb"> & {
   segments: string[];
 
   /**
-   * Its display name, the one its parent's listing uses; for the root, the viewer's own name.
+   * Its display name, the one its parent's listing uses (with its `name_ordinal`,
+   * what that listing shows); for the root, the viewer's own name.
    *
    * @generated from field: string name = 2;
    */
   name: string;
+
+  /**
+   * Its type, from DenNode.type's vocabulary, for its icon; unknown values get a generic icon.
+   *
+   * @generated from field: string type = 3;
+   */
+  type: string;
+
+  /**
+   * The number its parent's listing gives it, as DenNode.name_ordinal: set, from 2
+   * up, on each entry after the first of those with the same name, in a fixed order
+   * (open entries by key, so commissions oldest first; then cards). Unset otherwise,
+   * and always for the root.
+   *
+   * @generated from field: optional uint32 name_ordinal = 4;
+   */
+  nameOrdinal?: number | undefined;
 };
 
 /**
@@ -383,7 +438,8 @@ export const DenCrumbSchema: GenMessage<DenCrumb> = /*@__PURE__*/
 export type DenListing = Message<"zurfur.api.v1.DenListing"> & {
   /**
    * The entries, in the order the server sends; clients keep it within each kind and may
-   * show directories first. Today: by name, as the viewer is shown it.
+   * show directories first. Today: by name, digit runs by value and without regard to
+   * case; an entry's `name_ordinal` never moves it.
    *
    * @generated from field: repeated zurfur.api.v1.DenNode entries = 1;
    */

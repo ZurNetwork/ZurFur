@@ -22,7 +22,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file zurfur/api/v1/commission.proto.
  */
 export const file_zurfur_api_v1_commission: GenFile = /*@__PURE__*/
-  fileDesc("Ch56dXJmdXIvYXBpL3YxL2NvbW1pc3Npb24ucHJvdG8SDXp1cmZ1ci5hcGkudjEinwMKGENyZWF0ZUNvbW1pc3Npb25SZXNwb25zZRIKCgJpZBgBIAEoCRINCgV0aXRsZRgCIAEoCRIRCglsaWZlY3ljbGUYAyABKAkSEgoKdmlzaWJpbGl0eRgEIAEoCRIxCghkZWFkbGluZRgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBIAIgBARIuCghtYXR1cml0eRgGIAEoCzIXLnp1cmZ1ci5hcGkudjEuTWF0dXJpdHlIAYgBARIdChBkaXJlY3Rpb25fc3RhdHVzGAcgASgJSAKIAQESHAoPZGVhZGxpbmVfc3RhdHVzGAggASgJSAOIAQESGwoObGlua2VkX2NoYW5uZWwYCSABKAlIBIgBARIuCgpjcmVhdGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEILCglfZGVhZGxpbmVCCwoJX21hdHVyaXR5QhMKEV9kaXJlY3Rpb25fc3RhdHVzQhIKEF9kZWFkbGluZV9zdGF0dXNCEQoPX2xpbmtlZF9jaGFubmVsIisKCE1hdHVyaXR5Eg4KBnJhdGluZxgBIAEoCRIPCgdncmFwaGljGAIgASgIIqUBChdDcmVhdGVDb21taXNzaW9uUmVxdWVzdBINCgV0aXRsZRgBIAEoCRIxCghkZWFkbGluZRgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBIAIgBARIuCghtYXR1cml0eRgDIAEoCzIXLnp1cmZ1ci5hcGkudjEuTWF0dXJpdHlIAYgBAUILCglfZGVhZGxpbmVCCwoJX21hdHVyaXR5MpkBChFDb21taXNzaW9uU2VydmljZRKDAQoQQ3JlYXRlQ29tbWlzc2lvbhImLnp1cmZ1ci5hcGkudjEuQ3JlYXRlQ29tbWlzc2lvblJlcXVlc3QaJy56dXJmdXIuYXBpLnYxLkNyZWF0ZUNvbW1pc3Npb25SZXNwb25zZSIegtPkkwIYOgEqIhMvYXBpL3YxL2NvbW1pc3Npb25zYgZwcm90bzM", [file_google_api_annotations, file_google_protobuf_timestamp]);
+  fileDesc("Ch56dXJmdXIvYXBpL3YxL2NvbW1pc3Npb24ucHJvdG8SDXp1cmZ1ci5hcGkudjEinwMKGENyZWF0ZUNvbW1pc3Npb25SZXNwb25zZRIKCgJpZBgBIAEoCRINCgV0aXRsZRgCIAEoCRIRCglsaWZlY3ljbGUYAyABKAkSEgoKdmlzaWJpbGl0eRgEIAEoCRIxCghkZWFkbGluZRgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBIAIgBARIuCghtYXR1cml0eRgGIAEoCzIXLnp1cmZ1ci5hcGkudjEuTWF0dXJpdHlIAYgBARIdChBkaXJlY3Rpb25fc3RhdHVzGAcgASgJSAKIAQESHAoPZGVhZGxpbmVfc3RhdHVzGAggASgJSAOIAQESGwoObGlua2VkX2NoYW5uZWwYCSABKAlIBIgBARIuCgpjcmVhdGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEILCglfZGVhZGxpbmVCCwoJX21hdHVyaXR5QhMKEV9kaXJlY3Rpb25fc3RhdHVzQhIKEF9kZWFkbGluZV9zdGF0dXNCEQoPX2xpbmtlZF9jaGFubmVsIisKCE1hdHVyaXR5Eg4KBnJhdGluZxgBIAEoCRIPCgdncmFwaGljGAIgASgIIqUBChdDcmVhdGVDb21taXNzaW9uUmVxdWVzdBINCgV0aXRsZRgBIAEoCRIxCghkZWFkbGluZRgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBIAIgBARIuCghtYXR1cml0eRgDIAEoCzIXLnp1cmZ1ci5hcGkudjEuTWF0dXJpdHlIAYgBAUILCglfZGVhZGxpbmVCCwoJX21hdHVyaXR5IjQKF1JlbmFtZUNvbW1pc3Npb25SZXF1ZXN0EgoKAmlkGAEgASgJEg0KBXRpdGxlGAIgASgJIp8DChhSZW5hbWVDb21taXNzaW9uUmVzcG9uc2USCgoCaWQYASABKAkSDQoFdGl0bGUYAiABKAkSEQoJbGlmZWN5Y2xlGAMgASgJEhIKCnZpc2liaWxpdHkYBCABKAkSMQoIZGVhZGxpbmUYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wSACIAQESLgoIbWF0dXJpdHkYBiABKAsyFy56dXJmdXIuYXBpLnYxLk1hdHVyaXR5SAGIAQESHQoQZGlyZWN0aW9uX3N0YXR1cxgHIAEoCUgCiAEBEhwKD2RlYWRsaW5lX3N0YXR1cxgIIAEoCUgDiAEBEhsKDmxpbmtlZF9jaGFubmVsGAkgASgJSASIAQESLgoKY3JlYXRlZF9hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCCwoJX2RlYWRsaW5lQgsKCV9tYXR1cml0eUITChFfZGlyZWN0aW9uX3N0YXR1c0ISChBfZGVhZGxpbmVfc3RhdHVzQhEKD19saW5rZWRfY2hhbm5lbDKqAgoRQ29tbWlzc2lvblNlcnZpY2USgwEKEENyZWF0ZUNvbW1pc3Npb24SJi56dXJmdXIuYXBpLnYxLkNyZWF0ZUNvbW1pc3Npb25SZXF1ZXN0GicuenVyZnVyLmFwaS52MS5DcmVhdGVDb21taXNzaW9uUmVzcG9uc2UiHoLT5JMCGDoBKiITL2FwaS92MS9jb21taXNzaW9ucxKOAQoQUmVuYW1lQ29tbWlzc2lvbhImLnp1cmZ1ci5hcGkudjEuUmVuYW1lQ29tbWlzc2lvblJlcXVlc3QaJy56dXJmdXIuYXBpLnYxLlJlbmFtZUNvbW1pc3Npb25SZXNwb25zZSIpgtPkkwIjOgEqMh4vYXBpL3YxL2NvbW1pc3Npb25zL3tpZH0vdGl0bGViBnByb3RvMw", [file_google_api_annotations, file_google_protobuf_timestamp]);
 
 /**
  * `POST /api/v1/commissions` succeeds `201` with the created commission —
@@ -153,7 +153,7 @@ export const MaturitySchema: GenMessage<Maturity> = /*@__PURE__*/
  */
 export type CreateCommissionRequest = Message<"zurfur.api.v1.CreateCommissionRequest"> & {
   /**
-   * Required; missing/invalid → 422.
+   * Required; a refused title → 422 with a field error at `#/title`.
    *
    * @generated from field: string title = 1;
    */
@@ -182,6 +182,123 @@ export const CreateCommissionRequestSchema: GenMessage<CreateCommissionRequest> 
   messageDesc(file_zurfur_api_v1_commission, 2);
 
 /**
+ * `PATCH /api/v1/commissions/{id}/title` — the owner renames the commission.
+ *
+ * @generated from message zurfur.api.v1.RenameCommissionRequest
+ */
+export type RenameCommissionRequest = Message<"zurfur.api.v1.RenameCommissionRequest"> & {
+  /**
+   * Opaque commission id, from the path.
+   *
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * The new title. Required; a title the name rule refuses → 422 with a field error at `#/title`.
+   *
+   * @generated from field: string title = 2;
+   */
+  title: string;
+};
+
+/**
+ * Describes the message zurfur.api.v1.RenameCommissionRequest.
+ * Use `create(RenameCommissionRequestSchema)` to create a new message.
+ */
+export const RenameCommissionRequestSchema: GenMessage<RenameCommissionRequest> = /*@__PURE__*/
+  messageDesc(file_zurfur_api_v1_commission, 3);
+
+/**
+ * `PATCH .../title` succeeds `200` with the renamed commission — the bare
+ * resource, field for field the shape CreateCommissionResponse renders, kept a
+ * separate message so each answer can evolve on its own. Its `title` is the
+ * title as stored: the name rule may strip characters, such as a zero-width
+ * space, from what was sent.
+ *
+ * @generated from message zurfur.api.v1.RenameCommissionResponse
+ */
+export type RenameCommissionResponse = Message<"zurfur.api.v1.RenameCommissionResponse"> & {
+  /**
+   * Opaque commission id (R6).
+   *
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * The commission's title, as stored.
+   *
+   * @generated from field: string title = 2;
+   */
+  title: string;
+
+  /**
+   * Lifecycle step. Vocabulary (R8): `draft` | `batched` | `active` |
+   * `completed` | `cancelled` | `disputed`.
+   *
+   * @generated from field: string lifecycle = 3;
+   */
+  lifecycle: string;
+
+  /**
+   * Who may see it. Vocabulary (R8): `private` | `listed` | `public`.
+   *
+   * @generated from field: string visibility = 4;
+   */
+  visibility: string;
+
+  /**
+   * The agreed deadline, if set. Absent = no deadline, nothing more (R4).
+   *
+   * @generated from field: optional google.protobuf.Timestamp deadline = 5;
+   */
+  deadline?: Timestamp | undefined;
+
+  /**
+   * The maturity posture, if rated.
+   *
+   * @generated from field: optional zurfur.api.v1.Maturity maturity = 6;
+   */
+  maturity?: Maturity | undefined;
+
+  /**
+   * Direction axis of the two-dimensional status, if set (R8 vocabulary).
+   *
+   * @generated from field: optional string direction_status = 7;
+   */
+  directionStatus?: string | undefined;
+
+  /**
+   * Deadline axis of the two-dimensional status, if set (R8 vocabulary).
+   *
+   * @generated from field: optional string deadline_status = 8;
+   */
+  deadlineStatus?: string | undefined;
+
+  /**
+   * The external chat channel pointer, if one is linked.
+   *
+   * @generated from field: optional string linked_channel = 9;
+   */
+  linkedChannel?: string | undefined;
+
+  /**
+   * When the commission was created.
+   *
+   * @generated from field: google.protobuf.Timestamp created_at = 10;
+   */
+  createdAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message zurfur.api.v1.RenameCommissionResponse.
+ * Use `create(RenameCommissionResponseSchema)` to create a new message.
+ */
+export const RenameCommissionResponseSchema: GenMessage<RenameCommissionResponse> = /*@__PURE__*/
+  messageDesc(file_zurfur_api_v1_commission, 4);
+
+/**
  * The commissions service. Session-gated; Problems per problem.proto.
  *
  * @generated from service zurfur.api.v1.CommissionService
@@ -197,6 +314,18 @@ export const CommissionService: GenService<{
     methodKind: "unary";
     input: typeof CreateCommissionRequestSchema;
     output: typeof CreateCommissionResponseSchema;
+  },
+  /**
+   * Owner-only rename. `200` + the renamed commission. Someone outside the
+   * commission gets the same 404 as an id that names nothing; a Participant
+   * who isn't the owner gets 403.
+   *
+   * @generated from rpc zurfur.api.v1.CommissionService.RenameCommission
+   */
+  renameCommission: {
+    methodKind: "unary";
+    input: typeof RenameCommissionRequestSchema;
+    output: typeof RenameCommissionResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_zurfur_api_v1_commission, 0);

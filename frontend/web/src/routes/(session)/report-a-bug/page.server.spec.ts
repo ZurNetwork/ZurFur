@@ -479,7 +479,7 @@ describe('the report action: the description and hidden characters', () => {
 
 /** A problem the API answers with `status`. */
 function problemAt(status: number): Problem {
-	return { type: 'urn:zurfur:error:x', code: 'x', title: 'x', detail: 'x', status };
+	return { type: 'urn:zurfur:error:x', code: 'x', title: 'x', detail: 'x', status, errors: [] };
 }
 
 describe('the report action: the API answer', () => {
@@ -609,6 +609,8 @@ describe('the report page load', () => {
 	it('gives the frame its path', async () => {
 		const data = await loadWith({});
 
-		expect(data.trail).toStrictEqual([{ step: 'named', label: 'Report a bug', href: undefined }]);
+		expect(data.trail).toStrictEqual([
+			{ step: 'named', label: 'Report a bug', ordinal: undefined, href: undefined }
+		]);
 	});
 });

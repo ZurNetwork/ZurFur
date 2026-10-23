@@ -1,5 +1,5 @@
 //! The commissions route group: the commission JSON API, split per area
-//! (create, changelog, notes, channel, delete, archive, maturity,
+//! (create, rename, changelog, notes, channel, delete, archive, maturity,
 //! elements, slots, seats, invitations, status, deadline, files, markup,
 //! positioning). Mounted under the first-party-`Origin` (CSRF) layer.
 
@@ -10,14 +10,17 @@ use application::{
 use axum::{
     Router,
     extract::DefaultBodyLimit,
-    routing::{MethodRouter, delete, get, post, put},
+    routing::{MethodRouter, delete, get, patch, post, put},
 };
 use domain::elements::{
     commission::{Commission, CommissionId},
     user::UserId,
 };
 
-use crate::{AppState, problem::Problem};
+use crate::{
+    AppState,
+    problem::{FieldCode, FieldPointer, FieldRefusal, Problem},
+};
 
 /// Maps a commission use-case error onto the wire problem: `404` for a missing
 /// commission (or one that hides a non-participant, the closed-door policy),
@@ -83,6 +86,24 @@ impl From<CommissionError> for Problem {
     }
 }
 
+/// `422 invalid_request` with one field error, at `#/title`, saying `code`.
+fn title_refused(code: FieldCode) -> Problem {
+    let title_refusal = FieldRefusal {
+        pointer: FieldPointer::member("title"),
+        code,
+    };
+    Problem::invalid_fields(title_refusal, [])
+}
+
+/// A create's or a rename's refusal as the wire problem: a title the name rule refuses
+/// names `#/title`; any other error maps as every commission error does.
+fn title_write_problem(err: CommissionError) -> Problem {
+    match err {
+        CommissionError::InvalidName(rule) => title_refused(FieldCode::from(rule)),
+        other => Problem::from(other),
+    }
+}
+
 /// Domain time → the contract's wire timestamp type.
 pub(super) fn wire_timestamp(at: domain::datetime::DateTimeUtc) -> crate::wire_time::WireTimestamp {
     crate::wire_time::WireTimestamp::from(at)
@@ -109,6 +130,7 @@ mod markup;
 mod maturity;
 mod notes;
 mod positioning;
+mod rename;
 mod seats;
 mod slots;
 mod status;
@@ -129,6 +151,7 @@ pub(crate) fn commissions_router(max_upload_bytes: usize) -> Router<AppState> {
             "/commissions/{id}",
             axum::routing::delete(delete::delete_commission),
         )
+        .route("/commissions/{id}/title", patch(rename::rename_commission))
         .route(
             "/commissions/{id}/changelog",
             get(changelog::read_changelog),

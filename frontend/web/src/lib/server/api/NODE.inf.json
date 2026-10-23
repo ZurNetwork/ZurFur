@@ -21,22 +21,22 @@
   "fs": [
     {
       "name": "*.spec.ts",
-      "role": "port specs (zurfur-api-limits.spec.ts: each call's own time limit on fake timers, the body bounded too, no timer left behind, an interrupted call aborted; the live Den reads' paths, failures and route-template-only errors among them) + den-wire.spec.ts (the tolerant reader's every Den fallback, through the live port and the den program) + two infrastructure pins (tolerant-reader decode option; undici redirect:'manual' against a live local server) + the mock Layer's own spec (mock mode only in a dev build, the live API otherwise; the boot guard's misconfiguration cases)",
+      "role": "port specs (zurfur-api-limits.spec.ts: each call's own time limit on fake timers, the body bounded too, no timer left behind, an interrupted call aborted; the live Den reads' paths, failures and route-template-only errors among them) + den-wire.spec.ts (the tolerant reader's every Den fallback, a name's number among them, through the live port and the den program) + name-ordinals.spec.ts (the mock's numbering against the shared case file contract/golden/name-ordinals.json) + two infrastructure pins (tolerant-reader decode option; undici redirect:'manual' against a live local server) + the mock Layer's own spec (mock mode only in a dev build, the live API otherwise; the boot guard's misconfiguration cases)",
       "node": false
     },
     {
       "name": "den-mock.ts",
-      "role": "the mock Den world: alice's Den per the approved fixture tree (accounts from the mock store, Ember, Kael-sona, \"Untitled\", posts) plus HAND-MADE extras (a card, an archived commission, a deactivated Account, a paged folder, a very long and a right-to-left name); 25-entry pages, `p1.<offset>` tokens",
+      "role": "the mock Den world: alice's Den per the approved fixture tree (accounts from the mock store, Ember, Kael-sona, \"Untitled\", posts) and the commissions the mock created, from the store, plus HAND-MADE extras (a card, an archived commission, a deactivated Account, a paged folder, a very long and a right-to-left name); every crumb typed, commission and Account nodes naming their thing; equal names numbered by name-ordinals.ts over the viewer's whole filtered listing (open entries before cards, then key), listed in that same order (by name, then open entries before cards, then key); the node and each crumb numbered as their parent's listing numbers them; isOpenFixtureCommission tells the mock which fixed commissions it shows open; 25-entry pages, `p1.<offset>` tokens",
       "node": false
     },
     {
       "name": "den-read.ts",
-      "role": "the Den reads' port shape (DenQuery, DenRead, DenReadNode…): the Den contract as plain data with raw vocabularies; the mock and the live decode both produce it",
+      "role": "the Den reads' port shape (DenQuery, DenRead, DenReadNode, DenReadThing…): the Den contract as plain data with raw vocabularies; the mock and the live decode both produce it (an open node's optional thing, a crumb's type, a node's and a crumb's minted name ordinal beside its bare name)",
       "node": false
     },
     {
       "name": "den-wire.ts",
-      "role": "the live Den decode: generated Den answers mapped to DenRead, failing closed (anything but open access is a card, unknown or absent content is none, empty soft-delete and page token are absent, an answer with no node is undefined); DEN_ROUTES, the route templates Den failures name",
+      "role": "the live Den decode: generated Den answers mapped to DenRead, failing closed (anything but open access is a card, unknown or absent content is none, empty soft-delete and page token are absent, an answer with no node is undefined, an unknown or empty thing, or a blank Account DID, is no thing, a crumb without a type reads empty, a name ordinal that isn't a whole number of 2 or more is none); DEN_ROUTES, the route templates Den failures name",
       "node": false
     },
     {
@@ -50,13 +50,18 @@
       "node": false
     },
     {
+      "name": "name-ordinals.ts",
+      "role": "the mock's copy of the rule that tells equal names in one Den folder apart: nameOrdinals (groups by comparisonKey, the exact name for now — the one function an NFC switch changes; each later member of a group gets the smallest free \"name (n)\" from 2, rising)",
+      "node": false
+    },
+    {
       "name": "zurfur-api-mock.ts",
-      "role": "the mock ZurfurApi Layer — full in-memory stand-in for ZurfurApiLive so `yarn dev` renders a signed-in app with no backend; the one place mock-mode-enabled is read; fileBugReport keeps nothing and answers a made-up reference",
+      "role": "the mock ZurfurApi Layer — full in-memory stand-in for ZurfurApiLive so `yarn dev` renders a signed-in app with no backend; the one place mock-mode-enabled is read; createCommission refuses a blank title (name_empty) and one holding a bidirectional control (name_invisible) at #/title with the backend's details, and stores the rest under a fresh time-ordered (UUIDv7-shaped) id that is also its segment, so a later twin sorts after an earlier one; renameCommission renames a commission it created with the same title refusals, answers a fixed commission the Den shows open 403 forbidden (as the backend answers a Participant who isn't the owner), and any other id the commission not-found; fileBugReport keeps nothing and answers a made-up reference",
       "node": false
     },
     {
       "name": "zurfur-api.ts",
-      "role": "the port: every backend call as one service, each through backendFetch, which bounds the whole call (body read included) by its time limit (time-limits.ts), settling by its own timer even if the abort never reaches the fetch (bounded-fetch.ts), and stops the fetch when the call is interrupted; a call that runs out fails NetworkFailure timeout (Den reads denRoot/denNode call GET /den and /den/{path}, decode through den-wire.ts, and name only the route template in any failure; a path the builder refuses is the one not-found with no fetch), decodeContract (tolerant reader), RequestFetch, ZurfurApiLive + zurfurApiTest; account delete builds its path through path-builder.ts; fileBugReport posts a BugReportFiling to /bug-reports through the generated schema, an item not sent left off the wire, and decodes the reference (a malformed one is a ContractViolation)",
+      "role": "the port: every backend call as one service, each through backendFetch, which bounds the whole call (body read included) by its time limit (time-limits.ts), settling by its own timer even if the abort never reaches the fetch (bounded-fetch.ts), and stops the fetch when the call is interrupted; a call that runs out fails NetworkFailure timeout (Den reads denRoot/denNode call GET /den and /den/{path}, decode through den-wire.ts, and name only the route template in any failure; a path the builder refuses is the one not-found with no fetch), decodeContract (tolerant reader); problems decode their field errors tolerantly (a mistyped `errors` member is ignored, the problem kept), RequestFetch, ZurfurApiLive + zurfurApiTest; account delete builds its path through path-builder.ts; createCommission POSTs /commissions, its id minted through commissionId (an answer whose id doesn't mint is a ContractViolation); renameCommission PATCHes /commissions/{id}/title, its path built through path-builder.ts (a refused id is the commission not-found with no fetch), every failure naming only the route template; fileBugReport posts a BugReportFiling to /bug-reports through the generated schema, an item not sent left off the wire, and decodes the reference (a malformed one is a ContractViolation)",
       "node": false
     }
   ],

@@ -3,7 +3,10 @@ use domain::elements::{commission::CommissionId, did::Did};
 use uuid::Uuid;
 
 use super::*;
-use crate::test_world::World;
+use crate::{
+    den::{DenThing, SoftDelete},
+    test_world::World,
+};
 
 /// A bag over the in-memory runtime's ports, built as this crate's own [`Ports`].
 fn ports() -> Ports {
@@ -245,8 +248,16 @@ async fn admit_answers_from_the_record() {
 
     assert_eq!(recorded, Admission::Admit);
     assert_eq!(unrecorded, Admission::Refuse);
-    assert_eq!(host.soft_delete(&path(&["commission"])), Some(None));
-    assert_eq!(host.soft_delete(&path(&["post"])), None);
+    assert_eq!(
+        host.recorded(&path(&["commission"]))
+            .map(|facts| facts.soft_delete),
+        Some(None)
+    );
+    assert_eq!(
+        host.recorded(&path(&["post"]))
+            .map(|facts| facts.soft_delete),
+        None
+    );
 }
 
 #[tokio::test]
@@ -294,6 +305,39 @@ async fn a_folder_whose_content_is_not_shown_is_closed_to_typed_paths() {
 
     assert!(closed.is_none());
     assert!(matches!(open, Some(Parent::At(_))));
+}
+
+#[tokio::test]
+async fn a_recorded_commission_s_thing_is_its_place_s_id_not_its_path_s_last_segment() {
+    let ports = ports();
+    let alice = alice();
+    let host = DenHost::new(&ports, &alice, false);
+    let recorded_commission = commission_id(1);
+    let another_commission = commission_id(2);
+    let at = path(&["commission", &another_commission.to_string()]);
+    let place = commission::den::CommissionPlace::Commission(recorded_commission);
+    record(&host, &at, Place::Commission(place));
+    let expected_thing = Some(DenThing::Commission(recorded_commission));
+
+    let thing = host.recorded(&at).and_then(|facts| facts.thing);
+
+    assert_eq!(thing, expected_thing);
+}
+
+#[tokio::test]
+async fn a_recorded_account_s_thing_is_its_place_s_did_not_its_path_s_last_segment() {
+    let ports = ports();
+    let alice = alice();
+    let host = DenHost::new(&ports, &alice, false);
+    let recorded_account = AccountId::from(Did::from("did:plc:recorded".to_owned()));
+    let at = path(&["account", "did:plc:another"]);
+    let place = account::den::AccountPlace::Account(recorded_account.clone());
+    record(&host, &at, Place::Account(place));
+    let expected_thing = Some(DenThing::Account(recorded_account));
+
+    let thing = host.recorded(&at).and_then(|facts| facts.thing);
+
+    assert_eq!(thing, expected_thing);
 }
 
 /// A live, Private node at `place`.
@@ -430,7 +474,7 @@ async fn alice_s_commission_mounts(
             open_by_standing(),
             Reach::Listing,
         );
-        let word = host.soft_delete(&mount.target);
+        let word = host.recorded(&mount.target).map(|facts| facts.soft_delete);
         answers.push((found.metadata.name.to_string(), admission, word));
     }
     answers

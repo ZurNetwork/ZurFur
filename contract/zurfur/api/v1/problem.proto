@@ -30,4 +30,19 @@ message Problem {
   string detail = 4;
   // The HTTP status code, duplicated in the body per RFC 9457.
   int32 status = 5;
+  // The request fields that were refused, one item per field. Present only on a
+  // problem that refuses fields (a `422 invalid_request`), omitted when empty.
+  repeated FieldError errors = 6;
+}
+
+// One request field the server refused, as RFC 9457 §3's example problem type does.
+message FieldError {
+  // Where the field sits in the request body: a JSON Pointer in its URI-fragment form,
+  // built from the field's JSON name (its lowerCamelCase ProtoJSON name), such as
+  // `#/title` or `#/linkedChannel`. Always set.
+  string pointer = 1;
+  // The machine token for why, such as `name_empty`; clients branch on it. Always set.
+  string code = 2;
+  // Plain words a form shows under the field; fixed per code, never the value sent. Always set.
+  string detail = 3;
 }

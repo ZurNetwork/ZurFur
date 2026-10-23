@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
 	accountId,
 	bugReference,
+	commissionId,
 	did,
+	fieldPointer,
 	firstPartyOrigin,
 	handle,
 	handleFromTrusted,
+	nameOrdinal,
 	pathSegment,
 	pageToken
 } from './brand';
@@ -72,6 +75,50 @@ describe('pageToken (validated mint)', () => {
 
 	it.each(['', 'a b', 'a\u0000b', 'é', 'a'.repeat(513)])('refuses %j', (raw) => {
 		expect(pageToken(raw)).toBeUndefined();
+	});
+});
+
+describe('fieldPointer (validated mint)', () => {
+	it.each(['#/title', '#/maturity/rating', '#/linkedChannel'])('accepts the pointer %s', (raw) => {
+		expect(fieldPointer(raw)).toBe(raw);
+	});
+
+	it.each(['/title', 'title', '#', '#/', '#//title', '#/title/', '#/linked_channel', ''])(
+		'refuses %j',
+		(raw) => {
+			expect(fieldPointer(raw)).toBeUndefined();
+		}
+	);
+
+	it('never throws, whatever it is given', () => {
+		const hostile = ['#/\u0000', '#/ title', '#/é', '#/a'.repeat(10_000), '\n#/title', '#/title\n'];
+		for (const raw of hostile) {
+			expect(() => fieldPointer(raw)).not.toThrow();
+			expect(fieldPointer(raw)).toBeUndefined();
+		}
+	});
+});
+
+describe('nameOrdinal (validated mint)', () => {
+	it.each([2, 7, 4_294_967_295])('accepts %d', (raw) => {
+		expect(nameOrdinal(raw)).toBe(raw);
+	});
+
+	it.each([undefined, 0, 1, -2, 2.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53])(
+		'refuses %s',
+		(raw) => {
+			expect(nameOrdinal(raw)).toBeUndefined();
+		}
+	);
+});
+
+describe('commissionId (the opaque mint)', () => {
+	it('a commission id is not parsed', () => {
+		expect(commissionId('not-a-uuid')).toBe('not-a-uuid');
+		const long = 'x'.repeat(2048);
+		expect(commissionId(long)).toBe(long);
+		expect(commissionId(' padded ')).toBe(' padded ');
+		expect(commissionId('')).toBeUndefined();
 	});
 });
 

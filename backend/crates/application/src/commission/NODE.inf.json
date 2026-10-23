@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/application/src/commission",
-  "charted": "2026-09-19",
+  "charted": "2026-10-17",
   "short": "Commission use cases",
   "is": "Commission use cases — lifecycle (create/delete/archive/unarchive) and per-facet action trees (deadline, status, files, invitations, view, seats, slots, notes, maturity, markup, changelog), one Command/Query + Output + `#[use_case]` method file per action; the module root `../commission.rs` holds the `Commissions` namespace, `CommissionError`, `CommissionResult` and the system-actor `sweep_deadlines`.",
   "type": "code",
@@ -23,8 +23,8 @@
       "node": false
     },
     {
-      "name": "create.rs",
-      "role": "create a Commission for the caller (+ creation changelog entry, skeleton tabs)",
+      "name": "create.rs + create/tests.rs",
+      "role": "create a Commission for the caller (+ a `created` entry with an empty payload, skeleton tabs), then read the row back by id on its own unit and answer it as CommissionValues",
       "node": false
     },
     {
@@ -53,11 +53,6 @@
       "node": false
     },
     {
-      "name": "list.rs",
-      "role": "list Commissions (owner point of view); its only caller is create's read-back of the row it just made",
-      "node": false
-    },
-    {
       "name": "markup.rs",
       "role": "record a review-loop Markup on a file entry; authorize first, numeric bounds validated here",
       "node": false
@@ -73,6 +68,11 @@
       "node": false
     },
     {
+      "name": "rename.rs + rename/tests.rs",
+      "role": "the owner renames the commission: require_owner and the Den's name rule (den_title in ../commission.rs, shared with create) before the lazy unit opens, set_title on it, the row read back by id (gone → the one not-found), and a `renamed` entry (empty payload, no note) only on a real change; rename/tests.rs pins that a stranger, a non-owner Participant and a refused title open no unit",
+      "node": false
+    },
+    {
       "name": "seats.rs + seats/declare.rs",
       "role": "declare a vacant typed Seat",
       "node": false
@@ -85,6 +85,11 @@
     {
       "name": "status.rs + status/direction/{set,clear}.rs",
       "role": "set/clear the direction-status override; `clear` delegates to `set` and carries no `#[use_case]`",
+      "node": false
+    },
+    {
+      "name": "values.rs",
+      "role": "CommissionValues: the flat values create and rename answer, built from the row they read back",
       "node": false
     },
     {

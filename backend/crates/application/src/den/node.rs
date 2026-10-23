@@ -47,9 +47,14 @@ impl Den<'_> {
         let root = viewer_root(&query.viewer)?;
         let host = DenHost::new(ports, &query.viewer, query.include_deleted);
         let reader = Reader::over(&host, caps);
-        let resolved = reader.walk(&root, &segments).await?;
+        let walked = reader.walk(&root, &segments).await?;
+        let resolved = reader.tell_apart(walked).await?;
         let node = reader.node(resolved.node())?;
-        let crumbs = resolved.crumbs().iter().map(crumb).collect();
+        let crumbs = resolved
+            .crumbs()
+            .iter()
+            .map(crumb)
+            .collect::<Result<_, _>>()?;
         let content = reader.content(&resolved, query.page).await?;
         let output = Output {
             node,
@@ -59,3 +64,6 @@ impl Den<'_> {
         Ok(output)
     }
 }
+
+#[cfg(test)]
+mod tests;

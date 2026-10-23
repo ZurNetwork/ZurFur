@@ -4,9 +4,12 @@
 	import { navigating } from '$app/state';
 	import type { DenEntry } from '$lib/api/den';
 	import DenPane from '$lib/components/explorer/DenPane.svelte';
+	import NewCommission from '$lib/components/explorer/NewCommission.svelte';
+	import RenameCommission from '$lib/components/explorer/RenameCommission.svelte';
 	import { fetchListing } from '$lib/components/explorer/tree-loader';
 	import { treeMemoryFromContext } from '$lib/components/explorer/tree-memory.svelte';
-	import type { DenHref } from '$lib/types/brand';
+	import { shownNameText } from '$lib/components/ui/shown-name';
+	import type { CommissionId, DenHref, DenName } from '$lib/types/brand';
 	import type { PageData } from './$types';
 
 	/**
@@ -17,7 +20,8 @@
 	 * after the page changed is dropped. Opening an item from the pane or the
 	 * path bar moves focus to the pane's heading; opening one from the tree
 	 * leaves focus in the tree. The title stays generic; a live region says
-	 * which item opened.
+	 * which item opened. The viewer's own `commissions` folder offers "New
+	 * commission"; an open commission offers "Rename".
 	 */
 	let { data }: { data: PageData } = $props();
 
@@ -57,12 +61,14 @@
 		};
 	});
 
-	/** What the live region says once an item has opened: its name, or what the pane shows instead. */
+	/** What the live region says once an item has opened: its name and number, or what the pane shows instead. */
 	function spoken(): string {
 		const { outcome } = den;
 		switch (outcome.outcome) {
 			case 'page':
-				return outcome.page.crumbs.length === 0 ? 'My Den' : outcome.page.node.name;
+				return outcome.page.crumbs.length === 0
+					? 'My Den'
+					: shownNameText(outcome.page.node.name, outcome.page.node.ordinal);
 			case 'notFound':
 				return 'Nothing here';
 			case 'problem':
@@ -157,5 +163,17 @@
 			void onMore(more);
 		}}
 		bind:heading
-	/>
+	>
+		{#snippet newCommission()}
+			<NewCommission form={data.createCommission} />
+		{/snippet}
+		{#snippet renameCommission(id: CommissionId, name: DenName)}
+			<RenameCommission
+				form={data.renameCommission}
+				{id}
+				{name}
+				includeDeleted={den.includeDeleted}
+			/>
+		{/snippet}
+	</DenPane>
 </div>

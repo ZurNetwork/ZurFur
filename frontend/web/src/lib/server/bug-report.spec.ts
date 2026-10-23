@@ -40,7 +40,7 @@ function outcomeWhen(answer: ReturnType<ZurfurApiShape['fileBugReport']>) {
 }
 
 function problemAt(status: number): Problem {
-	return { type: 'urn:zurfur:error:x', code: 'x', title: 'x', detail: 'x', status };
+	return { type: 'urn:zurfur:error:x', code: 'x', title: 'x', detail: 'x', status, errors: [] };
 }
 
 describe('fileBugReportOutcome', () => {

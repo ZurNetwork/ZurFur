@@ -10,7 +10,7 @@ import { render } from 'svelte/server';
 import type { JsonValue } from '@bufbuild/protobuf';
 import { cardTypeWord, type CardEntry, type DenEntry, type DenPage } from '$lib/api/den';
 import { fetchStub } from '$lib/testing/http';
-import { denHref, denName, denType, did, pageToken } from '$lib/types/brand';
+import { commissionId, denHref, denName, denType, did, pageToken } from '$lib/types/brand';
 import EntryList from '$lib/components/explorer/EntryList.svelte';
 import NodeHeader from '$lib/components/explorer/NodeHeader.svelte';
 import Tree from '$lib/components/explorer/Tree.svelte';
@@ -19,7 +19,8 @@ import { TreeMemory } from '$lib/components/explorer/tree-memory.svelte';
 import { denPage, type DenPageResult } from './den';
 import { decodeContract, RequestFetch, ZurfurApiLive } from './api/zurfur-api';
 import type { ContractViolation, NetworkFailure } from './api/errors';
-import type { DenQuery } from './api/den-read';
+import type { DenQuery, DenRead, DenReadNode } from './api/den-read';
+import { denReadFromNode, denReadFromRoot } from './api/den-wire';
 import { segmentPath } from './path-builder';
 import { denApiPathOf, denHrefOf, denPathFromPathname, denQueryFromSearch } from './den/den-path';
 import {
@@ -116,7 +117,12 @@ function expectedPage(entry: GoldenEntry): object {
 		content.case === 'listing'
 			? { body: 'listing', entries, more }
 			: { body: content.case ?? 'notShown' };
-	return { view: 'open', node, crumbs, body };
+	const { thing } = message.node.access.value;
+	const commission =
+		thing.case === 'commissionId' && thing.value !== ''
+			? { thing: 'commission', id: thing.value }
+			: undefined;
+	return { view: 'open', node, thing: commission, crumbs, body };
 }
 
 /** The API request the web makes for a browser address: its allowlisted query only. */
@@ -317,6 +323,7 @@ describe('a card of a type this build doesn’t know', () => {
 	const card: CardEntry = {
 		view: 'card',
 		name: denName('Locked characters'),
+		ordinal: undefined,
 		type: denType('account.characters'),
 		mounted: false
 	};
@@ -384,6 +391,77 @@ describe('an Account node through the live port shows the Account’s own name',
 		for (const html of [pane, header, bar]) {
 			expect(html).not.toContain('<img');
 			expect(html).toContain('&lt;img src=x onerror=alert(1)>AC/DC');
+		}
+	});
+});
+
+/** The Den read a recorded body decodes to through the live decode, or a thrown test failure. */
+function readOfGolden(entry: GoldenEntry): DenRead {
+	const raw = JSON.parse(bodyText(entry)) as JsonValue;
+	const read =
+		entry.message === 'GetDenRootResponse'
+			? denReadFromRoot(decodeContract(GetDenRootResponseSchema, raw))
+			: denReadFromNode(decodeContract(GetDenNodeResponseSchema, raw));
+	if (read === undefined) throw new Error(`${entry.file} has no node`);
+	return read;
+}
+
+/** A read's own node, then its listing rows. */
+function nodesOf(read: DenRead): readonly DenReadNode[] {
+	const rows = read.content.content === 'listing' ? read.content.entries : [];
+	return [read.node, ...rows];
+}
+
+/** The commission id a recorded node's own path ends in: its segments are `commissions/<id>`. */
+function idInSegments(node: DenReadNode): string {
+	const [folder, id] = node.segments;
+	if (folder !== 'commissions' || id === undefined || node.segments.length !== 2)
+		throw new Error(`not a commission node: ${node.segments.join('/')}`);
+	return id;
+}
+
+/** The three handwritten files that hold a card, by name. */
+const CARD_FILES = [
+	'handwritten/listing-with-card.json',
+	'handwritten/listing-with-card-mount.json',
+	'handwritten/card-node.json'
+] as const;
+
+describe('the Den golden responses: the thing an open node names', () => {
+	it('alice’s commission carries its id and no handwritten card carries one', () => {
+		// Every card the handwritten files record: none names a thing, in the read or the raw JSON.
+		let cards = 0;
+		for (const file of CARD_FILES) {
+			const entry = golden(file);
+			const raw = JSON.parse(bodyText(entry)) as {
+				node?: object;
+				listing?: { entries?: object[] };
+			};
+			const rawNodes = [raw.node, ...(raw.listing?.entries ?? [])];
+			for (const rawNode of rawNodes) {
+				if (rawNode === undefined || !('card' in rawNode)) continue;
+				cards += 1;
+				expect(JSON.stringify(rawNode)).not.toMatch(/commissionId|accountDid/);
+			}
+			for (const node of nodesOf(readOfGolden(entry))) {
+				if (node.access.access !== 'card') continue;
+				expect(node.access).toEqual({ access: 'card' });
+			}
+		}
+		expect(cards).toBeGreaterThanOrEqual(3);
+
+		// An opened commission, its row in the listing, and the archived one.
+		const opened = readOfGolden(golden('alice/untitled.json')).node;
+		const archived = readOfGolden(golden('alice/old-sketch.json')).node;
+		const row = nodesOf(readOfGolden(golden('alice/commissions.json'))).find(
+			(node) => node.type === 'commission' && node.name === 'Untitled'
+		);
+		if (row === undefined) throw new Error('no Untitled row');
+		expect(opened.type).toBe('commission');
+		for (const node of [opened, row, archived]) {
+			const id = commissionId(idInSegments(node));
+			const thing = node.access.access === 'open' ? node.access.thing : undefined;
+			expect(thing).toEqual({ thing: 'commission', id });
 		}
 	});
 });

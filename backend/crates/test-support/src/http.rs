@@ -6,6 +6,7 @@ use adapter_mem::MemBackend;
 use axum::Router;
 use composition::Runtime;
 use http_stack::{Detach, Stacked};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ORIGIN};
 use reqwest::redirect::Policy;
 use tower_sessions::MemoryStore;
 
@@ -62,20 +63,49 @@ pub async fn serve_wrapped(
 }
 
 /// A cookie-keeping client that does not auto-follow redirects, so each hop
-/// in a multi-step flow is asserted on its own.
+/// in a multi-step flow is asserted on its own. It sends
+/// `Sec-Fetch-Site: same-origin` on every request and no `Origin`, though a
+/// browser's same-origin write would send both.
 pub fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(Policy::none())
+    let sec_fetch_site = HeaderName::from_static("sec-fetch-site");
+    first_party_client(sec_fetch_site, "same-origin")
+}
+
+/// As [`client`], sending `Origin: {origin}` on every request instead.
+pub fn client_with_origin(origin: &str) -> reqwest::Client {
+    first_party_client(ORIGIN, origin)
+}
+
+/// As [`client`], with no first-party signal at all: no `Origin` and no
+/// `Sec-Fetch-Site`, unless a request sets one.
+pub fn bare_client() -> reqwest::Client {
+    browser().build().expect("client builds")
+}
+
+/// A browser-like client that sends `name: value` on every request.
+fn first_party_client(name: HeaderName, value: &str) -> reqwest::Client {
+    let value = HeaderValue::try_from(value).expect("a header value");
+    let signal = HeaderMap::from_iter([(name, value)]);
+    browser()
+        .default_headers(signal)
         .build()
         .expect("client builds")
 }
 
+/// A cookie-keeping client builder that does not auto-follow redirects.
+fn browser() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .cookie_store(true)
+        .redirect(Policy::none())
+}
+
 /// Drives the two-step sign-in so `client`'s cookie jar carries a live
 /// session; returns the callback response so a test can inspect its cookie.
+/// The `POST /signin` sends `Origin: {base}`, so any client can sign in.
 pub async fn sign_in(client: &reqwest::Client, base: &str, handle: &str) -> reqwest::Response {
     let res = client
         .post(format!("{base}/signin"))
+        .header(ORIGIN, base)
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!("handle={handle}"))
         .send()

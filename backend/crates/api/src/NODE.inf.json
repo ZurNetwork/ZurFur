@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/api/src",
-  "charted": "2026-09-12",
+  "charted": "2026-10-17",
   "short": "Composition + cross-cutting HTTP concerns",
   "is": "Composition (lib/main) plus the cross-cutting HTTP concerns (extractors, problem, wire_time, sweep) around the route groups and the generated contract module.",
   "type": "code",
@@ -25,7 +25,12 @@
     },
     {
       "name": "extract.rs",
-      "role": "CallingUser extractor — session → Did → UserId, 401 on absence",
+      "role": "CallingUser extractor — session → Did → UserId, 401 on absence; CommissionPath extractor — the route's {id} segment → CommissionId, a missing or unparsable id the commission's one 404 (a non-UTF-8 segment too, unless another Path extractor runs first and answers axum's 400)",
+      "node": false
+    },
+    {
+      "name": "extract/",
+      "role": "tests.rs: the source scan that fails when any file under routes/ puts CommissionId inside a Path<…>, so every commission route reads its id through CommissionPath",
       "node": false
     },
     {
@@ -35,7 +40,7 @@
     },
     {
       "name": "lib.rs",
-      "role": "app() composition + no-store header layer; ports/Config now shared via the composition crate",
+      "role": "app() composition + no-store header layer; the outer router's not-found fallback (a bare 404) sits outside the CSRF guard and no-store; ports/Config now shared via the composition crate",
       "node": false
     },
     {
@@ -45,7 +50,12 @@
     },
     {
       "name": "problem.rs",
-      "role": "the single RFC 9457 error type and its code→URN mapping",
+      "role": "the single RFC 9457 error type and its code→URN mapping; its leaf problem/fields.rs builds field refusals",
+      "node": false
+    },
+    {
+      "name": "problem/",
+      "role": "fields.rs: FieldPointer, FieldCode, FieldRefusal and Problem::invalid_fields, the one way a problem names the fields it refused; tests.rs, fields/tests.rs with the token pin and the source scan",
       "node": false
     },
     {

@@ -9,8 +9,8 @@ use domain::{
     elements::{
         commission::{
             Band, ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
-            CommissionMarkup, CommissionSummary, DeadlineStatus, DirectionStatus, ElementId,
-            ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel,
+            CommissionMarkup, CommissionSummary, CommissionTitle, DeadlineStatus, DirectionStatus,
+            ElementId, ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel,
             LapsedDeadline, LifecycleStep, Markup, MarkupKey, NewCommission, NewElement, NewSeat,
             NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
             SurfaceAddress, SurfaceName, TabId, TabName, TabRow, Visibility, VisibilityMode,
@@ -430,6 +430,19 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         )
         .await?;
         Ok(())
+    }
+
+    /// Replaces `commission.title` via a conditional `UPDATE` (`IS DISTINCT FROM`),
+    /// so the return value IS the changed answer.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn set_title(
+        &mut self,
+        id: &CommissionId,
+        title: &CommissionTitle,
+    ) -> anyhow::Result<bool> {
+        let affected =
+            sql::set_title(&mut *self.conn, uuid::Uuid::from(*id), title.as_str()).await?;
+        Ok(affected > 0)
     }
 
     /// Repoints or clears `commission.linked_channel` via a conditional `UPDATE`

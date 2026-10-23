@@ -362,12 +362,12 @@
     {
       "page": 23592962,
       "title": "API Response Shape & Error Model",
-      "governs": "`problem.rs` module doc"
+      "governs": "`problem.rs` module doc; `problem/fields.rs`: the `errors` member — field refusals, the `#/` pointer from ProtoJSON names, fixed detail per code (decision 4)"
     },
     {
       "page": 24543244,
       "title": "Auth Surfaces, the Plugin Trust Boundary & CSRF",
-      "governs": "`routes/mod.rs::require_first_party_origin`"
+      "governs": "`routes/mod.rs::require_first_party_origin`: on the cookie surface only, a write (any method but GET, HEAD, OPTIONS) needs an Origin equal to the configured origin, or no Origin and Sec-Fetch-Site: same-origin, in every environment; else 403 cross_origin (`problem.rs`) before the handler"
     },
     {
       "page": 40992770,
@@ -488,7 +488,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "the whole route group: the one not-found, the viewer from the session only, the query parameters and their spelling, page tokens"
+      "governs": "the whole route group: the one not-found, the viewer from the session only, the query parameters and their spelling, page tokens; wire.rs: an open node's thing (D2, amended 2026-10-15) and each crumb's type (the breadcrumbs row, amended 2026-10-15)"
     }
   ],
   "backend/crates/application": [
@@ -592,6 +592,11 @@
       "governs": "view grants"
     },
     {
+      "page": 29425666,
+      "title": "Commission Structural Authority — the Commission Admin Role",
+      "governs": "rename.rs: the title is Admin-capable metadata; with no Admin role yet, only the owner renames, through require_owner"
+    },
+    {
       "page": 30408741,
       "title": "The Changelog — Structured Comms, Notes & the Linked Channel",
       "governs": "changelog"
@@ -604,7 +609,7 @@
     {
       "page": 59310081,
       "title": "The Changelog as the Only Record — Plugin Appends, Render-First Readability & the Eventlog as a Frontend Surface",
-      "governs": "changelog"
+      "governs": "changelog; rename.rs: a real rename appends a renamed entry"
     },
     {
       "page": 65110018,
@@ -631,7 +636,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "the whole module: Atta below application, one host trait with an exhaustive match (D1); keys are segments (D2); standing covers the real subtree (D3); soft-deleted nodes hidden unless asked (D13); content not shown is fixed per type (D15); one not-found (D21); no stored level means Private (D22); page tokens (D24)"
+      "governs": "the whole module: Atta below application, one host trait with an exhaustive match (D1); keys are segments (D2); standing covers the real subtree (D3); soft-deleted nodes hidden unless asked (D13); content not shown is fixed per type (D15); one not-found (D21); no stored level means Private (D22); equal names in one folder told apart at read time, on nodes and crumbs too (D23); page tokens (D24); an open node carries the id of the thing it stands for, an Account's DID or a commission's id, never parsed from a path (D2, amended 2026-10-15); each crumb carries its type for its icon (the breadcrumbs row, amended 2026-10-15)"
     }
   ],
   "backend/crates/application-macros": [
@@ -655,7 +660,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "D1 a library below application, reached through one host trait answered by an exhaustive match; D2 keys are path segments and identity is the real path; D3 standing on the real subtree; D5 entry levels; D21–D24 one not-found, no stored level means Private, the mount guard, opaque page tokens"
+      "governs": "D1 a library below application, reached through one host trait answered by an exhaustive match; D2 keys are path segments and identity is the real path; D3 standing on the real subtree; D5 entry levels; D21–D24 one not-found, no stored level means Private, the mount guard, opaque page tokens; D23 one folder never shows two entries with the same name: ordinal.rs and list.rs number equal names at read time, per viewer; D24 the listing order"
     }
   ],
   "backend/crates/cli": [
@@ -1057,7 +1062,7 @@
     {
       "page": 23592962,
       "title": "API Response Shape & Error Model",
-      "governs": "commission.proto: CreateCommissionResponse is a bare, unwrapped resource; problem.proto: the Problem shape itself"
+      "governs": "commission.proto: CreateCommissionResponse is a bare, unwrapped resource; problem.proto: the Problem shape itself and its `errors` member (`FieldError`)"
     },
     {
       "page": 27852802,
@@ -1092,7 +1097,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "den.proto: the Den read — one node shape, open or card access, one not-found, the soft-deleted word, `includeDeleted`"
+      "governs": "den.proto: the Den read — one node shape, open or card access, one not-found, the soft-deleted word, `includeDeleted`; `DenOpen.thing` (`accountDid` or `commissionId`): an open node carries the id of the thing it stands for, never on a card (D2, amended 2026-10-15); `DenCrumb.type`, each crumb's icon (the breadcrumbs row, amended 2026-10-15); `name_ordinal` on DenNode and DenCrumb, the per-viewer number that tells equal names in one folder apart (D23)"
     }
   ],
   "forks": [
@@ -1130,6 +1135,11 @@
     }
   ],
   "frontend/web/src/lib/server": [
+    {
+      "page": 23592962,
+      "title": "API Response Shape & Error Model",
+      "governs": "`forms/field-errors.ts`: field errors land under the fields their pointers name (decision 4)"
+    },
     {
       "page": 24543244,
       "title": "Auth Surfaces, the Plugin Trust Boundary & CSRF",

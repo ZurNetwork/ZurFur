@@ -1,4 +1,6 @@
-use crate::den::{DenName, DenSegment, DenType, NodeKind, NodeLevel, PageToken, SoftDelete};
+use crate::den::{
+    DenName, DenSegment, DenThing, DenType, NameOrdinal, NodeKind, NodeLevel, PageToken, SoftDelete,
+};
 
 /// One node as the Den shows it to its viewer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7,6 +9,9 @@ pub struct DenNode {
     pub segments: Vec<DenSegment>,
     /// Its display name, from what it holds.
     pub name: DenName,
+    /// Its number among the nodes of the same name the viewer sees in the folder it is listed
+    /// in or was reached through; `None` for the first of them, and for the root.
+    pub name_ordinal: Option<NameOrdinal>,
     /// Its type.
     pub den_type: DenType,
     /// Whether it is one of the viewer's mounts rather than a real child of its folder.
@@ -16,7 +21,7 @@ pub struct DenNode {
 }
 
 /// The viewer's access to a node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DenAccess {
     /// The viewer can open it.
     Open {
@@ -28,6 +33,8 @@ pub enum DenAccess {
         content_not_shown: bool,
         /// Its soft-deleted state; `None` when live.
         soft_delete: Option<SoftDelete>,
+        /// The thing it stands for, an Account or a commission; a mount carries its target's.
+        thing: Option<DenThing>,
     },
     /// The viewer may know it exists but can't open it.
     Card,
@@ -40,6 +47,11 @@ pub struct DenCrumb {
     pub segments: Vec<DenSegment>,
     /// Its display name.
     pub name: DenName,
+    /// Its number among the nodes of the same name the viewer sees in the folder it was
+    /// reached through; `None` for the first of them, and for the root.
+    pub name_ordinal: Option<NameOrdinal>,
+    /// Its type; a mount shows its target's.
+    pub den_type: DenType,
 }
 
 /// One page of an open directory's entries, after everything the viewer can't see is left out.

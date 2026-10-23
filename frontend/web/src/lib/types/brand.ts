@@ -115,12 +115,40 @@ export function denHref(value: string): DenHref {
 	return value as DenHref;
 }
 
+/** A commission's id: an opaque value the web only passes on, never reads. */
+export type CommissionId = Brand<string, 'CommissionId'>;
+
+/**
+ * Mint from an id off the wire: the value as a {@link CommissionId}, or
+ * `undefined` when it is empty. The id is opaque: the web never parses it,
+ * so there is no format check, no length cap and no trimming.
+ */
+export function commissionId(raw: string): CommissionId | undefined {
+	return raw.length === 0 ? undefined : (raw as CommissionId);
+}
+
 /** A Den node's display name: text to show, never HTML and never a key. */
 export type DenName = Brand<string, 'DenName'>;
 
 /** Nominal cast for a name off a Den read (trusted decode boundary). */
 export function denName(value: string): DenName {
 	return value as DenName;
+}
+
+/** The number that tells a Den name apart from an earlier equal name in the same folder: 2 or more. */
+export type NameOrdinal = Brand<number, 'NameOrdinal'>;
+
+/** The first number a later equal name can get. */
+const FIRST_NAME_ORDINAL = 2;
+
+/**
+ * Validated mint from UNTRUSTED input (a Den read's number): a whole number
+ * of 2 or more as a {@link NameOrdinal}; absent, 0, 1, a fraction or anything
+ * else is no number.
+ */
+export function nameOrdinal(raw: number | undefined): NameOrdinal | undefined {
+	if (raw === undefined || !Number.isSafeInteger(raw) || raw < FIRST_NAME_ORDINAL) return undefined;
+	return raw as NameOrdinal;
 }
 
 /** A Den node's provisional type name, such as `commission`: opaque, it only picks a marker. */
@@ -148,6 +176,21 @@ const PAGE_TOKEN_PATTERN = /^[\x21-\x7e]+$/;
 export function pageToken(raw: string): PageToken | undefined {
 	if (raw.length === 0 || raw.length > PAGE_TOKEN_MAX_LEN) return undefined;
 	return PAGE_TOKEN_PATTERN.test(raw) ? (raw as PageToken) : undefined;
+}
+
+/** Where a refused field sits in a request body: a JSON Pointer in its URI-fragment form, such as `#/title`. */
+export type FieldPointer = Brand<string, 'FieldPointer'>;
+
+/** `#/` then one or more `/`-separated member names, each one or more ASCII letters or digits. */
+const FIELD_POINTER_PATTERN = /^#(?:\/[A-Za-z0-9]+)+$/;
+
+/**
+ * Validated mint from UNTRUSTED input (a problem's field error off the wire):
+ * `raw` as a {@link FieldPointer} when it follows the pointer rule above,
+ * else `undefined`. Never throws.
+ */
+export function fieldPointer(raw: string): FieldPointer | undefined {
+	return FIELD_POINTER_PATTERN.test(raw) ? (raw as FieldPointer) : undefined;
 }
 
 /** The browser-visible origin of this site (scheme, host and port), parsed once ({@link firstPartyOrigin}). */

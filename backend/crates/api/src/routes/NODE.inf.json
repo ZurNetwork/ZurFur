@@ -48,7 +48,7 @@
     },
     {
       "name": "mod.rs",
-      "role": "group index + require_first_party_origin CSRF middleware (an Origin header must equal public_url's origin; an opaque origin matches nothing)",
+      "role": "group index + require_first_party_origin, the CSRF guard over the cookie surface: a write (any method but GET, HEAD, OPTIONS, exact case) passes only with one Origin equal to public_url's origin byte for byte (whatever Sec-Fetch-Site says; an opaque origin matches nothing), or no Origin and one Sec-Fetch-Site of exactly same-origin; else 403 cross_origin before the handler; its state is the BareOrigin alone, so no environment is in reach",
       "node": false
     },
     {
@@ -65,6 +65,7 @@
   "notes": [
     "`PATCH /accounts/{id}/handle`: DID-doc-first ordering — the did:plc UPDATE-op lands before the private-store write (DD 27852802).",
     "`wellknown.rs`'s namespace-membership check and `application::account`'s claim checks share one parsed `HandleDomain`, so they can never disagree on the namespace.",
-    "See also: ZMVP-39 (router split)."
+    "See also: ZMVP-39 (router split).",
+    "The CSRF guard's safe-method allowlist (GET, HEAD, OPTIONS, exact case) rests on these conditions. A lowercase `get` or an unknown method counts as a write. No cookie-surface GET changes the visitor's state except `/signin-callback`, which the browser-binding cookie guards (`GET /me` fills the server's profile cache, which isn't the visitor's state). OPTIONS is safe only because a browser can't send a cross-origin OPTIONS with cookies — in no-cors mode a method outside GET, HEAD and POST throws (Fetch Standard §5.4; CORS-safelisted methods §2.2.1), in cors mode it needs a preflight first (§4.8), and the preflight carries no credentials (§4.6) — and the API grants no CORS. A WebSocket handshake is a GET a cross-site page can open with cookies (cross-site WebSocket hijacking), so any upgrade route on the cookie surface checks `Origin` itself."
   ]
 }

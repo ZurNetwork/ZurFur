@@ -5,16 +5,20 @@
 use application::commission::status::direction;
 use axum::{
     Json,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{State, rejection::JsonRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use domain::elements::commission::{CommissionId, DirectionStatus};
+use domain::elements::commission::DirectionStatus;
 use serde::Deserialize;
 use strum::VariantArray;
 
-use crate::{AppState, extract::CallingUser, problem::Problem};
+use crate::{
+    AppState,
+    extract::{CallingUser, CommissionPath},
+    problem::Problem,
+};
 
 /// The `PUT /commissions/{id}/status/direction` request body: the direction
 /// value's stable wire token (`waiting_for_input` / `waiting_for_approval` /
@@ -29,8 +33,8 @@ pub(super) struct SetDirectionStatusBody {
 /// value. Returns `204 No Content`.
 pub(super) async fn set_direction_status(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(user_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
     body: Result<Json<SetDirectionStatusBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
@@ -67,8 +71,8 @@ pub(super) async fn set_direction_status(
 /// idempotent. Returns `204 No Content`.
 pub(super) async fn clear_direction_status(
     State(state): State<AppState>,
-    Path(commission_id): Path<CommissionId>,
     CallingUser(user_id): CallingUser,
+    CommissionPath(commission_id): CommissionPath,
 ) -> Result<Response, Problem> {
     let command = direction::clear::Command {
         commission_id,

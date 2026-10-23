@@ -316,7 +316,7 @@ async fn alice_s_posts_open_public_and_empty_with_their_content_not_shown() {
         "mount": true,
         "open": { "ownLevel": "public", "contentNotShown": true },
     });
-    let expected_crumbs = json!([{ "name": "Alice" }]);
+    let expected_crumbs = json!([{ "name": "Alice", "type": "user" }]);
 
     let posts = ok_json(get(&alice, &base, "/den/posts").await).await;
 
@@ -349,7 +349,7 @@ async fn every_path_below_posts_is_the_one_404_byte_for_byte() {
 async fn alice_s_accounts_mounts_supreme_arts() {
     let (base, alice) = as_alice().await;
     let supreme_arts_did = supreme_arts().to_string();
-    let expected_crumbs = json!([{ "name": "Alice" }]);
+    let expected_crumbs = json!([{ "name": "Alice", "type": "user" }]);
 
     let accounts = ok_json(get(&alice, &base, "/den/accounts").await).await;
 
@@ -415,6 +415,246 @@ async fn the_past_a_file_causes_continue_past_real_files() {
         assert_eq!(file["node"]["kind"], "file", "{path}");
         assert_eq!(file["file"], json!({}), "{path}");
     }
+}
+
+/// The keys an open node names its thing by.
+const THING_KEYS: [&str; 2] = ["accountDid", "commissionId"];
+
+/// Asserts the open node `node` names no thing.
+fn assert_no_thing(node: &Value, label: &str) {
+    let open = node.get("open").expect("an open node");
+    for key in THING_KEYS {
+        assert!(open.get(key).is_none(), "{label}: {node}");
+    }
+}
+
+/// The listing entry of `listing` named `name`.
+fn entry<'a>(listing: &'a Value, name: &str) -> &'a Value {
+    let entries = listing["entries"].as_array().expect("an entries array");
+    entries
+        .iter()
+        .find(|entry| entry["name"] == name)
+        .expect("the entry is listed")
+}
+
+#[tokio::test]
+async fn an_open_commission_carries_its_id() {
+    let (base, alice) = as_alice().await;
+    let untitled = untitled().to_string();
+    let expected_open = json!({ "ownLevel": "private", "commissionId": untitled });
+
+    let commissions = ok_json(get(&alice, &base, "/den/commissions").await).await;
+    let opened = ok_json(get(&alice, &base, &format!("/den/commissions/{untitled}")).await).await;
+
+    let listed = entry(&commissions["listing"], "Untitled");
+    assert_eq!(listed["mount"], true);
+    assert_eq!(listed["open"], expected_open);
+    assert_eq!(opened["node"]["mount"], true);
+    assert_eq!(opened["node"]["open"], expected_open);
+}
+
+#[tokio::test]
+async fn an_account_mount_carries_the_account_s_did_not_the_viewer_s() {
+    let (base, alice) = as_alice().await;
+    let supreme_arts_did = supreme_arts().to_string();
+    let expected_thing = json!(supreme_arts_did);
+
+    let accounts = ok_json(get(&alice, &base, "/den/accounts").await).await;
+    let opened =
+        ok_json(get(&alice, &base, &format!("/den/accounts/{supreme_arts_did}")).await).await;
+
+    let listed = entry(&accounts["listing"], "Supreme Arts");
+    assert_eq!(listed["mount"], true);
+    assert_eq!(listed["open"]["accountDid"], expected_thing);
+    assert!(listed["open"].get("commissionId").is_none(), "{listed}");
+    assert_eq!(opened["node"]["open"]["accountDid"], expected_thing);
+    assert!(
+        opened["node"]["open"].get("commissionId").is_none(),
+        "{opened}"
+    );
+}
+
+#[tokio::test]
+async fn system_folders_and_commission_entries_carry_no_thing() {
+    let (base, alice) = as_alice().await;
+    let untitled = untitled().to_string();
+    let supreme_arts_did = supreme_arts().to_string();
+    let nodes = [
+        "/den/commissions".to_owned(),
+        "/den/characters".to_owned(),
+        "/den/accounts".to_owned(),
+        format!("/den/commissions/{untitled}/attachments"),
+        format!("/den/commissions/{untitled}/changelog"),
+        format!("/den/commissions/{untitled}/slots"),
+        format!("/den/accounts/{supreme_arts_did}/characters"),
+        format!("/den/accounts/{supreme_arts_did}/commissions"),
+        format!("/den/accounts/{supreme_arts_did}/workflows"),
+    ];
+    let listings = [
+        format!("/den/commissions/{untitled}"),
+        format!("/den/accounts/{supreme_arts_did}"),
+    ];
+
+    let root = ok_json(get(&alice, &base, "/den").await).await;
+
+    assert_no_thing(&root["node"], "/den");
+    for listed in root["listing"]["entries"].as_array().expect("entries") {
+        assert_no_thing(listed, "/den's entries");
+    }
+    for path in nodes {
+        let answer = ok_json(get(&alice, &base, &path).await).await;
+
+        assert_no_thing(&answer["node"], &path);
+    }
+    for path in listings {
+        let answer = ok_json(get(&alice, &base, &path).await).await;
+
+        let entries = answer["listing"]["entries"].as_array().expect("entries");
+        assert!(!entries.is_empty(), "{path}");
+        for listed in entries {
+            assert_no_thing(listed, &path);
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_archived_commission_opened_with_include_deleted_carries_its_id() {
+    let (base, alice) = as_alice().await;
+    let old_sketch = old_sketch().to_string();
+    let expected_thing = json!(old_sketch);
+
+    let commissions =
+        ok_json(get(&alice, &base, "/den/commissions?includeDeleted=true").await).await;
+    let opened = ok_json(
+        get(
+            &alice,
+            &base,
+            &format!("/den/commissions/{old_sketch}?includeDeleted=true"),
+        )
+        .await,
+    )
+    .await;
+
+    let listed = entry(&commissions["listing"], "Old sketch");
+    assert_eq!(listed["open"]["softDelete"], "archived");
+    assert_eq!(listed["open"]["commissionId"], expected_thing);
+    assert_eq!(opened["node"]["open"]["softDelete"], "archived");
+    assert_eq!(opened["node"]["open"]["commissionId"], expected_thing);
+}
+
+#[tokio::test]
+async fn every_crumb_carries_its_type() {
+    let (base, alice) = as_alice().await;
+    let untitled = untitled().to_string();
+    let [attachment, _] = untitled_files();
+    let supreme_arts_did = supreme_arts().to_string();
+    let reads = [
+        (
+            format!("/den/commissions/{untitled}"),
+            vec!["user", "user.commissions"],
+        ),
+        (
+            format!("/den/commissions/{untitled}/attachments/{attachment}"),
+            vec![
+                "user",
+                "user.commissions",
+                "commission",
+                "commission.attachments",
+            ],
+        ),
+        (
+            format!("/den/accounts/{supreme_arts_did}/characters"),
+            vec!["user", "user.accounts", "account"],
+        ),
+    ];
+
+    for (path, expected_types) in reads {
+        let answer = ok_json(get(&alice, &base, &path).await).await;
+
+        let crumbs = answer["crumbs"].as_array().expect("crumbs");
+        let types: Vec<&str> = crumbs
+            .iter()
+            .map(|crumb| crumb["type"].as_str().expect("a type"))
+            .collect();
+        assert_eq!(types, expected_types, "{path}");
+    }
+}
+
+/// The title the twin commissions share; no fixture commission uses it.
+const TWIN_TITLE: &str = "Twin sketch";
+
+/// Creates a commission titled `title` as `client`, answering its id.
+async fn create_commission(client: &reqwest::Client, base: &str, title: &str) -> String {
+    let body = json!({ "title": title });
+    let response = client
+        .post(format!("{base}/commissions"))
+        .json(&body)
+        .send()
+        .await
+        .expect("POST /commissions");
+    assert_eq!(response.status(), 201, "creates the commission");
+    let created: Value = response.json().await.expect("a JSON body");
+    created["id"].as_str().expect("an id").to_owned()
+}
+
+/// Asserts no crumb of `answer` carries a name ordinal.
+fn assert_no_crumb_numbered(answer: &Value, path: &str) {
+    let crumbs = answer["crumbs"].as_array().expect("crumbs");
+    for crumb in crumbs {
+        assert!(crumb.get("nameOrdinal").is_none(), "{path}: {crumb}");
+    }
+}
+
+#[tokio::test]
+async fn a_twin_carries_name_ordinal_and_others_omit_it() {
+    let (base, alice) = as_alice().await;
+    let first = create_commission(&alice, &base, TWIN_TITLE).await;
+    let second = create_commission(&alice, &base, TWIN_TITLE).await;
+    // The later UUIDv7 is the newer twin, whatever order the two creates landed in.
+    let newer = first.max(second);
+    let newer_path = format!("/den/commissions/{newer}");
+    let attachments_path = format!("{newer_path}/attachments");
+
+    let commissions = ok_json(get(&alice, &base, "/den/commissions").await).await;
+    let twin = ok_json(get(&alice, &base, &newer_path).await).await;
+    let attachments = ok_json(get(&alice, &base, &attachments_path).await).await;
+
+    let entries = commissions["listing"]["entries"]
+        .as_array()
+        .expect("an entries array");
+    let numbered: Vec<(&str, &Value)> = entries
+        .iter()
+        .filter_map(|entry| {
+            let ordinal = entry.get("nameOrdinal")?;
+            let segments = entry["segments"].as_array().expect("segments");
+            let last = segments.last().and_then(Value::as_str).expect("a segment");
+            Some((last, ordinal))
+        })
+        .collect();
+    let two = json!(2);
+    let expected_numbered = vec![(newer.as_str(), &two)];
+    assert_eq!(numbered, expected_numbered, "{commissions}");
+    let twins = entries
+        .iter()
+        .filter(|entry| entry["name"] == TWIN_TITLE)
+        .count();
+    assert_eq!(twins, 2, "{commissions}");
+
+    assert_eq!(twin["node"]["nameOrdinal"], 2, "{twin}");
+    assert_no_crumb_numbered(&twin, &newer_path);
+
+    let crumb_ordinals: Vec<Option<&Value>> = attachments["crumbs"]
+        .as_array()
+        .expect("crumbs")
+        .iter()
+        .map(|crumb| crumb.get("nameOrdinal"))
+        .collect();
+    let expected_crumb_ordinals = vec![None, None, Some(&two)];
+    assert_eq!(crumb_ordinals, expected_crumb_ordinals, "{attachments}");
+    assert!(
+        attachments["node"].get("nameOrdinal").is_none(),
+        "{attachments}"
+    );
 }
 
 /// `text` without its terminal color codes.

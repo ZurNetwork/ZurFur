@@ -34,7 +34,8 @@ const handleTakenProblem = {
 	code: 'handle_taken',
 	title: 'handle_taken',
 	detail: 'That handle is already claimed.',
-	status: 409
+	status: 409,
+	errors: []
 };
 
 describe('accountsOutcome', () => {
@@ -49,7 +50,8 @@ describe('accountsOutcome', () => {
 			code: 'rate_limited',
 			title: 'rate_limited',
 			detail: 'Slow down.',
-			status: 429
+			status: 429,
+			errors: []
 		};
 		const outcome = await runTest(
 			{ listAccounts: Effect.fail(new ApiProblem({ problem })) },
@@ -79,7 +81,8 @@ describe('accountOutcome (⚠️ F1 — derived from the listing, no GET /accoun
 				code: 'account_not_found',
 				title: 'Account not found',
 				detail: 'No such account.',
-				status: 404
+				status: 404,
+				errors: []
 			}
 		});
 	});
@@ -90,7 +93,8 @@ describe('accountOutcome (⚠️ F1 — derived from the listing, no GET /accoun
 			code: 'rate_limited',
 			title: 'rate_limited',
 			detail: 'Slow down.',
-			status: 429
+			status: 429,
+			errors: []
 		};
 		const outcome = await runTest(
 			{ listAccounts: Effect.fail(new ApiProblem({ problem })) },
@@ -147,7 +151,8 @@ describe('deleteAccountOutcome', () => {
 			code: 'forbidden',
 			title: 'Forbidden',
 			detail: "You don't have permission to perform this action.",
-			status: 403
+			status: 403,
+			errors: []
 		};
 		const outcome = await runTest(
 			{ deleteAccount: () => Effect.fail(new ApiProblem({ problem })) },
