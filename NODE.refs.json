@@ -89,6 +89,11 @@
       "governs": "src/custodian.rs, src/derivation.rs, src/envelope.rs: the dev custodian of the did:plc custody keys and sign-in secrets — one HKDF-derived key per purpose, the v1 envelope binding purpose, key id and subject; golden/: the format's frozen constants"
     },
     {
+      "page": 64290818,
+      "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
+      "governs": "hkdf 0.13, hmac 0.13 (zeroize), sha2 0.11 as the renamed workspace entry sha2-0-11 (default features off, zeroize) and chacha20poly1305 0.10 supply HKDF, HMAC, SHA-256 and XChaCha20-Poly1305 and dictate nothing: their types stay crate-private, and the crate's surface is HkdfKeyCustodian::derive and the KeyCustodian port; zeroize's Zeroizing is the one crate type in a public signature"
+    },
+    {
       "page": 2026093001,
       "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
       "governs": "src/mac.rs: the Den MAC key (HMAC-SHA256 over a use label and the message), held under the same custody as the did:plc keys"
@@ -945,7 +950,7 @@
     {
       "page": 64290818,
       "title": "Libraries as Composition — the Approved Crate Set and the Newtype Derive Rules",
-      "governs": "newtype derive rules: path-qualified derives, thiserror owns errors, Deref dropped, FromStr/From derived only where the inner type carries the rule, IdError retired; strum allowed here exact-pinned with token tests; dev-dep proptest — StringBuilder properties beside their leaf (x/proptests.rs)"
+      "governs": "newtype derive rules: path-qualified derives, thiserror owns errors, Deref dropped, FromStr/From derived only where the inner type carries the rule, IdError retired; strum allowed here exact-pinned with token tests; dev-dep proptest — StringBuilder properties beside their leaf (x/proptests.rs); zeroize (OpenedSecret wiped on drop, read through expose(), no Deref)"
     },
     {
       "page": 2026093001,

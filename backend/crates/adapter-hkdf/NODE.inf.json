@@ -67,6 +67,6 @@
     }
   ],
   "notes": [
-    "HKDF's Extract concentrates the root's entropy but cannot add to it (RFC 5869 §4): under a public root, every derived key is public. Nothing builds a custodian outside this crate's tests yet; a KMS adapter is to sit beside this one."
+    "HKDF's Extract concentrates the root's entropy but cannot add to it (RFC 5869 §4): under a public root, every derived key is public. In production only composition's one custody function builds the custodian; test-support builds it for tests. A KMS adapter is to sit beside this one."
   ]
 }
