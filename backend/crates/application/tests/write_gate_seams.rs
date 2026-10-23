@@ -4,20 +4,21 @@
 //! entry written out and no two the same, the gated entries built only in the act file, each
 //! with a constructor of its own (two may build one kind), each act's lent view holding its one
 //! write and every act's only the read, each view write calling its own port method with the
-//! capability and the stored change, the lent view's surface and its latch,
-//! nothing else in the gate file reaching the lent view's fields, no compiled source the scans
-//! can't read, the write host and the gate named once each, the write use case kept inside the
-//! crate, nothing of it (and no raw SQL or in-memory seeder) in a driver, no lint silencer in
-//! any production file of the use-case layer, every method of the commission write view taking
-//! kernel's write capability in place of the commission's id or named, and none with a default
-//! body, the named writes clippy holds exactly the ones `application`'s clippy settings ban,
-//! the commission field writes not yet gated, frozen, and the commission tables written only by
-//! the commission write view in each adapter, whatever port a write is called through: in
-//! PostgreSQL, every statement writing a commission table in the commission's query folder, its
-//! generated write functions named only in the write view, and the view built only by the unit;
-//! in memory, the commission map changed only by the write view, the insert path, the lifecycle
-//! seeder and the unit's staging and merge, its rows built only by the insert path, and the
-//! view built only by the unit.
+//! capability and the stored change, the lent view's surface and its latch, nothing else in the
+//! gate file reaching the lent view's fields, no compiled source the scans can't read, the write
+//! host and the gate named once each, the system's viewer-less read and the sweep each with its
+//! one caller, the write use case kept inside the crate, nothing of it (and no raw SQL or
+//! in-memory seeder) in a driver, no lint silencer in any production file of the use-case layer,
+//! every method of the commission write view taking kernel's write capability in place of the
+//! commission's id or named, none taking the system's, and none with a default body, the named
+//! writes clippy holds exactly the ones `application`'s clippy settings ban, the commission field
+//! writes not yet gated, frozen, and the commission tables written only by the commission write
+//! view in each adapter, whatever port a write is called through: in PostgreSQL, every statement
+//! writing a commission table in the commission's query folder, its generated write functions
+//! named only in the write view, and the view built only by the unit; in memory, the commission
+//! map changed only by the write view, the insert path, the lifecycle seeder and the unit's
+//! staging and merge, its rows built only by the insert path, and the view built only by the
+//! unit.
 
 mod seams;
 
@@ -1185,7 +1186,7 @@ const ENTRY_RULE_VARIANTS: [&str; 2] = ["Always", "OnChange"];
 const HANDLER_TRAIT: &str = "trait Handler";
 
 /// The gated entries today's acts name, each by its file.
-const NAMED_GATED_ENTRIES: [(&str, &str); 9] = [
+const NAMED_GATED_ENTRIES: [(&str, &str); 10] = [
     ("commission/create.rs", "CREATED"),
     ("commission/deadline/clear.rs", "DEADLINE_CLEARED"),
     ("commission/deadline/set.rs", "DEADLINE_SET"),
@@ -1195,11 +1196,12 @@ const NAMED_GATED_ENTRIES: [(&str, &str); 9] = [
     ("commission/rename.rs", "RENAMED"),
     ("commission/status/direction/clear.rs", "STATUS_CLEARED"),
     ("commission/status/direction/set.rs", "STATUS_SET"),
+    ("commission/sweep.rs", "LATE"),
 ];
 
 /// The variants a gated entry's constructor is written out under: one takes no change, one
-/// the act's checked change.
-const CONSTRUCTOR_VARIANTS: [&str; 2] = ["Bare", "Change"];
+/// the act's checked change, and the system's takes the checked change and no actor.
+const CONSTRUCTOR_VARIANTS: [&str; 3] = ["Bare", "Change", "System"];
 
 /// The use-case layer's production sources, each with its path relative to its `src`.
 fn application_sources() -> Vec<(String, String)> {
@@ -1380,7 +1382,8 @@ fn entry_rule_scan(files: &[(String, String)]) -> (Vec<(String, String)>, Vec<St
 
 /// What breaks the gated entries' definitions in [`ACT_FILE`]: an associated const of an
 /// inherent impl of [`GATED_ENTRY`] not written out as `Self { kinds: &[ChangelogEntryKind::K,
-/// …], constructor: EntryConstructor::Bare(NewChangelogEntry::c) }` (or `::Change(…)`), and
+/// …], constructor: EntryConstructor::Bare(NewChangelogEntry::c) }` (or `::Change(…)` or
+/// `::System(…)`), and
 /// two consts sharing a constructor. Two constructors may build one kind.
 fn gated_definition_findings(act: &syn::File) -> Vec<String> {
     let mut constructors: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -1457,7 +1460,7 @@ fn written_out_kinds(expr: &syn::Expr) -> Option<Vec<String>> {
 }
 
 /// The domain constructor a gated entry's const names: `EntryConstructor::Bare(NewChangelogEntry::c)`
-/// or `EntryConstructor::Change(NewChangelogEntry::c)`; `None` for anything else.
+/// or `EntryConstructor::Change(…)` or `EntryConstructor::System(…)`; `None` for anything else.
 fn written_out_constructor(expr: &syn::Expr) -> Option<String> {
     let syn::Expr::Call(call) = expr else {
         return None;
@@ -1474,7 +1477,7 @@ fn written_out_constructor(expr: &syn::Expr) -> Option<String> {
 
 /// The kinds and the constructor a gated entry's const is written out with:
 /// `Self { kinds: &[ChangelogEntryKind::K, …], constructor: EntryConstructor::Bare(NewChangelogEntry::c) }`
-/// (or `::Change(…)`), nothing else.
+/// (or `::Change(…)` or `::System(…)`), nothing else.
 fn gated_fields(expr: &syn::Expr) -> Option<(Vec<String>, String)> {
     let syn::Expr::Struct(literal) = expr else {
         return None;
@@ -1519,7 +1522,7 @@ fn each_act_names_one_gated_entry_and_constructors_are_unique() {
         .iter()
         .map(|(file, name)| ((*file).to_owned(), (*name).to_owned()))
         .collect();
-    assert_eq!(named, expected, "the scan reads today's nine acts");
+    assert_eq!(named, expected, "the scan reads today's ten acts");
     let act_source =
         std::fs::read_to_string(application_src().join(ACT_FILE)).expect("the act file reads");
     let shares_a_constructor = act_source.replacen(
@@ -3074,6 +3077,161 @@ fn the_write_host_and_the_gate_are_named_once() {
     assert_eq!(host_and_gate_offenders(&src).len(), 2);
 }
 
+// The system's act: its viewer-less read and its sweep each have one caller.
+
+/// The commission unit's locked read that reads no viewer: the system's grant alone calls it.
+const SYSTEM_LOCK: &str = "lock_for_system";
+
+/// The deadline sweep's use case: the leader's pass alone calls it.
+const SWEEP_USE_CASE: &str = "sweep_deadlines";
+
+/// The production sources the one-caller pins read: the use-case layer's and every driver's,
+/// each by its path from the crates folder.
+fn caller_scan_files() -> Vec<(String, String)> {
+    let application = walk(&application_src()).production.into_iter();
+    let drivers = driver_files().into_iter().map(|(_, _, path)| path);
+    application
+        .chain(drivers)
+        .map(|path| {
+            let source = std::fs::read_to_string(&path).expect("a readable source");
+            (relative(&path, &crates()), source)
+        })
+        .collect()
+}
+
+/// Every naming of `seed`, or of an alias of it, in `files`, by file, piece and name.
+fn caller_namings(files: &[(String, String)], seed: &str) -> Vec<Naming> {
+    let sources: Vec<String> = files.iter().map(|(_, source)| source.clone()).collect();
+    let names = with_aliases(&[seed], &sources);
+    let mut out = Vec::new();
+    for (file, source) in files {
+        let parsed = syn::parse_file(source).expect("the source parses");
+        out.extend(named_past(file, &pieces(&parsed), &names, &[]));
+    }
+    out.sort();
+    out
+}
+
+/// The one naming of the viewer-less read: in the system's grant.
+fn the_system_grant_s_call() -> Vec<Naming> {
+    vec![(
+        "application/src/den/authority.rs".to_owned(),
+        "system_grant".to_owned(),
+        SYSTEM_LOCK.to_owned(),
+    )]
+}
+
+/// The two namings of the sweep: its definition, and the leader's pass.
+fn the_sweep_s_namings() -> Vec<Naming> {
+    vec![
+        (
+            SWEEP.to_owned(),
+            LEADER_LOCK.to_owned(),
+            SWEEP_USE_CASE.to_owned(),
+        ),
+        (
+            "application/src/commission/sweep.rs".to_owned(),
+            "Commissions::sweep_deadlines".to_owned(),
+            SWEEP_USE_CASE.to_owned(),
+        ),
+    ]
+}
+
+#[test]
+fn the_viewer_less_read_is_called_only_by_the_system_grant() {
+    let files = caller_scan_files();
+
+    let namings = caller_namings(&files, SYSTEM_LOCK);
+
+    assert_eq!(namings, the_system_grant_s_call());
+    let authority = "application/src/den/authority.rs";
+    let system_arm = "async fn system_grant(unit: Unit<'_>, commission: CommissionId) { let locked = unit.commissions().lock_for_system(&commission).await; }";
+    let user_arm = "async fn user_grant(unit: Unit<'_>, commission: CommissionId, user: &UserId) { let locked = unit.commissions().lock_for_system(&commission).await; let standing = unit.commissions().standing_for_update(&commission, user).await; }";
+    let kept = [(authority.to_owned(), system_arm.to_owned())];
+    assert_eq!(
+        caller_namings(&kept, SYSTEM_LOCK),
+        the_system_grant_s_call()
+    );
+    let planted = [
+        (authority, format!("{system_arm}\n{user_arm}")),
+        (
+            authority,
+            "async fn system_grant(unit: Unit<'_>, commission: CommissionId) { unit.commissions().lock_for_system(&commission).await; unit.commissions().lock_for_system(&commission).await; }".to_owned(),
+        ),
+        (
+            "application/src/commission/den.rs",
+            "async fn verdict(unit: Unit<'_>, commission: CommissionId) { let read = <dyn CommissionReads>::lock_for_system; }".to_owned(),
+        ),
+        (
+            "cli/src/commands/commission.rs",
+            "async fn sweep(unit: Unit<'_>, commission: CommissionId) { tokio::join!(async { unit.commissions().lock_for_system(&commission).await }); }".to_owned(),
+        ),
+    ];
+    for (file, source) in planted {
+        let fixture = [
+            (authority.to_owned(), system_arm.to_owned()),
+            (file.to_owned(), source.clone()),
+        ];
+        let fixture = if file == authority {
+            vec![(file.to_owned(), source.clone())]
+        } else {
+            fixture.to_vec()
+        };
+
+        let found = caller_namings(&fixture, SYSTEM_LOCK);
+
+        assert_ne!(found, the_system_grant_s_call(), "{file}: {source}");
+    }
+}
+
+#[test]
+fn sweep_deadlines_is_called_only_by_the_leader() {
+    let files = caller_scan_files();
+
+    let namings = caller_namings(&files, SWEEP_USE_CASE);
+
+    assert_eq!(namings, the_sweep_s_namings());
+    let definition = (
+        "application/src/commission/sweep.rs".to_owned(),
+        "impl Commissions<'_> { #[use_case] pub async fn sweep_deadlines(&self, #[ports] ports: &Ports, now: DateTimeUtc) -> CommissionResult<SweepResult> { todo!() } }".to_owned(),
+    );
+    let leader = (
+        SWEEP.to_owned(),
+        "async fn sweep_pass_as_leader(runtime: &AppState) -> anyhow::Result<Option<usize>> { let swept = runtime.app().commissions().sweep_deadlines(Utc::now()).await?; Ok(Some(swept.marked_late)) }".to_owned(),
+    );
+    let kept = [definition.clone(), leader.clone()];
+    assert_eq!(caller_namings(&kept, SWEEP_USE_CASE), the_sweep_s_namings());
+    let planted = [
+        (
+            "api/src/routes/commissions/sweep.rs",
+            "async fn sweep(State(state): State<AppState>) -> StatusCode { let later = Utc::now() + chrono::Duration::days(365); let _ = state.app().commissions().sweep_deadlines(later).await; StatusCode::NO_CONTENT }",
+        ),
+        (
+            SWEEP,
+            "async fn run_deadline_sweeper(runtime: AppState) { let _ = runtime.app().commissions().sweep_deadlines(Utc::now()).await; }",
+        ),
+        (
+            "cli/src/commands/sweep.rs",
+            "fn sweeper() { let sweep = Commissions::sweep_deadlines; }",
+        ),
+        (
+            "application/src/commission/delete.rs",
+            "impl Commissions<'_> { async fn delete(&self) { let _ = self.sweep_deadlines(Utc::now()).await; } }",
+        ),
+    ];
+    for (file, source) in planted {
+        let fixture = [
+            definition.clone(),
+            leader.clone(),
+            (file.to_owned(), source.to_owned()),
+        ];
+
+        let found = caller_namings(&fixture, SWEEP_USE_CASE);
+
+        assert_ne!(found, the_sweep_s_namings(), "{file}: {source}");
+    }
+}
+
 // The write use case stays inside the crate.
 
 /// Whether `vis` makes an item visible outside its crate.
@@ -4064,7 +4222,7 @@ const BANNED_WRITES: [&str; 6] = [
 const OTHER_UNCAPPED: [&str; 4] = ["add_element", "remove_element", "add_file", "add_markup"];
 
 /// The reads on the commission write view: they take no write capability, and never will.
-const WRITE_VIEW_READS: [&str; 2] = ["commission_has_facts", "lapsed_deadlines"];
+const WRITE_VIEW_READS: [&str; 1] = ["commission_has_facts"];
 
 /// The use-case layer's clippy settings.
 fn clippy_settings() -> PathBuf {
@@ -4191,10 +4349,12 @@ const COMMISSION_READS: &str = "CommissionReads";
 const COMMISSION_REPO: &str = "CommissionRepo";
 
 /// The read view's methods: lookups and row locks, never a write.
-const UNIT_READS: [&str; 5] = [
+const UNIT_READS: [&str; 7] = [
     "find",
     "find_for_update",
     "standing_for_update",
+    "lock_for_system",
+    "late_owed",
     "is_participant",
     "tab_for_update",
 ];
@@ -4709,6 +4869,31 @@ fn every_commission_write_takes_a_capability_or_is_named() {
     assert_eq!(listed.len(), list_lengths, "no name sits on two lists");
 }
 
+/// The role of the system's own act: bound to no port method in 0.2, so its capability
+/// writes nothing.
+const AS_SYSTEM: &str = "AsSystem";
+
+#[test]
+fn no_port_method_takes_the_system_s_capability() {
+    let port = std::fs::read_to_string(commission_port_file()).expect("the port file is readable");
+    let roles: Vec<&str> = BOUND_ROLES.iter().map(|(role, _)| *role).collect();
+
+    let named = identifiers(port.parse::<TokenStream>().expect("the port file lexes"));
+
+    assert!(!roles.contains(&AS_SYSTEM), "{roles:?}");
+    assert!(
+        !named.contains(&AS_SYSTEM.to_owned()),
+        "the port file names {AS_SYSTEM}"
+    );
+    let planted = "use crate::elements::commission::{AsSystem, CommissionId};\nuse kernel::ports::WriteCapability;\ntrait CommissionWrites: Send { async fn mark_late(&mut self, capability: &WriteCapability<CommissionId, AsSystem>) -> anyhow::Result<bool>; }";
+    let file = syn::parse_file(planted).expect("the planted trait parses");
+    let findings = port_findings(&file, &BTreeSet::new());
+    assert_eq!(
+        findings,
+        ["CommissionWrites::mark_late takes no write capability and is on no list"]
+    );
+}
+
 #[test]
 fn the_port_scan_names_each_planted_write() {
     let source =
@@ -4903,7 +5088,7 @@ fn the_port_scan_names_each_planted_write() {
 
         assert_eq!(findings, expected, "{planted}");
     }
-    let last_write = "    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>>;\n";
+    let last_write = "        change: &DelayedChange,\n    ) -> anyhow::Result<bool>;\n";
     assert!(
         source.contains(last_write),
         "the port file holds `{last_write}`"

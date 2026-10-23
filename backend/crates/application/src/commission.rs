@@ -1,28 +1,21 @@
 //! Use cases about [`Commission`]s.
 //!
-//! [`sweep_deadlines`] is the one act with no actor — the system recording a
-//! lapsed deadline. Its wall-clock timer and leader election live in `api`, so
+//! [`Commissions::sweep_deadlines`] is the one act with no user behind it: the system
+//! recording a lapsed deadline. Its wall-clock timer and leader election live in `api`, so
 //! the policy stays deterministic at an injected instant.
 
 use crate::ports::WithPorts;
 use domain::{
-    datetime::DateTimeUtc,
     elements::{
-        commission::{
-            Commission, CommissionId, CommissionRefusal, CommissionState, FileNameError, LateFacts,
-            MarkupError, NewChangelogEntry, owes_late,
-        },
+        commission::{Commission, CommissionId, CommissionRefusal, FileNameError, MarkupError},
         user::UserId,
     },
-    ports::{
-        Database, DidBelongsToAnotherActor, ElementNotFound, UnitOfWork, UnknownSurface, UnknownTab,
-    },
+    ports::{DidBelongsToAnotherActor, ElementNotFound, UnknownSurface, UnknownTab},
 };
 
 use crate::{
     common_error::{CommonError, NotFoundEntity},
     den::{DenError, DenNameError, write::DenWriteError},
-    transaction,
 };
 pub(crate) mod act;
 pub mod archive;
@@ -41,10 +34,12 @@ pub mod rename;
 pub mod seats;
 pub mod slots;
 pub mod status;
+pub mod sweep;
 pub mod unarchive;
 mod values;
 pub mod view;
 
+pub use sweep::SweepResult;
 pub use values::CommissionValues;
 
 /// Commission use cases, with the ports already bound. A namespace, not a
@@ -238,53 +233,6 @@ pub(crate) fn den_refusal(refusal: DenError, not_found: CommissionError) -> Comm
         DenError::NotFound => not_found,
         DenError::Store(cause) => CommonError::Infrastructure(cause).into(),
     }
-}
-
-/// How many commissions one [`sweep_deadlines`] pass newly recorded as Late.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SweepResult {
-    pub marked_late: usize,
-}
-
-/// Run one deadline sweep as of the injected `now`: scan the lapsed deadlines
-/// and append a system `Late` changelog entry for each one the Late rule says is
-/// owed, the whole pass in one unit of work. A commission already Late is never
-/// re-marked, and a Disputed one is skipped.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the sweep is a system job, not a use-case method"
-)]
-pub async fn sweep_deadlines(
-    database: &dyn Database,
-    now: DateTimeUtc,
-) -> Result<SweepResult, CommissionError> {
-    let marked_late = transaction(database, async move |uow: &mut dyn UnitOfWork| {
-        let lapsed = uow.commissions().lapsed_deadlines(now).await?;
-        let mut marked = 0;
-        for lapse in &lapsed {
-            let commission = uow.commissions().find(&lapse.id).await?.ok_or_else(|| {
-                anyhow::anyhow!("a lapsed commission is missing from the sweep's own unit")
-            })?;
-            // The scan answers only commissions with no `late` entry since their deadline
-            // last changed, so each one it returns is owed one.
-            let facts = LateFacts {
-                state: CommissionState::from(&commission),
-                owed: true,
-            };
-            // Log-only: `Late` is derived on lookup and never persisted.
-            let Ok(mark) = owes_late(&facts, now) else {
-                continue;
-            };
-            let entry = NewChangelogEntry::late(lapse.id, &mark, now);
-            uow.changelog().append(&entry).await?;
-            marked += 1;
-        }
-        Ok(marked)
-    })
-    .await
-    .map_err(CommonError::Infrastructure)?;
-
-    Ok(SweepResult { marked_late })
 }
 
 #[cfg(test)]

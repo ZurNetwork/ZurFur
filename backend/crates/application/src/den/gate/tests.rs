@@ -29,11 +29,12 @@ use crate::{
         Den, DenThing,
         act::{EntryConstructor, GatedEntry},
         authority::{GrantKind, MINT_AS},
+        host::DenHost,
         test_acts::{
             commission_path, create_act, hand_built_create, hand_built_rename, move_act,
             rename_act, set_deadline_act, state_at,
         },
-        write::{Command, DenWriteError, WriteResult},
+        write::{Actor, Command, DenWriteError, WriteResult},
     },
     test_world, transaction,
 };
@@ -191,7 +192,7 @@ async fn write_at(
     now: DateTimeUtc,
 ) -> Result<WriteResult, DenWriteError> {
     let command = Command {
-        actor: actor.clone(),
+        actor: Actor::User(actor.clone()),
         act,
     };
     Den::from(ports).write(command, now).await
@@ -272,7 +273,7 @@ fn lent_by_hand<'u, H: Handler>(
         repo: unit.commissions(),
         capability,
         node: written.node,
-        actor: grant.actor().clone(),
+        actor: grant.user().cloned(),
         now: Utc::now(),
         change,
         wrote: None,
@@ -841,14 +842,20 @@ fn an_entry_built_off_the_grant_is_a_broken_rule() {
             &[ChangelogEntryKind::Created],
             EntryConstructor::Bare(constructor),
         );
-        let built = built_entry(EntryRule::Always(gated), &written, None, &alice(), now);
+        let built = built_entry(
+            EntryRule::Always(gated),
+            &written,
+            None,
+            Some(&alice()),
+            now,
+        );
         assert!(built.is_err(), "{built:?}");
     }
     let built = built_entry(
         EntryRule::<()>::Always(GatedEntry::CREATED),
         &written,
         None,
-        &alice(),
+        Some(&alice()),
         now,
     )
     .expect("the domain's constructor builds as granted");
@@ -875,7 +882,7 @@ fn an_entry_of_another_kind_than_its_gated_entry_s_is_a_broken_rule() {
         EntryRule::OnChange(gated),
         &changed_untitled(),
         None,
-        &alice(),
+        Some(&alice()),
         Utc::now(),
     );
 
@@ -894,7 +901,7 @@ fn an_entry_carrying_a_note_is_a_broken_rule() {
         EntryRule::OnChange(gated),
         &changed_untitled(),
         None,
-        &alice(),
+        Some(&alice()),
         Utc::now(),
     );
 
@@ -914,14 +921,14 @@ fn a_change_constructor_with_no_recorded_change_builds_no_entry() {
         EntryRule::Always(GatedEntry::LIFECYCLE_MOVED),
         &unchanged,
         None,
-        &alice(),
+        Some(&alice()),
         Utc::now(),
     );
     let on_change = built_entry(
         EntryRule::OnChange(GatedEntry::LIFECYCLE_MOVED),
         &unchanged,
         None,
-        &alice(),
+        Some(&alice()),
         Utc::now(),
     )
     .expect("nothing changed, so nothing is built");
@@ -950,7 +957,7 @@ async fn another_kind_appends_nothing(ports: &Ports, actor: &UserId, commission:
         EntryRule::OnChange(gated),
         &written,
         None,
-        actor,
+        Some(actor),
         Utc::now(),
     )
     .await;
@@ -1043,4 +1050,112 @@ async fn create_and_rename_read_no_node_after_writing() {
 
     assert_eq!(created, ["node/create"; 7]);
     assert_eq!(renamed, ["node/at_top", "node/set_name"]);
+}
+
+/// The Late mark a lapsed deadline owes, as the system's rule checks it.
+fn a_late_mark() -> domain::elements::commission::LateMark {
+    let deadline = "2020-01-01T00:00:00Z".parse().expect("a timestamp");
+    let facts = domain::elements::commission::LateFacts {
+        state: crate::den::test_acts::state_with(LifecycleStep::Active, Some(deadline), None, None),
+        owed: true,
+    };
+    domain::elements::commission::owes_late(&facts, Utc::now()).expect("a late entry is owed")
+}
+
+/// A system constructor that builds its entry by a user, whatever it was given.
+fn by_someone(
+    commission: CommissionId,
+    _: &domain::elements::commission::LateMark,
+    at: DateTimeUtc,
+) -> NewChangelogEntry {
+    NewChangelogEntry::created(commission, bob(), at)
+}
+
+// The system's entry pairs with the system's grant alone: built with no actor from the mark the
+// act recorded; an entry the system's constructor builds by a user is a broken rule under the
+// system's grant, and the system's entry is one under a user's.
+#[test]
+fn the_system_s_entry_carries_no_actor_and_a_user_s_is_refused() {
+    let now = Utc::now();
+    let written = Written {
+        changed: false,
+        ..changed_untitled()
+    };
+    let mark = a_late_mark();
+    let by_a_user = GatedEntry::for_test(
+        &[ChangelogEntryKind::Created],
+        EntryConstructor::System(by_someone),
+    );
+
+    let late = built_entry(
+        EntryRule::Always(GatedEntry::LATE),
+        &written,
+        Some(&mark),
+        None,
+        now,
+    )
+    .expect("the system's entry builds as granted")
+    .expect("one entry");
+    let with_an_actor = built_entry(
+        EntryRule::Always(by_a_user),
+        &written,
+        Some(&mark),
+        None,
+        now,
+    );
+    let under_a_user = built_entry(
+        EntryRule::Always(GatedEntry::LATE),
+        &written,
+        Some(&mark),
+        Some(&alice()),
+        now,
+    );
+    let unrecorded = built_entry(
+        EntryRule::Always(GatedEntry::LATE),
+        &written,
+        None,
+        None,
+        now,
+    );
+
+    assert_eq!(late.kind(), ChangelogEntryKind::Late);
+    assert_eq!(late.actor_id(), None);
+    let payload = serde_json::json!({ "deadline": "2020-01-01T00:00:00Z", "from": null });
+    assert_eq!(late.payload(), &payload);
+    assert!(with_an_actor.is_err(), "{with_an_actor:?}");
+    assert!(under_a_user.is_err(), "{under_a_user:?}");
+    assert!(unrecorded.is_err(), "{unrecorded:?}");
+}
+
+// A role whose capability no write takes records the change its rule checked, as checked, and
+// a write under it is a broken rule; a user's create is refused under the system's grant.
+#[test]
+fn an_act_that_writes_no_field_records_its_checked_change() {
+    let mark = a_late_mark();
+    let system = Grant::for_system_test(GrantKind::System {
+        commission: untitled(),
+        level: Level::Private,
+        node: NodeId::mint(),
+        facts: domain::elements::commission::LateFacts {
+            state: state_at(LifecycleStep::Active),
+            owed: true,
+        },
+    });
+    let create = hand_built_create(made_up(), "Made by no one");
+
+    assert_eq!(
+        checked_unwritten(Some(mark.clone()), None).expect("recorded as checked"),
+        Some(mark.clone())
+    );
+    assert!(checked_unwritten(Some(mark), Some(Wrote::Landed)).is_err());
+    assert!(checked_unwritten::<()>(None, Some(Wrote::Nothing)).is_err());
+    assert!(!grant_fits(&system, &create.shape));
+    assert_eq!(<AsSystem as RoleTable>::RECORD, Record::Checked);
+    for record in [
+        <AsOwner as RoleTable>::RECORD,
+        <AsParticipant as RoleTable>::RECORD,
+        <Creator as RoleTable>::RECORD,
+    ] {
+        assert_eq!(record, Record::Landed);
+    }
 }

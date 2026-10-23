@@ -27,7 +27,7 @@ fn each_gated_entry_builds_its_own_kind_with_an_empty_payload_and_no_note() {
 
     for (entry, kind) in gated {
         let built = entry
-            .construct(untitled(), alice(), None, now)
+            .construct(untitled(), Some(&alice()), None, now)
             .expect("a bare constructor needs no change");
 
         assert!(entry.builds(kind), "{kind}");
@@ -48,9 +48,9 @@ fn the_lifecycle_entry_is_built_from_the_move_it_is_handed() {
     let gated = GatedEntry::LIFECYCLE_MOVED;
 
     let built = gated
-        .construct(untitled(), alice(), Some(&moved), now)
+        .construct(untitled(), Some(&alice()), Some(&moved), now)
         .expect("a move was handed");
-    let unbuilt = gated.construct(untitled(), alice(), None, now);
+    let unbuilt = gated.construct(untitled(), Some(&alice()), None, now);
 
     let payload = serde_json::json!({ "from": "draft", "to": "active" });
     assert_eq!(built.kind(), ChangelogEntryKind::LifecycleMoved);
@@ -67,7 +67,7 @@ fn an_on_change_rule_names_its_entry_only_when_the_act_changed_something() {
     let on_change = || EntryRule::<()>::OnChange(GatedEntry::RENAMED);
     let kind = |gated: Option<GatedEntry<()>>| {
         gated.and_then(|gated| {
-            let built = gated.construct(untitled(), alice(), None, Utc::now())?;
+            let built = gated.construct(untitled(), Some(&alice()), None, Utc::now())?;
             Some(built.kind())
         })
     };

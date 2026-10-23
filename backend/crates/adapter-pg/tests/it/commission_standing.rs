@@ -268,6 +268,52 @@ async fn standing_for_update_holds_the_commission_row() {
     );
 }
 
+// The system's lock reads no viewer: it answers the commission's node and level, holds the
+// commission row until its unit ends, and answers nothing for a made-up id.
+#[tokio::test]
+async fn lock_for_system_answers_the_node_and_holds_the_commission_row() {
+    let (pool, _kept) = test_support::pg::fresh_pool().await;
+    let database = PgDatabase::new(pool.clone());
+    let owner = provision(&database, "did:plc:systemlockowner").await;
+    let commission = committed_commission(&database, &owner).await;
+    let made_up = CommissionId::from(uuid::Uuid::now_v7());
+
+    let mut unit = database.begin().await.expect("begin");
+    let locked = unit
+        .commissions()
+        .lock_for_system(&commission)
+        .await
+        .expect("the system's locked read")
+        .expect("a commission with a node");
+    let standing = unit
+        .commissions()
+        .standing_for_update(&commission, &owner)
+        .await
+        .expect("the locked standing read")
+        .expect("the owner's standing");
+    let absent = unit
+        .commissions()
+        .lock_for_system(&made_up)
+        .await
+        .expect("the system's locked read");
+    assert!(
+        the_row_is_held(&pool, &commission).await,
+        "the unit holds the row after the system's lock"
+    );
+    unit.rollback().await.expect("end the unit");
+
+    assert_eq!(
+        locked.node, standing.node,
+        "the node the commission points at"
+    );
+    assert_eq!(locked.level, standing.standing.level);
+    assert_eq!(absent, None);
+    assert!(
+        !the_row_is_held(&pool, &commission).await,
+        "the row is free once the unit ends"
+    );
+}
+
 // A standing change committed while `standing_for_update` waited for the commission row is
 // what the locked read answers: a participant evicted under the row's lock reads as no role.
 #[tokio::test]

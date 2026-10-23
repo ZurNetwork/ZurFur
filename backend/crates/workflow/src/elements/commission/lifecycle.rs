@@ -39,6 +39,22 @@ impl LifecycleStep {
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Completed | Self::Cancelled)
     }
+
+    /// Whether a deadline missed on this step is swept Late: not on a terminal step, nor
+    /// while [`Disputed`](Self::Disputed).
+    pub fn lapses(&self) -> bool {
+        !self.is_terminal() && *self != Self::Disputed
+    }
+
+    /// Every step a missed deadline doesn't lapse on, in declaration order.
+    pub fn not_lapsing() -> Vec<LifecycleStep> {
+        use strum::VariantArray;
+        Self::VARIANTS
+            .iter()
+            .filter(|step| !step.lapses())
+            .cloned()
+            .collect()
+    }
 }
 
 /// A lifecycle move a rule passed: the step held and the step moved to. Built only by

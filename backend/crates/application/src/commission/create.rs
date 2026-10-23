@@ -118,7 +118,7 @@ impl Commissions<'_> {
             chosen: NewCommission { maturity, deadline },
         };
         let command = write::Command {
-            actor: actor_id,
+            actor: actor_id.into(),
             act: DenAct::Commission(CommissionAct::Create(act)),
         };
         let written = Den::from(self.ports()).write(command, now).await?;

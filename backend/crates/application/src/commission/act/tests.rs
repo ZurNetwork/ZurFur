@@ -9,7 +9,7 @@ use crate::{
     commission::den::CommissionPlace,
     den::{
         DenType, Place, TopLevel,
-        act::{ActShape, Anchor},
+        act::{ActShape, Anchor, Needs},
         needs,
     },
 };
@@ -42,12 +42,12 @@ fn create_needs_no_role_and_rename_needs_the_owner() {
     let created = create("A piece").spec();
     let renamed = rename("A new name").spec();
 
-    assert_eq!(created.needs, None);
+    assert_eq!(created.needs, Needs::Create);
     assert_eq!(created.needs, needs::<create::Act>());
     assert_eq!(created.anchor, Anchor::TopLevel(TopLevel::Commission));
     assert_eq!(created.den_type, DenType::Commission);
     let untitled_place = Place::Commission(CommissionPlace::Commission(untitled()));
-    assert_eq!(renamed.needs, Some(CommissionRole::Owner));
+    assert_eq!(renamed.needs, Needs::Role(CommissionRole::Owner));
     assert_eq!(renamed.needs, needs::<rename::Act>());
     assert_eq!(renamed.anchor, Anchor::Thing(untitled_place));
     assert_eq!(renamed.den_type, DenType::Commission);
@@ -115,7 +115,7 @@ fn a_lifecycle_move_needs_a_participant_and_is_a_change() {
     let spec = moved.spec();
 
     let untitled_place = Place::Commission(CommissionPlace::Commission(untitled()));
-    assert_eq!(spec.needs, Some(CommissionRole::Participant));
+    assert_eq!(spec.needs, Needs::Role(CommissionRole::Participant));
     assert_eq!(spec.needs, needs::<move_to::Act>());
     assert_eq!(spec.anchor, Anchor::Thing(untitled_place));
     assert_eq!(spec.den_type, DenType::Commission);
@@ -149,7 +149,11 @@ fn each_field_act_needs_a_participant_and_is_a_change() {
     for act in &acts {
         let spec = act.spec();
 
-        assert_eq!(spec.needs, Some(CommissionRole::Participant), "{act:?}");
+        assert_eq!(
+            spec.needs,
+            Needs::Role(CommissionRole::Participant),
+            "{act:?}"
+        );
         assert_eq!(
             spec.anchor,
             Anchor::Thing(untitled_place.clone()),
@@ -170,10 +174,10 @@ fn each_field_act_needs_a_participant_and_is_a_change() {
     assert_eq!(printed, variants);
     assert_eq!(
         needs::<direction::set::Act>(),
-        Some(CommissionRole::Participant)
+        Needs::Role(CommissionRole::Participant)
     );
     assert_eq!(
         needs::<deadline::status::clear::Act>(),
-        Some(CommissionRole::Participant)
+        Needs::Role(CommissionRole::Participant)
     );
 }

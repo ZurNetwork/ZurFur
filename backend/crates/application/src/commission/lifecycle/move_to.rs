@@ -103,7 +103,7 @@ impl Lifecycle<'_> {
             to,
         };
         let command = write::Command {
-            actor: actor_id,
+            actor: actor_id.into(),
             act: DenAct::Commission(CommissionAct::MoveLifecycle(act)),
         };
         Den::from(ports).write(command, now).await?;

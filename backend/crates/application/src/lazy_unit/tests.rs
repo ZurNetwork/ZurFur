@@ -85,6 +85,14 @@ impl Probe<'_> {
         self.open_twice().await
     }
 
+    /// Holds no unit of its own and delegates to two use cases in turn, each opening and
+    /// settling its own unit: the sweep's shape.
+    #[use_case]
+    async fn delegate_twice(&self, #[ports] _ports: &Ports) -> anyhow::Result<()> {
+        self.open_twice().await?;
+        self.open_twice().await
+    }
+
     /// Calls a lazy use case that opens its unit, then opens its own.
     #[use_case]
     async fn lazy_after_lazy(
@@ -176,6 +184,19 @@ async fn a_lazy_use_case_that_never_opens_may_delegate_to_one_that_does() {
     probe.delegate_to_lazy().await.expect("pure delegation");
 
     assert_eq!(log.events(), vec!["begin", "commit"]);
+}
+
+#[tokio::test]
+async fn a_use_case_with_no_unit_may_delegate_to_several_in_sequence() {
+    let (ports, log) = recording_ports();
+    let probe = Probe { ports: &ports };
+
+    probe
+        .delegate_twice()
+        .await
+        .expect("delegation in sequence");
+
+    assert_eq!(log.events(), vec!["begin", "commit", "begin", "commit"]);
 }
 
 #[cfg(debug_assertions)]

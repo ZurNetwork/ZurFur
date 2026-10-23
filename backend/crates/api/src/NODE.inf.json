@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/api/src",
-  "charted": "2026-10-22",
+  "charted": "2026-10-23",
   "short": "Composition + cross-cutting HTTP concerns",
   "is": "Composition (lib/main) plus the cross-cutting HTTP concerns (extractors, problem, wire_time, sweep) around the route groups and the generated contract module.",
   "type": "code",
@@ -65,7 +65,7 @@
     },
     {
       "name": "sweep.rs",
-      "role": "deadline sweeper background task; single-writer via pg_try_advisory_xact_lock",
+      "role": "deadline sweeper background task over the app's Runtime: each tick (sweep_tick) a pass when this instance wins pg_try_advisory_xact_lock (sweep_pass_as_leader, the one caller of Commissions::sweep_deadlines, at Utc::now()), a failing pass logged by its error's fixed text alone; sweep/tests.rs: a pass skips while another instance holds the lock, and a failing system act and a failing pass log no DID, name or store detail",
       "node": false
     },
     {

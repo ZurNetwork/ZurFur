@@ -11,8 +11,8 @@ use domain::elements::{
     commission::{
         AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
         CommissionMarkup, DeadlineChange, DelayedChange, DirectionChange, ElementId, GrantLevel,
-        LapsedDeadline, LifecycleMove, LockedStanding, NewChangelogEntry, NewCommission,
-        NewElement, NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId, TabRow,
+        LifecycleMove, LockedNode, LockedStanding, NewChangelogEntry, NewCommission, NewElement,
+        NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId, TabRow,
     },
     maturity::Maturity,
     user::UserId,
@@ -229,6 +229,19 @@ impl CommissionReads for SpyRepo<'_> {
         self.inner.standing_for_update(commission, user).await
     }
 
+    async fn lock_for_system(
+        &mut self,
+        commission: &CommissionId,
+    ) -> anyhow::Result<Option<LockedNode>> {
+        self.spy.record("lock_for_system");
+        self.inner.lock_for_system(commission).await
+    }
+
+    async fn late_owed(&mut self, commission: &CommissionId) -> anyhow::Result<bool> {
+        self.spy.record("late_owed");
+        self.inner.late_owed(commission).await
+    }
+
     async fn is_participant(
         &mut self,
         commission: &CommissionId,
@@ -377,9 +390,5 @@ impl CommissionWrites for SpyRepo<'_> {
         change: &DelayedChange,
     ) -> anyhow::Result<bool> {
         self.inner.set_deadline_status(capability, change).await
-    }
-
-    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
-        self.inner.lapsed_deadlines(now).await
     }
 }

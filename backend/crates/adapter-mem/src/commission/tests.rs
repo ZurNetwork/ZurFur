@@ -1312,10 +1312,10 @@ async fn late_is_derived_from_a_passed_deadline() {
     );
 }
 
-// ZMVP-86 (store layer, ruling E12) — `lapsed_deadlines` returns exactly
-// the sweepable set: past-deadline commissions that are not already Late
-// and not in a terminal lifecycle, ordered by deadline; and it sees writes
-// staged on the same open unit (the no-TOCTOU posture).
+// The pool's sweep scan returns exactly the sweepable set: past-deadline commissions with no
+// `late` entry since their deadline last changed, on a step a deadline lapses on (not terminal,
+// not Disputed), ordered by deadline. A unit's `late_owed` is the same anti-join for one
+// commission, and its system lock answers the commission's node and level.
 #[tokio::test]
 async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
     let backend = MemBackend::new();
@@ -1393,20 +1393,44 @@ async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
             .await
             .unwrap();
 
-        let lapsed = uow.commissions().lapsed_deadlines(now).await.unwrap();
-        let ids: Vec<_> = lapsed.iter().map(|l| l.id).collect();
-        assert_eq!(
-            ids,
-            vec![missed.id, slipping.id, disputed.id],
-            "exactly the sweepable set, ordered by deadline"
+        assert!(
+            !uow.commissions().late_owed(&already_late.id).await.unwrap(),
+            "a late entry staged on the unit is seen by its own read"
         );
-        assert_eq!(lapsed[0].status, None);
+        assert!(uow.commissions().late_owed(&missed.id).await.unwrap());
+        let locked = uow
+            .commissions()
+            .lock_for_system(&missed.id)
+            .await
+            .unwrap()
+            .expect("a bound commission answers its node");
+        assert_eq!(locked.level, Level::Private);
+        let absent = CommissionId::from(uuid::Uuid::now_v7());
         assert_eq!(
-            lapsed[1].status,
-            Some(DeadlineStatus::Delayed),
-            "the scan carries the standing flag"
+            uow.commissions().lock_for_system(&absent).await.unwrap(),
+            None
         );
     }
+    uow.commit().await.unwrap();
+
+    let not_lapsing = LifecycleStep::not_lapsing();
+    let lapsed = backend
+        .commission_store()
+        .lapsed_deadlines(now, &not_lapsing)
+        .await
+        .unwrap();
+    let ids: Vec<_> = lapsed.iter().map(|l| l.id).collect();
+    assert_eq!(
+        ids,
+        vec![missed.id, slipping.id],
+        "exactly the sweepable set, ordered by deadline"
+    );
+    assert_eq!(lapsed[0].status, None);
+    assert_eq!(
+        lapsed[1].status,
+        Some(DeadlineStatus::Delayed),
+        "the scan carries the standing flag"
+    );
 }
 
 // The owner-arm participant predicate and the linked-channel round-trip on

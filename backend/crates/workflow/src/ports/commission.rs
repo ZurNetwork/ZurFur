@@ -9,8 +9,9 @@ use crate::elements::{
         AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
         CommissionFile, CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary,
         DeadlineChange, DelayedChange, DirectionChange, ElementId, FileKey, FileSummary,
-        GrantLevel, LapsedDeadline, LifecycleMove, LockedStanding, NewCommission, NewElement,
-        NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
+        GrantLevel, LapsedDeadline, LifecycleMove, LifecycleStep, LockedNode, LockedStanding,
+        NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot,
+        TabId, TabRow,
     },
     workflow::{Column, ColumnId, WorkflowId},
 };
@@ -147,6 +148,16 @@ pub trait CommissionStore: Send + Sync {
     /// Every Slot declared on `commission`, in declaration order. Empty for a
     /// commission with no Slots, and for an unknown one.
     async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>>;
+
+    /// The commissions the deadline sweep may owe a `late` entry as of `now`: deadline
+    /// strictly before `now`, step not in `not_lapsing`, and no `late` entry recorded since the
+    /// deadline last changed. Ordered by deadline, then id. Only a scan: each one is re-read
+    /// under its own lock before anything is written.
+    async fn lapsed_deadlines(
+        &self,
+        now: DateTimeUtc,
+        not_lapsing: &[LifecycleStep],
+    ) -> anyhow::Result<Vec<LapsedDeadline>>;
 }
 
 /// The **write** surface of Zurfur's record of commissions — reachable only on an
@@ -322,13 +333,6 @@ pub trait CommissionWrites: Send {
         capability: &WriteCapability<CommissionId, AsParticipant>,
         change: &DelayedChange,
     ) -> anyhow::Result<bool>;
-
-    /// The commissions the deadline sweeper must mark Late as of `now`: deadline
-    /// strictly before `now`, not already
-    /// [`Late`](crate::elements::commission::DeadlineStatus::Late),
-    /// lifecycle not terminal. Ordered by deadline. A read on the write view so
-    /// the sweeper scans and marks in one unit, with no gap between.
-    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>>;
 }
 
 /// The **read** side of a commission unit of work — the same lookups as
@@ -354,6 +358,18 @@ pub trait CommissionReads: Send {
         commission: &CommissionId,
         user: &UserId,
     ) -> anyhow::Result<Option<LockedStanding>>;
+
+    /// The node `commission` points at and that node's level, with the commission row locked
+    /// (`FOR NO KEY UPDATE`) for the rest of the unit; `None` when it is absent or has no node.
+    /// Reads no viewer: it is the system's own act's lock, which no user's standing grants.
+    async fn lock_for_system(
+        &mut self,
+        commission: &CommissionId,
+    ) -> anyhow::Result<Option<LockedNode>>;
+
+    /// Whether `commission` is still owed a `late` entry: none recorded since its deadline last
+    /// changed. [`CommissionStore::lapsed_deadlines`]'s anti-join, for one commission.
+    async fn late_owed(&mut self, commission: &CommissionId) -> anyhow::Result<bool>;
 
     /// Whether `user` is a Participant of `commission`; as
     /// [`CommissionStore::is_participant`].

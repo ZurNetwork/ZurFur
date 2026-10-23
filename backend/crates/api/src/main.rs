@@ -85,9 +85,8 @@ async fn profile_app(config: Config) -> anyhow::Result<http_stack::Stacked> {
     let session_layer = http_cookies::session_layer(store, secure_cookies);
 
     tokio::spawn(api::run_deadline_sweeper(
-        app_state.database.clone(),
-        // Needs the pool directly for the advisory lock (single-writer leader election).
-        app_state.pool.clone(),
+        // The app's ports, and the pool for the advisory lock (single-writer leader election).
+        app_state.clone(),
         std::time::Duration::from_secs(app_state.config.deadline_sweep_interval_secs),
     ));
 

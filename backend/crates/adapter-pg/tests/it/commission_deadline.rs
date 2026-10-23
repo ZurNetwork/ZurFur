@@ -1,11 +1,9 @@
 //! The deadline axis over PostgreSQL, against a throwaway container:
 //! `set_deadline` / `set_deadline_status` live on the [`UnitOfWork`]'s
 //! commissions view (so a deadline write and its changelog entry commit
-//! together), and `lapsed_deadlines` is the sweeper's **transactional**
-//! candidate scan — asked on the same open unit that then marks Late, so no
-//! commission can slip between the scan and the mark (the
-//! same same-transaction posture as `commission_has_facts`). Requires a container
-//! runtime socket (DOCKER_HOST honored).
+//! together); `lapsed_deadlines` is the sweep's scan on the pool, and a unit's
+//! `late_owed` the same anti-join for one commission, which the sweep re-reads
+//! under its lock. Requires a container runtime socket (DOCKER_HOST honored).
 
 use crate::seed;
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
@@ -207,11 +205,10 @@ async fn deadline_and_status_round_trip_through_the_unit() {
     assert_eq!(found.deadline, None, "a dropped unit rolls the set back");
 }
 
-/// Ruling E12 (store layer) — `lapsed_deadlines(now)` returns exactly the
-/// commissions the sweeper must mark: deadline strictly before `now`, not
-/// already Late, lifecycle not terminal (Completed/Cancelled skipped; Disputed
-/// is not terminal and IS returned); ordered by deadline; and it sees writes
-/// staged on the SAME open unit (the no-TOCTOU posture).
+/// The pool's sweep scan returns exactly the commissions the sweep may owe a `late` entry:
+/// deadline strictly before `now`, no `late` entry since the deadline last changed, on a step a
+/// deadline lapses on (Completed, Cancelled and Disputed left out); ordered by deadline. A unit's
+/// `late_owed` answers the same anti-join for one commission, seeing what the unit staged.
 #[tokio::test]
 async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
     let (pool, _container) = fresh_pool().await;
@@ -310,24 +307,105 @@ async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
             .await
             .expect("log late");
 
-        let lapsed = uow
+        let owed = uow
             .commissions()
-            .lapsed_deadlines(now)
+            .late_owed(&already_late.id)
             .await
-            .expect("scan lapses");
-        let ids: Vec<_> = lapsed.iter().map(|l| l.id).collect();
-        assert_eq!(
-            ids,
-            vec![missed.id, missed_later.id, delayed.id, disputed.id],
-            "exactly the sweepable set, ordered by deadline"
+            .expect("the owed read");
+        assert!(
+            !owed,
+            "a late entry staged on the unit is seen by its own read"
         );
-        assert_eq!(lapsed[0].deadline, ts("2020-01-01T00:00:00Z"));
-        assert_eq!(lapsed[0].status, None);
-        assert_eq!(
-            lapsed[2].status,
-            Some(DeadlineStatus::Delayed),
-            "the scan carries the standing flag so the Late entry can name it"
-        );
+        let missed_owed = uow
+            .commissions()
+            .late_owed(&missed.id)
+            .await
+            .expect("the owed read");
+        assert!(missed_owed, "nothing recorded yet is owed");
     }
+    uow.commit().await.expect("commit");
+
+    let store = PgCommissionStore::new(pool.clone());
+    let not_lapsing = LifecycleStep::not_lapsing();
+    let lapsed = store
+        .lapsed_deadlines(now, &not_lapsing)
+        .await
+        .expect("scan lapses");
+    let ids: Vec<_> = lapsed.iter().map(|l| l.id).collect();
+    assert_eq!(
+        ids,
+        vec![missed.id, missed_later.id, delayed.id],
+        "exactly the sweepable set, ordered by deadline"
+    );
+    assert_eq!(lapsed[0].deadline, ts("2020-01-01T00:00:00Z"));
+    assert_eq!(lapsed[0].status, None);
+    assert_eq!(
+        lapsed[2].status,
+        Some(DeadlineStatus::Delayed),
+        "the scan carries the standing flag so the Late entry can name it"
+    );
+    assert!(
+        !ids.contains(&disputed.id),
+        "a Disputed commission's deadline doesn't lapse"
+    );
+}
+
+/// A deadline set after a `late` entry re-arms the owed read: one change per miss.
+#[tokio::test]
+async fn a_deadline_change_re_arms_the_owed_read() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:rearm-owner").await;
+    let now = ts("2020-06-01T00:00:00Z");
+    let commission = seed(
+        &pool,
+        &owner,
+        "Re-armed",
+        Some(ts("2020-01-01T00:00:00Z")),
+        None,
+    )
+    .await;
+    let db = PgDatabase::new(pool.clone());
+    let late_facts = LateFacts {
+        state: CommissionState::from(&commission),
+        owed: true,
+    };
+    let mark = owes_late(&late_facts, now).expect("a late entry is owed");
+    let moved = schedule_deadline(
+        &CommissionState::from(&commission),
+        ts("2020-03-01T00:00:00Z"),
+    )
+    .expect("allowed")
+    .expect("a real set");
+
+    let mut uow = db.begin().await.expect("begin");
+    uow.changelog()
+        .append(&NewChangelogEntry::late(commission.id, &mark, now))
+        .await
+        .expect("log late");
+    let logged = uow
+        .commissions()
+        .late_owed(&commission.id)
+        .await
+        .expect("the owed read");
+    uow.changelog()
+        .append(&NewChangelogEntry::deadline_set(
+            commission.id,
+            owner.id.clone(),
+            &moved,
+            now,
+        ))
+        .await
+        .expect("log the move");
+    let re_armed = uow
+        .commissions()
+        .late_owed(&commission.id)
+        .await
+        .expect("the owed read");
     uow.rollback().await.expect("rollback");
+
+    assert!(
+        !logged,
+        "a late entry since the deadline was set owes nothing"
+    );
+    assert!(re_armed, "a deadline set after it owes a fresh one");
 }

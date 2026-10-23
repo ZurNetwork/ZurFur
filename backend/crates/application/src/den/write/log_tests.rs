@@ -2,7 +2,8 @@
 //! stranger's, a Participant's (a rename needs the Owner), a create on a taken segment, the
 //! owner's lifecycle move and one its rule refuses, a Delayed flag its rule refuses and a
 //! deadline set, and a create whose store failure the gate latches. No DID or handle at info or
-//! above, no name anywhere, and nothing of PostgreSQL's detail.
+//! above, no name anywhere, and nothing of PostgreSQL's detail. The system's Late mark logs no
+//! DID and no name at any level.
 
 use std::sync::Arc;
 
@@ -21,7 +22,10 @@ use super::tests::{PG_TITLE, node_name, pg_seed, provision, write};
 use super::*;
 use crate::den::{
     authority::MINT_AS,
-    test_acts::{create_act, move_act, rename_act, set_deadline_act, set_delayed_act},
+    test_acts::{
+        create_act, mark_late_act, move_act, rename_act, set_deadline_act, set_delayed_act,
+        the_system,
+    },
 };
 
 /// The owner's DID.
@@ -171,4 +175,51 @@ async fn a_latched_store_failure_logs_no_store_detail_and_no_did() {
             assert!(!line.contains(leak), "a line carries {leak}: {line}");
         }
     }
+}
+
+/// The system's DID-less write's owner.
+const SYSTEM_OWNER: &str = "did:plc:den-write-log-system-owner";
+
+// The system's Late mark, landing and then owing nothing, logs no DID and no name at any level.
+#[tokio::test]
+async fn the_system_act_logs_no_did_or_name_at_any_level() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let (owner, commission) = pg_seed(&ports, SYSTEM_OWNER).await;
+    let missed = chrono::Utc::now() - chrono::Duration::hours(1);
+    write(&ports, &owner, set_deadline_act(commission, missed))
+        .await
+        .expect("the owner sets a deadline that has passed");
+    let (log, _guard) = capture_at_trace();
+
+    let marked = system_write(&ports, mark_late_act(commission)).await;
+    let owed_nothing = system_write(&ports, mark_late_act(commission)).await;
+
+    assert!(marked.is_ok(), "{marked:?}");
+    assert!(
+        matches!(
+            owed_nothing,
+            Err(DenWriteError::Precondition(CommissionRefusal::NothingOwed))
+        ),
+        "{owed_nothing:?}"
+    );
+    let text = log.text();
+    assert!(
+        text.contains("use case finished"),
+        "the capture saw nothing: {text}"
+    );
+    for line in text.lines() {
+        for leak in [SYSTEM_OWNER, "did:plc:", PG_TITLE, "DETAIL"] {
+            assert!(!line.contains(leak), "a line carries {leak}: {line}");
+        }
+    }
+}
+
+/// The system's write of `act` through the use case.
+async fn system_write(ports: &Ports, act: DenAct) -> Result<WriteResult, DenWriteError> {
+    let command = Command {
+        actor: the_system(),
+        act,
+    };
+    Den::from(ports).write(command, chrono::Utc::now()).await
 }

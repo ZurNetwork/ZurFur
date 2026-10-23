@@ -1,10 +1,14 @@
 //! Store doubles that answer from a real store until a test scripts them otherwise: an Account
 //! listing that also lists a membership the store wouldn't, an Account or user read that fails,
-//! a role read that answers a stale role, a user read that finds no row, and a commission
-//! standing scripted apart on the pool and in a unit. A script is shared, so a test seeds
-//! through the real answers first and scripts the double afterwards.
+//! a role read that answers a stale role, a user read that finds no row, a commission standing
+//! scripted apart on the pool and in a unit, and the deadline sweep's reads: a change made
+//! between its pool scan and its units, a scan that fails, and a unit's system lock that fails
+//! for one commission. A script is shared, so a test seeds through the real answers first and
+//! scripts the double afterwards.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
@@ -15,8 +19,9 @@ use domain::elements::{
         AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
         CommissionFile, CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary,
         DeadlineChange, DelayedChange, DirectionChange, ElementId, FileKey, FileSummary,
-        GrantLevel, LapsedDeadline, LifecycleMove, LockedStanding, NewCommission, NewElement,
-        NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
+        GrantLevel, LapsedDeadline, LifecycleMove, LifecycleStep, LockedNode, LockedStanding,
+        NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot,
+        TabId, TabRow,
     },
     did::Did,
     handle::Handle,
@@ -304,12 +309,18 @@ impl UserStore for ScriptedUsers {
 /// Scripted answers, keyed by commission and viewer.
 type ScriptedAnswers<T> = HashMap<(CommissionId, UserId), Option<T>>;
 
+/// A change a test makes once the sweep's pool scan has answered, before any of its units.
+pub type AfterScan = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
+
 /// What a scripted standing double answers beyond its inner store: the pool's and the unit's
-/// answers apart, so the two can disagree.
+/// answers apart, so the two can disagree; and the sweep's scripted reads, each once.
 #[derive(Default)]
 struct StandingPlan {
     standing: ScriptedAnswers<CommissionStanding>,
     standing_for_update: ScriptedAnswers<LockedStanding>,
+    after_scan: Option<AfterScan>,
+    scan_failure: Option<anyhow::Error>,
+    system_lock_failures: HashMap<CommissionId, anyhow::Error>,
 }
 
 /// A shared script for [`ScriptedStanding`] and [`ScriptedStandingDatabase`]; every clone
@@ -342,6 +353,22 @@ impl StandingScript {
             .insert((commission, user), answer);
     }
 
+    /// The next sweep scan on the pool answers as the store does, then runs `change` before it
+    /// returns: a change made between the scan and the sweep's units.
+    pub fn after_scan(&self, change: AfterScan) {
+        self.plan().after_scan = Some(change);
+    }
+
+    /// The next sweep scan on the pool fails with `failure`.
+    pub fn fail_scan(&self, failure: anyhow::Error) {
+        self.plan().scan_failure = Some(failure);
+    }
+
+    /// The next system lock a unit takes on `commission` fails with `failure`.
+    pub fn fail_system_lock(&self, commission: CommissionId, failure: anyhow::Error) {
+        self.plan().system_lock_failures.insert(commission, failure);
+    }
+
     fn plan(&self) -> MutexGuard<'_, StandingPlan> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -356,6 +383,21 @@ impl StandingScript {
         self.plan().standing.get(&pair).copied()
     }
 
+    /// The change scripted after the scan, taken so it runs once.
+    fn take_after_scan(&self) -> Option<AfterScan> {
+        self.plan().after_scan.take()
+    }
+
+    /// The scan's scripted failure, taken so it fails once.
+    fn take_scan_failure(&self) -> Option<anyhow::Error> {
+        self.plan().scan_failure.take()
+    }
+
+    /// The system lock's scripted failure on `commission`, taken so it fails once.
+    fn take_system_lock_failure(&self, commission: &CommissionId) -> Option<anyhow::Error> {
+        self.plan().system_lock_failures.remove(commission)
+    }
+
     /// The unit answer scripted for the pair, else `None` to read through.
     fn standing_for_update(
         &self,
@@ -367,8 +409,8 @@ impl StandingScript {
     }
 }
 
-/// A [`CommissionStore`] whose `standing` answers as its [`StandingScript`] says; every other
-/// read delegates to `inner`.
+/// A [`CommissionStore`] whose `standing` and sweep scan answer as its [`StandingScript`] says;
+/// every other read delegates to `inner`.
 pub struct ScriptedStanding {
     inner: Arc<dyn CommissionStore>,
     script: StandingScript,
@@ -492,10 +534,27 @@ impl CommissionStore for ScriptedStanding {
     async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>> {
         self.inner.slots(commission).await
     }
+
+    // The sweep's interpositions: a scripted failure, or the store's answer and then the
+    // scripted change.
+    async fn lapsed_deadlines(
+        &self,
+        now: DateTimeUtc,
+        not_lapsing: &[LifecycleStep],
+    ) -> anyhow::Result<Vec<LapsedDeadline>> {
+        if let Some(failure) = self.script.take_scan_failure() {
+            return Err(failure);
+        }
+        let lapsed = self.inner.lapsed_deadlines(now, not_lapsing).await?;
+        if let Some(change) = self.script.take_after_scan() {
+            change().await;
+        }
+        Ok(lapsed)
+    }
 }
 
-/// A [`Database`] whose units answer `standing_for_update` as its [`StandingScript`] says;
-/// everything else on the unit delegates to the unit `inner` opens.
+/// A [`Database`] whose units answer `standing_for_update` and `lock_for_system` as its
+/// [`StandingScript`] says; everything else on the unit delegates to the unit `inner` opens.
 pub struct ScriptedStandingDatabase {
     inner: Arc<dyn Database>,
     script: StandingScript,
@@ -609,6 +668,21 @@ impl CommissionReads for ScriptedStandingRepo<'_> {
             return Ok(scripted);
         }
         self.inner.standing_for_update(commission, user).await
+    }
+
+    // The sweep's interposition: a scripted failure for one commission.
+    async fn lock_for_system(
+        &mut self,
+        commission: &CommissionId,
+    ) -> anyhow::Result<Option<LockedNode>> {
+        if let Some(failure) = self.script.take_system_lock_failure(commission) {
+            return Err(failure);
+        }
+        self.inner.lock_for_system(commission).await
+    }
+
+    async fn late_owed(&mut self, commission: &CommissionId) -> anyhow::Result<bool> {
+        self.inner.late_owed(commission).await
     }
 
     async fn is_participant(
@@ -753,10 +827,6 @@ impl CommissionWrites for ScriptedStandingRepo<'_> {
         change: &DelayedChange,
     ) -> anyhow::Result<bool> {
         self.inner.set_deadline_status(capability, change).await
-    }
-
-    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
-        self.inner.lapsed_deadlines(now).await
     }
 }
 

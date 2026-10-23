@@ -13,10 +13,10 @@ use domain::{
             CommissionStanding, CommissionStart, CommissionSummary, DeadlineChange, DeadlineStatus,
             DelayedChange, DirectionChange, DirectionStatus, ElementId, ElementPayload, ElementRow,
             ElementType, FileKey, FileSummary, GrantLevel, LapsedDeadline, LifecycleMove,
-            LifecycleStep, LockedStanding, Markup, MarkupKey, NewCommission, NewElement, NewSeat,
-            NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
-            SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
-            declares_surface,
+            LifecycleStep, LockedNode, LockedStanding, Markup, MarkupKey, NewCommission,
+            NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind,
+            SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow,
+            VisibilityMode, declared_tabs, declares_surface,
         },
         did::Did,
         invitation::InvitationState,
@@ -591,42 +591,28 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         .await?;
         Ok(affected == 1)
     }
+}
 
-    /// The sweeper's candidate scan, on the open transaction: deadline strictly
-    /// before `now`, not already `late`, non-terminal lifecycle
-    /// ([`LifecycleStep::is_terminal`]).
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
-        let terminal: Vec<String> = {
-            use strum::VariantArray;
-            LifecycleStep::VARIANTS
-                .iter()
-                .filter(|step| step.is_terminal())
-                .map(|step| step.to_string())
-                .collect()
-        };
-        // Late is never persisted; dedup against the changelog's own last entry
-        // since the latest deadline change, so each fresh miss is its own event.
-        let rows = sql::lapsed_deadlines(&mut *self.conn, now, &terminal).await?;
-
-        rows.into_iter()
-            .map(|row| {
-                Ok(LapsedDeadline {
-                    id: CommissionId::from(row.id),
-                    deadline: row.deadline,
-                    status: row
-                        .deadline_status
-                        .as_deref()
-                        .map(|token| {
-                            DeadlineStatus::try_from(token).map_err(|_| {
-                                anyhow::anyhow!("unknown deadline_status token {token:?}")
-                            })
-                        })
-                        .transpose()?,
+/// The sweep scan's rows as the domain's lapses, each stored flag re-validated.
+fn to_lapses(rows: Vec<sql::LapsedDeadlinesRow>) -> anyhow::Result<Vec<LapsedDeadline>> {
+    rows.into_iter()
+        .map(|row| {
+            let status = row
+                .deadline_status
+                .as_deref()
+                .map(|token| {
+                    DeadlineStatus::try_from(token)
+                        .map_err(|_| anyhow::anyhow!("unknown deadline_status token {token:?}"))
                 })
-            })
-            .collect()
-    }
+                .transpose()?;
+            let lapse = LapsedDeadline {
+                id: CommissionId::from(row.id),
+                deadline: row.deadline,
+                status,
+            };
+            Ok(lapse)
+        })
+        .collect()
 }
 
 /// Re-validates a stored `mode` token into [`VisibilityMode`]; the one gate
@@ -882,6 +868,34 @@ impl CommissionReads for PgCommissionWrites<'_> {
             node: NodeId::from(row.node_id),
         };
         Ok(Some(locked))
+    }
+
+    /// One locking select on the unit's connection: the commission inner-joined to its node,
+    /// `FOR NO KEY UPDATE OF commission`, reading no viewer. An absent id, or a commission
+    /// with no node, answers `None`; else the node and its level, read leniently.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn lock_for_system(
+        &mut self,
+        commission: &CommissionId,
+    ) -> anyhow::Result<Option<LockedNode>> {
+        let rows = sql::lock_for_system(&mut *self.conn, uuid::Uuid::from(*commission)).await?;
+        // The select is on the primary key: at most one row.
+        let Some(row) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+        let locked = LockedNode {
+            node: NodeId::from(row.node_id),
+            level: stored_level(&row.level),
+        };
+        Ok(Some(locked))
+    }
+
+    /// The sweep scan's anti-join for one commission, on the unit's connection after its lock.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn late_owed(&mut self, commission: &CommissionId) -> anyhow::Result<bool> {
+        let owed = sql::late_owed(&mut *self.conn, uuid::Uuid::from(*commission)).await?;
+        // `NOT EXISTS` is never NULL; an unknown answer owes nothing.
+        Ok(owed.unwrap_or(false))
     }
 
     /// [`CommissionStore::is_participant`] on the unit's connection.
@@ -1263,5 +1277,18 @@ impl CommissionStore for PgCommissionStore {
                 to_commission(id, row.into())
             })
             .collect()
+    }
+
+    /// The sweep's scan on the pool: deadline strictly before `now`, step not in
+    /// `not_lapsing`, no `late` entry since the deadline last changed; ordered by deadline.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn lapsed_deadlines(
+        &self,
+        now: DateTimeUtc,
+        not_lapsing: &[LifecycleStep],
+    ) -> anyhow::Result<Vec<LapsedDeadline>> {
+        let steps: Vec<String> = not_lapsing.iter().map(ToString::to_string).collect();
+        let rows = sql::lapsed_deadlines(&self.pool, now, &steps).await?;
+        to_lapses(rows)
     }
 }

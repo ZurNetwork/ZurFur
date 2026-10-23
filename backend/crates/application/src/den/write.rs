@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use atta::{Act, ActName, Born, Placed, RealPath, Shape, WriteCaps, WriteError, Writer};
+use atta::{Act, ActName, Born, Placed, RealPath, Shape, Viewer, WriteCaps, WriteError, Writer};
 use domain::{
     datetime::DateTimeUtc,
     elements::{commission::CommissionRefusal, level::Level, user::UserId},
@@ -13,7 +13,7 @@ use domain::{
 
 use crate::{
     LazyUnit, Ports,
-    commission::den::CommissionPlace,
+    commission::{den::CommissionPlace, sweep::SweepToken},
     den::{
         Den, DenName, DenThing, DenType, Place, TopLevel,
         act::{ActShape, ActSpec, ArmAnswer, BornEntry, DenAct},
@@ -26,10 +26,58 @@ use crate::{
     use_case,
 };
 
+/// Atta's viewer for the system: no DID can equal it, since a DID starts `did:` and holds no
+/// angle bracket.
+const SYSTEM_VIEWER: &str = "<system>";
+
+/// Who acts in a write: the session's user, or the system, which only the deadline sweep can
+/// name, since only it can make a [`SweepToken`].
+pub(crate) enum Actor {
+    /// The session's user.
+    User(UserId),
+    /// The system, with no user behind it.
+    System(SweepToken),
+}
+
+impl Actor {
+    /// The user acting, or `None` for the system.
+    pub(in crate::den) fn user(&self) -> Option<&UserId> {
+        match self {
+            Self::User(user) => Some(user),
+            Self::System(_) => None,
+        }
+    }
+
+    /// Atta's viewer for this actor: a user's from their DID, the system's a fixed token.
+    pub(in crate::den) fn viewer(&self) -> Viewer {
+        match self {
+            Self::User(user) => DenHost::viewer_of(user),
+            Self::System(_) => Viewer::from(SYSTEM_VIEWER.to_owned()),
+        }
+    }
+}
+
+impl From<UserId> for Actor {
+    /// The session's user, acting.
+    fn from(user: UserId) -> Self {
+        Self::User(user)
+    }
+}
+
+impl fmt::Debug for Actor {
+    /// Which actor it is; never the user's DID.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::User(_) => formatter.write_str("User"),
+            Self::System(_) => formatter.write_str("System"),
+        }
+    }
+}
+
 /// A write: who acts, and the act.
 pub(crate) struct Command {
-    /// The session's user.
-    pub(crate) actor: UserId,
+    /// The session's user, or the system.
+    pub(crate) actor: Actor,
     /// What they do.
     pub(crate) act: DenAct,
 }
@@ -139,11 +187,16 @@ pub(in crate::den) fn commission_directory() -> Option<RealPath> {
 /// The existing node the grant names, as Atta's act carries it: its path from the grant's
 /// commission id, its type the act's, its level the locked read's.
 fn granted_node(grant: &Grant, den_type: DenType) -> Result<Placed, DenWriteError> {
-    let authority::GrantKind::Existing {
-        commission, level, ..
-    } = grant.kind()
-    else {
-        return Err(DenWriteError::Refused(RefusalClass::WrongGrant));
+    let (commission, level) = match grant.kind() {
+        authority::GrantKind::Existing {
+            commission, level, ..
+        }
+        | authority::GrantKind::System {
+            commission, level, ..
+        } => (commission, level),
+        authority::GrantKind::Create { .. } => {
+            return Err(DenWriteError::Refused(RefusalClass::WrongGrant));
+        }
     };
     let place = Place::Commission(CommissionPlace::Commission(*commission));
     let path = place
@@ -270,7 +323,7 @@ pub(in crate::den) async fn written(
     let spec = act.spec();
     let atta_act = build(spec, act, &grant)?;
     let writer = Writer {
-        viewer: DenHost::viewer_of(grant.actor()),
+        viewer: grant.actor().viewer(),
         caps: WriteCaps::default(),
     };
     let mut host = DenWriteHost::new(unit, grant, now);
@@ -298,7 +351,7 @@ impl Den<'_> {
         authority::admit(ports, &spec, &actor).await?;
 
         let unit = uow.open().await?;
-        let grant = authority::grant(&mut *unit, &spec, &actor).await?;
+        let grant = authority::grant(&mut *unit, &spec, actor).await?;
         written(unit, grant, act, now).await
     }
 }

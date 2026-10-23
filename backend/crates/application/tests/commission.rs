@@ -1,18 +1,24 @@
 //! The deadline sweep as **pure policy**: driven directly at a chosen `now`
 //! over the shared in-memory runtime — no wall clock, no HTTP, no leader
 //! lock. The timer and the advisory-lock leader election that wrap it stay
-//! in `api` and are tested there.
+//! in `api` and are tested there. Each lapsed commission is marked in its own
+//! unit, re-read under its lock: test-support's doubles make a change between
+//! the pool scan and the units, or fail one commission's lock.
 
 #![allow(clippy::disallowed_methods, reason = "test seeding")]
 
+use std::sync::Arc;
+
 use adapter_mem::CommissionSeed;
-use application::commission::{SweepResult, sweep_deadlines};
+use application::commission::SweepResult;
 use application::transaction;
 use chrono::{DateTime, Utc};
+use composition::Runtime;
 use domain::elements::commission::{ChangelogEntry, CommissionId, CommissionTitle, LifecycleStep};
 use domain::elements::{did::Did, user::UserId};
-use domain::ports::{ChangelogStore, CommissionStore, Database, UnitOfWork};
+use domain::ports::{ChangelogStore, CommissionStore, UnitOfWork};
 use test_support::runtime::MemRuntime;
+use test_support::store_doubles::{ScriptedStanding, ScriptedStandingDatabase, StandingScript};
 
 /// A deadline that is long past.
 fn past() -> DateTime<Utc> {
@@ -102,10 +108,52 @@ async fn entries(changelog: &dyn ChangelogStore, id: CommissionId) -> Vec<Change
     changelog.entries(&id).await.expect("inspect entries")
 }
 
-/// Runs one deterministic sweep at the injected instant — exactly what the
-/// composition root's interval task does, minus the wall clock.
-async fn sweep(database: &dyn Database, now: DateTime<Utc>) -> SweepResult {
-    sweep_deadlines(database, now).await.expect("sweep runs")
+/// Runs one deterministic sweep at the injected instant through the use case — exactly what
+/// the composition root's interval task does, minus the wall clock.
+async fn sweep(runtime: &Runtime, now: DateTime<Utc>) -> SweepResult {
+    runtime
+        .app()
+        .commissions()
+        .sweep_deadlines(now)
+        .await
+        .expect("sweep runs")
+}
+
+/// Puts the fixture's pool and units behind `script`'s doubles, and answers the runtime they
+/// wrap, which reads and writes the real stores: what a test changes between scan and units.
+fn scripted(fixture: &mut MemRuntime, script: &StandingScript) -> Runtime {
+    let real = fixture.runtime.clone();
+    let pool = ScriptedStanding::new(real.commissions.clone(), script.clone());
+    let units = ScriptedStandingDatabase::new(real.database.clone(), script.clone());
+    fixture.runtime.commissions = Arc::new(pool);
+    fixture.runtime.database = Arc::new(units);
+    real
+}
+
+/// The owner `owner_did` moves `id`'s deadline to `deadline` through the use case.
+async fn move_deadline(
+    runtime: &Runtime,
+    id: CommissionId,
+    owner_did: &str,
+    deadline: DateTime<Utc>,
+) {
+    let command = application::commission::deadline::set::Command {
+        actor_id: UserId::from(Did::from(owner_did.to_owned())),
+        commission_id: id,
+        deadline,
+    };
+    runtime
+        .app()
+        .commissions()
+        .deadline()
+        .set(command, seeded_at())
+        .await
+        .expect("the owner moves the deadline");
+}
+
+/// The kinds of `entries`, as their stable tokens.
+fn kinds(entries: &[ChangelogEntry]) -> Vec<&'static str> {
+    entries.iter().map(|entry| entry.kind.into()).collect()
 }
 
 // AC2 + AC5 + AC4 — the sweep records every missed deadline in one pass as a
@@ -116,7 +164,6 @@ async fn sweep(database: &dyn Database, now: DateTime<Utc>) -> SweepResult {
 async fn the_sweep_records_every_missed_deadline_once() {
     let fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
     let runtime = &fixture.runtime;
-    let database = &*runtime.database;
     let first = seed(
         &fixture,
         "did:plc:one",
@@ -151,7 +198,7 @@ async fn the_sweep_records_every_missed_deadline_once() {
     .await;
 
     assert_eq!(
-        sweep(database, after_past()).await.marked_late,
+        sweep(runtime, after_past()).await.marked_late,
         2,
         "both missed deadlines are marked in one sweep"
     );
@@ -191,7 +238,7 @@ async fn the_sweep_records_every_missed_deadline_once() {
 
     // Idempotent: an already-Late commission is not re-marked or re-logged.
     assert_eq!(
-        sweep(database, after_past()).await.marked_late,
+        sweep(runtime, after_past()).await.marked_late,
         0,
         "nothing new to mark"
     );
@@ -209,7 +256,6 @@ async fn the_sweep_records_every_missed_deadline_once() {
 async fn a_standing_delayed_upgrades_to_late() {
     let fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
     let runtime = &fixture.runtime;
-    let database = &*runtime.database;
     let id = seed(
         &fixture,
         "did:plc:slipping",
@@ -220,7 +266,7 @@ async fn a_standing_delayed_upgrades_to_late() {
     .await;
     flag(&fixture, id, "did:plc:slipping", seeded_at()).await;
 
-    assert_eq!(sweep(database, after_past()).await.marked_late, 1);
+    assert_eq!(sweep(runtime, after_past()).await.marked_late, 1);
     let log = entries(&*runtime.changelog, id).await;
     let kinds: Vec<&'static str> = log.iter().map(|entry| entry.kind.into()).collect();
     assert_eq!(
@@ -241,7 +287,6 @@ async fn a_standing_delayed_upgrades_to_late() {
 async fn the_sweeper_skips_terminal_lifecycles() {
     let fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
     let runtime = &fixture.runtime;
-    let database = &*runtime.database;
     let owner = "did:plc:lifecycle-owner";
     let completed = seed(
         &fixture,
@@ -261,7 +306,7 @@ async fn the_sweeper_skips_terminal_lifecycles() {
     .await;
 
     assert_eq!(
-        sweep(database, after_past()).await.marked_late,
+        sweep(runtime, after_past()).await.marked_late,
         0,
         "no closed commission is marked"
     );
@@ -289,7 +334,6 @@ async fn the_sweeper_skips_terminal_lifecycles() {
 async fn a_disputed_commission_is_not_swept() {
     let fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
     let runtime = &fixture.runtime;
-    let database = &*runtime.database;
     let owner = "did:plc:dispute-owner";
     let disputed = seed(
         &fixture,
@@ -309,7 +353,7 @@ async fn a_disputed_commission_is_not_swept() {
     .await;
 
     assert_eq!(
-        sweep(database, after_past()).await.marked_late,
+        sweep(runtime, after_past()).await.marked_late,
         1,
         "only the working commission is marked"
     );
@@ -320,4 +364,144 @@ async fn a_disputed_commission_is_not_swept() {
     let marked = entries(&*runtime.changelog, active).await;
     assert_eq!(marked.len(), 1, "the working commission's Late entry");
     assert_eq!(<&'static str>::from(marked[0].kind), "late");
+}
+
+// Another sweep logs a commission's Late between this one's scan and its unit: the unit
+// re-reads under its lock that nothing is owed, and skips it.
+#[tokio::test]
+async fn a_lapse_already_logged_since_the_scan_is_skipped() {
+    let mut fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
+    let owner = "did:plc:raced-owner";
+    let raced = seed(
+        &fixture,
+        owner,
+        "Raced",
+        Some(past()),
+        LifecycleStep::Active,
+    )
+    .await;
+    let script = StandingScript::default();
+    let real = scripted(&mut fixture, &script);
+    let other_instance = real.clone();
+    script.after_scan(Box::new(move || {
+        Box::pin(async move {
+            let marked = sweep(&other_instance, after_past()).await;
+            assert_eq!(marked.marked_late, 1, "the other sweep logs it first");
+        })
+    }));
+
+    let swept = sweep(&fixture.runtime, after_past()).await;
+
+    assert_eq!(swept.marked_late, 0, "nothing was owed under the lock");
+    let log = entries(&*real.changelog, raced).await;
+    assert_eq!(
+        kinds(&log),
+        ["late"],
+        "exactly one late entry, the other sweep's"
+    );
+}
+
+// The owner moves the deadline into the future between the scan and the unit: the unit reads
+// the moved deadline under its lock, owes nothing, and appends nothing.
+#[tokio::test]
+async fn a_deadline_moved_since_the_scan_is_skipped() {
+    let mut fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
+    let owner = "did:plc:moving-owner";
+    let moved = seed(
+        &fixture,
+        owner,
+        "Moved",
+        Some(past()),
+        LifecycleStep::Active,
+    )
+    .await;
+    let script = StandingScript::default();
+    let real = scripted(&mut fixture, &script);
+    let mover = real.clone();
+    let later: DateTime<Utc> = "2099-01-01T00:00:00Z".parse().expect("valid timestamp");
+    script.after_scan(Box::new(move || {
+        Box::pin(async move { move_deadline(&mover, moved, owner, later).await })
+    }));
+
+    let swept = sweep(&fixture.runtime, after_past()).await;
+
+    assert_eq!(swept.marked_late, 0, "the moved deadline hasn't lapsed");
+    let log = entries(&*real.changelog, moved).await;
+    assert!(
+        !kinds(&log).contains(&"late"),
+        "no late entry: {:?}",
+        kinds(&log)
+    );
+}
+
+// One commission's unit fails: it is logged by its id and the pass goes on, so the next lapsed
+// commission is still marked.
+#[tokio::test]
+async fn one_failing_commission_does_not_stop_the_pass() {
+    let mut fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
+    let owner = "did:plc:failing-owner";
+    let failing = seed(
+        &fixture,
+        owner,
+        "Failing",
+        Some(past()),
+        LifecycleStep::Active,
+    )
+    .await;
+    let later_miss: DateTime<Utc> = "2020-02-01T00:00:00Z".parse().expect("valid timestamp");
+    let marked = seed(
+        &fixture,
+        owner,
+        "Marked",
+        Some(later_miss),
+        LifecycleStep::Active,
+    )
+    .await;
+    let script = StandingScript::default();
+    let real = scripted(&mut fixture, &script);
+    script.fail_system_lock(failing, anyhow::anyhow!("the commission's lock failed"));
+
+    let swept = sweep(&fixture.runtime, after_past()).await;
+
+    assert_eq!(swept.marked_late, 1, "the pass went on past the failure");
+    assert!(entries(&*real.changelog, failing).await.is_empty());
+    let log = entries(&*real.changelog, marked).await;
+    assert_eq!(kinds(&log), ["late"], "the next commission is marked");
+}
+
+// The owner moves a missed deadline to another past date between the scan and the unit: the
+// entry names the deadline the unit read under its lock, not the one the scan saw.
+#[tokio::test]
+async fn the_late_entry_names_the_locked_deadline() {
+    let mut fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
+    let owner = "did:plc:locked-owner";
+    let moved = seed(
+        &fixture,
+        owner,
+        "Moved",
+        Some(past()),
+        LifecycleStep::Active,
+    )
+    .await;
+    let script = StandingScript::default();
+    let real = scripted(&mut fixture, &script);
+    let mover = real.clone();
+    let still_missed: DateTime<Utc> = "2020-03-01T00:00:00Z".parse().expect("valid timestamp");
+    script.after_scan(Box::new(move || {
+        Box::pin(async move { move_deadline(&mover, moved, owner, still_missed).await })
+    }));
+
+    let swept = sweep(&fixture.runtime, after_past()).await;
+
+    assert_eq!(swept.marked_late, 1);
+    let log = entries(&*real.changelog, moved).await;
+    let late = log
+        .iter()
+        .find(|entry| <&'static str>::from(entry.kind) == "late")
+        .expect("a late entry");
+    assert_eq!(late.actor_id, None, "the system entry carries no actor");
+    assert_eq!(
+        late.payload["deadline"], "2020-03-01T00:00:00Z",
+        "the locked deadline, not the scanned one"
+    );
 }

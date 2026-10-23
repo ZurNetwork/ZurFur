@@ -1232,6 +1232,13 @@ pub mod commission {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
+    pub struct LockForSystemRow {
+        pub node_id: uuid::Uuid,
+        pub level: String,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
     pub struct RemoveElementGateRow {
         pub tab_id: uuid::Uuid,
         pub surface: String,
@@ -1680,8 +1687,11 @@ pub mod commission {
 
     /// `queries/commission/lapsed_deadlines.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// The deadline param receives the sweep instant ("now"); lifecycle takes the
-    /// terminal lifecycles exempt from lapsing.
+    /// The deadline sweep's scan on the pool: the deadline param receives the sweep
+    /// instant ("now"); lifecycle takes the steps a missed deadline doesn't lapse on
+    /// (the terminal ones and Disputed). A commission with a `late` entry recorded
+    /// since its deadline last changed is left out. Only a scan: the sweep re-reads
+    /// each one under its own lock before it writes.
     pub async fn lapsed_deadlines(
         conn: impl sqlx::PgExecutor<'_>,
         deadline: chrono::DateTime<chrono::Utc>,
@@ -1691,6 +1701,21 @@ pub mod commission {
             .bind(deadline)
             .bind(lifecycle)
             .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/commission/late_owed.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Whether one commission is still owed a `late` entry: none recorded since its
+    /// deadline last changed. The sweep scan's anti-join, for one commission, run on
+    /// the unit after its lock so it sees what committed while the lock was awaited.
+    pub async fn late_owed(
+        conn: impl sqlx::PgExecutor<'_>,
+        commission_id: uuid::Uuid,
+    ) -> sqlx::Result<Option<bool>> {
+        sqlx::query_scalar(include_str!("../queries/commission/late_owed.sql"))
+            .bind(commission_id)
+            .fetch_one(conn)
             .await
     }
 
@@ -1770,6 +1795,24 @@ pub mod commission {
     ) -> sqlx::Result<Vec<LoadTabsRow>> {
         sqlx::query_as(include_str!("../queries/commission/load_tabs.sql"))
             .bind(commission_id)
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/commission/lock_for_system.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The system's own act's lock, with no viewer: the node the commission points
+    /// at and that node's level, with the commission row locked until the unit of
+    /// work ends. FOR NO KEY UPDATE OF commission locks the commission row alone, as
+    /// the standing read does, so a user's act on the same commission waits for this
+    /// unit, and this one for it. An absent id, or a commission with no node,
+    /// answers no row.
+    pub async fn lock_for_system(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+    ) -> sqlx::Result<Vec<LockForSystemRow>> {
+        sqlx::query_as(include_str!("../queries/commission/lock_for_system.sql"))
+            .bind(id)
             .fetch_all(conn)
             .await
     }

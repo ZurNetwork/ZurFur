@@ -20,7 +20,7 @@
 //!   (actor NULL), atomically with the status write.
 //!
 //! The sweep itself is exercised deterministically by calling
-//! [`application::commission::sweep_deadlines`] with an injected `now` — the
+//! [`application::commission::Commissions::sweep_deadlines`] with an injected `now` — the
 //! same use case the composition root's interval task drives on the wall clock.
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
@@ -126,7 +126,15 @@ async fn entries(
 /// Runs one deterministic sweep at the injected instant — exactly what the
 /// composition root's interval task does, minus the wall clock.
 async fn sweep(backend: &MemBackend, now: DateTime<Utc>) -> usize {
-    application::commission::sweep_deadlines(&*backend.database(), now)
+    let sweeper = Did::from("did:plc:sweeper".to_owned());
+    let mut runtime = test_support::runtime::mem(&sweeper).build().runtime;
+    runtime.commissions = backend.commission_store();
+    runtime.changelog = backend.changelog_store();
+    runtime.database = backend.database();
+    runtime
+        .app()
+        .commissions()
+        .sweep_deadlines(now)
         .await
         .expect("sweep runs")
         .marked_late

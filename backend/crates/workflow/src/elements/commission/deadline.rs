@@ -349,15 +349,15 @@ impl LateMark {
     }
 }
 
-/// The `late` entry `facts` owe at `now`: owed when the deadline is strictly before `now`, the
-/// step isn't terminal, the commission isn't Disputed and no entry is recorded yet.
+/// The `late` entry `facts` owe at `now`: owed when the deadline is strictly before `now`, on a
+/// step a deadline lapses on (not terminal, not Disputed), and no entry is recorded yet.
 pub fn owes_late(facts: &LateFacts, now: DateTimeUtc) -> Result<LateMark, CommissionRefusal> {
     let state = &facts.state;
     let Some(deadline) = state.deadline() else {
         return Err(CommissionRefusal::NothingOwed);
     };
-    let lapsed = deadline < now && !state.lifecycle_step().is_terminal();
-    if !lapsed || state.is_disputed() || !facts.owed {
+    let lapsed = deadline < now && state.lifecycle_step().lapses();
+    if !lapsed || !facts.owed {
         return Err(CommissionRefusal::NothingOwed);
     }
     Ok(LateMark {

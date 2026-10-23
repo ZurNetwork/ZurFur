@@ -2,7 +2,7 @@
   "path": "backend/crates/application/src/commission",
   "charted": "2026-10-23",
   "short": "Commission use cases",
-  "is": "Commission use cases — lifecycle (create/delete/archive/unarchive) and per-facet action trees (deadline, status, files, invitations, view, seats, slots, notes, maturity, markup, changelog), one Command/Query + Output + `#[use_case]` method file per action; the module root `../commission.rs` holds the `Commissions` namespace, `CommissionError` (with `From<DenWriteError>`), `CommissionResult` and the system-actor `sweep_deadlines`; `act.rs` holds the commission's acts through the Den's write: create, rename, the lifecycle facet's move, and the direction, deadline and Delayed sets and clears.",
+  "is": "Commission use cases — lifecycle (create/delete/archive/unarchive) and per-facet action trees (deadline, status, files, invitations, view, seats, slots, notes, maturity, markup, changelog), one Command/Query + Output + `#[use_case]` method file per action; the module root `../commission.rs` holds the `Commissions` namespace, `CommissionError` (with `From<DenWriteError>`), and `CommissionResult`; `sweep.rs` holds the system's Late mark and its `sweep_deadlines` use case; `act.rs` holds the commission's acts through the Den's write: create, rename, the lifecycle facet's move, the direction, deadline and Delayed sets and clears, and the system's Late mark.",
   "type": "code",
   "tags": [
     "category:source"
@@ -14,7 +14,7 @@
   "fs": [
     {
       "name": "act.rs + act/tests.rs",
-      "role": "CommissionAct, the commission's acts the Den's write carries (Create, Rename, MoveLifecycle, SetDirection, ClearDirection, SetDeadline, ClearDeadline, SetDelayed, ClearDelayed), each body beside its typed use case; spec() and a Debug that prints the variant alone; act/tests.rs: a create needs no role, a rename the Owner and a lifecycle move any Participant, each read from its capability marker, a create's six Private entries named by their words, a rename's shape its new name, a move's a Change; each direction, deadline and Delayed act needs any Participant, is a Change on its commission's place, and prints its variant alone",
+      "role": "CommissionAct, the commission's acts the Den's write carries (Create, Rename, MoveLifecycle, SetDirection, ClearDirection, SetDeadline, ClearDeadline, SetDelayed, ClearDelayed, MarkLate), each body beside its typed use case; spec() and a Debug that prints the variant alone; act/tests.rs: a create needs a create (Needs::Create), a rename the Owner and a lifecycle move any Participant (Needs::Role), each read from its capability marker, a create's six Private entries named by their words, a rename's shape its new name, a move's a Change; each direction, deadline and Delayed act needs any Participant, is a Change on its commission's place, and prints its variant alone",
       "node": false
     },
     {
@@ -98,6 +98,11 @@
       "node": false
     },
     {
+      "name": "sweep.rs + sweep/tests.rs",
+      "role": "the deadline sweep: SweepToken (its one field private here, so only this file can make the system's actor, by type: E0451 elsewhere), the system's Late mark (sweep::Act: the commission it is anchored on; spec a Change needing the system, read from the AsSystem marker; precondition the domain's owes_late on the LateFacts its grant read under the lock; handle the lent commission alone, writing no field; ENTRY `EntryRule::Always(GatedEntry::LATE)`), SweepResult { marked_late }, and `Commissions::sweep_deadlines(now)`, a #[use_case] holding no unit: one pool scan (lapsed_deadlines, leaving out LifecycleStep::not_lapsing), then one Den::write per lapsed commission, each its own unit; nothing owed and not found are skips, any other failure is logged by the commission's id at warn and the sweep goes on; its one caller is api's sweep_pass_as_leader (write_gate_seams pins it); sweep/tests.rs: the act's spec, the outcome classes, and on each adapter one late entry by no actor with the locked deadline and a second pass appending none",
+      "node": false
+    },
+    {
       "name": "values.rs",
       "role": "CommissionValues: the flat values create and rename answer; `answered(written, now)` builds them from the write's answer, its id the thing written, its title and visibility the name and level the gate wrote, and its deadline status derived at the act's time, through from_parts",
       "node": false
@@ -113,7 +118,7 @@
     "**Ordering rule.** Authorize before anything observable or written: before a byte of an upload is read, before a no-op is noticed (each act through the Den's write, whose grant comes before its rule), and before `provision` (`view/grant`, `view/revoke`, `invitations/issue`).",
     "**Atomicity.** A state write and the changelog entry recording it share one unit of work, and entries are keyed on a REAL transition — an idempotent no-op writes nothing and appends nothing. Blob bytes cannot ride a Postgres transaction, so `files/upload` writes the blob first and deletes the orphan before refusing.",
     "`seq` on a changelog entry is the STORE's ordering key (a `bigserial` in pg): monotonic per stream but not gapless, and never renumbered off a page position.",
-    "`sweep_deadlines` is the only system actor here. It can only scan `lapsed_deadlines`, read each lapsed commission in the same unit, and append the system `Late` entry the domain's `owes_late` says is owed (a Disputed commission is owed none); it holds no handle that could move a lifecycle or a direction status. `Late` is derived on read, never persisted. The deadline, Delayed and direction acts, like the lifecycle move, run their domain rules in the Den's write gate; `From<CommissionRefusal>` maps each refusal to its own answer (a Disputed commission's deadline act, like its lifecycle move, `CommissionDisputed`, a 409, while its Delayed acts are allowed; a Delayed act with no deadline `NoDeadline` and one while Late `CommissionLate`, 409s; a move into Draft or Disputed `LifecycleMoveRefused`, a 409); each comes through the Den's write as `DenWriteError::Precondition`.",
+    "`sweep_deadlines` is the only system actor here, and it acts only through the Den's write: it scans `lapsed_deadlines` on the pool, then hands each lapse to the write as the system, whose grant locks the row by the viewer-less `lock_for_system`, re-reads its state and whether a `late` entry is still owed (`late_owed`), and appends the `late` entry the domain's `owes_late` says is owed (a Disputed commission's deadline never lapses), built by the gate with no actor; its capability (`AsSystem`) is taken by no port method, so it can't move a lifecycle, a direction status or any field. `Late` is derived on read, never persisted. The deadline, Delayed and direction acts, like the lifecycle move, run their domain rules in the Den's write gate; `From<CommissionRefusal>` maps each refusal to its own answer (a Disputed commission's deadline act, like its lifecycle move, `CommissionDisputed`, a 409, while its Delayed acts are allowed; a Delayed act with no deadline `NoDeadline` and one while Late `CommissionLate`, 409s; a move into Draft or Disputed `LifecycleMoveRefused`, a 409); each comes through the Den's write as `DenWriteError::Precondition`.",
     "The streaming seam is `tokio::io::AsyncRead` in both directions — never a buffered `Vec<u8>` or a driver type.",
     "See also: ZMVP-88 (file entries streaming seam).",
     "See also: ZMVP-86 (deadline sweep)."

@@ -8,8 +8,8 @@ use domain::{
     elements::{
         commission::{
             ChangelogEntryKind, Commission, CommissionId, CommissionRole, DeadlineCleared,
-            DeadlineSet, DelayedCleared, DelayedSet, DirectionCleared, DirectionSet, LifecycleMove,
-            NewChangelogEntry,
+            DeadlineSet, DelayedCleared, DelayedSet, DirectionCleared, DirectionSet, LateMark,
+            LifecycleMove, NewChangelogEntry,
         },
         level::Level,
         name::NodeName,
@@ -73,8 +73,20 @@ pub(crate) enum ActShape {
     Change,
 }
 
-/// What an act declares about itself: its word, the type it acts on or makes, its anchor, the
-/// role it needs on an existing thing, and its shape.
+/// Who an act needs: anyone signed in, to make a new thing; a user holding a role on an existing
+/// thing; or the system, with no user behind it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Needs {
+    /// A create, which a top-level anchor carries; a thing anchor refuses it.
+    Create,
+    /// The least role a user needs on an existing thing.
+    Role(CommissionRole),
+    /// The system's own act, which no user may make.
+    System,
+}
+
+/// What an act declares about itself: its word, the type it acts on or makes, its anchor, who
+/// it needs, and its shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ActSpec {
     /// Its word, for the engine's log.
@@ -83,9 +95,8 @@ pub(crate) struct ActSpec {
     pub(crate) den_type: DenType,
     /// Where it is anchored.
     pub(crate) anchor: Anchor,
-    /// The least role it needs on an existing thing, from its capability's role; `None` for a
-    /// create, which a thing anchor refuses.
-    pub(crate) needs: Option<CommissionRole>,
+    /// Who it needs, from its capability's role: a create, a user's role, or the system.
+    pub(crate) needs: Needs,
     /// What it does to the tree.
     pub(crate) shape: ActShape,
 }
@@ -109,12 +120,15 @@ impl fmt::Debug for DenAct {
 }
 
 /// A gated kind's domain constructor: its entry on a commission, by an actor, at a time, with
-/// no change, or with the act's checked change `C`.
+/// no change, or with the act's checked change `C`; or the system's entry, by no actor, with
+/// the checked change.
 pub(in crate::den) enum EntryConstructor<C> {
     /// A constructor that takes no change.
     Bare(fn(CommissionId, UserId, DateTimeUtc) -> NewChangelogEntry),
     /// A constructor that takes the act's checked change.
     Change(fn(CommissionId, UserId, &C, DateTimeUtc) -> NewChangelogEntry),
+    /// A constructor of the system's entry, which takes no actor and the act's checked change.
+    System(fn(CommissionId, &C, DateTimeUtc) -> NewChangelogEntry),
 }
 
 impl<C> fmt::Debug for EntryConstructor<C> {
@@ -123,6 +137,7 @@ impl<C> fmt::Debug for EntryConstructor<C> {
         match self {
             Self::Bare(_) => formatter.write_str("Bare"),
             Self::Change(_) => formatter.write_str("Change"),
+            Self::System(_) => formatter.write_str("System"),
         }
     }
 }
@@ -165,19 +180,26 @@ impl<C> GatedEntry<C> {
     }
 
     /// Its entry on `commission`, by `actor`, at `at`, as its domain constructor builds it from
-    /// `change`, the change the act's view recorded; `None` when its constructor takes a change
-    /// and none was recorded.
+    /// `change`, the change the act recorded; `None` when its constructor takes a change and
+    /// none was recorded, or takes an actor and the act has none. The system's constructor
+    /// takes no actor.
     pub(in crate::den) fn construct(
         &self,
         commission: CommissionId,
-        actor: UserId,
+        actor: Option<&UserId>,
         change: Option<&C>,
         at: DateTimeUtc,
     ) -> Option<NewChangelogEntry> {
         match self.constructor {
-            EntryConstructor::Bare(constructor) => Some(constructor(commission, actor, at)),
+            EntryConstructor::Bare(constructor) => {
+                actor.map(|actor| constructor(commission, actor.clone(), at))
+            }
             EntryConstructor::Change(constructor) => {
-                change.map(|change| constructor(commission, actor, change, at))
+                let actor = actor?;
+                change.map(|change| constructor(commission, actor.clone(), change, at))
+            }
+            EntryConstructor::System(constructor) => {
+                change.map(|change| constructor(commission, change, at))
             }
         }
     }
@@ -246,6 +268,15 @@ impl GatedEntry<DelayedCleared> {
     pub(crate) const DELAYED_CLEARED: Self = Self {
         kinds: &[ChangelogEntryKind::Delayed],
         constructor: EntryConstructor::Change(NewChangelogEntry::delayed_cleared),
+    };
+}
+
+impl GatedEntry<LateMark> {
+    /// The system's Late entry: kind `Late`, by `NewChangelogEntry::late`, by no actor, from
+    /// the mark the act's rule checked.
+    pub(crate) const LATE: Self = Self {
+        kinds: &[ChangelogEntryKind::Late],
+        constructor: EntryConstructor::System(NewChangelogEntry::late),
     };
 }
 

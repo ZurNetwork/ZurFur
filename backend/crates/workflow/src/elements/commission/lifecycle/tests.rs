@@ -108,3 +108,19 @@ fn a_move_between_working_steps_carries_both_steps() {
     let reopened = move_lifecycle(&state_at(LifecycleStep::Completed), LifecycleStep::Active);
     assert!(matches!(reopened, Ok(Some(_))), "{reopened:?}");
 }
+
+// A missed deadline lapses on every working step: never on closed work, and never while
+// Disputed, which isn't terminal.
+#[test]
+fn a_deadline_lapses_on_working_steps_only() {
+    let not_lapsing: Vec<&'static str> = LifecycleStep::not_lapsing()
+        .iter()
+        .map(<&'static str>::from)
+        .collect();
+
+    assert_eq!(not_lapsing, ["completed", "cancelled", "disputed"]);
+    for step in LifecycleStep::VARIANTS {
+        let listed = LifecycleStep::not_lapsing().contains(step);
+        assert_eq!(step.lapses(), !listed, "{step}");
+    }
+}

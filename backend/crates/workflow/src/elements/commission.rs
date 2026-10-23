@@ -64,14 +64,14 @@ pub use grant_level::GrantLevel;
 pub use id::CommissionId;
 pub use lifecycle::{LifecycleMove, LifecycleStep, move_lifecycle};
 pub use markup::{CommissionMarkup, Markup, MarkupError, MarkupKey, MarkupShape};
-pub use role_marker::{AsOwner, AsParticipant};
+pub use role_marker::{AsOwner, AsParticipant, AsSystem};
 pub use rows::{CommissionBirth, CommissionSummary, NewCommission};
 pub use seat::{
     NewSeat, Seat, SeatKind, SeatKindError, SeatLink, SeatLinkError, SeatPrompt, SeatPromptError,
 };
 pub use seat_invitation::{SeatInvitation, SeatInvitationId};
 pub use slot::{NewSlot, Slot, SlotTitle, SlotTitleError};
-pub use standing::{CommissionStanding, LockedStanding};
+pub use standing::{CommissionStanding, LockedNode, LockedStanding};
 pub use start::CommissionStart;
 pub use state::{CommissionState, LateFacts};
 pub use title::CommissionTitle;

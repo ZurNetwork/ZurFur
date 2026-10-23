@@ -129,7 +129,7 @@ pub(super) async fn write(
     act: DenAct,
 ) -> Result<WriteResult, DenWriteError> {
     let command = Command {
-        actor: actor.clone(),
+        actor: Actor::User(actor.clone()),
         act,
     };
     Den::from(ports).write(command, Utc::now()).await
@@ -709,7 +709,7 @@ async fn the_entry_lands_on_the_granted_commission_with_the_grant_s_actor() {
     let world = world().await;
     let now = Utc::now();
     let command = Command {
-        actor: alice(),
+        actor: Actor::User(alice()),
         act: owner_s_rename(),
     };
 

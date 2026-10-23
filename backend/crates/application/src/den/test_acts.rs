@@ -1,7 +1,8 @@
-//! Test-only acts: the real create, rename and field acts as the den carries them, each field
-//! act's typed use case called by one value, a commission's stored state at any step and with
-//! any field (and its entries and fields read back), and Atta's acts built by hand around a real
-//! act's body, for the tests that drive the write host below the den's builder.
+//! Test-only acts: the real create, rename, field and Late acts as the den carries them, the
+//! system as an actor, each field act's typed use case called by one value, a commission's
+//! stored state at any step and with any field (and its entries and fields read back), and
+//! Atta's acts built by hand around a real act's body, for the tests that drive the write host
+//! below the den's builder.
 
 use atta::{Act, ActName, Born, Placed, RealPath, Shape};
 use domain::{
@@ -21,7 +22,7 @@ use crate::{
     Ports,
     commission::{
         CommissionError, Commissions, act::CommissionAct, create, deadline, den::CommissionPlace,
-        lifecycle::move_to, rename, status::direction,
+        lifecycle::move_to, rename, status::direction, sweep,
     },
     den::{DenType, Place, act::DenAct, host::type_key, names, write::commission_directory},
 };
@@ -95,6 +96,17 @@ pub(crate) fn set_delayed_act(commission: CommissionId) -> DenAct {
 pub(crate) fn clear_delayed_act(commission: CommissionId) -> DenAct {
     let act = deadline::status::clear::Act { commission };
     DenAct::Commission(CommissionAct::ClearDelayed(act))
+}
+
+/// The system's Late mark on the commission `commission`.
+pub(crate) fn mark_late_act(commission: CommissionId) -> DenAct {
+    let act = sweep::Act { commission };
+    DenAct::Commission(CommissionAct::MarkLate(act))
+}
+
+/// The system, acting: what only the sweep may name.
+pub(crate) fn the_system() -> crate::den::write::Actor {
+    crate::den::write::Actor::System(sweep::SweepToken::for_test())
 }
 
 /// One call of a field act's typed use case, by what it carries.

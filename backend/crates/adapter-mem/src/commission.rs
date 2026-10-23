@@ -15,10 +15,10 @@ use domain::elements::{
         CommissionRole, CommissionStanding, CommissionStart, CommissionSummary, CommissionTitle,
         DeadlineChange, DeadlineStatus, DelayedChange, DirectionChange, DirectionStatus, ElementId,
         ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel, LapsedDeadline,
-        LifecycleMove, LifecycleStep, LockedStanding, NewChangelogEntry, NewCommission, NewElement,
-        NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt,
-        Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
-        declares_surface,
+        LifecycleMove, LifecycleStep, LockedNode, LockedStanding, NewChangelogEntry, NewCommission,
+        NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink,
+        SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode,
+        declared_tabs, declares_surface,
     },
     did::Did,
     invitation::InvitationState,
@@ -1002,69 +1002,31 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         stored.delayed_flag = change.after();
         Ok(true)
     }
+}
 
-    /// The sweeper's candidate scan, answered on the unit's staged snapshot:
-    /// deadline strictly before `now`, not already Late, lifecycle not terminal;
-    /// ordered by deadline, id as tiebreak.
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
-        // Late is never persisted, so dedup on the changelog itself: skip only
-        // if the latest `late` entry is AFTER the latest deadline change, since a
-        // deadline set or extension re-arms the log.
-        let logged_since_change: std::collections::HashSet<CommissionId> = {
-            let changelog = self
-                .0
-                .changelog
-                .lock()
-                .expect("MemBackend changelog mutex poisoned");
-            let mut latest_late: std::collections::HashMap<CommissionId, i64> =
-                std::collections::HashMap::new();
-            let mut latest_change: std::collections::HashMap<CommissionId, i64> =
-                std::collections::HashMap::new();
-            for entry in changelog.iter() {
-                let target = match entry.kind {
-                    ChangelogEntryKind::Late => &mut latest_late,
-                    ChangelogEntryKind::DeadlineSet | ChangelogEntryKind::DeadlineExtended => {
-                        &mut latest_change
-                    }
-                    _ => continue,
-                };
-                target
-                    .entry(entry.commission_id)
-                    .and_modify(|seq| *seq = (*seq).max(entry.seq))
-                    .or_insert(entry.seq);
+/// The commissions `changelog` holds a `late` entry for since their deadline last changed: a
+/// deadline set or extension re-arms the log, so each fresh miss is its own event.
+fn logged_since_change(changelog: &[StoredChangelogEntry]) -> HashSet<CommissionId> {
+    let mut latest_late: HashMap<CommissionId, i64> = HashMap::new();
+    let mut latest_change: HashMap<CommissionId, i64> = HashMap::new();
+    for entry in changelog {
+        let target = match entry.kind {
+            ChangelogEntryKind::Late => &mut latest_late,
+            ChangelogEntryKind::DeadlineSet | ChangelogEntryKind::DeadlineExtended => {
+                &mut latest_change
             }
-            latest_late
-                .into_iter()
-                .filter(|(id, late_seq)| *late_seq > latest_change.get(id).copied().unwrap_or(0))
-                .map(|(id, _)| id)
-                .collect()
+            _ => continue,
         };
-        let commissions = self
-            .0
-            .commissions
-            .lock()
-            .expect("MemBackend commissions mutex poisoned");
-        let mut lapsed: Vec<LapsedDeadline> = commissions
-            .iter()
-            .filter_map(|(id, stored)| {
-                let deadline = stored.deadline?;
-                if deadline >= now
-                    || stored.lifecycle_step.is_terminal()
-                    || logged_since_change.contains(id)
-                {
-                    return None;
-                }
-                Some(LapsedDeadline {
-                    id: *id,
-                    deadline,
-                    status: stored.delayed_flag,
-                })
-            })
-            .collect();
-        lapsed.sort_by_key(|lapse| (lapse.deadline, uuid::Uuid::from(lapse.id)));
-        Ok(lapsed)
+        target
+            .entry(entry.commission_id)
+            .and_modify(|seq| *seq = (*seq).max(entry.seq))
+            .or_insert(entry.seq);
     }
+    latest_late
+        .into_iter()
+        .filter(|(id, late_seq)| *late_seq > latest_change.get(id).copied().unwrap_or(0))
+        .map(|(id, _)| id)
+        .collect()
 }
 
 /// In-memory [`ChangelogWrites`] view: appends land on the unit's staged
@@ -1140,6 +1102,50 @@ impl CommissionReads for MemCommissionWrites<'_> {
             .await?;
         let locked = standing.map(|standing| LockedStanding { standing, node });
         Ok(locked)
+    }
+
+    /// The node the commission points at and its level, over the unit's staged maps; there is
+    /// no row to lock. A commission whose node the unit doesn't hold answers `None`, as the
+    /// locked join does.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn lock_for_system(
+        &mut self,
+        commission: &CommissionId,
+    ) -> anyhow::Result<Option<LockedNode>> {
+        let bound = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned")
+            .get(commission)
+            .map(|stored| stored.node_id);
+        let Some(node) = bound else {
+            return Ok(None);
+        };
+        let locked = self
+            .0
+            .nodes
+            .lock()
+            .expect("MemBackend nodes mutex poisoned")
+            .get(&node)
+            .map(|row| LockedNode {
+                node,
+                level: row.level,
+            });
+        Ok(locked)
+    }
+
+    /// Whether the unit's staged changelog holds no `late` entry for `commission` since its
+    /// deadline last changed: the scan's anti-join, for one commission.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn late_owed(&mut self, commission: &CommissionId) -> anyhow::Result<bool> {
+        let changelog = self
+            .0
+            .changelog
+            .lock()
+            .expect("MemBackend changelog mutex poisoned");
+        let logged = logged_since_change(&changelog);
+        Ok(!logged.contains(commission))
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
@@ -1606,6 +1612,50 @@ impl CommissionStore for MemCommissionStore {
             .collect();
         found.sort_by_key(|slot| uuid::Uuid::from(slot.element_id));
         Ok(found)
+    }
+
+    /// The sweep's scan over the shared maps: deadline strictly before `now`, step not in
+    /// `not_lapsing`, no `late` entry since the deadline last changed; ordered by deadline, id
+    /// as tiebreak.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn lapsed_deadlines(
+        &self,
+        now: DateTimeUtc,
+        not_lapsing: &[LifecycleStep],
+    ) -> anyhow::Result<Vec<LapsedDeadline>> {
+        let logged = {
+            let changelog = self
+                .0
+                .changelog
+                .lock()
+                .expect("MemBackend changelog mutex poisoned");
+            logged_since_change(&changelog)
+        };
+        let commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        let mut lapsed: Vec<LapsedDeadline> = commissions
+            .iter()
+            .filter_map(|(id, stored)| {
+                let deadline = stored.deadline?;
+                let skipped = deadline >= now
+                    || not_lapsing.contains(&stored.lifecycle_step)
+                    || logged.contains(id);
+                if skipped {
+                    return None;
+                }
+                let lapse = LapsedDeadline {
+                    id: *id,
+                    deadline,
+                    status: stored.delayed_flag,
+                };
+                Some(lapse)
+            })
+            .collect();
+        lapsed.sort_by_key(|lapse| (lapse.deadline, uuid::Uuid::from(lapse.id)));
+        Ok(lapsed)
     }
 }
 

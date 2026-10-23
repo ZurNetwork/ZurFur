@@ -32,7 +32,7 @@ use domain::elements::{
     commission::{
         AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
         CommissionMarkup, CommissionTitle, DeadlineChange, DelayedChange, DirectionChange,
-        ElementId, GrantLevel, LapsedDeadline, LifecycleMove, LockedStanding, NewCommission,
+        ElementId, GrantLevel, LifecycleMove, LockedNode, LockedStanding, NewCommission,
         NewElement, NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId, element::TabRow,
     },
     did::Did,
@@ -321,6 +321,17 @@ impl CommissionReads for FactBearingCommissions<'_> {
         self.0.standing_for_update(commission, user).await
     }
 
+    async fn lock_for_system(
+        &mut self,
+        commission: &CommissionId,
+    ) -> anyhow::Result<Option<LockedNode>> {
+        self.0.lock_for_system(commission).await
+    }
+
+    async fn late_owed(&mut self, commission: &CommissionId) -> anyhow::Result<bool> {
+        self.0.late_owed(commission).await
+    }
+
     async fn is_participant(
         &mut self,
         commission: &CommissionId,
@@ -464,10 +475,6 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         change: &DelayedChange,
     ) -> anyhow::Result<bool> {
         self.0.set_deadline_status(capability, change).await
-    }
-
-    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
-        self.0.lapsed_deadlines(now).await
     }
 }
 
