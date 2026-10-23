@@ -126,8 +126,9 @@ impl Runtime {
     }
 
     /// [`connect`](Runtime::connect) with `purposes` derived from `root`, plus the
-    /// [`CustodyMigrator`] the driver runs. The root is guarded and consumed at the call,
-    /// never carried into the returned future.
+    /// [`CustodyMigrator`] the driver runs. The root is guarded and consumed at the call;
+    /// a zeroizing copy of its bytes rides the returned future into the migrator, which
+    /// keeps it until `run` returns or the migrator is dropped.
     pub fn connect_migrating(
         config: Config,
         root: RootSecret,

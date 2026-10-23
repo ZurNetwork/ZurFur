@@ -1,6 +1,8 @@
 //! Key custody's seams. The custody root and the 0.1 root key are named only where they are
-//! read, derived from or opened, and neither is held as another struct's field, in a shared
-//! or locked wrapper, or in a static. Only composition (and the test rig) links the HKDF
+//! read, derived from or opened; the custody migrator, which keeps a copy of the root, and
+//! `connect_migrating`, which hands it back, only where they are built, called or run. None
+//! is held as another struct's field (the migrator's 0.1 key aside), in a shared or locked
+//! wrapper, or in a static. Only composition (and the test rig) links the HKDF
 //! custodian, and of the driver crates only composition's custody file names the custodian,
 //! where the boot guard runs before the one derivation. No custody file formats a value
 //! through `Debug`, logs a field with the `?` sigil, or instruments a span with its fields.
@@ -22,8 +24,9 @@ use seams::{
 };
 use syn::{Expr, Item, Stmt};
 
-/// A key type the scan keeps in place: the files that may name it, the folders whose every
-/// production file may, and the one struct that may hold it as a field.
+/// A key type, or what carries one, the scan keeps in place: the files that may name it,
+/// the folders whose every production file may, and the one struct that may hold it as a
+/// field.
 struct KeptKey {
     name: &'static str,
     files: &'static [&'static str],
@@ -62,7 +65,43 @@ const LEGACY_ROOT_KEY: KeptKey = KeptKey {
     holder: Some(("adapter-pg/src/custody_migrator.rs", "CustodyMigrator")),
 };
 
-/// The shared and locked wrappers neither key may sit inside.
+/// The custody migrator, which keeps a copy of the root until it runs: defined and
+/// re-exported in adapter-pg, built in composition's runtime, and run by the CLI.
+const CUSTODY_MIGRATOR: KeptKey = KeptKey {
+    name: "CustodyMigrator",
+    files: &[
+        "adapter-pg/src/custody_migrator.rs",
+        "adapter-pg/src/lib.rs",
+        "composition/src/runtime.rs",
+        "cli/src/lib.rs",
+        "cli/src/commands/migrate.rs",
+    ],
+    folders: &["test-support/src"],
+    holder: None,
+};
+
+/// The boot that hands back the custody migrator: defined in composition's runtime and
+/// called by the drivers' boots, the CLI's through a wrapper of the same name.
+const CONNECT_MIGRATING: KeptKey = KeptKey {
+    name: "connect_migrating",
+    files: &[
+        "composition/src/runtime.rs",
+        "api/src/main.rs",
+        "cli/src/lib.rs",
+    ],
+    folders: &["test-support/src"],
+    holder: None,
+};
+
+/// Every name the placement scan keeps in place.
+const KEPT_KEYS: [KeptKey; 4] = [
+    ROOT_SECRET,
+    LEGACY_ROOT_KEY,
+    CUSTODY_MIGRATOR,
+    CONNECT_MIGRATING,
+];
+
+/// The shared and locked wrappers no kept name may sit inside.
 const WRAPPERS: [&str; 4] = ["Arc", "Rc", "Mutex", "RwLock"];
 
 /// The items whose bodies hold fields.
@@ -352,7 +391,7 @@ fn key_findings(key: &KeptKey, file: &str, source: &str, names: &BTreeSet<String
 }
 
 #[test]
-fn root_and_legacy_key_stay_where_they_belong() {
+fn kept_names_stay_where_they_belong() {
     let sources = workspace_sources();
     let files: Vec<(String, String)> = workspace_production()
         .iter()
@@ -361,7 +400,7 @@ fn root_and_legacy_key_stay_where_they_belong() {
 
     let mut offenders = Vec::new();
     let mut stale = Vec::new();
-    for key in [ROOT_SECRET, LEGACY_ROOT_KEY] {
+    for key in KEPT_KEYS {
         let names = with_aliases(&[key.name], &sources);
         for (file, source) in &files {
             offenders.extend(key_findings(&key, file, source, &names));
@@ -387,7 +426,7 @@ fn root_and_legacy_key_stay_where_they_belong() {
 
 #[test]
 fn the_key_scan_refuses_each_planted_hold() {
-    let refused: [(&KeptKey, &str, &str); 11] = [
+    let refused: [(&KeptKey, &str, &str); 17] = [
         (
             &ROOT_SECRET,
             "api/src/main.rs",
@@ -443,6 +482,36 @@ fn the_key_scan_refuses_each_planted_hold() {
             "adapter-pg/src/key_vault.rs",
             "fn hold() { thread_local! { static ROOT: RefCell<Option<LegacyRootKey>> = RefCell::new(None); } }",
         ),
+        (
+            &CUSTODY_MIGRATOR,
+            "api/src/main.rs",
+            "struct KeptMigrator(std::sync::Arc<adapter_pg::CustodyMigrator>);",
+        ),
+        (
+            &CUSTODY_MIGRATOR,
+            "cli/src/lib.rs",
+            "static MIGRATOR: OnceLock<CustodyMigrator> = OnceLock::new();",
+        ),
+        (
+            &CUSTODY_MIGRATOR,
+            "composition/src/runtime.rs",
+            "fn keep(migrator: CustodyMigrator) -> Mutex<CustodyMigrator> { Mutex::new(migrator) }",
+        ),
+        (
+            &CUSTODY_MIGRATOR,
+            "cli/src/commands/migrate.rs",
+            "pub struct Migrating { migrator: CustodyMigrator, args: MigrateArgs }",
+        ),
+        (
+            &CONNECT_MIGRATING,
+            "cli/src/commands/account.rs",
+            "fn boot() { let _connect = composition::Runtime::connect_migrating; }",
+        ),
+        (
+            &CONNECT_MIGRATING,
+            "api/src/main.rs",
+            "static BOOT: fn(Config, RootSecret, &[Purpose]) -> Connecting = AppState::connect_migrating;",
+        ),
     ];
     for (key, file, source) in refused {
         let names = with_aliases(&[key.name], &[source.to_owned()]);
@@ -452,12 +521,27 @@ fn the_key_scan_refuses_each_planted_hold() {
         assert!(!found.is_empty(), "{file}: {source}");
     }
 
-    let aliased = "use composition::RootSecret as Root;\nstruct Boot { root: Root }";
-    let names = with_aliases(&[ROOT_SECRET.name], &[aliased.to_owned()]);
-    let found = key_findings(&ROOT_SECRET, "api/src/main.rs", aliased, &names);
-    assert!(!found.is_empty(), "{aliased}");
+    let aliased: [(&KeptKey, &str, &str); 2] = [
+        (
+            &ROOT_SECRET,
+            "api/src/main.rs",
+            "use composition::RootSecret as Root;\nstruct Boot { root: Root }",
+        ),
+        (
+            &CUSTODY_MIGRATOR,
+            "cli/src/lib.rs",
+            "use adapter_pg::CustodyMigrator as Kept;\nstruct Boot { kept: Kept }",
+        ),
+    ];
+    for (key, file, source) in aliased {
+        let names = with_aliases(&[key.name], &[source.to_owned()]);
 
-    let allowed: [(&KeptKey, &str, &str); 5] = [
+        let found = key_findings(key, file, source, &names);
+
+        assert!(!found.is_empty(), "{file}: {source}");
+    }
+
+    let allowed: [(&KeptKey, &str, &str); 8] = [
         (
             &ROOT_SECRET,
             "composition/src/custody.rs",
@@ -482,6 +566,21 @@ fn the_key_scan_refuses_each_planted_hold() {
             &LEGACY_ROOT_KEY,
             "adapter-pg/src/key_vault.rs",
             "pub struct LegacyRootKey(Zeroizing<[u8; 32]>);\nimpl LegacyRootKey { pub(crate) fn new(root: Zeroizing<[u8; 32]>) -> Self { Self(root) } }",
+        ),
+        (
+            &CUSTODY_MIGRATOR,
+            "adapter-pg/src/custody_migrator.rs",
+            "pub struct CustodyMigrator { pool: PgPool, legacy_root: LegacyRootKey, thread_bound: PhantomData<*const ()> }",
+        ),
+        (
+            &CUSTODY_MIGRATOR,
+            "cli/src/commands/migrate.rs",
+            "pub async fn run(custody_migrator: CustodyMigrator, args: MigrateArgs) -> Result<Value, CliError> { todo!() }",
+        ),
+        (
+            &CONNECT_MIGRATING,
+            "api/src/main.rs",
+            "async fn profile_app(config: Config) -> anyhow::Result<()> { let (app_state, custody_migrator) = AppState::connect_migrating(config, root, &purposes).await?; Ok(()) }",
         ),
     ];
     for (key, file, source) in allowed {

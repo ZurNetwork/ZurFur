@@ -1,5 +1,7 @@
 //! The custody root: 32 bytes read from the environment by a command that holds a
-//! purpose, and held only until the one custody function derives from them.
+//! purpose, and consumed by the one custody function. A migrating boot hands a zeroizing
+//! copy of them to the custody migrator, which keeps it until its run returns or it is
+//! dropped.
 
 use std::env::VarError;
 use std::fmt;

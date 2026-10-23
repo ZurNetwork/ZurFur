@@ -3,6 +3,7 @@
 //! re-wraps the 0.1 rows into the envelope.
 
 use std::fmt;
+use std::marker::PhantomData;
 
 use domain::elements::custody::ForDidCustody;
 use domain::ports::ScopedSealer;
@@ -15,7 +16,8 @@ use crate::key_vault::LegacyRootKey;
 use crate::{MigrationReport, latest_embedded_version, migrator, pending_migrations};
 
 /// Migrates the private store and moves the 0.1 custody rows into the envelope.
-/// Runs once: [`run`](CustodyMigrator::run) consumes it.
+/// Runs once: [`run`](CustodyMigrator::run) consumes it. It holds a copy of the custody
+/// root until then, and is bound to its thread, so nothing `Send` can keep it.
 ///
 /// ```compile_fail
 /// async fn migrator_is_one_shot(migrator: adapter_pg::CustodyMigrator) {
@@ -29,10 +31,25 @@ use crate::{MigrationReport, latest_embedded_version, migrator, pending_migratio
 ///     let _report = migrator.run().await;
 /// }
 /// ```
+///
+/// It can't cross to another thread:
+///
+/// ```compile_fail
+/// fn crosses<T: Send>() {}
+/// crosses::<adapter_pg::CustodyMigrator>();
+/// ```
+///
+/// Nor can it be shared between threads:
+///
+/// ```compile_fail
+/// fn shared<T: Sync>() {}
+/// shared::<adapter_pg::CustodyMigrator>();
+/// ```
 pub struct CustodyMigrator {
     pool: PgPool,
     legacy_root: LegacyRootKey,
     sealer: ScopedSealer<ForDidCustody>,
+    thread_bound: PhantomData<*const ()>,
 }
 
 /// What [`CustodyMigrator::check`] found, without writing anything.
@@ -72,6 +89,7 @@ impl CustodyMigrator {
             pool,
             legacy_root: LegacyRootKey::new(legacy_root),
             sealer,
+            thread_bound: PhantomData,
         }
     }
 

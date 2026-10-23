@@ -66,7 +66,7 @@
     },
     {
       "name": "src/runtime.rs",
-      "role": "Runtime bag of Arc<dyn Port> (AccountStore, Authenticator, BugReportStore, ChangelogStore, CommissionStore, Database, DidMinter, FileStore, IdentityResolver, ProfileCache, ProfileSource, UserStore) plus the process-wide ProfileLookups (built once in `wire`, shared by every clone) and `den_mac`, the Den's MAC handle (PurposeNotHeld in a runtime connected without that purpose); Runtime::connect(config, Custody) wiring pg+atproto adapters (one AtprotoIdentityResolver shared by the authenticator and the profile source), Runtime::connect_migrating(config, RootSecret, purposes), which derives at the call and returns a Send future of (Runtime, CustodyMigrator); a compile-time Send + Sync + Clone assertion; transaction convenience; tests in src/runtime/tests.rs",
+      "role": "Runtime bag of Arc<dyn Port> (AccountStore, Authenticator, BugReportStore, ChangelogStore, CommissionStore, Database, DidMinter, FileStore, IdentityResolver, ProfileCache, ProfileSource, UserStore) plus the process-wide ProfileLookups (built once in `wire`, shared by every clone) and `den_mac`, the Den's MAC handle (PurposeNotHeld in a runtime connected without that purpose); Runtime::connect(config, Custody) wiring pg+atproto adapters (one AtprotoIdentityResolver shared by the authenticator and the profile source), Runtime::connect_migrating(config, RootSecret, purposes), which derives at the call and returns a Send future of (Runtime, CustodyMigrator), the migrator keeping a zeroizing copy of the root until it runs or drops; a compile-time Send + Sync + Clone assertion; transaction convenience; tests in src/runtime/tests.rs",
       "node": false
     },
     {
