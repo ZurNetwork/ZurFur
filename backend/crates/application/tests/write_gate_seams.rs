@@ -15,14 +15,16 @@
 //! writes not yet gated, frozen, and the commission tables written only by the commission write
 //! view in each adapter, whatever port a write is called through: in PostgreSQL, every statement
 //! writing a commission table in the commission's query folder, its generated write functions
-//! named only in the write view, and the view built only by the unit; in memory, the commission
+//! named only in the write view, the view built only by the unit, and no SQL text handed to sqlx
+//! but the generated queries' and three named exemptions'; in memory, the commission
 //! map changed only by the write view, the insert path, the lifecycle seeder and the unit's
 //! staging and merge, its rows built only by the insert path, and the view built only by the
 //! unit; each write statement and in-memory change named only in its own method, a capped
 //! write's other parameters only named values holding no id, the banned writes' sites frozen,
 //! the gated changelog constructors named only in the rows file and the act file and the rows
-//! file's entry surface pinned, no macro in a core crate, and no later migration's function or
-//! trigger writing a commission table.
+//! file's entry surface pinned, no macro in a core crate, no later migration's function or
+//! trigger writing a commission table or running dynamic SQL, and no in-memory backend method or
+//! trait impl hiding a seeder.
 
 mod seams;
 
@@ -3534,50 +3536,202 @@ fn block_items(block: &syn::Block) -> Vec<&Item> {
         .collect()
 }
 
-/// The in-memory adapter's seeders a driver may not name, from its sources `files`: every
-/// `pub` method of an inherent impl of `MemBackend` (an alias, a module or a body
-/// included), but a port method's name, which a token scan can't tell from the port call, and
-/// the boot the dev profile builds its ports with: `new` and each port handle (`&self` in,
-/// `Arc<dyn …>` out).
-fn in_memory_seeders(files: &[(String, String)]) -> BTreeSet<String> {
-    let sources: Vec<String> = files.iter().map(|(_, source)| source.clone()).collect();
-    let backends = token_aliases(&[MEM_BACKEND], &sources);
-    let parsed: Vec<syn::File> = sources
+/// Today's inherent `MemBackend` helpers that carry a port method's name, each a seed or
+/// inspect helper delegating to its port's in-memory view. A token scan can't tell a driver's
+/// call of one from the port call of the same name, so no other inherent method may carry a
+/// port method's name ([`backend_surface_findings`]); each leaves this list when it is renamed.
+const PORT_NAMED_HELPERS: [&str; 7] = [
+    "create",
+    "create_invitation",
+    "find",
+    "find_by_did",
+    "find_pending_invitation",
+    "provision",
+    "role_of",
+];
+
+/// The traits `MemBackend` may carry, by its derive or an impl: the ones it derives today.
+const BACKEND_TRAITS: [&str; 2] = ["Clone", "Default"];
+
+/// One `pub` method of an inherent impl of `MemBackend`: the file it sits in, its name, and
+/// whether it is the boot's ([`boots_the_ports`]).
+struct BackendMethod {
+    file: String,
+    name: String,
+    boots: bool,
+}
+
+/// Every impl in `files`, at any depth (see [`items_at_any_depth`]), with its file.
+fn impls_in(files: &[(String, String)]) -> Vec<(String, syn::ItemImpl)> {
+    files
         .iter()
-        .map(|source| syn::parse_file(source).expect("the source parses"))
-        .collect();
-    let impls: Vec<syn::ItemImpl> = parsed
-        .iter()
-        .flat_map(|file| items_at_any_depth(&file.items))
-        .filter_map(|item| match item {
-            Item::Impl(implementation) => Some(implementation.clone()),
-            _ => None,
+        .flat_map(|(file, source)| {
+            let parsed = syn::parse_file(source).expect("the source parses");
+            items_at_any_depth(&parsed.items)
+                .into_iter()
+                .filter_map(|item| match item {
+                    Item::Impl(implementation) => Some((file.clone(), implementation.clone())),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
         })
-        .collect();
-    let port_methods: BTreeSet<String> = impls
+        .collect()
+}
+
+/// The names `MemBackend` goes by in `files`: its own, and each alias at any depth.
+fn backend_names(files: &[(String, String)]) -> BTreeSet<String> {
+    let sources: Vec<String> = files.iter().map(|(_, source)| source.clone()).collect();
+    token_aliases(&[MEM_BACKEND], &sources)
+}
+
+/// Every `pub` method of an inherent impl of `MemBackend` in `files` (an alias, a module or a
+/// body included).
+fn backend_methods(files: &[(String, String)]) -> Vec<BackendMethod> {
+    let backends = backend_names(files);
+    impls_in(files)
+        .into_iter()
+        .filter(|(_, implementation)| {
+            implementation.trait_.is_none()
+                && backends.contains(&type_name(&implementation.self_ty))
+        })
+        .flat_map(|(file, implementation)| {
+            implementation
+                .items
+                .iter()
+                .filter_map(|impl_item| match impl_item {
+                    ImplItem::Fn(method) if public(&method.vis) => Some(BackendMethod {
+                        file: file.clone(),
+                        name: unraw(&method.sig.ident),
+                        boots: boots_the_ports(&method.sig),
+                    }),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// The port method names in `files`: every method of every trait impl.
+fn port_method_names(files: &[(String, String)]) -> BTreeSet<String> {
+    impls_in(files)
         .iter()
-        .filter(|implementation| implementation.trait_.is_some())
-        .flat_map(|implementation| &implementation.items)
+        .filter(|(_, implementation)| implementation.trait_.is_some())
+        .flat_map(|(_, implementation)| &implementation.items)
         .filter_map(|impl_item| match impl_item {
             ImplItem::Fn(method) => Some(unraw(&method.sig.ident)),
             _ => None,
         })
-        .collect();
-    impls
-        .iter()
-        .filter(|implementation| {
-            implementation.trait_.is_none()
-                && backends.contains(&type_name(&implementation.self_ty))
-        })
-        .flat_map(|implementation| &implementation.items)
-        .filter_map(|impl_item| match impl_item {
-            ImplItem::Fn(method) if public(&method.vis) && !boots_the_ports(&method.sig) => {
-                Some(unraw(&method.sig.ident))
-            }
-            _ => None,
-        })
-        .filter(|name| !port_methods.contains(name))
         .collect()
+}
+
+/// The in-memory adapter's seeders a driver may not name, from its sources `files`: every
+/// `pub` method of an inherent impl of `MemBackend` (an alias, a module or a body included),
+/// but the boot the dev profile builds its ports with (`new` and each port handle, `&self` in,
+/// `Arc<dyn …>` out) and today's [`PORT_NAMED_HELPERS`].
+fn in_memory_seeders(files: &[(String, String)]) -> BTreeSet<String> {
+    backend_methods(files)
+        .into_iter()
+        .filter(|method| !method.boots && !PORT_NAMED_HELPERS.contains(&method.name.as_str()))
+        .map(|method| method.name)
+        .collect()
+}
+
+/// The inherent `MemBackend` methods in `files` that carry a port method's name, the boot's
+/// aside, by name.
+fn port_named_backend_methods(files: &[(String, String)]) -> BTreeSet<String> {
+    let port_methods = port_method_names(files);
+    backend_methods(files)
+        .into_iter()
+        .filter(|method| !method.boots && port_methods.contains(&method.name))
+        .map(|method| method.name)
+        .collect()
+}
+
+/// Whether `implementation`'s self type is one of its own generic parameters: a blanket impl.
+fn is_a_blanket_impl(implementation: &syn::ItemImpl) -> bool {
+    let Type::Path(path) = implementation.self_ty.as_ref() else {
+        return false;
+    };
+    let parameters: BTreeSet<String> = implementation
+        .generics
+        .type_params()
+        .map(|parameter| parameter.ident.to_string())
+        .collect();
+    path.qself.is_none()
+        && path.path.segments.len() == 1
+        && parameters.contains(&path.path.segments[0].ident.to_string())
+}
+
+/// The traits `MemBackend`'s definitions in `files` derive, by last name.
+fn backend_derives(files: &[(String, String)]) -> Vec<(String, String)> {
+    let backends = backend_names(files);
+    files
+        .iter()
+        .flat_map(|(file, source)| {
+            let parsed = syn::parse_file(source).expect("the source parses");
+            items_at_any_depth(&parsed.items)
+                .into_iter()
+                .filter_map(|item| match item {
+                    Item::Struct(structure) if backends.contains(&structure.ident.to_string()) => {
+                        Some(structure.attrs.clone())
+                    }
+                    _ => None,
+                })
+                .flatten()
+                .filter(|attribute| attribute.path().is_ident("derive"))
+                .flat_map(|attribute| identifiers(attribute.meta.to_token_stream()))
+                .filter(|name| name != "derive")
+                .map(|name| (file.clone(), name))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// What lets a driver reach a raw in-memory write past the derived seeders, in adapter-mem's
+/// sources `files`: an inherent `MemBackend` method carrying a port method's name outside
+/// [`PORT_NAMED_HELPERS`]; a trait impl for a type naming `MemBackend` (an alias, a reference
+/// or a wrapper included) or a blanket impl, unless of one of [`BACKEND_TRAITS`]; and a derive
+/// on `MemBackend` outside them.
+fn backend_surface_findings(files: &[(String, String)]) -> Vec<String> {
+    let backends = backend_names(files);
+    let port_named = port_named_backend_methods(files);
+    let mut out: Vec<String> = backend_methods(files)
+        .into_iter()
+        .filter(|method| port_named.contains(&method.name))
+        .filter(|method| !PORT_NAMED_HELPERS.contains(&method.name.as_str()))
+        .map(|method| {
+            format!(
+                "adapter-mem/src/{}: `{MEM_BACKEND}::{}` carries a port method's name",
+                method.file, method.name
+            )
+        })
+        .collect();
+    for (file, implementation) in impls_in(files) {
+        let Some((_, trait_path, _)) = &implementation.trait_ else {
+            continue;
+        };
+        let trait_name = trait_path
+            .segments
+            .last()
+            .map(|segment| unraw(&segment.ident))
+            .unwrap_or_default();
+        let names_the_backend = identifiers(implementation.self_ty.to_token_stream())
+            .iter()
+            .any(|name| backends.contains(name));
+        let reaches = names_the_backend || is_a_blanket_impl(&implementation);
+        if reaches && !BACKEND_TRAITS.contains(&trait_name.as_str()) {
+            let self_type = implementation.self_ty.to_token_stream();
+            let trait_impl = format!("adapter-mem/src/{file}: `impl {trait_name} for {self_type}`");
+            out.push(trait_impl);
+        }
+    }
+    for (file, derived) in backend_derives(files) {
+        if !BACKEND_TRAITS.contains(&derived.as_str()) {
+            let derive = format!("adapter-mem/src/{file}: `{MEM_BACKEND}` derives `{derived}`");
+            out.push(derive);
+        }
+    }
+    out
 }
 
 /// Whether `signature` is the boot's: `new()`, or a port handle taking `&self` alone and
@@ -4106,6 +4260,125 @@ fn every_in_memory_seeder_is_derived_and_refused_in_a_driver() {
     );
     let today = driver_findings(API, "api/src/dev_profile.rs", &dev_profile, &forbidden);
     assert_eq!(today, Vec::<String>::new());
+}
+
+#[test]
+fn no_backend_method_or_trait_impl_carries_a_seeder_past_the_derived_list() {
+    let files = mem_sources();
+
+    let findings = backend_surface_findings(&files);
+
+    assert_eq!(findings, Vec::<String>::new());
+    let port_named = port_named_backend_methods(&files);
+    let listed: BTreeSet<String> = PORT_NAMED_HELPERS
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect();
+    assert_eq!(
+        port_named, listed,
+        "the port-named helpers are today's, exactly"
+    );
+    let derives: Vec<String> = backend_derives(&files)
+        .into_iter()
+        .map(|(_, derived)| derived)
+        .collect();
+    assert_eq!(derives, BACKEND_TRAITS, "the backend's derives are read");
+    let append = "use crate::MemBackend;\nimpl MemBackend {\n    pub fn append(&self, commission: CommissionId, kind: ChangelogEntryKind, payload: Value, at: DateTimeUtc) {}\n}";
+    let refused = [
+        (
+            "forge.rs",
+            append,
+            "adapter-mem/src/forge.rs: `MemBackend::append` carries a port method's name",
+        ),
+        (
+            "forge.rs",
+            "type Store = crate::MemBackend;\nimpl Store {\n    pub fn set_archived(&self, commission: CommissionId) {}\n}",
+            "adapter-mem/src/forge.rs: `MemBackend::set_archived` carries a port method's name",
+        ),
+        (
+            "forge.rs",
+            "pub trait Forge {\n    fn forge(&self);\n}\nimpl Forge for crate::MemBackend {\n    fn forge(&self) {}\n}",
+            "adapter-mem/src/forge.rs: `impl Forge for crate :: MemBackend`",
+        ),
+        (
+            "forge.rs",
+            "pub trait Forge {\n    fn forge(&self);\n}\ntype Store = crate::MemBackend;\nimpl Forge for Store {\n    fn forge(&self) {}\n}",
+            "adapter-mem/src/forge.rs: `impl Forge for Store`",
+        ),
+        (
+            "forge.rs",
+            "pub trait Forge {\n    fn forge(&self);\n}\nimpl Forge for std::sync::Arc<crate::MemBackend> {\n    fn forge(&self) {}\n}",
+            "adapter-mem/src/forge.rs: `impl Forge for std :: sync :: Arc < crate :: MemBackend >`",
+        ),
+        (
+            "forge.rs",
+            "pub trait Forge {\n    fn forge(&self);\n}\nfn hide() {\n    impl Forge for &crate::MemBackend {\n        fn forge(&self) {}\n    }\n}",
+            "adapter-mem/src/forge.rs: `impl Forge for & crate :: MemBackend`",
+        ),
+        (
+            "forge.rs",
+            "pub trait Forge {\n    fn forge(&self) {}\n}\nimpl<T: Clone> Forge for T {}",
+            "adapter-mem/src/forge.rs: `impl Forge for T`",
+        ),
+    ];
+    for (file, source, expected) in refused {
+        let planted = with_file(&files, file, source);
+
+        let found = backend_surface_findings(&planted);
+
+        assert!(
+            found.iter().any(|finding| finding == expected),
+            "{source}: {found:?}"
+        );
+    }
+    let (lib, lib_source) = files
+        .iter()
+        .find(|(file, _)| file == MEM_LIB_FILE)
+        .expect("the crate root");
+    let derive = "#[derive(Clone, Default)]\npub struct MemBackend {";
+    assert!(
+        lib_source.contains(derive),
+        "{lib} derives the backend's traits"
+    );
+    let wider = lib_source.replacen(
+        derive,
+        "#[derive(Clone, Default, derive_more::Constructor)]\npub struct MemBackend {",
+        1,
+    );
+    let found = backend_surface_findings(&with_file(&files, lib, &wider));
+    assert!(
+        found.contains(&"adapter-mem/src/lib.rs: `MemBackend` derives `Constructor`".to_owned()),
+        "{found:?}"
+    );
+    let planted = with_file(&files, "forge.rs", append);
+    let seeders = in_memory_seeders(&planted);
+    assert!(seeders.contains("append"), "{seeders:?}");
+    let seeder_names: Vec<&str> = seeders.iter().map(String::as_str).collect();
+    let forbidden = with_aliases(&seeder_names, &[]);
+    let herons_driver = "pub fn forge(backend: &adapter_mem::MemBackend, commission: CommissionId) {\n    backend.append(commission, ChangelogEntryKind::Late, serde_json::json!({}), chrono::Utc::now());\n}";
+    let found = driver_findings(API, "api/src/heron_plant.rs", herons_driver, &forbidden);
+    assert_eq!(found, ["api/src/heron_plant.rs: `append` in forge"]);
+    let kept = [
+        (
+            "forge.rs",
+            "use crate::MemBackend;\nimpl MemBackend {\n    pub(crate) fn append(&self) {}\n}",
+        ),
+        (
+            "forge.rs",
+            "pub trait Forge {\n    fn forge(&self);\n}\nimpl Forge for crate::MemNodeStore {\n    fn forge(&self) {}\n}",
+        ),
+        (
+            "forge.rs",
+            "struct Wrapper<T>(T);\nimpl<T: Clone> Clone for Wrapper<T> {\n    fn clone(&self) -> Self { Self(self.0.clone()) }\n}",
+        ),
+    ];
+    for (file, source) in kept {
+        let planted = with_file(&files, file, source);
+
+        let found = backend_surface_findings(&planted);
+
+        assert_eq!(found, Vec::<String>::new(), "{source}");
+    }
 }
 
 #[test]
@@ -6639,12 +6912,145 @@ fn pg_commission_file_helpers(
     pg_write_helpers(&file_pieces, &modules, write_fns)
 }
 
+/// Every way sqlx 0.9 takes SQL text, by name: the query functions and macros, `raw_sql`, the
+/// query builder, the text wrappers and their conversion, the executor's methods (each takes a
+/// `&'static str`, a leaked one included), a transaction opened with a statement, the raw
+/// `COPY`, and a migrator built from a folder. Each lets adapter-pg send text the pin can't
+/// read, so only the generated queries and [`SQL_TEXT_EXEMPTIONS`] name one.
+const SQL_TEXT_DOORS: [&str; 46] = [
+    "query",
+    "query_with",
+    "query_as",
+    "query_as_with",
+    "query_scalar",
+    "query_scalar_with",
+    "__query_with_result",
+    "__query_scalar_with_result",
+    "query_statement",
+    "query_statement_with",
+    "query_statement_as",
+    "query_statement_as_with",
+    "query_statement_scalar",
+    "query_statement_scalar_with",
+    "query_unchecked",
+    "query_as_unchecked",
+    "query_scalar_unchecked",
+    "query_file",
+    "query_file_as",
+    "query_file_scalar",
+    "query_file_unchecked",
+    "query_file_as_unchecked",
+    "query_file_scalar_unchecked",
+    "raw_sql",
+    "RawSql",
+    "QueryBuilder",
+    "AssertSqlSafe",
+    "SqlStr",
+    "SqlSafeStr",
+    "into_sql_str",
+    "Execute",
+    "execute",
+    "execute_many",
+    "fetch",
+    "fetch_many",
+    "fetch_all",
+    "fetch_one",
+    "fetch_optional",
+    "prepare",
+    "prepare_with",
+    "describe",
+    "begin_with",
+    "try_begin_with",
+    "copy_in_raw",
+    "copy_out_raw",
+    "Migrator",
+];
+
+/// sqlx's migration macro, which embeds a folder of SQL: a door only when called, since its
+/// module (`sqlx::migrate::…`) carries the same name.
+const MIGRATE_MACRO: &str = "migrate";
+
+/// The context [`sql_text_door_findings`] gives a `use` item at the top of a file.
+const TOP_LEVEL_IMPORTS: &str = "the file's imports";
+
+/// The SQL-text doors adapter-pg's hand-written sources may name, by file, context and count:
+/// the crate root's imports, `migrator`, which turns the embedded migration files into
+/// migrations, and `schema_status`'s one ledger probe.
+const SQL_TEXT_EXEMPTIONS: [(&str, &str, &str, usize); 6] = [
+    ("lib.rs", TOP_LEVEL_IMPORTS, "SqlSafeStr", 1),
+    ("lib.rs", TOP_LEVEL_IMPORTS, "Migrator", 1),
+    ("lib.rs", "migrator", "into_sql_str", 1),
+    ("lib.rs", "migrator", "Migrator", 3),
+    ("lib.rs", "schema_status", "query_scalar", 1),
+    ("lib.rs", "schema_status", "fetch_one", 1),
+];
+
+/// Each naming of a SQL-text door in adapter-pg's sources `files` (each by path relative to its
+/// `src`, the generated queries aside), past the allowance `exemptions` holds: one of
+/// [`SQL_TEXT_DOORS`], a call of [`MIGRATE_MACRO`], or a name the sources bind to either (a
+/// rename or a type alias, at any depth).
+fn sql_text_door_namings(
+    files: &[(String, String)],
+    exemptions: &[(&str, &str, &str, usize)],
+) -> Vec<Naming> {
+    let sources: Vec<String> = files.iter().map(|(_, source)| source.clone()).collect();
+    let mut names = token_aliases(&SQL_TEXT_DOORS, &sources);
+    let macro_aliases: Vec<String> = token_aliases(&[MIGRATE_MACRO], &sources)
+        .into_iter()
+        .filter(|name| name != MIGRATE_MACRO)
+        .collect();
+    names.extend(macro_aliases);
+    let mut out = Vec::new();
+    for (file, source) in files {
+        let shown = format!("adapter-pg/src/{file}");
+        let parsed =
+            syn::parse_file(source).unwrap_or_else(|error| panic!("{shown} parses: {error}"));
+        let mut file_pieces = pieces(&parsed);
+        for piece in &mut file_pieces {
+            if is_use_item(piece) && piece.context.starts_with("use ") {
+                piece.context = TOP_LEVEL_IMPORTS.to_owned();
+            }
+        }
+        let allowed: Vec<(&str, &str, usize)> = exemptions
+            .iter()
+            .filter(|(exempt_file, ..)| exempt_file == file)
+            .map(|(_, context, name, count)| (*context, *name, *count))
+            .collect();
+        out.extend(named_past(&shown, &file_pieces, &names, &allowed));
+        for piece in &file_pieces {
+            for level in levels(piece.tokens.clone()) {
+                let calls = (0..level.len()).filter(|at| {
+                    ident_at(&level, *at).as_deref() == Some(MIGRATE_MACRO)
+                        && punct_at(&level, at + 1, '!')
+                });
+                for _ in calls {
+                    let naming = (
+                        shown.clone(),
+                        piece.context.clone(),
+                        format!("{MIGRATE_MACRO}!"),
+                    );
+                    out.push(naming);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// What sends SQL text the pin can't read in adapter-pg's sources `files`: each naming of a
+/// SQL-text door past [`SQL_TEXT_EXEMPTIONS`].
+fn sql_text_door_findings(files: &[(String, String)]) -> Vec<String> {
+    show(&sql_text_door_namings(files, &SQL_TEXT_EXEMPTIONS))
+}
+
 /// What breaks the PostgreSQL pin in the adapter's sources `files` (each by path relative to
 /// its `src`, the generated queries aside): outside the commission file, any reach into the
 /// generated commission module; in it, a write function named or a write method called
 /// outside the write view; in any file, a write helper called outside the write view; a
-/// write-view literal outside the unit's `commissions()`; and SQL in Rust that writes a
-/// commission table or names a `.sql` file.
+/// write-view literal outside the unit's `commissions()`; SQL in Rust that writes a
+/// commission table or names a `.sql` file; and SQL text handed to sqlx past the generated
+/// queries and the named exemptions ([`sql_text_door_findings`]), so every statement the
+/// adapter sends is a literal the pin reads.
 fn pg_pin_findings(
     files: &[(String, String)],
     write_fns: &BTreeSet<String>,
@@ -6653,7 +7059,7 @@ fn pg_pin_findings(
     let sources: Vec<String> = files.iter().map(|(_, source)| source.clone()).collect();
     let views = token_aliases(&[PG_WRITE_VIEW], &sources);
     let helpers = pg_commission_file_helpers(files, write_fns);
-    let mut out = Vec::new();
+    let mut out = sql_text_door_findings(files);
     for (file, source) in files {
         let shown = format!("adapter-pg/src/{file}");
         let parsed =
@@ -7031,6 +7437,11 @@ fn the_pg_pin_refuses_each_planted_write() {
             column_writes,
             "    async fn retire_card(&mut self, view: &mut crate::PgCommissionWrites<'_>, element: &NewElement) -> anyhow::Result<()> { view.insert_element(element).await }".to_owned(),
         ),
+        (
+            "workflow.rs",
+            column_writes,
+            "    async fn probe(&mut self) -> anyhow::Result<()> { sqlx::query(\"SELECT id FROM commission WHERE id = $1\").execute(&mut *self.conn).await?; Ok(()) }".to_owned(),
+        ),
     ];
     for (file, anchor, addition) in &refused {
         let planted = planted_after(&files, file, anchor, addition);
@@ -7060,16 +7471,192 @@ fn the_pg_pin_refuses_each_planted_write() {
             column_writes,
             "    async fn probe(&mut self) -> anyhow::Result<()> { column_sql::clear_cards(&mut *self.conn, uuid::Uuid::nil()).await?; Ok(()) }",
         ),
-        (
-            "workflow.rs",
-            column_writes,
-            "    async fn probe(&mut self) -> anyhow::Result<()> { sqlx::query(\"SELECT id FROM commission WHERE id = $1\").execute(&mut *self.conn).await?; Ok(()) }",
-        ),
     ];
     for (file, anchor, addition) in kept {
         let planted = planted_after(&files, file, anchor, addition);
 
         let found = pg_pin_findings(&planted, &write_fns, &write_methods);
+
+        assert_eq!(found, Vec::<String>::new(), "{file}: {addition}");
+    }
+}
+
+#[test]
+fn the_pg_pin_names_each_sql_text_door_outside_its_exemptions() {
+    let files = pg_sources();
+
+    let unexempted = sql_text_door_namings(&files, &[]);
+
+    let mut counted: BTreeMap<(String, String, String), usize> = BTreeMap::new();
+    for (file, context, name) in unexempted {
+        *counted.entry((file, context, name)).or_default() += 1;
+    }
+    let exempted: BTreeMap<(String, String, String), usize> = SQL_TEXT_EXEMPTIONS
+        .iter()
+        .map(|(file, context, name, count)| {
+            let key = (
+                format!("adapter-pg/src/{file}"),
+                (*context).to_owned(),
+                (*name).to_owned(),
+            );
+            (key, *count)
+        })
+        .collect();
+    assert_eq!(
+        counted, exempted,
+        "the exemptions are today's namings, exactly"
+    );
+    assert_eq!(sql_text_door_findings(&files), Vec::<String>::new());
+    let markup =
+        "    async fn add_markup(&mut self, markup: &CommissionMarkup) -> anyhow::Result<()> {";
+    let column_writes = "impl ColumnWrites for PgColumnWrites<'_> {";
+    let imports = "pub use sqlx::PgPool;";
+    let ledger_probe = "    let migrator = migrator();";
+    let retire = |body: &str| {
+        format!(
+            "    async fn retire_card(&mut self, commission: &CommissionId) -> anyhow::Result<bool> {{ {body} }}"
+        )
+    };
+    let herons_plant = "        let table = \"commission\";\n        let assembled = format!(\"UPDATE {table} SET archived_at = NULL WHERE id = $1\");\n        sqlx::query(sqlx::AssertSqlSafe(assembled))\n            .bind(uuid::Uuid::from(markup.commission_id))\n            .execute(&mut *self.conn)\n            .await?;";
+    let refused = [
+        (
+            COMMISSION_FILE,
+            markup,
+            herons_plant.to_owned(),
+            "adapter-pg/src/commission.rs: `AssertSqlSafe` in PgCommissionWrites::add_markup",
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "use sqlx::AssertSqlSafe as Trusted; let text = Trusted(format!(\"UPDATE {} SET archived_at = NULL\", \"commission\")); Ok(sqlx::Executor::execute(&mut *self.conn, text).await?.rows_affected() == 1)",
+            ),
+            "adapter-pg/src/workflow.rs: `Trusted` in PgColumnWrites::retire_card",
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "let written = sqlx::raw_sql(\"SELECT 1\").execute(&mut *self.conn).await?; Ok(written.rows_affected() == 1)",
+            ),
+            "adapter-pg/src/workflow.rs: `raw_sql` in PgColumnWrites::retire_card",
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "let mut built = sqlx::QueryBuilder::<sqlx::Postgres>::new(\"UPDATE \"); built.push(\"commission\").push(\" SET archived_at = NULL\"); Ok(built.build().execute(&mut *self.conn).await?.rows_affected() == 1)",
+            ),
+            "adapter-pg/src/workflow.rs: `QueryBuilder` in PgColumnWrites::retire_card",
+        ),
+        (
+            "lib.rs",
+            imports,
+            "pub async fn ledger_rows(pool: &PgPool) -> Result<i64, sqlx::Error> { sqlx::query_scalar(\"SELECT count(*) FROM _sqlx_migrations\").fetch_one(pool).await }".to_owned(),
+            "adapter-pg/src/lib.rs: `query_scalar` in ledger_rows",
+        ),
+        (
+            "lib.rs",
+            ledger_probe,
+            "    let _: bool = sqlx::query_scalar(\"SELECT true\").fetch_one(pool).await?;".to_owned(),
+            "adapter-pg/src/lib.rs: `query_scalar` in schema_status",
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "let text: &'static str = Box::leak(format!(\"UPDATE {} SET archived_at = NULL\", \"commission\").into_boxed_str()); Ok(sqlx::Executor::execute(&mut *self.conn, text).await?.rows_affected() == 1)",
+            ),
+            "adapter-pg/src/workflow.rs: `execute` in PgColumnWrites::retire_card",
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "let text = sqlx::SqlStr::from_static(\"SELECT 1\"); Ok(sqlx::Executor::execute(&mut *self.conn, text).await?.rows_affected() == 1)",
+            ),
+            "adapter-pg/src/workflow.rs: `SqlStr` in PgColumnWrites::retire_card",
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "use sqlx::SqlSafeStr; let text = \"SELECT 1\".into_sql_str(); Ok(self.conn.begin_with(text).await.is_ok())",
+            ),
+            "adapter-pg/src/workflow.rs: `into_sql_str` in PgColumnWrites::retire_card",
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            retire(
+                "let text = String::from(\"COPY commission FROM STDIN\"); Ok(self.conn.copy_in_raw(&text).await.is_ok())",
+            ),
+            "adapter-pg/src/workflow.rs: `copy_in_raw` in PgColumnWrites::retire_card",
+        ),
+        (
+            "lib.rs",
+            imports,
+            "pub async fn migrate_elsewhere(pool: &PgPool) -> anyhow::Result<()> { sqlx::migrate!(\"./elsewhere\").run(pool).await?; Ok(()) }".to_owned(),
+            "adapter-pg/src/lib.rs: `migrate!` in migrate_elsewhere",
+        ),
+        (
+            "lib.rs",
+            imports,
+            "pub async fn migrate_from(pool: &PgPool, folder: &std::path::Path) -> anyhow::Result<()> { sqlx::migrate::Migrator::new(folder).await?.run(pool).await?; Ok(()) }".to_owned(),
+            "adapter-pg/src/lib.rs: `Migrator` in migrate_from",
+        ),
+        (
+            "lib.rs",
+            imports,
+            "type Assembled = sqlx::AssertSqlSafe<String>;".to_owned(),
+            "adapter-pg/src/lib.rs: `AssertSqlSafe` in type Assembled",
+        ),
+    ];
+    for (file, anchor, addition, expected) in &refused {
+        let planted = planted_after(&files, file, anchor, addition);
+
+        let found = sql_text_door_findings(&planted);
+
+        assert!(
+            found.iter().any(|finding| finding == expected),
+            "{addition}: {found:?}"
+        );
+    }
+    let aliased_elsewhere = planted_after(
+        &files,
+        "lib.rs",
+        imports,
+        "pub use sqlx::AssertSqlSafe as Trusted;",
+    );
+    let used_elsewhere = planted_after(
+        &aliased_elsewhere,
+        "workflow.rs",
+        column_writes,
+        &retire("let _ = crate::Trusted(String::new()); Ok(true)"),
+    );
+    let found = sql_text_door_findings(&used_elsewhere);
+    assert!(
+        found.contains(
+            &"adapter-pg/src/workflow.rs: `Trusted` in PgColumnWrites::retire_card".to_owned()
+        ),
+        "{found:?}"
+    );
+    let kept = [
+        (
+            "lib.rs",
+            imports,
+            "pub fn refusal(error: sqlx::migrate::MigrateError) -> String { error.to_string() }",
+        ),
+        (
+            "workflow.rs",
+            column_writes,
+            "    async fn probe(&mut self) -> anyhow::Result<()> { column_sql::clear_cards(&mut *self.conn, uuid::Uuid::nil()).await?; Ok(()) }",
+        ),
+    ];
+    for (file, anchor, addition) in kept {
+        let planted = planted_after(&files, file, anchor, addition);
+
+        let found = sql_text_door_findings(&planted);
 
         assert_eq!(found, Vec::<String>::new(), "{file}: {addition}");
     }
@@ -7906,15 +8493,146 @@ fn running_write_findings(statement: &str, writers: &BTreeSet<String>) -> Vec<St
     out
 }
 
+/// The PL/pgSQL statement that runs SQL text built at run time, whose tables no scan can read.
+const DYNAMIC_SQL: &str = "EXECUTE";
+
+/// The words after which a trigger's own `EXECUTE` names the function it runs.
+const TRIGGER_RUNS: [&str; 2] = ["FUNCTION", "PROCEDURE"];
+
+/// What a `DO` statement's body is called in a finding: it has no name.
+const DO_BLOCK: &str = "a DO block";
+
+/// `sql` without the comments outside its quotes, dollar quotes and quoted identifiers.
+fn without_outer_comments(sql: &str) -> String {
+    let characters: Vec<char> = sql.chars().collect();
+    let mut out = String::new();
+    let mut at = 0;
+    while at < characters.len() {
+        let Some(end) = past_a_quote(&characters, at) else {
+            out.push(characters[at]);
+            at += 1;
+            continue;
+        };
+        let pair = (characters[at], characters.get(at + 1).copied());
+        if pair == ('-', Some('-')) || pair == ('/', Some('*')) {
+            out.push(' ');
+        } else {
+            out.extend(&characters[at..end]);
+        }
+        at = end;
+    }
+    out
+}
+
+/// The texts of `statement` a body scan reads: its outer comments dropped and its single-quoted
+/// strings read as SQL, once as that is and once with the comments inside the bodies dropped.
+fn body_texts(statement: &str) -> [String; 2] {
+    let opened = with_strings_opened(&without_outer_comments(statement));
+    [without_sql_comments(&opened), opened]
+}
+
+/// What holds the body `words` (one statement) define, by lower-case name: each function or
+/// procedure, or `a DO block`. Empty when the statement holds no body.
+fn body_owners(words: &[SqlWord]) -> Vec<String> {
+    if is_bare(words.first(), "DO") {
+        return vec![DO_BLOCK.to_owned()];
+    }
+    (0..words.len())
+        .filter_map(|at| running_object_at(words, at))
+        .filter(|(_, object)| object == "FUNCTION" || object == "PROCEDURE")
+        .filter_map(|(name_at, _)| table_name(words.get(table_name_at(words, name_at))))
+        .collect()
+}
+
+/// Whether the `EXECUTE` at `at` is a trigger's own clause, not dynamic SQL: `EXECUTE FUNCTION`
+/// or `EXECUTE PROCEDURE`, a name and its opening `(`, after a `CREATE … TRIGGER` in the same
+/// statement of the body.
+fn is_a_trigger_clause(words: &[SqlWord], at: usize) -> bool {
+    let runs = TRIGGER_RUNS
+        .iter()
+        .any(|word| is_bare(words.get(at + 1), word));
+    let name_end = table_name_at(words, at + 2);
+    let named = matches!(
+        words.get(at + 2),
+        Some(SqlWord::Bare(_) | SqlWord::Quoted(_))
+    ) && words.get(name_end + 1) == Some(&SqlWord::Other('('));
+    let start = (0..at)
+        .rev()
+        .find(|index| words[*index] == SqlWord::Other(';'))
+        .map_or(0, |index| index + 1);
+    let in_a_trigger = (start..at).any(|index| {
+        running_object_at(words, index).is_some_and(|(_, object)| object == "TRIGGER")
+    });
+    runs && named && in_a_trigger
+}
+
+/// Whether `words` hold an `EXECUTE` that is not a trigger's own clause.
+fn runs_dynamic_sql(words: &[SqlWord]) -> bool {
+    (0..words.len())
+        .any(|at| is_bare(words.get(at), DYNAMIC_SQL) && !is_a_trigger_clause(words, at))
+}
+
+/// The bodies `statement` defines that run dynamic SQL, by owner (see [`body_owners`]), its
+/// bodies read whichever way they are quoted.
+fn dynamic_bodies(statement: &str) -> Vec<String> {
+    let mut out: Vec<String> = body_texts(statement)
+        .iter()
+        .map(|text| sql_words(text))
+        .filter(|words| runs_dynamic_sql(words))
+        .flat_map(|words| body_owners(&words))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// What one statement of a later migration does with dynamic SQL that only a listed one may: a
+/// function, procedure or `DO` body that runs `EXECUTE`, or a body or trigger that names one of
+/// `executors`, the functions any migration defines that run it.
+fn dynamic_sql_findings(statement: &str, executors: &BTreeSet<String>) -> Vec<String> {
+    let mut out: Vec<String> = dynamic_bodies(statement)
+        .into_iter()
+        .map(|owner| format!("`{owner}` runs dynamic SQL ({DYNAMIC_SQL})"))
+        .collect();
+    for text in body_texts(statement) {
+        let words = sql_words(&text);
+        let owners = body_owners(&words);
+        let runs_later = !owners.is_empty()
+            || (0..words.len()).any(|at| {
+                running_object_at(&words, at).is_some_and(|(_, object)| object == "TRIGGER")
+            });
+        if !runs_later {
+            continue;
+        }
+        let named = words
+            .iter()
+            .filter_map(|word| table_name(Some(word)))
+            .filter(|name| executors.contains(name) && !owners.contains(name));
+        for executor in named {
+            out.push(format!("names `{executor}`, which runs dynamic SQL"));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// What breaks the migration rule in `files` (each by file name, with its SQL): each statement
 /// of a migration stamped after [`LAST_UNREAD_MIGRATION`] and not in `allowed` that
-/// [`running_write_findings`] refuses, against the writer functions any migration defines; and
-/// a migration without a numeric stamp.
+/// [`running_write_findings`] refuses, against the writer functions any migration defines, or
+/// that [`dynamic_sql_findings`] refuses, against the functions any migration defines that run
+/// dynamic SQL; and a migration without a numeric stamp.
 fn migration_findings(files: &[(String, String)], allowed: &[&str]) -> Vec<String> {
     let writers: BTreeSet<String> = files
         .iter()
         .flat_map(|(_, sql)| sql_statements(sql))
         .flat_map(|statement| writer_functions(&statement))
+        .collect();
+    let executors: BTreeSet<String> = files
+        .iter()
+        .flat_map(|(_, sql)| sql_statements(sql))
+        .flat_map(|statement| dynamic_bodies(&statement))
+        .filter(|owner| owner != DO_BLOCK)
         .collect();
     let mut out = Vec::new();
     for (file, sql) in files {
@@ -7930,7 +8648,10 @@ fn migration_findings(files: &[(String, String)], allowed: &[&str]) -> Vec<Strin
             continue;
         }
         for statement in sql_statements(sql) {
-            for finding in running_write_findings(&statement, &writers) {
+            let findings = running_write_findings(&statement, &writers)
+                .into_iter()
+                .chain(dynamic_sql_findings(&statement, &executors));
+            for finding in findings {
                 out.push(format!("{shown}: {finding}"));
             }
         }
@@ -7971,6 +8692,10 @@ fn no_later_migration_defines_a_function_or_trigger_that_writes_a_commission_tab
         "20261022132603_sync.sql".to_owned(),
         "CREATE FUNCTION sync_title() RETURNS trigger AS $$ BEGIN UPDATE commission SET title = NEW.name WHERE node_id = NEW.id; RETURN NEW; END $$ LANGUAGE plpgsql;".to_owned(),
     );
+    let earlier_executor = (
+        "20261022132604_run.sql".to_owned(),
+        "CREATE FUNCTION run_sql(statement text) RETURNS void AS $$ BEGIN EXECUTE statement; END $$ LANGUAGE plpgsql;".to_owned(),
+    );
     let refused = [
         "CREATE OR REPLACE FUNCTION archive_all() RETURNS void AS $$\nBEGIN\n  UPDATE commission SET archived_at = now();\nEND\n$$ LANGUAGE plpgsql;",
         "CREATE FUNCTION archive_all() RETURNS void AS 'UPDATE commission SET archived_at = now()' LANGUAGE sql;",
@@ -7986,9 +8711,22 @@ fn no_later_migration_defines_a_function_or_trigger_that_writes_a_commission_tab
         "create constraint trigger late after insert on commission_changelog deferrable for each row execute procedure sync_title();",
         "CREATE /* the card */ FUNCTION archive_all() RETURNS void AS $$ UPDATE -- the card\n commission SET archived_at = now() $$ LANGUAGE sql;",
         "CREATE FUNCTION archive_all() RETURNS void AS E'SELECT \\';\\'; UPDATE commission SET archived_at = now()' LANGUAGE sql;",
+        "CREATE PROCEDURE archive_all() LANGUAGE plpgsql AS $$ BEGIN EXECUTE 'UPDATE ' || quote_ident('commission') || ' SET archived_at = now()'; END $$;",
+        "DO $$ BEGIN EXECUTE format('UPDATE %I SET archived_at = now()', 'commission'); END $$;",
+        "CREATE FUNCTION wipe_tabs() RETURNS void AS $fn$ BEGIN EXECUTE 'DELETE FROM ' || 'commission_tab'; END $fn$ LANGUAGE plpgsql;",
+        "CREATE FUNCTION archive_all() RETURNS void AS 'BEGIN EXECUTE ''UPDATE '' || ''commission'' || '' SET archived_at = now()''; END' LANGUAGE plpgsql;",
+        "CREATE FUNCTION archive_all() RETURNS void AS $$ DECLARE function text := 'UPDATE ' || 'commission'; BEGIN EXECUTE function; END $$ LANGUAGE plpgsql;",
+        "CREATE FUNCTION archived() RETURNS SETOF commission AS $$ BEGIN RETURN QUERY EXECUTE 'SELECT * FROM ' || 'commission'; END $$ LANGUAGE plpgsql;",
+        "CREATE FUNCTION archive_all() RETURNS void AS $$ DECLARE dash text := '--'; BEGIN EXECUTE 'UPD' || 'ATE commission'; END $$ LANGUAGE plpgsql;",
+        "CREATE FUNCTION archive_all() RETURNS void AS $$ BEGIN PERFORM run_sql('UPD' || 'ATE commission SET archived_at = now()'); END $$ LANGUAGE plpgsql;",
+        "CREATE TRIGGER rerun AFTER UPDATE ON node FOR EACH ROW EXECUTE FUNCTION run_sql();",
     ];
     for sql in refused {
-        let planted = [earlier_writer.clone(), (later.to_owned(), sql.to_owned())];
+        let planted = [
+            earlier_writer.clone(),
+            earlier_executor.clone(),
+            (later.to_owned(), sql.to_owned()),
+        ];
 
         let found = migration_findings(&planted, &COMMISSION_WRITING_MIGRATIONS);
 
@@ -8014,13 +8752,32 @@ fn no_later_migration_defines_a_function_or_trigger_that_writes_a_commission_tab
         "CREATE TRIGGER name_node BEFORE INSERT ON node FOR EACH ROW EXECUTE FUNCTION node_name_known();",
         "CREATE FUNCTION node_unmoved() RETURNS trigger AS $$ BEGIN IF NEW.parent_id = OLD.parent_id THEN RETURN NEW; END IF; RAISE EXCEPTION 'moved'; END $$ LANGUAGE plpgsql;",
         "CREATE INDEX commission_deadline ON commission (deadline);",
+        "CREATE TRIGGER name_node AFTER UPDATE ON node FOR EACH ROW EXECUTE PROCEDURE node_name_known();",
+        "DO $$ BEGIN CREATE TRIGGER name_node AFTER INSERT ON node FOR EACH ROW EXECUTE FUNCTION node_name_known(); END $$;",
+        "-- Executes nothing at run time.\nCREATE FUNCTION tidy() RETURNS void AS $$ DELETE FROM workflow WHERE false $$ LANGUAGE sql;",
     ];
     for sql in kept {
-        let planted = [earlier_writer.clone(), (later.to_owned(), sql.to_owned())];
+        let planted = [
+            earlier_writer.clone(),
+            earlier_executor.clone(),
+            (later.to_owned(), sql.to_owned()),
+        ];
 
         let found = migration_findings(&planted, &COMMISSION_WRITING_MIGRATIONS);
 
         assert_eq!(found, Vec::<String>::new(), "{sql}");
+    }
+    let herons_plant = "-- A trigger on another table that un-archives a commission by dynamic SQL.\nCREATE FUNCTION heron_unarchive() RETURNS trigger AS $$\nBEGIN\n    EXECUTE format('UPDATE %I SET archived_at = NULL WHERE node_id = $1', 'commission') USING NEW.id;\n    RETURN NEW;\nEND\n$$ LANGUAGE plpgsql;\n\nCREATE TRIGGER heron_unarchive AFTER UPDATE ON node FOR EACH ROW EXECUTE FUNCTION heron_unarchive();\n\n-- The same, with the statement concatenated.\nCREATE FUNCTION heron_unarchive_two() RETURNS trigger AS $$\nBEGIN\n    EXECUTE 'UPDATE ' || 'commission' || ' SET archived_at = NULL WHERE node_id = $1' USING NEW.id;\n    RETURN NEW;\nEND\n$$ LANGUAGE plpgsql;\n";
+    let planted = [(later.to_owned(), herons_plant.to_owned())];
+    let found = migration_findings(&planted, &COMMISSION_WRITING_MIGRATIONS);
+    let shown = "adapter-pg/migrations/20261023000000_later.sql";
+    let expected = [
+        format!("{shown}: `heron_unarchive_two` runs dynamic SQL (EXECUTE)"),
+        format!("{shown}: `heron_unarchive` runs dynamic SQL (EXECUTE)"),
+        format!("{shown}: names `heron_unarchive`, which runs dynamic SQL"),
+    ];
+    for finding in &expected {
+        assert!(found.contains(finding), "{finding}: {found:?}");
     }
     let earlier = [(earlier_writer.0.clone(), refused[0].to_owned())];
     assert_eq!(
