@@ -17,7 +17,7 @@ use adapter_hkdf::HkdfKeyCustodian;
 use adapter_pg::PgPool;
 use async_trait::async_trait;
 use composition::RootSecret;
-use data_encoding::{BASE64, HEXLOWER};
+use data_encoding::{BASE64, BASE64_NOPAD, BASE64URL, BASE64URL_NOPAD, HEXLOWER, HEXUPPER};
 use domain::elements::account_keys::{AccountKeys, SecretKey};
 use domain::elements::custody::{
     CustodyError, CustodySubject, ForDidCustody, ForSigninSecrets, MacMessage, MacTag, MacUse,
@@ -305,24 +305,66 @@ pub fn envelope_key_id(envelope: &[u8]) -> String {
     String::from_utf8(key_id.to_vec()).expect("a key id is text")
 }
 
-/// `bytes` as a log could print them: lowercase hex, standard base64, and the `Debug` of
-/// a byte slice (`[1, 2, …]`).
-pub fn printed_forms(bytes: &[u8]) -> [String; 3] {
-    [
-        HEXLOWER.encode(bytes),
-        BASE64.encode(bytes),
-        format!("{bytes:?}"),
-    ]
+/// The length of the slices [`printed_forms`] prints apart, so a partial print shows.
+const PRINTED_WINDOW_BYTES: usize = 8;
+
+/// `bytes` whole, as a log could print them, each beside its name ("as uppercase hex"):
+/// lowercase and uppercase hex, standard and URL-safe base64 padded and unpadded, and the
+/// `{:?}`, `{:x?}` and `{:X?}` byte lists.
+fn whole_forms(bytes: &[u8]) -> Vec<(String, String)> {
+    let forms = [
+        ("as hex", HEXLOWER.encode(bytes)),
+        ("as uppercase hex", HEXUPPER.encode(bytes)),
+        ("as base64", BASE64.encode(bytes)),
+        ("as unpadded base64", BASE64_NOPAD.encode(bytes)),
+        ("as URL-safe base64", BASE64URL.encode(bytes)),
+        ("as unpadded URL-safe base64", BASE64URL_NOPAD.encode(bytes)),
+        ("as a byte list", format!("{bytes:?}")),
+        ("as a hex byte list", format!("{bytes:x?}")),
+        ("as an uppercase hex byte list", format!("{bytes:X?}")),
+    ];
+    forms
+        .into_iter()
+        .map(|(name, printed)| (name.to_owned(), printed))
+        .collect()
 }
 
-/// Each of [`printed_forms`] of `bytes`, named after `what`.
-pub fn named_printings(what: &str, bytes: &[u8]) -> [(String, String); 3] {
-    let [hex, base64, list] = printed_forms(bytes);
-    [
-        (format!("{what} as hex"), hex),
-        (format!("{what} as base64"), base64),
-        (format!("{what} as a byte list"), list),
-    ]
+/// Every 8-byte window of `bytes` in lowercase and uppercase hex, each beside its name
+/// ("bytes 8..16 as hex"); none when `bytes` is shorter than 8.
+fn window_forms(bytes: &[u8]) -> Vec<(String, String)> {
+    bytes
+        .windows(PRINTED_WINDOW_BYTES)
+        .enumerate()
+        .flat_map(|(start, window)| {
+            let range = format!("bytes {start}..{}", start + PRINTED_WINDOW_BYTES);
+            [
+                (format!("{range} as hex"), HEXLOWER.encode(window)),
+                (format!("{range} as uppercase hex"), HEXUPPER.encode(window)),
+            ]
+        })
+        .collect()
+}
+
+/// Every form a log could print `bytes` in, each beside its name: the whole value as
+/// lowercase and uppercase hex, standard and URL-safe base64 padded and unpadded, and the
+/// `{:?}`, `{:x?}` and `{:X?}` byte lists; then every 8-byte window as lowercase and
+/// uppercase hex (none when `bytes` is shorter than 8).
+pub fn printed_forms(bytes: &[u8]) -> Vec<(String, String)> {
+    let mut forms = whole_forms(bytes);
+    forms.extend(window_forms(bytes));
+    forms
+}
+
+/// Each of [`printed_forms`] of `bytes`, named after `what`: "the PRK as uppercase hex",
+/// "the PRK's bytes 8..16 as hex".
+pub fn named_printings(what: &str, bytes: &[u8]) -> Vec<(String, String)> {
+    let whole = whole_forms(bytes)
+        .into_iter()
+        .map(|(form, printed)| (format!("{what} {form}"), printed));
+    let windows = window_forms(bytes)
+        .into_iter()
+        .map(|(form, printed)| (format!("{what}'s {form}"), printed));
+    whole.chain(windows).collect()
 }
 
 /// Every printing of what `root` derives, each named: its PRK and each purpose's key, in

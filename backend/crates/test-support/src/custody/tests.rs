@@ -129,10 +129,63 @@ async fn the_canary_names_the_key_ids_the_custodian_writes() {
 }
 
 #[test]
-fn printed_forms_are_hex_base64_and_the_byte_list() {
-    let forms = printed_forms(&[0x00, 0x7f, 0xff]);
+fn printed_forms_are_every_hex_base64_and_byte_list_form() {
+    let forms = printed_forms(&[0x00, 0x7f, 0xff, 0x10]);
 
-    assert_eq!(forms, ["007fff", "AH//", "[0, 127, 255]"]);
+    let forms: Vec<(&str, &str)> = forms
+        .iter()
+        .map(|(name, text)| (name.as_str(), text.as_str()))
+        .collect();
+    let expected = [
+        ("as hex", "007fff10"),
+        ("as uppercase hex", "007FFF10"),
+        ("as base64", "AH//EA=="),
+        ("as unpadded base64", "AH//EA"),
+        ("as URL-safe base64", "AH__EA=="),
+        ("as unpadded URL-safe base64", "AH__EA"),
+        ("as a byte list", "[0, 127, 255, 16]"),
+        ("as a hex byte list", "[0, 7f, ff, 10]"),
+        ("as an uppercase hex byte list", "[0, 7F, FF, 10]"),
+    ];
+    assert_eq!(forms, expected);
+}
+
+#[test]
+fn nine_bytes_print_two_windows_in_each_case() {
+    let bytes = [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe];
+
+    let forms = printed_forms(&bytes);
+
+    let windows: Vec<(&str, &str)> = forms
+        .iter()
+        .filter(|(name, _)| name.starts_with("bytes "))
+        .map(|(name, text)| (name.as_str(), text.as_str()))
+        .collect();
+    let expected = [
+        ("bytes 0..8 as hex", "0123456789abcdef"),
+        ("bytes 0..8 as uppercase hex", "0123456789ABCDEF"),
+        ("bytes 1..9 as hex", "23456789abcdeffe"),
+        ("bytes 1..9 as uppercase hex", "23456789ABCDEFFE"),
+    ];
+    assert_eq!(windows, expected);
+}
+
+#[test]
+fn fewer_than_eight_bytes_print_no_window() {
+    let forms = printed_forms(&[0x01; 7]);
+
+    let windows = forms.iter().filter(|(name, _)| name.starts_with("bytes "));
+    assert_eq!(windows.count(), 0);
+}
+
+#[test]
+fn named_printings_name_the_whole_value_and_each_window() {
+    let printings = named_printings("the signing key", &[0x01; 9]);
+
+    let names: Vec<&str> = printings.iter().map(|(name, _)| name.as_str()).collect();
+    assert!(names.contains(&"the signing key as uppercase hex"));
+    assert!(names.contains(&"the signing key's bytes 1..9 as hex"));
+    assert_eq!(printings.len(), 9 + 2 * 2);
 }
 
 #[test]
@@ -142,7 +195,10 @@ fn derived_printings_cover_the_prk_and_every_purpose_key() {
     let printings = derived_printings(&root);
 
     let prk_hex = HEXLOWER.encode(&prk_of(&root));
-    assert_eq!(printings.len(), 3 * (1 + Purpose::VARIANTS.len()));
+    let windows_per_key = KEY_BYTES - 8 + 1;
+    let forms_per_key = 9 + 2 * windows_per_key;
+    let expected_printings = forms_per_key * (1 + Purpose::VARIANTS.len());
+    assert_eq!(printings.len(), expected_printings);
     assert!(printings.iter().any(|(_, printed)| *printed == prk_hex));
     for purpose in Purpose::VARIANTS {
         let key_base64 = BASE64.encode(&purpose_key_of(&root, *purpose));
