@@ -33,7 +33,7 @@
     },
     {
       "name": "migrate.rs",
-      "role": "zurfur migrate — runs the custody migrator `Runtime::connect_migrating` hands back (holding DID custody): probe, migrations, re-wrap; reports `applied`, `version`, `rowsRewrapped`. `--check` runs only `check()`, reporting `unopenable` and `pending` without writing. A root the 0.1 rows don't open under is a `config` refusal naming a count; exempt from the schema-drift gate",
+      "role": "zurfur migrate — runs the custody migrator `Runtime::connect_migrating` hands back (holding DID custody): probe, migrations, re-wrap; reports `applied`, `version`, `rowsRewrapped`. `--check` runs only `check()`, reporting `unopenable` and `pending` without writing. A root any custody row (a 0.1 ciphertext or an envelope) doesn't open under is a `config` refusal naming a count; exempt from the schema-drift gate",
       "node": false
     },
     {

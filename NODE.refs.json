@@ -210,7 +210,7 @@
     {
       "page": 26804226,
       "title": "did:plc Identity Custody, Minting & Credible Exit",
-      "governs": "`src/key_vault.rs` (LegacyRootKey, the 0.1 opener), `src/key_store.rs` (the custody store over the DID-custody handle, the legacy probe and the re-wrap), `src/custody_migrator.rs` (probe and dry run before the migrations, the re-wrap after), `queries/key_store/`, `migrations/20260630190000_create_account_keys_table.sql`"
+      "governs": "`src/key_vault.rs` (LegacyRootKey, the 0.1 opener), `src/key_store.rs` (the custody store over the DID-custody handle, the custody probe and the re-wrap), `src/custody_migrator.rs` (probe and dry run before the migrations, the re-wrap after), `queries/key_store/`, `migrations/20260630190000_create_account_keys_table.sql`"
     },
     {
       "page": 27852802,

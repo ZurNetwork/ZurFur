@@ -1,6 +1,6 @@
-//! [`CustodyMigrator`]: how a driver migrates the private store. It probes every
-//! 0.1 custody row and dry-runs its re-wrap first, then runs the migrations, then
-//! re-wraps the 0.1 rows into the envelope.
+//! [`CustodyMigrator`]: how a driver migrates the private store. It first dry-runs
+//! the re-wrap of every 0.1 custody row and opens every envelope, then runs the
+//! migrations, then re-wraps the 0.1 rows into the envelope.
 
 use std::fmt;
 use std::marker::PhantomData;
@@ -15,9 +15,10 @@ use crate::key_store::{PgKeyStore, RewrapError};
 use crate::key_vault::LegacyRootKey;
 use crate::{MigrationReport, latest_embedded_version, migrator, pending_migrations};
 
-/// Migrates the private store and moves the 0.1 custody rows into the envelope.
-/// Runs once: [`run`](CustodyMigrator::run) consumes it. It holds a copy of the custody
-/// root until then, and is bound to its thread, so nothing `Send` can keep it.
+/// Migrates the private store and moves the 0.1 custody rows into the envelope,
+/// refusing a root any custody row doesn't open under. Runs once:
+/// [`run`](CustodyMigrator::run) consumes it. It holds a copy of the custody root
+/// until then, and is bound to its thread, so nothing `Send` can keep it.
 ///
 /// ```compile_fail
 /// async fn migrator_is_one_shot(migrator: adapter_pg::CustodyMigrator) {
@@ -55,7 +56,9 @@ pub struct CustodyMigrator {
 /// What [`CustodyMigrator::check`] found, without writing anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CustodyCheck {
-    /// The 0.1 rows that don't open under the configured root or fail the dry run.
+    /// The custody rows that don't open under the configured root: a 0.1
+    /// ciphertext that fails the dry run, or an envelope that doesn't open to three
+    /// keys. A row failing both counts once.
     pub unopenable: usize,
     /// The rows a run would re-wrap.
     pub pending: usize,
@@ -64,7 +67,7 @@ pub struct CustodyCheck {
 /// Why a custody migration stopped. Names counts only: never a DID, a key id or a byte.
 #[derive(Debug, thiserror::Error)]
 pub enum CustodyMigrationError {
-    /// The probe found rows that don't open or fail the dry run; nothing ran.
+    /// The probe found custody rows that don't open or fail the dry run; nothing ran.
     #[error("{}", unopenable_rows(.count))]
     Unopenable { count: usize },
     /// The re-wrap stopped after the migrations; it sealed nothing.
@@ -93,10 +96,11 @@ impl CustodyMigrator {
         }
     }
 
-    /// Probes and dry-runs every 0.1 row, refusing before any migration if one
-    /// fails; then runs the pending migrations and re-wraps the 0.1 rows.
+    /// Dry-runs every 0.1 row's re-wrap and opens every envelope, refusing before
+    /// any migration if a row fails; then runs the pending migrations and re-wraps
+    /// the 0.1 rows.
     pub async fn run(self) -> Result<MigrationReport, CustodyMigrationError> {
-        let probe = PgKeyStore::probe_legacy(&self.pool, &self.legacy_root, &self.sealer).await?;
+        let probe = PgKeyStore::probe(&self.pool, &self.legacy_root, &self.sealer).await?;
         if probe.unopenable > 0 {
             let refusal = CustodyMigrationError::Unopenable {
                 count: probe.unopenable,
@@ -115,10 +119,10 @@ impl CustodyMigrator {
         Ok(report)
     }
 
-    /// Counts the 0.1 rows that would refuse a run and the rows a run would
+    /// Counts the custody rows that would refuse a run and the rows a run would
     /// re-wrap. Writes nothing.
     pub async fn check(&self) -> Result<CustodyCheck, CustodyMigrationError> {
-        let probe = PgKeyStore::probe_legacy(&self.pool, &self.legacy_root, &self.sealer).await?;
+        let probe = PgKeyStore::probe(&self.pool, &self.legacy_root, &self.sealer).await?;
         let pending = PgKeyStore::pending_rewraps(&self.pool, &probe).await?;
         let check = CustodyCheck {
             unopenable: probe.unopenable,

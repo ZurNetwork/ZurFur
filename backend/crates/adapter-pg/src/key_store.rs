@@ -1,8 +1,9 @@
 //! [`PgKeyStore`]: the custody store for minted `did:plc` keys over `account_keys`,
-//! sealed through the DID-custody handle; and the probe and the re-wrap that move
-//! the 0.1 rows into the envelope. Pool-backed: a DID's keys are written while it
-//! is minted, before its Account row exists.
+//! sealed through the DID-custody handle; the probe that opens every custody row;
+//! and the re-wrap that moves the 0.1 rows into the envelope. Pool-backed: a DID's
+//! keys are written while it is minted, before its Account row exists.
 
+use std::collections::BTreeSet;
 use std::fmt;
 
 use async_trait::async_trait;
@@ -78,12 +79,13 @@ pub enum RewrapError {
     Database(#[from] sqlx::Error),
 }
 
-/// What the probe found among the rows holding a 0.1 ciphertext.
+/// What the probe found among the custody rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct LegacyProbe {
+pub(crate) struct CustodyProbe {
     /// Every row holding a 0.1 ciphertext.
-    pub(crate) rows: usize,
-    /// The rows that don't open or fail the dry run.
+    pub(crate) legacy_rows: usize,
+    /// The rows whose 0.1 ciphertext fails the dry run or whose envelope doesn't
+    /// open to three keys; a row failing both counts once.
     pub(crate) unopenable: usize,
 }
 
@@ -94,29 +96,42 @@ impl PgKeyStore {
         Self { pool, sealer }
     }
 
-    /// Opens, re-seals in memory and re-opens every row holding a 0.1 ciphertext,
-    /// in DID order, and writes nothing. Reads only `did` and `wrapped_keys`, so it
-    /// runs before the envelope's migration too; no custody table reads as none.
-    pub(crate) async fn probe_legacy(
+    /// Dry-runs the re-wrap of every row holding a 0.1 ciphertext, and opens every
+    /// envelope as a read would, both in DID order; writes nothing. Before the
+    /// envelope's column exists it reads only `did` and `wrapped_keys`; no custody
+    /// table reads as none.
+    pub(crate) async fn probe(
         pool: &PgPool,
         legacy_root: &LegacyRootKey,
         sealer: &ScopedSealer<ForDidCustody>,
-    ) -> Result<LegacyProbe, sqlx::Error> {
+    ) -> Result<CustodyProbe, sqlx::Error> {
         if !sql::table_exists(pool).await? {
-            return Ok(LegacyProbe::default());
+            return Ok(CustodyProbe::default());
         }
-        let rows = sql::legacy_probe(pool).await?;
-        let mut unopenable = 0;
-        for row in &rows {
+        let legacy_rows = sql::legacy_probe(pool).await?;
+        let sealed_rows = if sql::sealed_column_exists(pool).await? {
+            sql::sealed_probe(pool).await?
+        } else {
+            Vec::new()
+        };
+        let mut unopenable_dids = BTreeSet::new();
+        for row in &legacy_rows {
             let dry_run = reseal(legacy_root, sealer, &row.did, &row.wrapped_keys).await;
             if let Err(error) = dry_run {
                 tracing::debug!(did = %row.did, %error, "a custody row fails the dry run");
-                unopenable += 1;
+                unopenable_dids.insert(row.did.clone());
             }
         }
-        let probe = LegacyProbe {
-            rows: rows.len(),
-            unopenable,
+        for row in sealed_rows {
+            let opened = open_sealed(sealer, &row.did, row.sealed_keys).await;
+            if let Err(error) = opened {
+                tracing::debug!(did = %row.did, %error, "a custody row's envelope doesn't open");
+                unopenable_dids.insert(row.did);
+            }
+        }
+        let probe = CustodyProbe {
+            legacy_rows: legacy_rows.len(),
+            unopenable: unopenable_dids.len(),
         };
         Ok(probe)
     }
@@ -125,13 +140,13 @@ impl PgKeyStore {
     /// envelope's column exists, and every row without an envelope after it.
     pub(crate) async fn pending_rewraps(
         pool: &PgPool,
-        probe: &LegacyProbe,
+        probe: &CustodyProbe,
     ) -> Result<usize, sqlx::Error> {
         if !sql::table_exists(pool).await? {
             return Ok(0);
         }
         if !sql::sealed_column_exists(pool).await? {
-            return Ok(probe.rows);
+            return Ok(probe.legacy_rows);
         }
         let unsealed = sql::count_unsealed(pool).await?;
         // A count is never negative.
@@ -201,10 +216,7 @@ impl KeyStore for PgKeyStore {
             return Ok(None);
         };
         let sealed = stored.ok_or(CustodyError::NotRewrapped)?;
-        let subject = custody_subject(did.as_ref())?;
-        let envelope = SealedEnvelope::from(sealed);
-        let opened = self.sealer.open(&subject, &envelope).await?;
-        let bundle = KeyBundle::try_from(opened.expose())?;
+        let bundle = open_sealed(&self.sealer, did.as_ref(), sealed).await?;
         Ok(Some(AccountKeys::from(&bundle)))
     }
 }
@@ -274,6 +286,20 @@ impl From<LegacyOpenError> for ResealError {
 fn custody_subject(did: &str) -> Result<CustodySubject, PartsError> {
     let parts: [&[u8]; 2] = [SUBJECT_TABLE, did.as_bytes()];
     CustodySubject::try_from(parts.as_slice())
+}
+
+/// Opens `did`'s envelope through the DID-custody handle, bound to `did`'s subject,
+/// into its three keys: the one open a read and the probe share.
+async fn open_sealed(
+    sealer: &ScopedSealer<ForDidCustody>,
+    did: &str,
+    sealed: Vec<u8>,
+) -> anyhow::Result<KeyBundle> {
+    let subject = custody_subject(did)?;
+    let envelope = SealedEnvelope::from(sealed);
+    let opened = sealer.open(&subject, &envelope).await?;
+    let bundle = KeyBundle::try_from(opened.expose())?;
+    Ok(bundle)
 }
 
 /// Opens a 0.1 row with the legacy root, seals its keys under DID custody, opens

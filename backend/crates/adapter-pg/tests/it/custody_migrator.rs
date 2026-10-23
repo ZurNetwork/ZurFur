@@ -1,15 +1,16 @@
-//! The custody migrator: it probes and dry-runs every 0.1 custody row before any
-//! migration and refuses, naming a count, when one fails; it re-wraps the 0.1 rows
-//! after the migrations, keeping their ciphertext; it reports its counts; `check`
-//! writes nothing; the probe reads only `public.account_keys`. Requires a container
-//! runtime socket (DOCKER_HOST honored).
+//! The custody migrator: before any migration it dry-runs every 0.1 custody row and
+//! opens every envelope, and refuses, naming a count of rows, when one fails; it
+//! re-wraps the 0.1 rows after the migrations, keeping their ciphertext; it reports
+//! its counts; `check` writes nothing; the probe reads only `public.account_keys`.
+//! Requires a container runtime socket (DOCKER_HOST honored).
 
 use adapter_pg::{CustodyCheck, CustodyMigrationError, CustodyMigrator, PgKeyStore, PgPool};
 use domain::elements::{custody::ForDidCustody, did::Did};
 use domain::ports::{KeyStore, ScopedSealer};
 use test_support::custody::{
-    LEGACY_ALICE_BLOB_HEX, LEGACY_ALICE_DID, LEGACY_BOB_BLOB_HEX, LEGACY_BOB_DID, LEGACY_ROOT,
-    hex_bytes, legacy_keys, lying_did_custody, test_custody,
+    GOLDEN_DID, LEGACY_ALICE_BLOB_HEX, LEGACY_ALICE_DID, LEGACY_BOB_BLOB_HEX, LEGACY_BOB_DID,
+    LEGACY_ROOT, custody_of, golden_subject, hex_bytes, legacy_keys, lying_did_custody,
+    test_custody,
 };
 use zeroize::Zeroizing;
 
@@ -340,4 +341,148 @@ async fn debug_prints_no_key_bytes() {
             assert!(!text.contains(form), "{text} holds the root as {form}");
         }
     }
+}
+
+#[tokio::test]
+async fn a_wrong_root_refuses_a_database_holding_only_envelopes() {
+    let (pool, _container) = bare_pool().await;
+    honest_migrator(&pool)
+        .run()
+        .await
+        .expect("the first boot migrates");
+    let did = Did::from("did:plc:foundedaftertheupgrade".to_owned());
+    PgKeyStore::new(pool.clone(), test_custody().did_custody)
+        .put(&did, &legacy_keys())
+        .await
+        .expect("an Account founded after the upgrade is sealed");
+    let ledger_before = ledger(&pool).await;
+    let blobs_before = blobs(&pool).await;
+    let wrong = custody_of(WRONG_ROOT);
+
+    let run = migrator(&pool, WRONG_ROOT, wrong.did_custody.clone())
+        .run()
+        .await;
+    let check = migrator(&pool, WRONG_ROOT, wrong.did_custody)
+        .check()
+        .await
+        .expect("the check counts");
+
+    let refusal = run.expect_err("a root the envelope doesn't open under refuses");
+    assert!(matches!(
+        refusal,
+        CustodyMigrationError::Unopenable { count: 1 }
+    ));
+    let expected_check = CustodyCheck {
+        unopenable: 1,
+        pending: 0,
+    };
+    assert_eq!(check, expected_check);
+    assert_eq!(ledger(&pool).await, ledger_before, "no migration ran");
+    assert_eq!(blobs(&pool).await, blobs_before, "no row changed");
+}
+
+#[tokio::test]
+async fn a_row_failing_both_ciphertexts_counts_once() {
+    let (pool, _container) = bare_pool().await;
+    run_migrations_before(&pool, CUSTODY_ENVELOPE).await;
+    seed_legacy(&pool, LEGACY_ALICE_DID, &hex_bytes(LEGACY_ALICE_BLOB_HEX)).await;
+    honest_migrator(&pool)
+        .run()
+        .await
+        .expect("the re-wrap seals Alice");
+    let wrong = custody_of(WRONG_ROOT);
+
+    let run = migrator(&pool, WRONG_ROOT, wrong.did_custody.clone())
+        .run()
+        .await;
+    let check = migrator(&pool, WRONG_ROOT, wrong.did_custody)
+        .check()
+        .await
+        .expect("the check counts");
+
+    let refusal = run.expect_err("neither of Alice's ciphertexts opens");
+    assert!(matches!(
+        refusal,
+        CustodyMigrationError::Unopenable { count: 1 }
+    ));
+    assert_eq!(
+        refusal.to_string(),
+        "1 custody row doesn't open under the configured root"
+    );
+    let expected_check = CustodyCheck {
+        unopenable: 1,
+        pending: 0,
+    };
+    assert_eq!(check, expected_check, "one row, counted once");
+}
+
+#[tokio::test]
+async fn the_right_root_runs_a_database_holding_envelopes() {
+    let (pool, _container) = before_the_envelope_with_two_rows().await;
+    honest_migrator(&pool)
+        .run()
+        .await
+        .expect("the re-wrap seals both rows");
+    let did = Did::from("did:plc:foundedaftertheupgrade".to_owned());
+    PgKeyStore::new(pool.clone(), test_custody().did_custody)
+        .put(&did, &legacy_keys())
+        .await
+        .expect("an Account founded after the upgrade is sealed");
+
+    let report = honest_migrator(&pool)
+        .run()
+        .await
+        .expect("every envelope opens under the right root");
+    let check = honest_migrator(&pool).check().await.expect("check");
+
+    assert_eq!((report.applied, report.rows_rewrapped), (0, 0));
+    let expected_check = CustodyCheck {
+        unopenable: 0,
+        pending: 0,
+    };
+    assert_eq!(check, expected_check);
+}
+
+#[tokio::test]
+async fn an_envelope_that_opens_to_other_than_three_keys_refuses() {
+    let (pool, _container) = bare_pool().await;
+    honest_migrator(&pool)
+        .run()
+        .await
+        .expect("the first boot migrates");
+    let sealer = test_custody().did_custody;
+    let subject = golden_subject("account_keys");
+    let envelope = sealer
+        .seal(&subject, &[0xAB; 95])
+        .await
+        .expect("seal 95 bytes");
+    let opened = sealer.open(&subject, &envelope).await.expect("it opens");
+    assert_eq!(opened.expose().len(), 95, "the planted envelope opens");
+    sqlx::query(
+        "INSERT INTO account_keys (did, sealed_keys, created_at)
+         VALUES ($1, $2, now())",
+    )
+    .bind(GOLDEN_DID)
+    .bind(envelope.as_ref())
+    .execute(&pool)
+    .await
+    .expect("plant the short envelope");
+    let ledger_before = ledger(&pool).await;
+    let blobs_before = blobs(&pool).await;
+
+    let run = honest_migrator(&pool).run().await;
+    let check = honest_migrator(&pool).check().await.expect("check");
+
+    let refusal = run.expect_err("an envelope of 95 bytes is no three keys");
+    assert!(matches!(
+        refusal,
+        CustodyMigrationError::Unopenable { count: 1 }
+    ));
+    let expected_check = CustodyCheck {
+        unopenable: 1,
+        pending: 0,
+    };
+    assert_eq!(check, expected_check);
+    assert_eq!(ledger(&pool).await, ledger_before, "no migration ran");
+    assert_eq!(blobs(&pool).await, blobs_before, "no row changed");
 }

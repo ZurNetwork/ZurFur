@@ -2222,6 +2222,13 @@ pub mod key_store {
         pub wrapped_keys: Vec<u8>,
     }
 
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct SealedProbeRow {
+        pub did: String,
+        pub sealed_keys: Vec<u8>,
+    }
+
     /// `queries/key_store/count_unsealed.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// How many rows have no sealed envelope yet.
@@ -2298,6 +2305,17 @@ pub mod key_store {
         ))
         .fetch_one(conn)
         .await
+    }
+
+    /// `queries/key_store/sealed_probe.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every row holding a sealed envelope, by DID, so the probe can open each one.
+    pub async fn sealed_probe(
+        conn: impl sqlx::PgExecutor<'_>,
+    ) -> sqlx::Result<Vec<SealedProbeRow>> {
+        sqlx::query_as(include_str!("../queries/key_store/sealed_probe.sql"))
+            .fetch_all(conn)
+            .await
     }
 
     /// `queries/key_store/store_sealed.sql`, contract inferred from the SQL against the migrated schema.

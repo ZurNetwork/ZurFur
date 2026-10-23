@@ -1,5 +1,5 @@
 //! `zurfur migrate`: migrate the private store through the custody migrator, which
-//! probes the 0.1 custody rows, runs the embedded migrations and re-wraps those rows.
+//! probes every custody row, runs the embedded migrations and re-wraps the 0.1 rows.
 //! `--check` counts what a run would do and writes nothing. Exempt from the schema
 //! gate: it is the fix the gate points at. Idempotent.
 
@@ -10,8 +10,8 @@ use crate::CliError;
 /// The flags of `zurfur migrate`.
 #[derive(Debug, Clone, Copy, clap::Args)]
 pub struct MigrateArgs {
-    /// Count the 0.1 custody rows that don't open under the configured root and the
-    /// rows a run would re-wrap, writing nothing.
+    /// Count the custody rows that don't open under the configured root and the rows
+    /// a run would re-wrap, writing nothing.
     #[arg(long)]
     pub check: bool,
 }
@@ -68,9 +68,10 @@ pub async fn run(
     }
 }
 
-/// A custody migration's failure as a problem: rows the configured root doesn't open
-/// are a `config` problem, anything else `service_unavailable`. The text names counts
-/// only; the cause goes to stderr at debug.
+/// A custody migration's failure as a problem: custody rows the configured root
+/// doesn't open, 0.1 ciphertexts or envelopes, are a `config` problem, anything else
+/// `service_unavailable`. The text names counts only; the cause goes to stderr at
+/// debug.
 fn refusal(error: CustodyMigrationError) -> CliError {
     tracing::debug!(%error, "the custody migration stopped");
     match error {
