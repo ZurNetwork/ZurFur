@@ -1,7 +1,7 @@
 //! Each pair of not-found causes at the same depth (absent; present but not the viewer's) runs
 //! the same SQL statements in the same order on PostgreSQL, through the den routes and through
 //! commission's reads behind den's check, with the profile cache warm and then cold, and
-//! through the rename and the board card's placement. The statements are read off the wire by
+//! through the rename, the new field writes and the board card's placement. The statements are read off the wire by
 //! the recording proxy; only bound values may differ.
 //! Requires a container runtime socket.
 
@@ -10,11 +10,11 @@ use strum::VariantArray as _;
 use test_support::{
     den::{get, patch_title},
     pg_app::{
-        self, COMMISSION_NOT_FOUND, DenWorld, MissPair, ProfileCacheState, RENAME_TITLE, Statement,
-        StatementLog, absent_commission, archived_participant_pairs, commission_read_live_pairs,
-        commission_read_stranger_pairs, den_account_pair, den_character_pair,
-        den_participant_pairs, den_stranger_pairs, den_stranger_targets, download_participant_pair,
-        rename_stranger_pair, stranger_targets,
+        self, COMMISSION_NOT_FOUND, CommissionCall, DenWorld, MissPair, ProfileCacheState,
+        RENAME_TITLE, Statement, StatementLog, absent_commission, archived_participant_pairs,
+        commission_read_live_pairs, commission_read_stranger_pairs, den_account_pair,
+        den_character_pair, den_participant_pairs, den_stranger_pairs, den_stranger_targets,
+        download_participant_pair, new_write_calls, rename_stranger_pair, stranger_targets,
     },
 };
 
@@ -47,9 +47,10 @@ const NEVER_FOR_A_MISSING_FILE: [&str; 3] = ["commission/find_file", "file/filen
 /// actor's standing, then the actor's own view grant.
 const BOARD_CARD_CHECK: [&str; 2] = ["commission/standing", "commission/view_grant"];
 
-/// Everything a rename by someone outside the commission runs, and all of it: the session's
-/// load, then the actor's standing, read on the pool before any unit opens.
-const RENAME_MISS: [&str; 2] = ["session/load", "commission/standing"];
+/// Everything a write by someone outside the commission runs, a rename or a field write, and
+/// all of it: the session's load, then the actor's standing, read on the pool before any unit
+/// opens.
+const WRITE_MISS: [&str; 2] = ["session/load", "commission/standing"];
 
 /// The profile cache's read, by DID.
 const PROFILE_GET: &str = "profile/get";
@@ -524,7 +525,7 @@ async fn a_stranger_s_rename_and_a_made_up_id_s_run_the_same_statements() {
     let absent = rename_statements(&recorded, &bob, &pair.absent).await;
 
     for (cause, statements) in [("not yours", &not_yours), ("absent", &absent)] {
-        assert_eq!(names(statements), RENAME_MISS, "{cause}");
+        assert_eq!(names(statements), WRITE_MISS, "{cause}");
         let opened = statements.iter().find(|statement| begins(statement));
         assert_eq!(opened, None, "{cause}: a unit opened");
     }
@@ -566,5 +567,50 @@ async fn get_commission_runs_the_check_s_pair_alike_for_a_stranger_and_a_made_up
             assert_eq!(names(&statements), GET_COMMISSION_MISS, "{label}");
             assert_runs_none_of(&statements, &[WHOLE_COMMISSION], &label);
         }
+    }
+}
+
+/// The statements `call` runs at `path` as `reader`, after checking it is a `404`.
+async fn call_statements(
+    recorded: &Recorded,
+    reader: &Reader<'_>,
+    call: &CommissionCall,
+    path: &str,
+) -> Vec<Statement> {
+    let mark = recorded.statements.mark();
+    let response = call
+        .send(reader.client, recorded.world.base_url(), path)
+        .await;
+    assert_eq!(response.status(), 404, "{}: {path}", call.label);
+    let statements = recorded.statements.since(mark);
+    let unreadable = statements.iter().any(Statement::is_unreadable);
+    assert!(
+        !unreadable,
+        "{}: {path}: {:?}",
+        call.label,
+        names(&statements)
+    );
+    statements
+}
+
+#[tokio::test]
+async fn a_stranger_and_a_made_up_id_run_the_same_statements_on_every_new_call() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let bob = bob(world);
+
+    for call in new_write_calls() {
+        let pair = call.pair(&world.old_sketch);
+
+        // bob takes no part in "Old sketch".
+        let not_yours = call_statements(&recorded, &bob, &call, &pair.not_yours).await;
+        let absent = call_statements(&recorded, &bob, &call, &pair.absent).await;
+
+        for (cause, statements) in [("not yours", &not_yours), ("absent", &absent)] {
+            assert_eq!(names(statements), WRITE_MISS, "{}, {cause}", call.label);
+            let opened = statements.iter().find(|statement| begins(statement));
+            assert_eq!(opened, None, "{}, {cause}: a unit opened", call.label);
+        }
+        assert_eq!(texts(&absent), texts(&not_yours), "{}", call.label);
     }
 }

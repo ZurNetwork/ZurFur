@@ -1,19 +1,21 @@
 //! Clock times of each pair of not-found causes on PostgreSQL, for the security review: every
 //! read pair the statement suite runs, each cause timed over many runs from a warm and a cold
-//! profile cache, printed as a Markdown table; then the rename's pair, interleaved and warm,
-//! with each cause's median, p10 and p90 and the pass rule's verdict. Not gated, as clock times
+//! profile cache, printed as a Markdown table; then the write pairs, the rename's and each new
+//! field write's, each interleaved and warm, with each cause's median, p10 and p90 and the
+//! pass rule's verdict. Not gated, as clock times
 //! are too noisy for CI: run it with `just den-timing`. Requires a container runtime socket.
 
 use std::time::{Duration, Instant};
 
 use strum::VariantArray as _;
 use test_support::{
-    den::{get, patch_title},
+    den::get,
     pg_app::{
-        self, DenWorld, MissPair, ProfileCacheState, RENAME_TITLE, archived_participant_pairs,
+        self, CommissionCall, DenWorld, MissPair, ProfileCacheState, archived_participant_pairs,
         commission_read_live_pairs, commission_read_stranger_pairs, den_account_pair,
         den_character_pair, den_participant_pairs, den_stranger_pairs, den_stranger_targets,
-        download_participant_pair, rename_stranger_pair, stranger_targets,
+        download_participant_pair, new_write_calls, rename_call, rename_stranger_pair,
+        stranger_targets,
     },
 };
 
@@ -149,27 +151,28 @@ struct WritePair {
 }
 
 impl WritePair {
-    /// Times `pair` as `viewer` through the rename: in each iteration both causes run, in
+    /// Times `pair` as `viewer` through `call`: in each iteration both causes run, in
     /// alternating order, so drift lands on both alike.
     async fn time(
         world: &DenWorld,
         viewer: &reqwest::Client,
+        call: &CommissionCall,
         pair: &MissPair,
         runs: usize,
     ) -> Self {
         for _ in 0..WARM_UP_RUNS {
-            rename(world, viewer, &pair.absent).await;
-            rename(world, viewer, &pair.not_yours).await;
+            timed_call(world, viewer, call, &pair.absent).await;
+            timed_call(world, viewer, call, &pair.not_yours).await;
         }
         let mut absent = Vec::with_capacity(runs);
         let mut not_yours = Vec::with_capacity(runs);
         for run in 0..runs {
             if run % 2 == 0 {
-                absent.push(rename(world, viewer, &pair.absent).await);
-                not_yours.push(rename(world, viewer, &pair.not_yours).await);
+                absent.push(timed_call(world, viewer, call, &pair.absent).await);
+                not_yours.push(timed_call(world, viewer, call, &pair.not_yours).await);
             } else {
-                not_yours.push(rename(world, viewer, &pair.not_yours).await);
-                absent.push(rename(world, viewer, &pair.absent).await);
+                not_yours.push(timed_call(world, viewer, call, &pair.not_yours).await);
+                absent.push(timed_call(world, viewer, call, &pair.absent).await);
             }
         }
         Self {
@@ -196,10 +199,10 @@ impl WritePair {
     }
 
     /// The pair's table and its verdict, in microseconds.
-    fn report(&self, runs: usize) -> Vec<String> {
+    fn report(&self, label: &str, runs: usize) -> Vec<String> {
         let line = |cause: &str, spread: &Spread| {
             format!(
-                "| rename, {cause} | {:.0} | {:.0} | {:.0} |",
+                "| {label}, {cause} | {:.0} | {:.0} | {:.0} |",
                 micros(spread.median),
                 micros(spread.p10),
                 micros(spread.p90),
@@ -212,7 +215,7 @@ impl WritePair {
         };
         vec![
             format!(
-                "Write pair: bob's rename, absent against not yours, {runs} interleaved pairs, warm"
+                "Write pair, {label}: bob, absent against not yours, {runs} interleaved pairs, warm"
             ),
             String::new(),
             "| Cause | Median µs | p10 µs | p90 µs |".to_owned(),
@@ -230,20 +233,24 @@ impl WritePair {
                 MEDIAN_TOLERANCE * 100.0,
                 self.median_gap() < MEDIAN_TOLERANCE,
             ),
-            format!("Write pair verdict: {verdict}"),
+            format!("Write pair verdict ({label}): {verdict}"),
         ]
     }
 }
 
-/// One `PATCH {path}` with [`RENAME_TITLE`] as `viewer`, timed from the request to the body's
-/// last byte.
-async fn rename(world: &DenWorld, viewer: &reqwest::Client, path: &str) -> Duration {
+/// One `call` at `path` as `viewer`, timed from the request to the body's last byte.
+async fn timed_call(
+    world: &DenWorld,
+    viewer: &reqwest::Client,
+    call: &CommissionCall,
+    path: &str,
+) -> Duration {
     let started = Instant::now();
-    let response = patch_title(viewer, world.base_url(), path, RENAME_TITLE).await;
+    let response = call.send(viewer, world.base_url(), path).await;
     let status = response.status();
     let _body = response.bytes().await.expect("the body");
     let elapsed = started.elapsed();
-    assert_eq!(status, 404, "{path}");
+    assert_eq!(status, 404, "{}: {path}", call.label);
     elapsed
 }
 
@@ -270,7 +277,16 @@ async fn clock_times_of_each_pair_s_causes() {
     let load_before = load_average();
     world.set_profile_cache(ProfileCacheState::Warm).await;
     let rename_pair = rename_stranger_pair(&world);
-    let write_pair = WritePair::time(&world, &world.bob, &rename_pair, runs).await;
+    let rename = rename_call();
+    let mut write_pairs = vec![(
+        rename.label,
+        WritePair::time(&world, &world.bob, &rename, &rename_pair, runs).await,
+    )];
+    for call in new_write_calls() {
+        let pair = call.pair(&world.old_sketch);
+        let timed = WritePair::time(&world, &world.bob, &call, &pair, runs).await;
+        write_pairs.push((call.label, timed));
+    }
     let mut timer = Timer {
         world: &world,
         runs,
@@ -332,7 +348,10 @@ async fn clock_times_of_each_pair_s_causes() {
         println!("{}", row.line());
     }
     println!();
-    for line in write_pair.report(runs) {
-        println!("{line}");
+    for (label, write_pair) in &write_pairs {
+        for line in write_pair.report(label, runs) {
+            println!("{line}");
+        }
+        println!();
     }
 }
