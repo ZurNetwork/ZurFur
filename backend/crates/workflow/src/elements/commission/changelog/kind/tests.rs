@@ -105,3 +105,21 @@ fn the_open_kinds_are_pinned_literally_and_record_as_their_own_token() {
         assert_eq!(<&'static str>::from(stored), <&'static str>::from(kind));
     }
 }
+
+// A Late mark records as `late`, and a deadline set (a clear records as one) or extended re-arms
+// it, pinned literally; a mark never re-arms itself.
+#[test]
+fn the_late_kinds_are_pinned_literally() {
+    let late_kinds = LateKinds::default();
+
+    let mark = <&'static str>::from(late_kinds.mark());
+    let rearming: Vec<&'static str> = late_kinds
+        .rearming()
+        .iter()
+        .map(<&'static str>::from)
+        .collect();
+
+    assert_eq!(mark, "late");
+    assert_eq!(rearming, ["deadline_set", "deadline_extended"]);
+    assert!(!late_kinds.rearming().contains(&late_kinds.mark()));
+}

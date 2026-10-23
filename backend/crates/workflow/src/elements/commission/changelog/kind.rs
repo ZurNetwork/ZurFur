@@ -101,6 +101,52 @@ pub enum ChangelogEntryKind {
     Renamed,
 }
 
+/// The kinds that say whether a Late is still owed: the kind a Late mark records, and the kinds
+/// that re-arm it. A re-arming entry recorded after the last mark makes a Late owed again, so each
+/// fresh miss is its own event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LateKinds {
+    mark: ChangelogEntryKind,
+    rearming: Vec<ChangelogEntryKind>,
+}
+
+impl Default for LateKinds {
+    /// The domain's: a [`Late`](ChangelogEntryKind::Late) entry marks, and a deadline set (a
+    /// clear records as one) or extended re-arms it.
+    fn default() -> Self {
+        use strum::VariantArray;
+        let rearming = ChangelogEntryKind::VARIANTS
+            .iter()
+            .copied()
+            .filter(rearms_late)
+            .collect();
+        Self {
+            mark: ChangelogEntryKind::Late,
+            rearming,
+        }
+    }
+}
+
+impl LateKinds {
+    /// The kind a Late mark records.
+    pub fn mark(&self) -> ChangelogEntryKind {
+        self.mark
+    }
+
+    /// The kinds that re-arm a Late, in declaration order.
+    pub fn rearming(&self) -> &[ChangelogEntryKind] {
+        &self.rearming
+    }
+}
+
+/// Whether an entry of `kind`, recorded after a Late mark, makes a Late owed again.
+fn rearms_late(kind: &ChangelogEntryKind) -> bool {
+    matches!(
+        kind,
+        ChangelogEntryKind::DeadlineSet | ChangelogEntryKind::DeadlineExtended
+    )
+}
+
 /// The kinds still recorded outside the den's write gate, each with a payload its caller
 /// builds. [`NewChangelogEntry::event`](super::NewChangelogEntry::event) takes only these, so
 /// a gated kind is built only by its own domain constructor.

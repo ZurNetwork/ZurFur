@@ -1169,14 +1169,6 @@ pub mod commission {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
-    pub struct LapsedDeadlinesRow {
-        pub id: uuid::Uuid,
-        pub deadline: chrono::DateTime<chrono::Utc>,
-        pub deadline_status: Option<String>,
-    }
-
-    /// Row shape read back from the prepared statement's metadata.
-    #[derive(Debug, sqlx::FromRow)]
     pub struct ListOwnedByRow {
         pub id: uuid::Uuid,
         pub owner_id: String,
@@ -1689,32 +1681,43 @@ pub mod commission {
     ///
     /// The deadline sweep's scan on the pool: the deadline param receives the sweep
     /// instant ("now"); lifecycle takes the steps a missed deadline doesn't lapse on
-    /// (the terminal ones and Disputed). A commission with a `late` entry recorded
-    /// since its deadline last changed is left out. Only a scan: the sweep re-reads
-    /// each one under its own lock before it writes.
+    /// (the terminal ones and Disputed); mark_kind takes the kind a Late mark records,
+    /// and rearm_kind the kinds that re-arm it. A commission with a mark recorded
+    /// since its last re-arming entry is left out. Answers ids only, ordered by
+    /// deadline, then id. Only a scan: the sweep re-reads each one under its own lock
+    /// before it writes.
     pub async fn lapsed_deadlines(
         conn: impl sqlx::PgExecutor<'_>,
         deadline: chrono::DateTime<chrono::Utc>,
         lifecycle: &[String],
-    ) -> sqlx::Result<Vec<LapsedDeadlinesRow>> {
-        sqlx::query_as(include_str!("../queries/commission/lapsed_deadlines.sql"))
+        mark_kind: &str,
+        rearm_kind: &[String],
+    ) -> sqlx::Result<Vec<uuid::Uuid>> {
+        sqlx::query_scalar(include_str!("../queries/commission/lapsed_deadlines.sql"))
             .bind(deadline)
             .bind(lifecycle)
+            .bind(mark_kind)
+            .bind(rearm_kind)
             .fetch_all(conn)
             .await
     }
 
     /// `queries/commission/late_owed.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// Whether one commission is still owed a `late` entry: none recorded since its
-    /// deadline last changed. The sweep scan's anti-join, for one commission, run on
-    /// the unit after its lock so it sees what committed while the lock was awaited.
+    /// Whether one commission is still owed a `late` entry: no entry of mark_kind
+    /// (the kind a Late mark records) since its last entry of rearm_kind (the kinds
+    /// that re-arm it). The sweep scan's anti-join, for one commission, run on the
+    /// unit after its lock so it sees what committed while the lock was awaited.
     pub async fn late_owed(
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,
+        mark_kind: &str,
+        rearm_kind: &[String],
     ) -> sqlx::Result<Option<bool>> {
         sqlx::query_scalar(include_str!("../queries/commission/late_owed.sql"))
             .bind(commission_id)
+            .bind(mark_kind)
+            .bind(rearm_kind)
             .fetch_one(conn)
             .await
     }

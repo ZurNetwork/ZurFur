@@ -19,7 +19,7 @@ use domain::elements::{
         AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
         CommissionFile, CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary,
         DeadlineChange, DelayedChange, DirectionChange, ElementId, FileKey, FileSummary,
-        GrantLevel, LapsedDeadline, LifecycleMove, LifecycleStep, LockedNode, LockedStanding,
+        GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode, LockedStanding,
         NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot,
         TabId, TabRow,
     },
@@ -541,11 +541,15 @@ impl CommissionStore for ScriptedStanding {
         &self,
         now: DateTimeUtc,
         not_lapsing: &[LifecycleStep],
-    ) -> anyhow::Result<Vec<LapsedDeadline>> {
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<Vec<CommissionId>> {
         if let Some(failure) = self.script.take_scan_failure() {
             return Err(failure);
         }
-        let lapsed = self.inner.lapsed_deadlines(now, not_lapsing).await?;
+        let lapsed = self
+            .inner
+            .lapsed_deadlines(now, not_lapsing, late_kinds)
+            .await?;
         if let Some(change) = self.script.take_after_scan() {
             change().await;
         }
@@ -681,8 +685,12 @@ impl CommissionReads for ScriptedStandingRepo<'_> {
         self.inner.lock_for_system(commission).await
     }
 
-    async fn late_owed(&mut self, commission: &CommissionId) -> anyhow::Result<bool> {
-        self.inner.late_owed(commission).await
+    async fn late_owed(
+        &mut self,
+        commission: &CommissionId,
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<bool> {
+        self.inner.late_owed(commission, late_kinds).await
     }
 
     async fn is_participant(

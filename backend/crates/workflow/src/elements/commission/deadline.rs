@@ -1,6 +1,6 @@
 use super::{
-    CommissionDeadline, CommissionId, CommissionRefusal, CommissionState, DeadlineStatusError,
-    LateFacts, LifecycleStep,
+    CommissionDeadline, CommissionRefusal, CommissionState, DeadlineStatusError, LateFacts,
+    LifecycleStep,
 };
 use kernel::datetime::DateTimeUtc;
 
@@ -32,20 +32,6 @@ pub enum DeadlineStatus {
 /// The typed error for a token outside the vocabulary; strum hands it the original input.
 fn unknown_token(_token: &str) -> DeadlineStatusError {
     DeadlineStatusError::InvalidValue
-}
-
-/// One commission the deadline sweep must log as Late: deadline passed,
-/// lifecycle not terminal, not yet logged (the sweep dedupes on the changelog).
-/// Carries what the `late` entry needs to render without joins. The sweep only
-/// logs; the state itself is derived at the time asked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LapsedDeadline {
-    /// The commission to log Late.
-    pub id: CommissionId,
-    /// The deadline that was missed (named in the Late entry's payload).
-    pub deadline: DateTimeUtc,
-    /// The standing manual flag at scan time — what the Late entry supersedes.
-    pub status: Option<DeadlineStatus>,
 }
 
 /// The deadline-axis status at `now`: Late once `deadline` is past on a step that isn't

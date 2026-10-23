@@ -5,7 +5,8 @@
 use domain::{
     datetime::DateTimeUtc,
     elements::commission::{
-        AsSystem, CommissionId, CommissionRefusal, LateFacts, LateMark, LifecycleStep, owes_late,
+        AsSystem, CommissionId, CommissionRefusal, LateFacts, LateKinds, LateMark, LifecycleStep,
+        owes_late,
     },
 };
 
@@ -117,15 +118,14 @@ impl Commissions<'_> {
         now: DateTimeUtc,
     ) -> CommissionResult<SweepResult> {
         let not_lapsing = LifecycleStep::not_lapsing();
+        let late_kinds = LateKinds::default();
         let lapsed = ports
             .commissions
-            .lapsed_deadlines(now, &not_lapsing)
+            .lapsed_deadlines(now, &not_lapsing, &late_kinds)
             .await?;
         let mut marked_late = 0;
-        for lapse in lapsed {
-            let act = Act {
-                commission: lapse.id,
-            };
+        for commission in lapsed {
+            let act = Act { commission };
             let command = write::Command {
                 actor: Actor::System(SweepToken { _sealed: () }),
                 act: DenAct::Commission(CommissionAct::MarkLate(act)),
@@ -135,7 +135,7 @@ impl Commissions<'_> {
                 Ok(Marked::Late) => marked_late += 1,
                 Ok(Marked::Skipped) => {}
                 Err(failure) => tracing::warn!(
-                    commission = %lapse.id,
+                    commission = %commission,
                     error = %failure,
                     "a commission's Late mark failed; the sweep goes on"
                 ),

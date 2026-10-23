@@ -2,8 +2,9 @@ use chrono::Utc;
 use domain::elements::account::AccountId;
 use domain::elements::commission::{
     CommissionDeadline, CommissionState, CommissionTitle, DirectionStatus, FileName, LateFacts,
-    NewSlot, SKELETON, SeatInvitation, SeatKind, SlotTitle, clear_deadline, clear_delayed,
-    clear_direction, move_lifecycle, owes_late, schedule_deadline, set_delayed, set_direction,
+    LateKinds, NewSlot, SKELETON, SeatInvitation, SeatKind, SlotTitle, clear_deadline,
+    clear_delayed, clear_direction, move_lifecycle, owes_late, schedule_deadline, set_delayed,
+    set_direction,
 };
 use domain::elements::did::Did;
 use domain::elements::workflow::{ColumnName, WorkflowName};
@@ -1383,6 +1384,7 @@ async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
         .expect("allowed before the deadline")
         .expect("a real set");
 
+    let late_kinds = LateKinds::default();
     let mut uow = database.begin().await.unwrap();
     {
         uow.commissions()
@@ -1397,10 +1399,18 @@ async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
             .unwrap();
 
         assert!(
-            !uow.commissions().late_owed(&already_late.id).await.unwrap(),
+            !uow.commissions()
+                .late_owed(&already_late.id, &late_kinds)
+                .await
+                .unwrap(),
             "a late entry staged on the unit is seen by its own read"
         );
-        assert!(uow.commissions().late_owed(&missed.id).await.unwrap());
+        assert!(
+            uow.commissions()
+                .late_owed(&missed.id, &late_kinds)
+                .await
+                .unwrap()
+        );
         let locked = uow
             .commissions()
             .lock_for_system(&missed.id)
@@ -1417,22 +1427,96 @@ async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
     uow.commit().await.unwrap();
 
     let not_lapsing = LifecycleStep::not_lapsing();
-    let lapsed = backend
+    let ids = backend
         .commission_store()
-        .lapsed_deadlines(now, &not_lapsing)
+        .lapsed_deadlines(now, &not_lapsing, &late_kinds)
         .await
         .unwrap();
-    let ids: Vec<_> = lapsed.iter().map(|l| l.id).collect();
     assert_eq!(
         ids,
         vec![missed.id, slipping.id],
-        "exactly the sweepable set, ordered by deadline"
+        "exactly the sweepable set, ordered by deadline, a Delayed one included"
     );
-    assert_eq!(lapsed[0].status, None);
+}
+
+// An extension after a `late` entry re-arms both the owed read and the scan: one change per
+// miss.
+#[tokio::test]
+async fn an_extension_re_arms_the_owed_read_and_the_scan() {
+    let backend = MemBackend::new();
+    let database = backend.database();
+    let owner = user_id();
+    let now = Utc::now();
+    let missed = CommissionSeed {
+        created_at: now,
+        deadline: Some(now - chrono::Duration::days(30)),
+        ..commission("Re-armed", owner.clone())
+    };
+    seed(&backend, &missed).await;
+    let late_kinds = LateKinds::default();
+    let not_lapsing = LifecycleStep::not_lapsing();
+    let state = state_of(&backend, missed.id).await;
+    let late_facts = LateFacts {
+        state: state.clone(),
+        owed: true,
+    };
+    let mark = owes_late(&late_facts, now).expect("a late entry is owed");
+    let later = now - chrono::Duration::days(10);
+    let extended = schedule_deadline(&state, later.into())
+        .expect("allowed")
+        .expect("a real set");
+    assert!(extended.extends(), "a later deadline is an extension");
+
+    let mut uow = database.begin().await.unwrap();
+    uow.changelog()
+        .append(&NewChangelogEntry::late(missed.id, &mark, now))
+        .await
+        .unwrap();
+    let logged = uow
+        .commissions()
+        .late_owed(&missed.id, &late_kinds)
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+    let scanned_after_mark = backend
+        .commission_store()
+        .lapsed_deadlines(now, &not_lapsing, &late_kinds)
+        .await
+        .unwrap();
+
+    let mut uow = database.begin().await.unwrap();
+    uow.changelog()
+        .append(&NewChangelogEntry::deadline_set(
+            missed.id,
+            owner.clone(),
+            &extended,
+            now,
+        ))
+        .await
+        .unwrap();
+    let re_armed = uow
+        .commissions()
+        .late_owed(&missed.id, &late_kinds)
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+    let scanned_after_extension = backend
+        .commission_store()
+        .lapsed_deadlines(now, &not_lapsing, &late_kinds)
+        .await
+        .unwrap();
+
+    let expected_after_mark = (false, Vec::<CommissionId>::new());
     assert_eq!(
-        lapsed[1].status,
-        Some(DeadlineStatus::Delayed),
-        "the scan carries the standing flag"
+        (logged, scanned_after_mark),
+        expected_after_mark,
+        "a late entry since the deadline was set owes nothing and leaves the scan"
+    );
+    let expected_after_extension = (true, vec![missed.id]);
+    assert_eq!(
+        (re_armed, scanned_after_extension),
+        expected_after_extension,
+        "an extension after the mark owes a fresh one and puts it back in the scan"
     );
 }
 

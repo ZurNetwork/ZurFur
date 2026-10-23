@@ -34,14 +34,13 @@ mod title;
 mod values;
 
 pub use changelog::{
-    ChangelogEntry, ChangelogEntryKind, ChannelPointer, ChannelPointerError, NewChangelogEntry,
-    OpenChangelogEntry, OpenKind,
+    ChangelogEntry, ChangelogEntryKind, ChannelPointer, ChannelPointerError, LateKinds,
+    NewChangelogEntry, OpenChangelogEntry, OpenKind,
 };
 pub use commission_role::CommissionRole;
 pub use deadline::{
     DeadlineChange, DeadlineCleared, DeadlineSet, DeadlineStatus, DelayedChange, DelayedCleared,
-    DelayedSet, LapsedDeadline, LateMark, clear_deadline, clear_delayed, owes_late,
-    schedule_deadline, set_delayed,
+    DelayedSet, LateMark, clear_deadline, clear_delayed, owes_late, schedule_deadline, set_delayed,
 };
 pub use direction::{
     DirectionChange, DirectionCleared, DirectionSet, DirectionStatus, clear_direction,

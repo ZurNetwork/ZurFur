@@ -11,8 +11,8 @@ use domain::elements::{
     commission::{
         AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
         CommissionMarkup, DeadlineChange, DelayedChange, DirectionChange, ElementId, GrantLevel,
-        LifecycleMove, LockedNode, LockedStanding, NewChangelogEntry, NewCommission, NewElement,
-        NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId, TabRow,
+        LateKinds, LifecycleMove, LockedNode, LockedStanding, NewChangelogEntry, NewCommission,
+        NewElement, NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId, TabRow,
     },
     maturity::Maturity,
     user::UserId,
@@ -237,9 +237,13 @@ impl CommissionReads for SpyRepo<'_> {
         self.inner.lock_for_system(commission).await
     }
 
-    async fn late_owed(&mut self, commission: &CommissionId) -> anyhow::Result<bool> {
+    async fn late_owed(
+        &mut self,
+        commission: &CommissionId,
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<bool> {
         self.spy.record("late_owed");
-        self.inner.late_owed(commission).await
+        self.inner.late_owed(commission, late_kinds).await
     }
 
     async fn is_participant(

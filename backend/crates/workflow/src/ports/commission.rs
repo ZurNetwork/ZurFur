@@ -9,7 +9,7 @@ use crate::elements::{
         AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
         CommissionFile, CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary,
         DeadlineChange, DelayedChange, DirectionChange, ElementId, FileKey, FileSummary,
-        GrantLevel, LapsedDeadline, LifecycleMove, LifecycleStep, LockedNode, LockedStanding,
+        GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode, LockedStanding,
         NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot,
         TabId, TabRow,
     },
@@ -149,15 +149,16 @@ pub trait CommissionStore: Send + Sync {
     /// commission with no Slots, and for an unknown one.
     async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>>;
 
-    /// The commissions the deadline sweep may owe a `late` entry as of `now`: deadline
-    /// strictly before `now`, step not in `not_lapsing`, and no `late` entry recorded since the
-    /// deadline last changed. Ordered by deadline, then id. Only a scan: each one is re-read
-    /// under its own lock before anything is written.
+    /// The ids of the commissions the deadline sweep may owe a `late` entry as of `now`:
+    /// deadline strictly before `now`, step not in `not_lapsing`, and no entry of `late_kinds`'
+    /// mark recorded since the last of its re-arming kinds. Ordered by deadline, then id. Only a
+    /// scan: each one is re-read under its own lock before anything is written.
     async fn lapsed_deadlines(
         &self,
         now: DateTimeUtc,
         not_lapsing: &[LifecycleStep],
-    ) -> anyhow::Result<Vec<LapsedDeadline>>;
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<Vec<CommissionId>>;
 }
 
 /// The **write** surface of Zurfur's record of commissions — reachable only on an
@@ -367,9 +368,14 @@ pub trait CommissionReads: Send {
         commission: &CommissionId,
     ) -> anyhow::Result<Option<LockedNode>>;
 
-    /// Whether `commission` is still owed a `late` entry: none recorded since its deadline last
-    /// changed. [`CommissionStore::lapsed_deadlines`]'s anti-join, for one commission.
-    async fn late_owed(&mut self, commission: &CommissionId) -> anyhow::Result<bool>;
+    /// Whether `commission` is still owed a `late` entry: no entry of `late_kinds`' mark
+    /// recorded since the last of its re-arming kinds. [`CommissionStore::lapsed_deadlines`]'s
+    /// anti-join, for one commission.
+    async fn late_owed(
+        &mut self,
+        commission: &CommissionId,
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<bool>;
 
     /// Whether `user` is a Participant of `commission`; as
     /// [`CommissionStore::is_participant`].

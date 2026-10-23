@@ -6219,7 +6219,7 @@ fn capped_parameters_come_from_the_value_list() {
     for planted_type in [
         "&uuid::Uuid",
         "&NodeId",
-        "&LapsedDeadline",
+        "&CommissionSummary",
         "&str",
         "DeadlineChange<u8>",
         "&mut DeadlineChange",
@@ -6247,9 +6247,9 @@ fn capped_parameters_come_from_the_value_list() {
         ["CommissionWrites::set_deadline takes `& NodeId`, not one of the named values"]
     );
     let rebound = [
-        format!("{port_source}\ntype DeadlineChange = LapsedDeadline;\n"),
+        format!("{port_source}\ntype DeadlineChange = CommissionSummary;\n"),
         format!(
-            "{port_source}\nuse crate::elements::commission::LapsedDeadline as DeadlineChange;\n"
+            "{port_source}\nuse crate::elements::commission::CommissionSummary as DeadlineChange;\n"
         ),
         port_source.replacen(
             "use crate::elements::",
@@ -6273,7 +6273,7 @@ fn capped_parameters_come_from_the_value_list() {
     assert!(deadline_source.contains(change_fields));
     let gains = [
         "    commission: CommissionId,\n",
-        "    lapse: Option<LapsedDeadline>,\n",
+        "    summary: Option<CommissionSummary>,\n",
         "    held: Vec<(DateTimeUtc, Box<CommissionId>)>,\n",
         "    held: HeldFor,\n",
     ];

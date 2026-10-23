@@ -12,11 +12,11 @@ use domain::{
             CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionRole,
             CommissionStanding, CommissionStart, CommissionSummary, DeadlineChange, DeadlineStatus,
             DelayedChange, DirectionChange, DirectionStatus, ElementId, ElementPayload, ElementRow,
-            ElementType, FileKey, FileSummary, GrantLevel, LapsedDeadline, LifecycleMove,
-            LifecycleStep, LockedNode, LockedStanding, Markup, MarkupKey, NewCommission,
-            NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind,
-            SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow,
-            VisibilityMode, declared_tabs, declares_surface,
+            ElementType, FileKey, FileSummary, GrantLevel, LateKinds, LifecycleMove, LifecycleStep,
+            LockedNode, LockedStanding, Markup, MarkupKey, NewCommission, NewElement, NewSeat,
+            NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
+            SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
+            declares_surface,
         },
         did::Did,
         invitation::InvitationState,
@@ -593,25 +593,12 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     }
 }
 
-/// The sweep scan's rows as the domain's lapses, each stored flag re-validated.
-fn to_lapses(rows: Vec<sql::LapsedDeadlinesRow>) -> anyhow::Result<Vec<LapsedDeadline>> {
-    rows.into_iter()
-        .map(|row| {
-            let status = row
-                .deadline_status
-                .as_deref()
-                .map(|token| {
-                    DeadlineStatus::try_from(token)
-                        .map_err(|_| anyhow::anyhow!("unknown deadline_status token {token:?}"))
-                })
-                .transpose()?;
-            let lapse = LapsedDeadline {
-                id: CommissionId::from(row.id),
-                deadline: row.deadline,
-                status,
-            };
-            Ok(lapse)
-        })
+/// The stored tokens of the kinds that re-arm a Late, as the owed reads bind them.
+fn rearming_tokens(late_kinds: &LateKinds) -> Vec<String> {
+    late_kinds
+        .rearming()
+        .iter()
+        .map(ToString::to_string)
         .collect()
 }
 
@@ -892,8 +879,20 @@ impl CommissionReads for PgCommissionWrites<'_> {
 
     /// The sweep scan's anti-join for one commission, on the unit's connection after its lock.
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn late_owed(&mut self, commission: &CommissionId) -> anyhow::Result<bool> {
-        let owed = sql::late_owed(&mut *self.conn, uuid::Uuid::from(*commission)).await?;
+    async fn late_owed(
+        &mut self,
+        commission: &CommissionId,
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<bool> {
+        let mark = <&'static str>::from(late_kinds.mark());
+        let rearming = rearming_tokens(late_kinds);
+        let owed = sql::late_owed(
+            &mut *self.conn,
+            uuid::Uuid::from(*commission),
+            mark,
+            &rearming,
+        )
+        .await?;
         // `NOT EXISTS` is never NULL; an unknown answer owes nothing.
         Ok(owed.unwrap_or(false))
     }
@@ -1280,15 +1279,20 @@ impl CommissionStore for PgCommissionStore {
     }
 
     /// The sweep's scan on the pool: deadline strictly before `now`, step not in
-    /// `not_lapsing`, no `late` entry since the deadline last changed; ordered by deadline.
+    /// `not_lapsing`, no Late mark since the last re-arming entry; ids ordered by deadline, then
+    /// id.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn lapsed_deadlines(
         &self,
         now: DateTimeUtc,
         not_lapsing: &[LifecycleStep],
-    ) -> anyhow::Result<Vec<LapsedDeadline>> {
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<Vec<CommissionId>> {
         let steps: Vec<String> = not_lapsing.iter().map(ToString::to_string).collect();
-        let rows = sql::lapsed_deadlines(&self.pool, now, &steps).await?;
-        to_lapses(rows)
+        let mark = <&'static str>::from(late_kinds.mark());
+        let rearming = rearming_tokens(late_kinds);
+        let ids = sql::lapsed_deadlines(&self.pool, now, &steps, mark, &rearming).await?;
+        let lapsed = ids.into_iter().map(CommissionId::from).collect();
+        Ok(lapsed)
     }
 }

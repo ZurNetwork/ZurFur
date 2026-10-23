@@ -6,7 +6,7 @@ use std::fmt;
 
 use domain::{
     elements::{
-        commission::{CommissionId, CommissionRole, CommissionState, LateFacts},
+        commission::{CommissionId, CommissionRole, CommissionState, LateFacts, LateKinds},
         level::Level,
         node::NodeId,
         user::UserId,
@@ -345,7 +345,11 @@ async fn system_grant(
         .find(&commission)
         .await?
         .ok_or_else(|| broken("a locked commission has no row"))?;
-    let owed = unit.commissions().late_owed(&commission).await?;
+    let late_kinds = LateKinds::default();
+    let owed = unit
+        .commissions()
+        .late_owed(&commission, &late_kinds)
+        .await?;
     let facts = LateFacts {
         state: CommissionState::from(&stored),
         owed,

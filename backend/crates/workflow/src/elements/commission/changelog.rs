@@ -13,6 +13,6 @@ mod rows;
 mod value;
 
 pub use errors::ChannelPointerError;
-pub use kind::{ChangelogEntryKind, OpenKind};
+pub use kind::{ChangelogEntryKind, LateKinds, OpenKind};
 pub use rows::{ChangelogEntry, NewChangelogEntry, OpenChangelogEntry};
 pub use value::ChannelPointer;

@@ -15,7 +15,7 @@ use domain::elements::{
         CommissionMarkup, CommissionRole, CommissionStanding, CommissionStart, CommissionSummary,
         CommissionTitle, DeadlineChange, DeadlineStatus, DelayedChange, DirectionChange,
         DirectionStatus, ElementId, ElementPayload, ElementRow, ElementType, FileKey, FileSummary,
-        GrantLevel, LapsedDeadline, LifecycleMove, LifecycleStep, LockedNode, LockedStanding,
+        GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode, LockedStanding,
         NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
         SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId,
         TabName, TabRow, VisibilityMode, declared_tabs, declares_surface,
@@ -1004,18 +1004,21 @@ impl CommissionWrites for MemCommissionWrites<'_> {
     }
 }
 
-/// The commissions `changelog` holds a `late` entry for since their deadline last changed: a
-/// deadline set or extension re-arms the log, so each fresh miss is its own event.
-fn logged_since_change(changelog: &[StoredChangelogEntry]) -> HashSet<CommissionId> {
+/// The commissions `changelog` holds an entry of `late_kinds`' mark for since their last entry
+/// of its re-arming kinds, so each fresh miss is its own event.
+fn logged_since_change(
+    changelog: &[StoredChangelogEntry],
+    late_kinds: &LateKinds,
+) -> HashSet<CommissionId> {
     let mut latest_late: HashMap<CommissionId, i64> = HashMap::new();
     let mut latest_change: HashMap<CommissionId, i64> = HashMap::new();
     for entry in changelog {
-        let target = match entry.kind {
-            ChangelogEntryKind::Late => &mut latest_late,
-            ChangelogEntryKind::DeadlineSet | ChangelogEntryKind::DeadlineExtended => {
-                &mut latest_change
-            }
-            _ => continue,
+        let target = if entry.kind == late_kinds.mark() {
+            &mut latest_late
+        } else if late_kinds.rearming().contains(&entry.kind) {
+            &mut latest_change
+        } else {
+            continue;
         };
         target
             .entry(entry.commission_id)
@@ -1138,13 +1141,17 @@ impl CommissionReads for MemCommissionWrites<'_> {
     /// Whether the unit's staged changelog holds no `late` entry for `commission` since its
     /// deadline last changed: the scan's anti-join, for one commission.
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn late_owed(&mut self, commission: &CommissionId) -> anyhow::Result<bool> {
+    async fn late_owed(
+        &mut self,
+        commission: &CommissionId,
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<bool> {
         let changelog = self
             .0
             .changelog
             .lock()
             .expect("MemBackend changelog mutex poisoned");
-        let logged = logged_since_change(&changelog);
+        let logged = logged_since_change(&changelog, late_kinds);
         Ok(!logged.contains(commission))
     }
 
@@ -1615,28 +1622,29 @@ impl CommissionStore for MemCommissionStore {
     }
 
     /// The sweep's scan over the shared maps: deadline strictly before `now`, step not in
-    /// `not_lapsing`, no `late` entry since the deadline last changed; ordered by deadline, id
+    /// `not_lapsing`, no Late mark since the last re-arming entry; ids ordered by deadline, id
     /// as tiebreak.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn lapsed_deadlines(
         &self,
         now: DateTimeUtc,
         not_lapsing: &[LifecycleStep],
-    ) -> anyhow::Result<Vec<LapsedDeadline>> {
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<Vec<CommissionId>> {
         let logged = {
             let changelog = self
                 .0
                 .changelog
                 .lock()
                 .expect("MemBackend changelog mutex poisoned");
-            logged_since_change(&changelog)
+            logged_since_change(&changelog, late_kinds)
         };
         let commissions = self
             .0
             .commissions
             .lock()
             .expect("MemBackend commissions mutex poisoned");
-        let mut lapsed: Vec<LapsedDeadline> = commissions
+        let mut lapsed: Vec<(DateTimeUtc, CommissionId)> = commissions
             .iter()
             .filter_map(|(id, stored)| {
                 let deadline = stored.deadline?;
@@ -1646,16 +1654,12 @@ impl CommissionStore for MemCommissionStore {
                 if skipped {
                     return None;
                 }
-                let lapse = LapsedDeadline {
-                    id: *id,
-                    deadline,
-                    status: stored.delayed_flag,
-                };
-                Some(lapse)
+                Some((deadline, *id))
             })
             .collect();
-        lapsed.sort_by_key(|lapse| (lapse.deadline, uuid::Uuid::from(lapse.id)));
-        Ok(lapsed)
+        lapsed.sort_by_key(|(deadline, id)| (*deadline, uuid::Uuid::from(*id)));
+        let ids = lapsed.into_iter().map(|(_, id)| id).collect();
+        Ok(ids)
     }
 }
 
