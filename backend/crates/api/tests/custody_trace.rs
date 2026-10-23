@@ -18,8 +18,8 @@ use domain::elements::did::Did;
 use domain::ports::KeyStore as _;
 use strum::VariantArray as _;
 use test_support::custody::{
-    self, LEGACY_ALICE_BLOB_HEX, LEGACY_ALICE_DID, LEGACY_BOB_BLOB_HEX, LEGACY_BOB_DID,
-    LEGACY_ROOT, SIGNIN_CANARY_DID, SIGNIN_CANARY_SECRETS, hex_bytes, legacy_keys, root_of,
+    self, LEGACY_ALICE_DID, LEGACY_BOB_DID, LEGACY_ROOT, SIGNIN_CANARY_DID, SIGNIN_CANARY_SECRETS,
+    legacy_keys, root_of,
 };
 use test_support::log_capture::CapturedLog;
 use test_support::pg::TestDb;
@@ -42,9 +42,6 @@ const FORGED_PIECES: [&str; 2] = ["canarybadkeyid", "forgedtail"];
 
 /// The Den record the MAC is computed over.
 const DEN_RECORD: &[u8] = b"canary-den-record-8d3e";
-
-/// The envelope's migration, as sqlx numbers it.
-const CUSTODY_ENVELOPE: i64 = 20261022231354;
 
 /// The table every DID-custody subject names first.
 const KEYS_TABLE: &[u8] = b"account_keys";
@@ -114,15 +111,6 @@ fn forged_envelope() -> Vec<u8> {
     bytes
 }
 
-/// The key id a stored envelope's header names.
-fn header_key_id(envelope: &[u8]) -> String {
-    let [_version, key_id_length, rest @ ..] = envelope else {
-        panic!("a stored envelope has a header");
-    };
-    let key_id = &rest[..usize::from(*key_id_length)];
-    String::from_utf8(key_id.to_vec()).expect("a key id is text")
-}
-
 /// The sealed envelope stored for `did`.
 async fn stored_envelope(pool: &PgPool, did: &str) -> Vec<u8> {
     sqlx::query_scalar("SELECT sealed_keys FROM account_keys WHERE did = $1")
@@ -132,37 +120,10 @@ async fn stored_envelope(pool: &PgPool, did: &str) -> Vec<u8> {
         .expect("the custody row is stored")
 }
 
-/// Store one 0.1 row, naming only the columns the table had before the envelope.
-async fn seed_legacy(pool: &PgPool, did: &str, wrapped_keys: &[u8]) {
-    sqlx::query(
-        "INSERT INTO account_keys (did, wrapped_keys, created_at)
-         VALUES ($1, $2, now())",
-    )
-    .bind(did)
-    .bind(wrapped_keys)
-    .execute(pool)
-    .await
-    .expect("seed a 0.1 row");
-}
-
 /// A database on the schema before the envelope, holding Alice's and Bob's 0.1 rows.
 async fn before_the_envelope() -> TestDb {
-    let db = test_support::pg::bare_db().await;
-    let pool = adapter_pg::connect(db.url()).await.expect("pool connects");
-    let mut embedded = adapter_pg::migrator();
-    let before: Vec<_> = embedded
-        .migrations
-        .iter()
-        .filter(|migration| migration.version < CUSTODY_ENVELOPE)
-        .cloned()
-        .collect();
-    embedded.migrations = before.into();
-    embedded
-        .run(&pool)
-        .await
-        .expect("the migrations before the envelope run");
-    seed_legacy(&pool, LEGACY_ALICE_DID, &hex_bytes(LEGACY_ALICE_BLOB_HEX)).await;
-    seed_legacy(&pool, LEGACY_BOB_DID, &hex_bytes(LEGACY_BOB_BLOB_HEX)).await;
+    let (pool, db) = custody::before_the_envelope().await;
+    custody::seed_alice_and_bob(&pool).await;
     pool.close().await;
     db
 }
@@ -264,7 +225,7 @@ async fn nothing_secret_reaches_a_trace_capture() {
     assert_eq!(refused_tag, Err(CustodyError::Unauthentic));
     assert_eq!(reopened, planted_keys(), "the keys round-trip");
     assert_eq!(
-        header_key_id(&envelope),
+        custody::envelope_key_id(&envelope),
         custody::key_id_of(&PLANTED_ROOT, Purpose::DidCustody),
         "the canary names the key id the custodian writes"
     );

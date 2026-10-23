@@ -44,7 +44,25 @@ pub struct SignedIn {
 /// [`InProcessPds`] and sessions kept in PostgreSQL. Every custody purpose is
 /// derived from [`TEST_ROOT`](crate::custody::TEST_ROOT).
 pub async fn serve(app: impl FnOnce(Runtime) -> Router) -> PgServed {
-    serve_through(app, None, |stacked| stacked, test_root(), |_| {}).await
+    serve_through(
+        fresh_db().await,
+        app,
+        None,
+        |stacked| stacked,
+        test_root(),
+        |_| {},
+    )
+    .await
+}
+
+/// As [`serve`], over `db` as it stands, migrated by no one here, with every purpose derived
+/// from `root`: for a test that brings its database to a schema itself.
+pub async fn serve_over(
+    db: TestDb,
+    app: impl FnOnce(Runtime) -> Router,
+    root: RootSecret,
+) -> PgServed {
+    serve_through(db, app, None, |stacked| stacked, root, |_| {}).await
 }
 
 /// As [`serve`], over `root` and with `configure` changing the dev [`Config`] before the
@@ -54,7 +72,15 @@ pub async fn serve_configured(
     root: RootSecret,
     configure: impl FnOnce(&mut Config),
 ) -> PgServed {
-    serve_through(app, None, |stacked| stacked, root, configure).await
+    serve_through(
+        fresh_db().await,
+        app,
+        None,
+        |stacked| stacked,
+        root,
+        configure,
+    )
+    .await
 }
 
 /// As [`serve`], with `wrap` adding layers outside the whole stack.
@@ -62,7 +88,7 @@ pub async fn serve_wrapped(
     app: impl FnOnce(Runtime) -> Router,
     wrap: impl FnOnce(Stacked) -> Stacked,
 ) -> PgServed {
-    serve_through(app, None, wrap, test_root(), |_| {}).await
+    serve_through(fresh_db().await, app, None, wrap, test_root(), |_| {}).await
 }
 
 /// As [`serve`], with the app reaching its database through a proxy that logs into
@@ -72,6 +98,7 @@ pub async fn serve_recording(
     statements: &StatementLog,
 ) -> PgServed {
     serve_through(
+        fresh_db().await,
         app,
         Some(statements),
         |stacked| stacked,
@@ -81,17 +108,17 @@ pub async fn serve_recording(
     .await
 }
 
-/// Boots `app` as [`serve`] says, through the recording proxy when `statements` is given,
-/// with `wrap` adding layers outside the whole stack, every purpose derived from `root`,
-/// and `configure` changing the config.
+/// Boots `app` as [`serve`] says over `db`, through the recording proxy when `statements`
+/// is given, with `wrap` adding layers outside the whole stack, every purpose derived from
+/// `root`, and `configure` changing the config.
 async fn serve_through(
+    db: TestDb,
     app: impl FnOnce(Runtime) -> Router,
     statements: Option<&StatementLog>,
     wrap: impl FnOnce(Stacked) -> Stacked,
     root: RootSecret,
     configure: impl FnOnce(&mut Config),
 ) -> PgServed {
-    let db = fresh_db().await;
     let database_url = match statements {
         Some(log) => record_statements(db.url(), log.clone()).await,
         None => db.url().to_owned(),
@@ -102,7 +129,7 @@ async fn serve_through(
     let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
 
     let pds = Arc::new(InProcessPds::default());
-    let mut config = config(&base_url, &database_url);
+    let mut config = dev_config(&base_url, &database_url);
     configure(&mut config);
     let custody = every_purpose(root, &config);
     let live = Runtime::connect(config, custody)
@@ -165,7 +192,7 @@ async fn runtime_through(statements: Option<&StatementLog>) -> PgRuntime {
         None => db.url().to_owned(),
     };
     let pds = Arc::new(InProcessPds::default());
-    let config = config("http://localhost", &database_url);
+    let config = dev_config("http://localhost", &database_url);
     let custody = every_purpose(test_root(), &config);
     let live = Runtime::connect(config, custody)
         .await
@@ -257,7 +284,7 @@ fn every_purpose(root: RootSecret, config: &Config) -> Custody {
 
 /// A dev-profile [`Config`] on `database_url`, served at `public_url`, with PLC
 /// submission off, so minting stays local. Panics when `public_url` is not a bare origin.
-fn config(public_url: &str, database_url: &str) -> Config {
+pub fn dev_config(public_url: &str, database_url: &str) -> Config {
     Config {
         env: Environment::DEV,
         http_addr: "127.0.0.1:0".parse().expect("loopback socket address"),

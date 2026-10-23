@@ -1,7 +1,14 @@
-//! Custody fixtures: three real 0.1 custody rows and the root they open under, the test
-//! root and a test custodian's scoped handles over it, a lying custodian for the
-//! self-check tests, and the log canary's printings of what a planted root derives,
-//! computed apart from the custodian's code.
+//! Custody fixtures: three real 0.1 custody rows and the root they open under, a 0.1 store
+//! on a test database, the test root and a test custodian's scoped handles over it, a lying
+//! custodian for the self-check tests, and the log canary's printings of what a planted
+//! root derives, computed apart from the custodian's code.
+
+mod legacy_store;
+
+pub use legacy_store::{
+    CUSTODY_ENVELOPE, StoreSnapshot, before_the_envelope, legacy_genesis_record,
+    seed_alice_and_bob, seed_legacy, store_snapshot,
+};
 
 use std::sync::Arc;
 
@@ -250,6 +257,15 @@ pub fn key_id_of(root: &[u8; KEY_BYTES], purpose: Purpose) -> String {
     let fingerprint = expand(&prk_of(root), info.as_bytes(), FINGERPRINT_BYTES);
     let fingerprint_hex = HEXLOWER.encode(&fingerprint);
     format!("hkdf:{token}:{fingerprint_hex}")
+}
+
+/// The key id a stored envelope's header names; panics on an envelope too short for one.
+pub fn envelope_key_id(envelope: &[u8]) -> String {
+    let [_version, key_id_length, rest @ ..] = envelope else {
+        panic!("a stored envelope has a header");
+    };
+    let key_id = &rest[..usize::from(*key_id_length)];
+    String::from_utf8(key_id.to_vec()).expect("a key id is text")
 }
 
 /// `bytes` as a log could print them: lowercase hex, standard base64, and the `Debug` of

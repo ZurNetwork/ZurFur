@@ -74,18 +74,12 @@ async fn the_canary_names_the_key_ids_the_custodian_writes() {
         .await
         .expect("tagged");
 
-    let header_key_id = |envelope: &SealedEnvelope| {
-        let [_version, length, rest @ ..] = envelope.as_ref() else {
-            panic!("an envelope has a header");
-        };
-        String::from_utf8(rest[..usize::from(*length)].to_vec()).expect("a key id is text")
-    };
     assert_eq!(
-        header_key_id(&did_custody),
+        envelope_key_id(did_custody.as_ref()),
         key_id_of(&root, Purpose::DidCustody)
     );
     assert_eq!(
-        header_key_id(&signin_secrets),
+        envelope_key_id(signin_secrets.as_ref()),
         key_id_of(&root, Purpose::SigninSecrets)
     );
     assert_eq!(tag.key_id().as_ref(), key_id_of(&root, Purpose::DenMac));
