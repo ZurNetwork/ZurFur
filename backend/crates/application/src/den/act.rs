@@ -153,12 +153,20 @@ pub(crate) struct GatedEntry<C> {
 
 impl<C> GatedEntry<C> {
     /// A create's entry: kind `Created`, by `NewChangelogEntry::created`, with no change.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
     pub(crate) const CREATED: Self = Self {
         kinds: &[ChangelogEntryKind::Created],
         constructor: EntryConstructor::Bare(NewChangelogEntry::created),
     };
 
     /// A rename's entry: kind `Renamed`, by `NewChangelogEntry::renamed`, with no change.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
     pub(crate) const RENAMED: Self = Self {
         kinds: &[ChangelogEntryKind::Renamed],
         constructor: EntryConstructor::Bare(NewChangelogEntry::renamed),
@@ -208,6 +216,10 @@ impl<C> GatedEntry<C> {
 impl GatedEntry<LifecycleMove> {
     /// A lifecycle move's entry: kind `LifecycleMoved`, by `NewChangelogEntry::lifecycle_moved`,
     /// from the move the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
     pub(crate) const LIFECYCLE_MOVED: Self = Self {
         kinds: &[ChangelogEntryKind::LifecycleMoved],
         constructor: EntryConstructor::Change(NewChangelogEntry::lifecycle_moved),
@@ -217,6 +229,10 @@ impl GatedEntry<LifecycleMove> {
 impl GatedEntry<DirectionSet> {
     /// A direction status set's entry: kind `StatusChanged`, by
     /// `NewChangelogEntry::direction_set`, from the set the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
     pub(crate) const STATUS_SET: Self = Self {
         kinds: &[ChangelogEntryKind::StatusChanged],
         constructor: EntryConstructor::Change(NewChangelogEntry::direction_set),
@@ -226,6 +242,10 @@ impl GatedEntry<DirectionSet> {
 impl GatedEntry<DirectionCleared> {
     /// A direction status clear's entry: kind `StatusChanged`, by
     /// `NewChangelogEntry::direction_cleared`, from the clear the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
     pub(crate) const STATUS_CLEARED: Self = Self {
         kinds: &[ChangelogEntryKind::StatusChanged],
         constructor: EntryConstructor::Change(NewChangelogEntry::direction_cleared),
@@ -235,6 +255,10 @@ impl GatedEntry<DirectionCleared> {
 impl GatedEntry<DeadlineSet> {
     /// A deadline set's entry: kind `DeadlineSet`, or `DeadlineExtended` for a later deadline,
     /// by `NewChangelogEntry::deadline_set`, from the set the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
     pub(crate) const DEADLINE_SET: Self = Self {
         kinds: &[
             ChangelogEntryKind::DeadlineSet,
@@ -247,6 +271,10 @@ impl GatedEntry<DeadlineSet> {
 impl GatedEntry<DeadlineCleared> {
     /// A deadline clear's entry: kind `DeadlineSet`, by `NewChangelogEntry::deadline_cleared`,
     /// from the clear the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
     pub(crate) const DEADLINE_CLEARED: Self = Self {
         kinds: &[ChangelogEntryKind::DeadlineSet],
         constructor: EntryConstructor::Change(NewChangelogEntry::deadline_cleared),
@@ -256,6 +284,10 @@ impl GatedEntry<DeadlineCleared> {
 impl GatedEntry<DelayedSet> {
     /// A Delayed flag's entry: kind `Delayed`, by `NewChangelogEntry::delayed_set`, from the
     /// set the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
     pub(crate) const DELAYED_SET: Self = Self {
         kinds: &[ChangelogEntryKind::Delayed],
         constructor: EntryConstructor::Change(NewChangelogEntry::delayed_set),
@@ -265,6 +297,10 @@ impl GatedEntry<DelayedSet> {
 impl GatedEntry<DelayedCleared> {
     /// A Delayed flag taken down's entry: kind `Delayed`, by
     /// `NewChangelogEntry::delayed_cleared`, from the clear the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
     pub(crate) const DELAYED_CLEARED: Self = Self {
         kinds: &[ChangelogEntryKind::Delayed],
         constructor: EntryConstructor::Change(NewChangelogEntry::delayed_cleared),
@@ -274,6 +310,10 @@ impl GatedEntry<DelayedCleared> {
 impl GatedEntry<LateMark> {
     /// The system's Late entry: kind `Late`, by `NewChangelogEntry::late`, by no actor, from
     /// the mark the act's rule checked.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
     pub(crate) const LATE: Self = Self {
         kinds: &[ChangelogEntryKind::Late],
         constructor: EntryConstructor::System(NewChangelogEntry::late),

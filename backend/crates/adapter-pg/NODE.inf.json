@@ -16,7 +16,7 @@
     "Table names singular from ZMVP-65 on.",
     "Commission-owned satellite rows that annotate other bookkeeping (e.g. `commission_markup`) are NON-FACT and carry a composite FK back onto their parent row, so a cross-commission reference is unrepresentable.",
     "`FileStore` streams at the port (`AsyncRead` in, `FileDownload` out) but this v1 adapter buffers in memory — a documented exception pending the blob architecture.",
-    "Only the commission write view writes the commission tables: every statement writing `commission` or a `commission_*` table (the changelog's aside) lives in `queries/commission/`, only `src/commission.rs` names the generated commission module, its write functions are named only in `impl CommissionWrites for PgCommissionWrites` and its inherent helpers, and only the unit's `commissions()` builds a `PgCommissionWrites`; the application crate's write-gate seam test holds it."
+    "Only the commission write view writes the commission tables: every statement writing `commission` or a `commission_*` table (the changelog's aside) lives in `queries/commission/`, only `src/commission.rs` names the generated commission module, its write functions are named only in `impl CommissionWrites for PgCommissionWrites` and its inherent helpers, each only in the method(s) a table gives it, and only the unit's `commissions()` builds a `PgCommissionWrites`; the application crate's write-gate seam test holds it."
   ],
   "entry_points": [
     "src/lib.rs",
