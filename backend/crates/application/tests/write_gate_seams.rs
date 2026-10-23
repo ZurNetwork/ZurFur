@@ -20,8 +20,9 @@
 //! staging and merge, its rows built only by the insert path, and the view built only by the
 //! unit; each write statement and in-memory change named only in its own method, a capped
 //! write's other parameters only named values holding no id, the banned writes' sites frozen,
-//! the gated changelog constructors named only in the domain and the act file, no macro in a
-//! core crate, and no later migration's function or trigger writing a commission table.
+//! the gated changelog constructors named only in the rows file and the act file and the rows
+//! file's entry surface pinned, no macro in a core crate, and no later migration's function or
+//! trigger writing a commission table.
 
 mod seams;
 
@@ -8026,13 +8027,99 @@ fn no_later_migration_defines_a_function_or_trigger_that_writes_a_commission_tab
     assert!(!migration_findings(&unstamped, &COMMISSION_WRITING_MIGRATIONS).is_empty());
 }
 
-// The gated changelog constructors are named only in the domain and the act file.
+// The gated changelog constructors are named only in the rows file and the act file.
 
 /// A new changelog entry, whose gated constructors only the act file names.
 const NEW_CHANGELOG_ENTRY: &str = "NewChangelogEntry";
 
+/// An entry of an open kind, the only shape a note rides beside a payload.
+const OPEN_CHANGELOG_ENTRY: &str = "OpenChangelogEntry";
+
 /// The new entry's open constructors, any use case's to call: every other is gated.
 const OPEN_CONSTRUCTORS: [&str; 2] = ["event", "note"];
+
+/// The open entry's one method, which attaches a note.
+const OPEN_ENTRY_NOTE: &str = "with_note";
+
+/// The new entry's accessors, the only items of the rows file that reach an entry's fields.
+const ACCESSORS: [&str; 6] = [
+    "actor_id",
+    "commission_id",
+    "created_at",
+    "kind",
+    "note_text",
+    "payload",
+];
+
+/// The new entry's private helper, named only by the gated and the open constructors.
+const ENTRY_HELPER: &str = "by";
+
+/// Every item of the entry types' inherent impls that isn't gated, by its type and name,
+/// pinned to its visibility and signature: the accessors, the helper, the open constructors
+/// and the open entry's note. Every other item there that isn't private is gated.
+const ENTRY_SURFACE: [(&str, &str, &str); 10] = [
+    (
+        NEW_CHANGELOG_ENTRY,
+        "commission_id",
+        "pub fn commission_id(&self) -> CommissionId",
+    ),
+    (
+        NEW_CHANGELOG_ENTRY,
+        "kind",
+        "pub fn kind(&self) -> ChangelogEntryKind",
+    ),
+    (
+        NEW_CHANGELOG_ENTRY,
+        "actor_id",
+        "pub fn actor_id(&self) -> Option<&UserId>",
+    ),
+    (
+        NEW_CHANGELOG_ENTRY,
+        "payload",
+        "pub fn payload(&self) -> &Value",
+    ),
+    (
+        NEW_CHANGELOG_ENTRY,
+        "note_text",
+        "pub fn note_text(&self) -> Option<&str>",
+    ),
+    (
+        NEW_CHANGELOG_ENTRY,
+        "created_at",
+        "pub fn created_at(&self) -> DateTimeUtc",
+    ),
+    (
+        NEW_CHANGELOG_ENTRY,
+        ENTRY_HELPER,
+        "fn by(commission: CommissionId, kind: ChangelogEntryKind, actor: UserId, payload: Value, at: DateTimeUtc) -> Self",
+    ),
+    (
+        NEW_CHANGELOG_ENTRY,
+        "event",
+        "pub fn event(commission: CommissionId, kind: OpenKind, actor: UserId, payload: Value, at: DateTimeUtc) -> OpenChangelogEntry",
+    ),
+    (
+        NEW_CHANGELOG_ENTRY,
+        "note",
+        "pub fn note(commission: CommissionId, actor: UserId, text: String, at: DateTimeUtc) -> Self",
+    ),
+    (
+        OPEN_CHANGELOG_ENTRY,
+        OPEN_ENTRY_NOTE,
+        "pub fn with_note(self, text: String) -> Self",
+    ),
+];
+
+/// The items of the rows file that build an entry by hand, with a struct literal or pattern
+/// of either entry type: the helper, the open constructors, the system's Late mark (which has
+/// no actor) and the open entry's note.
+const ENTRY_BUILDERS: [&str; 5] = [
+    "NewChangelogEntry::by",
+    "NewChangelogEntry::event",
+    "NewChangelogEntry::late",
+    "NewChangelogEntry::note",
+    "OpenChangelogEntry::with_note",
+];
 
 /// The gated constructors, as the domain defines them today.
 const GATED_CONSTRUCTORS: [&str; 10] = [
@@ -8048,69 +8135,440 @@ const GATED_CONSTRUCTORS: [&str; 10] = [
     "renamed",
 ];
 
-/// The domain file that defines the new entry's constructors.
+/// The domain file that defines the entry types and their constructors, from the crates folder.
+const ROWS_FILE: &str = "workflow/src/elements/commission/changelog/rows.rs";
+
+/// The files that may name a gated constructor, from the crates folder: the rows file that
+/// defines them, and the act file.
+const GATED_CONSTRUCTOR_FILES: [&str; 2] = [ROWS_FILE, "application/src/den/act.rs"];
+
+/// Keywords that open an item, which no body in the rows file may hold.
+const ITEM_KEYWORDS: [&str; 12] = [
+    "const",
+    "enum",
+    "fn",
+    "impl",
+    "macro_rules",
+    "mod",
+    "static",
+    "struct",
+    "trait",
+    "type",
+    "union",
+    "use",
+];
+
 fn changelog_rows_file() -> PathBuf {
-    crates().join("workflow/src/elements/commission/changelog/rows.rs")
+    crates().join(ROWS_FILE)
 }
 
-/// The gated constructors `rows` defines: each `pub` function of an inherent impl of
-/// [`NEW_CHANGELOG_ENTRY`] that answers `Self` or the entry, but the open ones.
-fn gated_constructors(rows: &syn::File) -> BTreeSet<String> {
+/// `text` with its whitespace and trailing commas dropped, so two spellings of one signature
+/// compare equal.
+fn squeezed(text: &str) -> String {
+    let bare: String = text
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    bare.replace(",)", ")").replace(",>", ">")
+}
+
+/// The names a file gives each entry type, its aliases included.
+struct EntryNames {
+    new: BTreeSet<String>,
+    open: BTreeSet<String>,
+}
+
+impl EntryNames {
+    fn of(rows: &syn::File) -> Self {
+        Self {
+            new: aliases_in_file(&[NEW_CHANGELOG_ENTRY], rows),
+            open: aliases_in_file(&[OPEN_CHANGELOG_ENTRY], rows),
+        }
+    }
+
+    /// The entry type `typ` names, by its own name, or `None` for another type.
+    fn owner(&self, typ: &Type) -> Option<&'static str> {
+        let name = type_name(typ);
+        if self.new.contains(&name) {
+            Some(NEW_CHANGELOG_ENTRY)
+        } else if self.open.contains(&name) {
+            Some(OPEN_CHANGELOG_ENTRY)
+        } else {
+            None
+        }
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.new.contains(name) || self.open.contains(name)
+    }
+}
+
+/// One item of an entry type's inherent impl: the type, the item's name, whether it is
+/// private (`pub(crate)`, `pub(super)` and `pub(in …)` are not), and how it is written (a
+/// function's visibility and signature, any other item whole).
+struct EntryImplItem {
+    owner: &'static str,
+    name: String,
+    private: bool,
+    written: String,
+}
+
+/// Every item of every inherent impl of an entry type in `rows`, inline modules included.
+fn entry_impl_items(rows: &syn::File) -> Vec<EntryImplItem> {
+    let names = EntryNames::of(rows);
     every_item(&rows.items)
         .into_iter()
         .filter_map(|item| match item {
-            Item::Impl(implementation)
-                if implementation.trait_.is_none()
-                    && type_name(&implementation.self_ty) == NEW_CHANGELOG_ENTRY =>
-            {
-                Some(implementation)
-            }
+            Item::Impl(implementation) if implementation.trait_.is_none() => names
+                .owner(&implementation.self_ty)
+                .map(|owner| (owner, implementation)),
             _ => None,
         })
-        .flat_map(|implementation| &implementation.items)
-        .filter_map(|impl_item| match impl_item {
-            ImplItem::Fn(function) if public(&function.vis) => Some(function),
-            _ => None,
+        .flat_map(|(owner, implementation)| {
+            implementation
+                .items
+                .iter()
+                .map(move |impl_item| entry_impl_item(owner, impl_item))
         })
-        .filter(|function| match &function.sig.output {
-            syn::ReturnType::Type(_, ty) => {
-                let answered = type_name(ty);
-                answered == "Self" || answered == NEW_CHANGELOG_ENTRY
-            }
-            syn::ReturnType::Default => false,
-        })
-        .map(|function| unraw(&function.sig.ident))
-        .filter(|name| !OPEN_CONSTRUCTORS.contains(&name.as_str()))
         .collect()
 }
 
-/// Whether `file`, by its path from the crates folder, may name a gated constructor: the
-/// domain crate that defines them, and the act file.
-fn may_name_gated_constructors(file: &str) -> bool {
-    file.starts_with("workflow/") || file == "application/src/den/act.rs"
+fn entry_impl_item(owner: &'static str, impl_item: &ImplItem) -> EntryImplItem {
+    let is_private = |vis: &Visibility| matches!(vis, Visibility::Inherited);
+    let whole = impl_item.to_token_stream().to_string();
+    let (name, private, written) = match impl_item {
+        ImplItem::Fn(function) => {
+            let mut signature = function.vis.to_token_stream();
+            signature.extend(function.sig.to_token_stream());
+            (
+                unraw(&function.sig.ident),
+                is_private(&function.vis),
+                signature.to_string(),
+            )
+        }
+        ImplItem::Const(constant) => (unraw(&constant.ident), is_private(&constant.vis), whole),
+        ImplItem::Type(alias) => (unraw(&alias.ident), is_private(&alias.vis), whole),
+        _ => (whole.clone(), true, whole),
+    };
+    EntryImplItem {
+        owner,
+        name,
+        private,
+        written,
+    }
+}
+
+/// The pinned spelling of `item`, when [`ENTRY_SURFACE`] lists it.
+fn pinned(item: &EntryImplItem) -> Option<&'static str> {
+    ENTRY_SURFACE
+        .iter()
+        .find(|(owner, name, _)| *owner == item.owner && *name == item.name)
+        .map(|(_, _, written)| *written)
+}
+
+/// The gated constructors `rows` defines: every item of an entry type's inherent impl that
+/// isn't private and isn't on [`ENTRY_SURFACE`], whatever it answers.
+fn gated_constructors(rows: &syn::File) -> BTreeSet<String> {
+    entry_impl_items(rows)
+        .into_iter()
+        .filter(|item| !item.private && pinned(item).is_none())
+        .map(|item| item.name)
+        .collect()
+}
+
+/// What breaks the entry types' pinned surface in `rows`: a listed item spelled otherwise, a
+/// private item no list names, and a listed item that is missing.
+fn entry_surface_findings(rows: &syn::File) -> Vec<String> {
+    let items = entry_impl_items(rows);
+    let mut out = Vec::new();
+    for item in &items {
+        let EntryImplItem { owner, name, .. } = item;
+        match pinned(item) {
+            Some(written) if squeezed(written) != squeezed(&item.written) => out.push(format!(
+                "{ROWS_FILE}: `{owner}::{name}` is `{}`, not `{written}`",
+                item.written
+            )),
+            None if item.private => out.push(format!(
+                "{ROWS_FILE}: `{owner}::{name}` is a private item no list names"
+            )),
+            _ => {}
+        }
+    }
+    for (owner, name, _) in ENTRY_SURFACE {
+        let present = items
+            .iter()
+            .any(|item| item.owner == owner && item.name == name);
+        if !present {
+            out.push(format!("{ROWS_FILE}: `{owner}::{name}` is missing"));
+        }
+    }
+    out
+}
+
+/// A unit of the rows file a seal finding names: an item, an impl's header, or an item of an
+/// impl or a trait (`Type::name`, or `<Type as Trait>::name` in a trait impl). `body` is what
+/// runs: a function's block, a constant's value, a macro's input.
+struct RowsUnit {
+    label: String,
+    self_is_entry: bool,
+    tokens: TokenStream,
+    body: Option<TokenStream>,
+}
+
+fn impl_item_body(impl_item: &ImplItem) -> Option<TokenStream> {
+    match impl_item {
+        ImplItem::Fn(function) => Some(function.block.to_token_stream()),
+        ImplItem::Const(constant) => Some(constant.expr.to_token_stream()),
+        ImplItem::Macro(called) => Some(called.mac.tokens.clone()),
+        ImplItem::Verbatim(tokens) => Some(tokens.clone()),
+        _ => None,
+    }
+}
+
+fn impl_item_name(impl_item: &ImplItem) -> String {
+    match impl_item {
+        ImplItem::Fn(function) => unraw(&function.sig.ident),
+        ImplItem::Const(constant) => unraw(&constant.ident),
+        ImplItem::Type(alias) => unraw(&alias.ident),
+        other => other.to_token_stream().to_string(),
+    }
+}
+
+/// Every unit of `rows`, inline modules included.
+fn rows_units(rows: &syn::File, names: &EntryNames) -> Vec<RowsUnit> {
+    let mut out = Vec::new();
+    for item in every_item(&rows.items) {
+        match item {
+            Item::Mod(_) => {}
+            Item::Impl(implementation) => {
+                let owner = names.owner(&implementation.self_ty);
+                let self_name =
+                    owner.map_or_else(|| type_name(&implementation.self_ty), str::to_owned);
+                let base = match &implementation.trait_ {
+                    Some((_, trait_path, _)) => {
+                        let trait_name = squeezed(&trait_path.to_token_stream().to_string());
+                        format!("<{self_name} as {trait_name}>")
+                    }
+                    None => self_name,
+                };
+                let mut header = implementation.self_ty.to_token_stream();
+                if let Some((_, trait_path, _)) = &implementation.trait_ {
+                    header.extend(trait_path.to_token_stream());
+                }
+                header.extend(implementation.generics.to_token_stream());
+                for attribute in &implementation.attrs {
+                    header.extend(attribute.to_token_stream());
+                }
+                out.push(RowsUnit {
+                    label: format!("impl {base}"),
+                    self_is_entry: owner.is_some(),
+                    tokens: header,
+                    body: None,
+                });
+                for impl_item in &implementation.items {
+                    out.push(RowsUnit {
+                        label: format!("{base}::{}", impl_item_name(impl_item)),
+                        self_is_entry: owner.is_some(),
+                        tokens: impl_item.to_token_stream(),
+                        body: impl_item_body(impl_item),
+                    });
+                }
+            }
+            Item::Trait(tr) => {
+                for trait_item in &tr.items {
+                    let (name, body) = match trait_item {
+                        TraitItem::Fn(method) => (
+                            unraw(&method.sig.ident),
+                            method.default.as_ref().map(ToTokens::to_token_stream),
+                        ),
+                        TraitItem::Const(constant) => (
+                            unraw(&constant.ident),
+                            constant
+                                .default
+                                .as_ref()
+                                .map(|(_, value)| value.to_token_stream()),
+                        ),
+                        other => (
+                            other.to_token_stream().to_string(),
+                            Some(other.to_token_stream()),
+                        ),
+                    };
+                    out.push(RowsUnit {
+                        label: format!("{}::{name}", tr.ident),
+                        self_is_entry: false,
+                        tokens: trait_item.to_token_stream(),
+                        body,
+                    });
+                }
+                let mut header = tr.supertraits.to_token_stream();
+                header.extend(tr.generics.to_token_stream());
+                out.push(RowsUnit {
+                    label: format!("trait {}", tr.ident),
+                    self_is_entry: false,
+                    tokens: header,
+                    body: None,
+                });
+            }
+            other => {
+                let body = match other {
+                    Item::Fn(function) => Some(function.block.to_token_stream()),
+                    Item::Const(constant) => Some(constant.expr.to_token_stream()),
+                    Item::Static(stat) => Some(stat.expr.to_token_stream()),
+                    Item::Macro(called) => Some(called.mac.tokens.clone()),
+                    Item::Verbatim(tokens) => Some(tokens.clone()),
+                    _ => None,
+                };
+                out.push(RowsUnit {
+                    label: item_name(other),
+                    self_is_entry: false,
+                    tokens: other.to_token_stream(),
+                    body,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Each name `tokens` holds as a path's last segment (`T::c`, `<T>::c`, `Self::c`).
+fn path_last_segments(tokens: TokenStream) -> Vec<String> {
+    let mut out = Vec::new();
+    for level in levels(tokens) {
+        for at in 2..level.len() {
+            if let Some(name) = ident_at(&level, at)
+                && path_separator_at(&level, at - 2)
+            {
+                out.push(name);
+            }
+        }
+    }
+    out
+}
+
+/// Whether `tokens` build or take apart an entry by hand: an entry type's name (or `Self` when
+/// `self_is_entry`) right before braces or parentheses, unless it is being declared or
+/// answered (after `impl`, `for`, `struct`, `enum`, `union`, `trait` or `>`).
+fn builds_an_entry(tokens: TokenStream, names: &EntryNames, self_is_entry: bool) -> bool {
+    levels(tokens).iter().any(|level| {
+        (0..level.len()).any(|at| {
+            let Some(name) = ident_at(level, at) else {
+                return false;
+            };
+            let entry = names.contains(&name) || (self_is_entry && name == "Self");
+            let opened = matches!(
+                level.get(at + 1),
+                Some(TokenTree::Group(group))
+                    if matches!(group.delimiter(), Delimiter::Brace | Delimiter::Parenthesis)
+            );
+            let declared = at > 0
+                && (punct_at(level, at - 1, '>')
+                    || ident_at(level, at - 1).is_some_and(|before| {
+                        ["impl", "for", "struct", "enum", "union", "trait"]
+                            .contains(&before.as_str())
+                    }));
+            entry && opened && !declared
+        })
+    })
+}
+
+/// Whether `tokens` reach one of `fields` as a field (`x.kind`, not `x.kind()`).
+fn reaches_a_field(tokens: TokenStream, fields: &BTreeSet<String>) -> bool {
+    levels(tokens).iter().any(|level| {
+        (1..level.len()).any(|at| {
+            let lone_dot = matches!(
+                level.get(at - 1),
+                Some(TokenTree::Punct(punct)) if punct.as_char() == '.' && punct.spacing() == Spacing::Alone
+            ) && !(at >= 2 && punct_at(level, at - 2, '.'));
+            let field = ident_at(level, at).is_some_and(|name| fields.contains(&name));
+            let called = parenthesized_at(level, at + 1) || path_separator_at(level, at + 1);
+            lone_dot && field && !called
+        })
+    })
+}
+
+/// Whether `body` holds an item: a keyword that opens one, a lifetime's name aside.
+fn holds_an_item(body: TokenStream) -> bool {
+    levels(body).iter().any(|level| {
+        (0..level.len()).any(|at| {
+            let keyword = matches!(
+                level.get(at),
+                Some(TokenTree::Ident(ident)) if ITEM_KEYWORDS.contains(&ident.to_string().as_str())
+            );
+            let lifetime = at > 0 && punct_at(level, at - 1, '\'');
+            keyword && !lifetime
+        })
+    })
+}
+
+/// The new entry's fields, as `rows` declares them.
+fn entry_fields(rows: &syn::File) -> BTreeSet<String> {
+    every_item(&rows.items)
+        .into_iter()
+        .filter_map(|item| match item {
+            Item::Struct(structure) if structure.ident == NEW_CHANGELOG_ENTRY => Some(structure),
+            _ => None,
+        })
+        .flat_map(|structure| &structure.fields)
+        .filter_map(|field| field.ident.as_ref().map(unraw))
+        .collect()
+}
+
+/// What breaks the seal inside `rows`: a unit naming a gated constructor; one naming the
+/// helper that isn't a gated or open constructor; one building or taking apart an entry by
+/// hand that isn't on [`ENTRY_BUILDERS`]; one reaching an entry's field that isn't an
+/// accessor; and a body holding an item.
+fn rows_seal_findings(rows: &syn::File, gated: &BTreeSet<String>) -> Vec<String> {
+    let names = EntryNames::of(rows);
+    let fields = entry_fields(rows);
+    let label_of = |name: &&str| format!("{NEW_CHANGELOG_ENTRY}::{name}");
+    let helper_callers: BTreeSet<String> = GATED_CONSTRUCTORS
+        .iter()
+        .chain(&OPEN_CONSTRUCTORS)
+        .map(label_of)
+        .collect();
+    let readers: BTreeSet<String> = ACCESSORS.iter().map(label_of).collect();
+    let mut out = Vec::new();
+    for unit in rows_units(rows, &names) {
+        let label = &unit.label;
+        for name in path_last_segments(unit.tokens.clone()) {
+            if gated.contains(&name) {
+                out.push(format!(
+                    "{ROWS_FILE}: {label} names the gated constructor `{name}`"
+                ));
+            } else if name == ENTRY_HELPER && !helper_callers.contains(label) {
+                out.push(format!("{ROWS_FILE}: {label} names `{ENTRY_HELPER}`"));
+            }
+        }
+        let builds = builds_an_entry(unit.tokens.clone(), &names, unit.self_is_entry);
+        if builds && !ENTRY_BUILDERS.contains(&label.as_str()) {
+            out.push(format!("{ROWS_FILE}: {label} builds an entry by hand"));
+        }
+        if reaches_a_field(unit.tokens.clone(), &fields) && !readers.contains(label) {
+            out.push(format!("{ROWS_FILE}: {label} reaches an entry's field"));
+        }
+        if unit.body.is_some_and(holds_an_item) {
+            out.push(format!("{ROWS_FILE}: {label} holds an item in its body"));
+        }
+    }
+    out
 }
 
 /// Each gated constructor `source`, the file `file`, names as a path's last segment (`T::c`,
 /// `<T>::c`, `Self::c`, whatever `T` is), when the file may not name one.
 fn gated_constructor_findings(file: &str, source: &str, gated: &BTreeSet<String>) -> Vec<String> {
-    if may_name_gated_constructors(file) {
+    if GATED_CONSTRUCTOR_FILES.contains(&file) {
         return Vec::new();
     }
     let parsed = syn::parse_file(source).expect("the source parses");
-    let mut out = Vec::new();
-    for piece in pieces(&parsed) {
-        for level in levels(piece.tokens.clone()) {
-            for at in 2..level.len() {
-                let Some(name) = ident_at(&level, at).filter(|name| gated.contains(name)) else {
-                    continue;
-                };
-                if path_separator_at(&level, at - 2) {
-                    out.push(format!("{file}: `{name}` in {}", piece.context));
-                }
-            }
-        }
-    }
-    out
+    pieces(&parsed)
+        .into_iter()
+        .flat_map(|piece| {
+            path_last_segments(piece.tokens)
+                .into_iter()
+                .filter(|name| gated.contains(name))
+                .map(move |name| format!("{file}: `{name}` in {}", piece.context))
+        })
+        .collect()
 }
 
 /// The application's clippy bans on the gated constructors, and what breaks their tie to
@@ -8132,9 +8590,22 @@ fn constructor_ban_findings(settings: &str, gated: &BTreeSet<String>) -> Vec<Str
     unbanned.chain(ungated).collect()
 }
 
+/// Every seal finding in the rows file `source`, with the gated constructors it defines.
+fn rows_findings(source: &str) -> (Vec<String>, BTreeSet<String>) {
+    let rows = syn::parse_file(source).expect("the rows file parses");
+    let gated = gated_constructors(&rows);
+    let found = entry_surface_findings(&rows)
+        .into_iter()
+        .chain(rows_seal_findings(&rows, &gated))
+        .collect();
+    (found, gated)
+}
+
 #[test]
-fn the_gated_constructors_are_named_only_in_the_domain_and_the_act_file() {
-    let gated = gated_constructors(&parse(&changelog_rows_file()));
+fn the_gated_constructors_are_named_only_in_the_rows_file_and_the_act_file() {
+    let rows_source =
+        std::fs::read_to_string(changelog_rows_file()).expect("the rows file is readable");
+    let (in_rows, gated) = rows_findings(&rows_source);
     let everywhere = workspace_production();
 
     let found: Vec<String> = everywhere
@@ -8146,11 +8617,28 @@ fn the_gated_constructors_are_named_only_in_the_domain_and_the_act_file() {
         .collect();
 
     assert_eq!(found, Vec::<String>::new());
+    assert_eq!(in_rows, Vec::<String>::new());
     let expected: BTreeSet<String> = GATED_CONSTRUCTORS
         .iter()
         .map(|name| (*name).to_owned())
         .collect();
     assert_eq!(gated, expected);
+    let surface: BTreeSet<(&str, &str)> = ENTRY_SURFACE
+        .iter()
+        .map(|(owner, name, _)| (*owner, *name))
+        .collect();
+    let listed = ACCESSORS
+        .iter()
+        .chain(&OPEN_CONSTRUCTORS)
+        .chain([&ENTRY_HELPER])
+        .map(|name| (NEW_CHANGELOG_ENTRY, *name))
+        .chain([(OPEN_CHANGELOG_ENTRY, OPEN_ENTRY_NOTE)]);
+    for item in listed {
+        assert!(surface.contains(&item), "{item:?} is pinned");
+    }
+    for file in GATED_CONSTRUCTOR_FILES {
+        assert!(crates().join(file).is_file(), "{file} exists");
+    }
     let act = application_src().join(ACT_FILE);
     let act_source = std::fs::read_to_string(&act).expect("the act file reads");
     let named_in_act =
@@ -8196,6 +8684,14 @@ fn the_gated_constructors_are_named_only_in_the_domain_and_the_act_file() {
             "adapter-mem/src/fixture/commission.rs",
             "fn forge(c: CommissionId, a: UserId, t: DateTimeUtc) -> NewChangelogEntry { NewChangelogEntry::created(c, a, t) }",
         ),
+        (
+            "workflow/src/elements/commission/fact.rs",
+            "fn forge(c: CommissionId, a: UserId, t: DateTimeUtc) -> NewChangelogEntry { NewChangelogEntry::renamed(c, a, t) }",
+        ),
+        (
+            "workflow/src/elements/commission/deadline.rs",
+            "impl LateMark { pub fn entry(&self, commission: CommissionId, at: DateTimeUtc) -> NewChangelogEntry { NewChangelogEntry::late(commission, self, at) } }",
+        ),
     ];
     for (file, source) in refused {
         let found_here = gated_constructor_findings(file, source, &gated);
@@ -8214,9 +8710,98 @@ fn the_gated_constructors_are_named_only_in_the_domain_and_the_act_file() {
             "{source}"
         );
     }
-    let workflow_file = "workflow/src/elements/commission/fact.rs";
-    let in_the_domain = gated_constructor_findings(workflow_file, refused[0].1, &gated);
-    assert_eq!(in_the_domain, Vec::<String>::new());
+    for file in GATED_CONSTRUCTOR_FILES {
+        let allowed = gated_constructor_findings(file, refused[0].1, &gated);
+        assert_eq!(allowed, Vec::<String>::new(), "{file}");
+    }
+    let in_entry_impl = |plant: &str| {
+        let planted = rows_source.replacen(
+            "impl NewChangelogEntry {\n",
+            &format!("impl NewChangelogEntry {{\n{plant}\n"),
+            1,
+        );
+        assert_ne!(planted, rows_source, "the plant lands in the entry's impl");
+        planted
+    };
+    let after_the_entry = |plant: &str| format!("{rows_source}\n{plant}\n");
+    let accessor = "pub fn kind(&self) -> ChangelogEntryKind {\n        self.kind\n    }";
+    let re_signed = rows_source.replacen(
+        accessor,
+        "pub fn kind(&self) -> Option<NewChangelogEntry> {\n        None\n    }",
+        1,
+    );
+    assert_ne!(re_signed, rows_source, "the accessor is re-signed");
+    let rows_refused: [(String, &[&str]); 11] = [
+        (
+            in_entry_impl(
+                "pub fn lifecycle_moved_if(commission: CommissionId, actor: UserId, moved: Option<&LifecycleMove>, at: DateTimeUtc) -> Option<Self> { moved.map(|moved| Self::lifecycle_moved(commission, actor, moved, at)) }",
+            ),
+            &["lifecycle_moved_if"],
+        ),
+        (
+            in_entry_impl(
+                "pub(crate) fn late_by(commission: CommissionId, actor: UserId, at: DateTimeUtc) -> Self { Self::by(commission, ChangelogEntryKind::Late, actor, json!({}), at) }",
+            ),
+            &["late_by"],
+        ),
+        (
+            after_the_entry(
+                "pub fn forged_late(commission: CommissionId, at: DateTimeUtc) -> NewChangelogEntry { NewChangelogEntry { commission_id: commission, kind: ChangelogEntryKind::Late, actor_id: None, payload: json!({}), note: None, created_at: at } }",
+            ),
+            &[],
+        ),
+        (
+            after_the_entry(
+                "impl From<&LateMark> for NewChangelogEntry { fn from(mark: &LateMark) -> Self { Self::late(CommissionId::from(Uuid::nil()), mark, DateTimeUtc::default()) } }",
+            ),
+            &[],
+        ),
+        (
+            after_the_entry(
+                "pub fn relabeled(commission: CommissionId, actor: UserId, at: DateTimeUtc) -> NewChangelogEntry { let mut entry = NewChangelogEntry::note(commission, actor, String::new(), at); entry.kind = ChangelogEntryKind::Late; entry }",
+            ),
+            &[],
+        ),
+        (
+            after_the_entry(
+                "type Entry = NewChangelogEntry;\npub fn forged(commission: CommissionId, at: DateTimeUtc) -> Entry { Entry { commission_id: commission, kind: ChangelogEntryKind::Late, actor_id: None, payload: Value::Null, note: None, created_at: at } }",
+            ),
+            &[],
+        ),
+        (
+            after_the_entry(
+                "pub fn opened(entry: NewChangelogEntry) -> OpenChangelogEntry { OpenChangelogEntry(entry) }",
+            ),
+            &[],
+        ),
+        (
+            after_the_entry(
+                "const _: () = { impl NewChangelogEntry { pub fn forged(commission: CommissionId, actor: UserId, at: DateTimeUtc) -> Self { Self::note(commission, actor, String::new(), at) } } };",
+            ),
+            &[],
+        ),
+        (
+            after_the_entry("forge! { impl NewChangelogEntry { pub fn forged() {} } }"),
+            &[],
+        ),
+        (
+            in_entry_impl(
+                "fn forged(commission: CommissionId, actor: UserId, at: DateTimeUtc) -> Self { Self::note(commission, actor, String::new(), at) }",
+            ),
+            &[],
+        ),
+        (re_signed, &[]),
+    ];
+    for (planted, newly_gated) in rows_refused {
+        let (found_here, planted_gated) = rows_findings(&planted);
+
+        assert_eq!(found_here.len(), 1, "{planted}: {found_here:?}");
+        let added: Vec<&str> = planted_gated
+            .difference(&expected)
+            .map(String::as_str)
+            .collect();
+        assert_eq!(added, newly_gated, "{found_here:?}");
+    }
     let closing = settings.rfind(']').expect("clippy.toml's list closes");
     let created_line = settings
         .lines()
