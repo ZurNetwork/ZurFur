@@ -28,6 +28,10 @@ const ENVELOPE_VERSION: u8 = 0x01;
 /// How every sign-in-secrets key id starts.
 const SIGNIN_KEY_ID_PREFIX: &str = "hkdf:signin_secrets:";
 
+/// A JSON string sealed as a session: the session type rejects it, and the
+/// decoder's error quotes it.
+const UNDECODABLE_CANARY: &str = "leaky-canary-7f3a";
+
 /// A store on a fresh, fully migrated private database (a clone of the shared
 /// template, which the real migrations gave the `atproto_oauth` schema — see
 /// `test_support::pg`), sealing with the test custodian's sign-in handle. The
@@ -567,6 +571,47 @@ async fn the_sign_in_handle_cannot_open_did_custody() {
         custody_refusal(&read_error).is_some(),
         "a did-custody envelope doesn't open as a session: {read_error}"
     );
+}
+
+/// A session blob that opens under the sign-in key and its subject but doesn't
+/// decode fails with an error whose text, through its whole source chain, never
+/// quotes what the blob held.
+#[tokio::test]
+async fn a_blob_that_doesnt_decode_fails_without_quoting_it() {
+    let (store, pool, _container) = fresh_store_and_pool().await;
+    let plaintext = serde_json::to_vec(UNDECODABLE_CANARY).expect("json");
+    let decoder_error = serde_json::from_slice::<ClientSessionData>(&plaintext)
+        .expect_err("a string is no session");
+    assert!(
+        decoder_error.to_string().contains(UNDECODABLE_CANARY),
+        "the decoder's own error quotes the value: {decoder_error}"
+    );
+    let parts: [&[u8]; 3] = [b"client_session", b"did:plc:alice", b"session-1"];
+    let subject = CustodySubject::try_from(parts.as_slice()).expect("the parts encode");
+    let envelope = test_custody()
+        .signin_secrets
+        .seal(&subject, &plaintext)
+        .await
+        .expect("the sign-in key seals");
+
+    plant_session(&pool, "did:plc:alice", "session-1", envelope.as_ref()).await;
+    let did: Did = Did::new_static("did:plc:alice").expect("valid did");
+    let read_error = store
+        .get_session(&did, "session-1")
+        .await
+        .expect_err("a string is no session");
+
+    let mut texts = vec![read_error.to_string()];
+    let mut source = std::error::Error::source(&read_error);
+    while let Some(error) = source {
+        texts.push(error.to_string());
+        source = error.source();
+    }
+    let quoting: Vec<&String> = texts
+        .iter()
+        .filter(|text| text.contains(UNDECODABLE_CANARY))
+        .collect();
+    assert!(quoting.is_empty(), "the error quotes the blob: {quoting:?}");
 }
 
 /// A session's blob is sealed to the door's `client_session` subject, built from the

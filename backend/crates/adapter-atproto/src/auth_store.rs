@@ -223,7 +223,7 @@ impl AtprotoAuthStore {
             .open(subject, &envelope)
             .await
             .map_err(custody_error)?;
-        Ok(serde_json::from_slice(opened.expose())?)
+        serde_json::from_slice(opened.expose()).map_err(decode_error)
     }
 }
 
@@ -271,6 +271,19 @@ fn custody_error(error: CustodyError) -> SessionStoreError {
 /// Map a subject that can't be encoded into jacquard's [`SessionStoreError`].
 fn subject_error(error: PartsError) -> SessionStoreError {
     SessionStoreError::Other(Box::new(error))
+}
+
+/// Why a stored sign-in blob that opened was refused: it doesn't decode as the
+/// type read. Carries nothing of the blob, not even the decoder's error.
+#[derive(Debug, thiserror::Error)]
+#[error("a stored sign-in blob doesn't decode")]
+struct UndecodableBlob;
+
+/// Map a blob that opened but doesn't decode into jacquard's
+/// [`SessionStoreError`], dropping the decoder's error, whose text quotes the
+/// value it rejected.
+fn decode_error(_error: serde_json::Error) -> SessionStoreError {
+    SessionStoreError::Other(Box::new(UndecodableBlob))
 }
 
 impl ClientAuthStore for AtprotoAuthStore {
