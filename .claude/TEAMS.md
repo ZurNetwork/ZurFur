@@ -28,7 +28,7 @@
 | integration | `feature/{slug}` | cut at main's tip. Zurfur's names stand for the pack's through 0.2 (R-215, 2026-10-19): for 0.2, `{slug}` is `release-0-2`, so `feature/release-0-2` ↔ the version `pre-alpha-v0.2.0` ↔ `<docs>/releases/0.2/`. `bug/{slug}` is an off-cycle fix's branch. The pack-shaped names are decided at 0.3's scope, with the release-model question |
 | slice | `feature/{slug}-{n}-{part}` | its PR targets the integration branch. A slice's base is the longest `feature/<x>` prefix of its name that exists on the remote; Machinery's slice-PR briefs name the base. The `feature/` prefix makes CI run on PRs into `feature/**` |
 | fix | `feature/{slug}-m{n}-{team}-fix` | a milestone fix round's branch; its PR targets the integration branch (R-215) |
-| engineer reviews | main | also the design corpus's and Vulpes's main |
+| engineer reviews | — | none since R-247 to R-249 (2026-10-23, until the Engineer says otherwise): the Orchestrator merges into main, the design corpus's main and Vulpes's main once the top-level QA has reviewed the PR's head, with CI and CodeRabbit's review still gating as before; a one-way door stays the Engineer's, asked as a plain design question with no code, and its merge waits for the Engineer's yes (R-248) |
 | merge slice | merge | |
 | merge main | squash | `gh pr merge <N> --squash` queues it |
 
@@ -109,9 +109,9 @@
 | Key | Value | Notes |
 |---|---|---|
 | release reviews | on | compliance, architecture and security at the end of each release, before its last QA |
-| security triggers | authentication; authorization and permissions; sessions and tokens; secrets, keys and signing; the private↔public data boundary; DID or handle correlation; plugin trust; the blob store; fetches of user-supplied URLs | a slice that touches one gets a security review of its plan and its code. A PR into main whose work hit one gets a fresh security review of its cumulative diff before the Engineer's review (R-209, 2026-10-19): off-cycle work has no release review, so this covers it |
+| security triggers | authentication; authorization and permissions; sessions and tokens; secrets, keys and signing; the private↔public data boundary; DID or handle correlation; plugin trust; the blob store; fetches of user-supplied URLs | a slice that touches one gets a security review of its plan and its code. A PR into main whose work hit one gets a fresh security review of its cumulative diff before its merge (R-209, 2026-10-19): off-cycle work has no release review, so this covers it |
 | compliance triggers | personal data; age or adult content; copyright or takedowns; payments or tax; accessibility; a new dependency's license | a slice that touches one calls compliance in early |
-| bot | — | `copilot`, paused since 2026-10-15 (R-149); set it back when the Engineer resumes it. CodeRabbit reviews only PRs into main, automatically, as part of the top-level review layer beside QA and the architects, and a merge into main waits for its review (the Engineer, 2026-10-16). Slice PRs into other branches get no CodeRabbit: its default auto-review covers only the default branch |
+| bot | — | `copilot`, paused since 2026-10-15 (R-149); set it back when the Engineer resumes it. CodeRabbit reviews only PRs into main, automatically, as part of the top-level review layer beside QA and the architects, and a merge into main waits for its review (the Engineer, 2026-10-16), as it does for the top-level QA's review of the head (R-247). Slice PRs into other branches get no CodeRabbit: its default auto-review covers only the default branch |
 | comment prefix | `Claude:` | starts every comment posted through the Engineer's accounts |
 
 ## Teams
