@@ -2,7 +2,7 @@
 //! [`SealPurpose`], [`MacUse`]), the type-level purpose markers ([`ForDidCustody`],
 //! [`ForSigninSecrets`]), the values a custodian takes and returns, and [`CustodyError`].
 //!
-//! None of these values prints a secret, a subject, a tag or a full key id.
+//! No value's `Debug` prints a secret, a subject, a tag or a full key id.
 
 mod errors;
 mod purpose;

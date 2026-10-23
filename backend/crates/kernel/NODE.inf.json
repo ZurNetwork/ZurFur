@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/kernel",
-  "charted": "2026-10-22",
+  "charted": "2026-10-23",
   "short": "The shared domain vocabulary",
   "is": "The bottom domain crate: the vocabulary every other domain crate speaks — the DID, the text primitives, the rule for a name safe to show, the maturity posture, the three-level visibility, the Den node element, key custody's vocabulary, the blob and markdown stubs, the one clock type and the string-validation builder — and the node port, the write capability a gated port method takes, and the key custody port with its purpose-typed handles, with no I/O and no workspace dependency (shared allowed).",
   "type": "code",
@@ -45,7 +45,7 @@
     },
     {
       "name": "src/elements/custody.rs",
-      "role": "key custody's vocabulary (façade): Purpose, SealPurpose, MacUse, the purpose markers, KeyId, CustodySubject, MacMessage, SealedEnvelope, MacTag, OpenedSecret, CustodyError; no value prints a secret, subject, tag or full key id",
+      "role": "key custody's vocabulary (façade): Purpose, SealPurpose, MacUse, the purpose markers, KeyId, CustodySubject, MacMessage, SealedEnvelope, MacTag, OpenedSecret, CustodyError; no value's Debug prints a secret, subject, tag or full key id",
       "node": false
     },
     {
