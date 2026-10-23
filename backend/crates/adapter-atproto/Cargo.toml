@@ -15,10 +15,10 @@ jacquard = { version = "0.12.0", default-features = false, features = [
   "loopback",
   "derive",
 ] }
-jacquard-oauth = { version = "0.12.0" }
-jacquard-common = { version = "0.12.0" }
-fluent-uri = { version = "0.4.1", features = ["std"] }
-smol_str = "0.3.6"
+jacquard-oauth = { workspace = true }
+jacquard-common = { workspace = true }
+fluent-uri = { workspace = true }
+smol_str = { workspace = true }
 # Public-boundary record writes (ZMVP-105): content-address CIDs for blob refs,
 # raw request body bytes, and typed HTTP headers for uploadBlob's Content-Type.
 cid = { workspace = true }
@@ -46,10 +46,8 @@ derive_more = { workspace = true }
 sqlx = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-# Envelope-encrypts the OAuth store's at-rest secrets (DPoP private key, refresh/
-# access tokens, PKCE verifier) under the one custody root key — a faithful mirror
-# of adapter-pg's key_vault (same AEAD, same root key). See `secret_vault`.
-chacha20poly1305 = { workspace = true }
+# Wipes the OAuth store's transient plaintext (DPoP key, tokens, PKCE verifier)
+# once it is sealed.
 zeroize = { workspace = true }
 # The guarded client's transport (and the TLS backend jacquard leaves to the
 # consumer: jacquard-common enables only json/charset on reqwest). Only

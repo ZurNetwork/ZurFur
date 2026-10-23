@@ -1,0 +1,5 @@
+error[E0599]: no method named `clone` found for struct `MacTag` in the current scope
+ --> tests/ui/mac_tag_not_clone.rs:8:21
+  |
+8 |     let _copy = tag.clone();
+  |                     ^^^^^ method not found in `MacTag`

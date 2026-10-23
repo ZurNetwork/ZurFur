@@ -1,7 +1,7 @@
 //! The in-memory [`Runtime`] every driver's fast suite boots: one shared
 //! fixture instead of a copy per test file. The fakes come from
 //! `adapter-mem`; the pool is lazy and never connects; the config is a dev
-//! profile with placeholder secrets.
+//! profile; the Den's MAC handle is the test custodian's.
 
 use std::sync::Arc;
 
@@ -10,6 +10,8 @@ use adapter_mem::{
 };
 use composition::{BareOrigin, Config, Environment, Runtime};
 use domain::elements::{bug_report::BuildId, did::Did, profile::Profile};
+
+use crate::custody::test_custody;
 
 /// The `Config::database_url` the fixture carries — what an identity file's
 /// fingerprint must be taken against to match this runtime.
@@ -79,7 +81,6 @@ impl MemRuntimeBuilder {
             database_url: DATABASE_URL.to_string(),
             log_level: "info".to_string(),
             handle_domain: "zurfur.app".parse().expect("a valid handle domain"),
-            did_key_root_key: "unused-in-tests".to_string(),
             plc_directory_endpoint: "https://plc.directory".to_string(),
             plc_directory_submit: false,
             deadline_sweep_interval_secs: 60,
@@ -105,6 +106,7 @@ impl MemRuntimeBuilder {
             files: backend.file_store(),
             database: backend.database(),
             did_minter: Arc::new(MemDidMinter::new()),
+            den_mac: test_custody().den_mac,
         };
         MemRuntime { runtime, backend }
     }

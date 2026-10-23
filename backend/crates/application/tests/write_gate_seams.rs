@@ -3598,8 +3598,12 @@ fn boots_the_ports(signature: &syn::Signature) -> bool {
     constructor || (only_self && handle && signature.asyncness.is_none())
 }
 
+/// The private store's migration doors past the custody migrator: a driver migrates only
+/// through `CustodyMigrator`, which the scan's whole-identifier match lets pass.
+const MIGRATION_DOORS: [&str; 4] = ["migrate_fresh", "migrator", "Migrator", "migrate_reporting"];
+
 /// What a driver may not name: the node port, the issuer, the capability, the in-memory
-/// seeders, and raw SQL.
+/// seeders, raw SQL, and a migration door past the custody migrator.
 fn driver_forbidden(sources: &[String]) -> BTreeSet<String> {
     let seeds: Vec<&str> = NODE_PORT
         .iter()
@@ -3607,6 +3611,7 @@ fn driver_forbidden(sources: &[String]) -> BTreeSet<String> {
         .chain([GATE_ISSUED, WRITE_CAPABILITY])
         .chain(IN_MEMORY_SEEDERS)
         .chain(RAW_SQL)
+        .chain(MIGRATION_DOORS)
         .collect();
     with_aliases(&seeds, sources)
 }

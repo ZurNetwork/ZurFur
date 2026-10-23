@@ -2285,30 +2285,159 @@ pub mod health {
 }
 
 pub mod key_store {
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct FirstSealedRow {
+        pub did: String,
+        pub sealed_keys: Vec<u8>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct LegacyProbeRow {
+        pub did: String,
+        pub wrapped_keys: Vec<u8>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct LegacyUnsealedRow {
+        pub did: String,
+        pub wrapped_keys: Vec<u8>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct SealedProbeRow {
+        pub did: String,
+        pub sealed_keys: Vec<u8>,
+    }
+
+    /// `queries/key_store/count_unsealed.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// How many rows have no sealed envelope yet.
+    pub async fn count_unsealed(conn: impl sqlx::PgExecutor<'_>) -> sqlx::Result<i64> {
+        sqlx::query_scalar(include_str!("../queries/key_store/count_unsealed.sql"))
+            .fetch_one(conn)
+            .await
+    }
+
+    /// `queries/key_store/first_sealed.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The first row holding a sealed envelope, by DID: the one row a command
+    /// opens to check its root. Read only once `sealed_keys` exists.
+    pub async fn first_sealed(
+        conn: impl sqlx::PgExecutor<'_>,
+    ) -> sqlx::Result<Option<FirstSealedRow>> {
+        sqlx::query_as(include_str!("../queries/key_store/first_sealed.sql"))
+            .fetch_optional(conn)
+            .await
+    }
+
     /// `queries/key_store/get.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn get(conn: impl sqlx::PgExecutor<'_>, did: &str) -> sqlx::Result<Option<Vec<u8>>> {
+    ///
+    /// A row's sealed envelope, by DID: NULL until the row is re-wrapped. Never
+    /// reads the 0.1 ciphertext.
+    pub async fn get(
+        conn: impl sqlx::PgExecutor<'_>,
+        did: &str,
+    ) -> sqlx::Result<Option<Option<Vec<u8>>>> {
         sqlx::query_scalar(include_str!("../queries/key_store/get.sql"))
             .bind(did)
             .fetch_optional(conn)
             .await
     }
 
+    /// `queries/key_store/legacy_probe.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every row still holding a 0.1 ciphertext, by DID. Names only columns the
+    /// table had before the custody envelope, so it also runs on that schema.
+    pub async fn legacy_probe(
+        conn: impl sqlx::PgExecutor<'_>,
+    ) -> sqlx::Result<Vec<LegacyProbeRow>> {
+        sqlx::query_as(include_str!("../queries/key_store/legacy_probe.sql"))
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/key_store/legacy_unsealed.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every row with no sealed envelope yet, by DID, locked until the unit of work
+    /// ends. Such a row always holds its 0.1 ciphertext.
+    pub async fn legacy_unsealed(
+        conn: impl sqlx::PgExecutor<'_>,
+    ) -> sqlx::Result<Vec<LegacyUnsealedRow>> {
+        sqlx::query_as(include_str!("../queries/key_store/legacy_unsealed.sql"))
+            .fetch_all(conn)
+            .await
+    }
+
     /// `queries/key_store/put.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Store a newly minted DID's sealed envelope. Writes no 0.1 ciphertext;
+    /// key_version keeps its default.
     pub async fn put(
         conn: impl sqlx::PgExecutor<'_>,
         did: &str,
-        wrapped_keys: &[u8],
-        key_version: i32,
+        sealed_keys: Option<&[u8]>,
         created_at: chrono::DateTime<chrono::Utc>,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/key_store/put.sql"))
             .bind(did)
-            .bind(wrapped_keys)
-            .bind(key_version)
+            .bind(sealed_keys)
             .bind(created_at)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
+    }
+
+    /// `queries/key_store/sealed_column_exists.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Whether the custody table has its sealed-envelope column yet, so a read can
+    /// run on the schema before the custody envelope.
+    pub async fn sealed_column_exists(conn: impl sqlx::PgExecutor<'_>) -> sqlx::Result<bool> {
+        sqlx::query_scalar(include_str!(
+            "../queries/key_store/sealed_column_exists.sql"
+        ))
+        .fetch_one(conn)
+        .await
+    }
+
+    /// `queries/key_store/sealed_probe.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every row holding a sealed envelope, by DID, so the probe can open each one.
+    pub async fn sealed_probe(
+        conn: impl sqlx::PgExecutor<'_>,
+    ) -> sqlx::Result<Vec<SealedProbeRow>> {
+        sqlx::query_as(include_str!("../queries/key_store/sealed_probe.sql"))
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/key_store/store_sealed.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Store a row's sealed envelope, only while it has none: the envelope is
+    /// written once. Changes one row, or none when the row is missing or sealed.
+    pub async fn store_sealed(
+        conn: impl sqlx::PgExecutor<'_>,
+        did: &str,
+        sealed_keys: Option<&[u8]>,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/key_store/store_sealed.sql"))
+            .bind(did)
+            .bind(sealed_keys)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/key_store/table_exists.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Whether the custody table exists, so a read can run before any migration.
+    pub async fn table_exists(conn: impl sqlx::PgExecutor<'_>) -> sqlx::Result<bool> {
+        sqlx::query_scalar(include_str!("../queries/key_store/table_exists.sql"))
+            .fetch_one(conn)
+            .await
     }
 }
 
@@ -2868,6 +2997,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "file::delete",
     "file::put",
     "key_store::put",
+    "key_store::store_sealed",
     "node::create",
     "node::delete",
     "node::set_name",

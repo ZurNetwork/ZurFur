@@ -1,8 +1,8 @@
 {
   "path": "backend/crates",
   "charted": "2026-10-22",
-  "short": "The twenty-one workspace crates",
-  "is": "Twenty-one workspace crates arranged as a hexagon: an I/O-free core of domain crates (kernel, identity, workflow and the gallery and moderation stubs) behind the domain façade, one application layer of use cases, one HTTP-free composition root, two driving adapters (api, cli) over it, two HTTP crates that api and test-support share (http-cookies, http-stack), three data-boundary adapters implementing its ports, a leaf config crate, three support/codegen crates, one proc-macro crate serving the application layer, and one host-agnostic engine (atta) that knows no Zurfur type.",
+  "short": "The twenty-two workspace crates",
+  "is": "Twenty-two workspace crates arranged as a hexagon: an I/O-free core of domain crates (kernel, identity, workflow and the gallery and moderation stubs) behind the domain façade, one application layer of use cases, one HTTP-free composition root, two driving adapters (api, cli) over it, two HTTP crates that api and test-support share (http-cookies, http-stack), three data-boundary adapters implementing its ports, one key-custody adapter (adapter-hkdf, the dev custodian; not a fourth data boundary), a leaf config crate, three support/codegen crates, one proc-macro crate serving the application layer, and one host-agnostic engine (atta) that knows no Zurfur type.",
   "type": "code",
   "tags": [
     "category:source"
@@ -21,6 +21,11 @@
     {
       "name": "adapter-atproto/",
       "role": "public boundary: OAuth sign-in, PDS records/blobs, public profile reads, did:plc minting + key custody",
+      "node": true
+    },
+    {
+      "name": "adapter-hkdf/",
+      "role": "key-custody adapter, not a data boundary: the dev KeyCustodian — HKDF-derived keys per purpose, the v1 envelope (XChaCha20-Poly1305), the Den MAC, and the golden file with its independent script",
       "node": true
     },
     {

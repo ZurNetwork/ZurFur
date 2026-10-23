@@ -31,16 +31,17 @@ use sha2::{Digest as _, Sha256};
 use smol_str::SmolStr;
 use sqlx::PgPool;
 
+use domain::elements::custody::ForSigninSecrets;
 use domain::elements::{did::Did, handle::AtHandle};
 use domain::ports::{
-    AccountMismatch, Authenticator, BrowserBinding, BrowserMismatch, ResolveError, SigninStarted,
+    AccountMismatch, Authenticator, BrowserBinding, BrowserMismatch, ResolveError, ScopedSealer,
+    SigninStarted,
 };
 
 use crate::auth_store::{AtprotoAuthStore, StoredBinding};
 use crate::guarded_http::{Causes, PublicHttpsUrl, UrlPolicyError};
 use crate::oauth_scope::{OAUTH_SCOPES, grants_identity_only};
 use crate::resolver::AtprotoIdentityResolver;
-use crate::secret_vault::SecretVault;
 use jacquard_bridge::JacquardBridge;
 
 /// How long a started sign-in stays valid, and so its browser token: the
@@ -91,6 +92,18 @@ pub struct AtprotoAuthenticator {
     deadlines: Deadlines,
 }
 
+/// Shows the store and the deadlines; the store shows no key, token or row key.
+impl std::fmt::Debug for AtprotoAuthenticator {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let store: &AtprotoAuthStore = &self.signin.oauth.registry.store;
+        formatter
+            .debug_struct("AtprotoAuthenticator")
+            .field("store", store)
+            .field("deadlines", &self.deadlines)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Sign-in's working parts, shared with the callback's own task.
 struct Signin {
     resolver: Arc<AtprotoIdentityResolver>,
@@ -130,15 +143,15 @@ impl From<Session> for Grant {
 impl AtprotoAuthenticator {
     /// Build the loopback OAuth authenticator with `redirect_uri` as its sole
     /// registered redirect target. `pool` backs the persistent
-    /// [`AtprotoAuthStore`]; `vault` seals that store's secrets at rest; every
+    /// [`AtprotoAuthStore`]; `sealer` seals that store's secrets at rest; every
     /// lookup and request goes through `resolver`.
     pub fn new(
         redirect_uri: Uri<String>,
         pool: PgPool,
-        vault: SecretVault,
+        sealer: ScopedSealer<ForSigninSecrets>,
         resolver: Arc<AtprotoIdentityResolver>,
     ) -> Self {
-        let store = AtprotoAuthStore::new(pool, vault);
+        let store = AtprotoAuthStore::new(pool, sealer);
         let bridge = JacquardBridge::new(resolver.clone());
         let signin = Signin {
             resolver,

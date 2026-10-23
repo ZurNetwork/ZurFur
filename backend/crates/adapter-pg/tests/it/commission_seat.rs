@@ -220,7 +220,9 @@ async fn the_migration_backfills_the_owners_participant_row() {
     .expect("seed pre-membership commission");
 
     // The world catches up: the remaining migrations (with the backfill) run.
-    adapter_pg::migrate(&pool).await.expect("catch-up migrates");
+    adapter_pg::migrate_fresh(&pool)
+        .await
+        .expect("catch-up migrates");
 
     let commission = CommissionId::from(id);
     assert_eq!(

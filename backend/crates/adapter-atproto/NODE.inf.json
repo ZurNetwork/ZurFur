@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/adapter-atproto",
-  "charted": "2026-10-19",
+  "charted": "2026-10-23",
   "short": "Public boundary: the AT Protocol adapter (OAuth, PDS, did:plc)",
   "is": "The public data boundary: the only crate that knows the AT Protocol — OAuth sign-in, PDS record/blob writes, public profile reads, and real did:plc minting with key custody — quarantining jacquard behind domain port traits.",
   "type": "code",
@@ -10,7 +10,7 @@
   "conventions": [
     "Nothing protocol-shaped leaks past this crate's surface (the jacquard client type is a private alias).",
     "Uses `PgPool` as a plain DB client injected by `composition`; its queries run against adapter-pg's migrations.",
-    "OAuth at-rest secrets (DPoP key, tokens, PKCE verifier) are envelope-encrypted under the same custody root key as adapter-pg's `key_vault`.",
+    "OAuth at-rest secrets (DPoP key, tokens, PKCE verifier) are sealed through a `ScopedSealer<ForSigninSecrets>` (the custody port's sign-in handle, from composition), bound to subjects `[\"client_session\", did, session id]` and `[\"auth_request\", state]`; a 0.1 blob, or any envelope that doesn't open under that key and subject, fails closed (an error, never plaintext, never \"no session\").",
     "`auth_store` is one of the five documented Unit-of-Work exemptions.",
     "Genesis signatures are atproto-canonical ECDSA-SHA256 low-S via atrium-crypto — never hand-rolled.",
     "Every fetch to a host a visitor, a handle or a DID document names goes through `guarded_http::GuardedHttp`; only `guarded_http/client.rs`, `plc_directory.rs` and `public_records.rs` (operator-configured hosts) may name reqwest, only this crate's manifest may list it (never renamed), and `tests/network_door.rs` fails the build otherwise — it also forbids jacquard's own resolver (`JacquardResolver`, in any spelling) and bare-reqwest sessions, any mention of `ResolverOptions` outside `authenticator/jacquard_bridge.rs`, and any construction there but its full struct literal (no default, no `..` fill from one; the bridge's served-options test checks the rest), the named transport-weakening calls (TLS, proxy, address pinning, any redirect policy but `Policy::none()`), and any caller of `AtprotoPublicRecords` outside its own file and the façade, until its transport is settled with the hosted-repos design decision (endpoint from operator config only)."
@@ -26,7 +26,7 @@
     },
     {
       "name": "Cargo.toml",
-      "role": "jacquard/jacquard-oauth, atrium-crypto, DAG-CBOR/sha2 for PLC, reqwest+rustls (the guarded client's transport), hickory-resolver 0.26 (its DNS), sqlx for the auth store",
+      "role": "jacquard/jacquard-oauth, atrium-crypto, DAG-CBOR/sha2 for PLC, reqwest+rustls (the guarded client's transport), hickory-resolver 0.26 (its DNS), sqlx for the auth store, zeroize (the auth store's transient plaintext); no AEAD of its own (sealing is the custody port's)",
       "node": false
     },
     {
@@ -36,18 +36,18 @@
     },
     {
       "name": "src/",
-      "role": "authenticator (AtprotoAuthenticator: OAuth sign-in on the resolver; jacquard_bridge = the only resolver jacquard's OAuth client runs on), resolver (AtprotoIdentityResolver: handle ↔ DID, both ways), guarded_http (the guarded web client: URL policy, address table, DNS filter, GuardedHttp), did_minter (Real/Stub), plc + plc_directory (genesis op, hashing, submission), profile, public_records, auth_store, oauth_scope (OAUTH_SCOPES and grants_identity_only, shared by authenticator and auth_store), secret_vault, @generated queries.rs",
+      "role": "authenticator (AtprotoAuthenticator: OAuth sign-in on the resolver, built over the sign-in handle; its Debug shows the store, never a key; jacquard_bridge = the only resolver jacquard's OAuth client runs on), resolver (AtprotoIdentityResolver: handle ↔ DID, both ways), guarded_http (the guarded web client: URL policy, address table, DNS filter, GuardedHttp), did_minter (Real/Stub), plc + plc_directory (genesis op, hashing, submission), profile, public_records, auth_store (AtprotoAuthStore: jacquard's OAuth state in Postgres, sealed through the sign-in handle), oauth_scope (OAUTH_SCOPES and grants_identity_only, shared by authenticator and auth_store), @generated queries.rs",
       "node": false
     },
     {
       "name": "tests/",
-      "role": "auth_store round-trip, public_records against the throwaway PDS + conformance suite, wipe_replay, network_door (the source scan keeping the known doors around GuardedHttp shut)",
+      "role": "auth_store (round-trips, every blob a version-1 envelope under an `hkdf:signin_secrets:` key, a 0.1 blob failing closed, the table in the subject, the DID-custody key refused, a blob that opens but doesn't decode failing with no quote of it in its error chain, a session and an auth request sealed to the door's client_session and auth_request subjects (test-support's golden_subject)), public_records against the throwaway PDS + conformance suite, wipe_replay, network_door (the source scan keeping the known doors around GuardedHttp shut)",
       "node": false
     }
   ],
   "notes": [
     "Port → impl: `Authenticator` = `AtprotoAuthenticator` (authenticator.rs) · `IdentityResolver` = `AtprotoIdentityResolver` (resolver/) · `ProfileSource` = `AtprotoProfileSource` · `DidMinter` = `RealDidMinter` / `StubDidMinter` · `PublicRecords` = `AtprotoPublicRecords`. `PlcDirectory` is adapter-local, selected by `plc_directory_from_config`.",
-    "`secret_vault::SecretVault` deliberately mirrors adapter-pg's `key_vault::RootKey` (same AEAD, blob format and root key `ZURFUR_DID_KEY_ROOT_KEY`) rather than sharing a type — one adapter may not depend on another. Hoisting the envelope into `domain` is the open follow-up. Root-key custody is DEV-ONLY (config/env) pending a KMS; `composition::ensure_custody_hardened` covers this store too at boot.",
+    "Sign-in secrets (`auth_store.rs`): every `data` blob is JSON sealed through the `ScopedSealer<ForSigninSecrets>` composition derives from the custody root; the store and the authenticator take that handle, never a key or a custodian, so a DID-custody handle doesn't compile there. Subjects are `CustodySubject`s of `[\"client_session\", did, session id]` and `[\"auth_request\", state]`; the table token keeps a session's blob from opening as an auth request. A failure to seal or open is a `SessionStoreError` carrying the `CustodyError`, whose text names the kind only (no key id, subject, state, session id or DID). A blob that opens but doesn't decode is a `SessionStoreError` carrying a value-free error (\"a stored sign-in blob doesn't decode\"), never the decoder's error, whose text quotes the value it rejected. The upgrade's migration deleted every in-flight row, so a sign-in in progress across it is redone; a stray 0.1 blob (`24-byte nonce ‖ ciphertext`) fails closed. Root-key custody is DEV-ONLY (config/env) pending a KMS; `composition::ensure_custody_hardened` guards it at boot.",
     "Op ordering: `mint` writes custody + the genesis op BEFORE submitting; `tombstone` and `update_handle` submit BEFORE recording, so a failed submit never advances the local chain.",
     "`plc.rs` is pinned to the published vector `did:plc:ewvi7nxzyoun6zhxrhs64oiz`; it is the tripwire for the whole DAG-CBOR → sha256 → base32/24 pipeline.",
     "This crate's half of the `codegen_current` staleness gate lives over in adapter-pg's `tests/it/`, not here.",
