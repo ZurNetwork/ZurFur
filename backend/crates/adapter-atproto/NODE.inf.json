@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/adapter-atproto",
-  "charted": "2026-10-22",
+  "charted": "2026-10-23",
   "short": "Public boundary: the AT Protocol adapter (OAuth, PDS, did:plc)",
   "is": "The public data boundary: the only crate that knows the AT Protocol — OAuth sign-in, PDS record/blob writes, public profile reads, and real did:plc minting with key custody — quarantining jacquard behind domain port traits.",
   "type": "code",
@@ -41,7 +41,7 @@
     },
     {
       "name": "tests/",
-      "role": "auth_store (round-trips, every blob a version-1 envelope under an `hkdf:signin_secrets:` key, a 0.1 blob failing closed, the table in the subject, the DID-custody key refused), public_records against the throwaway PDS + conformance suite, wipe_replay, network_door (the source scan keeping the known doors around GuardedHttp shut)",
+      "role": "auth_store (round-trips, every blob a version-1 envelope under an `hkdf:signin_secrets:` key, a 0.1 blob failing closed, the table in the subject, the DID-custody key refused, a session and an auth request sealed to the door's client_session and auth_request subjects (test-support's golden_subject)), public_records against the throwaway PDS + conformance suite, wipe_replay, network_door (the source scan keeping the known doors around GuardedHttp shut)",
       "node": false
     }
   ],

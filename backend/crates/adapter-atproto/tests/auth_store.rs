@@ -5,7 +5,7 @@
 //! that every stored blob is sealed under the sign-in-secrets key, bound to its row.
 //! Requires a container runtime socket (DOCKER_HOST honored).
 use adapter_atproto::AtprotoAuthStore;
-use domain::elements::custody::{CustodyError, CustodySubject};
+use domain::elements::custody::{CustodyError, CustodySubject, SealedEnvelope};
 use fluent_uri::Uri;
 use jacquard_common::{session::SessionStoreError, types::did::Did};
 use jacquard_oauth::{
@@ -18,7 +18,8 @@ use jacquard_oauth::{
 use smol_str::SmolStr;
 use sqlx::PgPool;
 use test_support::custody::{
-    LEGACY_ALICE_BLOB_HEX, LEGACY_ALICE_BLOB_STARTING_0X01_HEX, hex_bytes, test_custody,
+    GOLDEN_DID, GOLDEN_SESSION_ID, GOLDEN_STATE, LEGACY_ALICE_BLOB_HEX,
+    LEGACY_ALICE_BLOB_STARTING_0X01_HEX, golden_subject, hex_bytes, test_custody,
 };
 
 /// The version byte every stored envelope starts with.
@@ -566,6 +567,54 @@ async fn the_sign_in_handle_cannot_open_did_custody() {
         custody_refusal(&read_error).is_some(),
         "a did-custody envelope doesn't open as a session: {read_error}"
     );
+}
+
+/// A session's blob is sealed to the door's `client_session` subject, built from the
+/// golden file's parts: the raw column opens under it to the session upserted.
+#[tokio::test]
+async fn a_session_is_sealed_to_the_door_subject() {
+    let (pool, _container) = test_support::pg::fresh_pool().await;
+    let sealer = test_custody().signin_secrets;
+    let store = AtprotoAuthStore::new(pool.clone(), sealer.clone());
+    let session = client_session(GOLDEN_DID, GOLDEN_SESSION_ID);
+    store
+        .upsert_session(session.clone())
+        .await
+        .expect("the golden session is upserted");
+
+    let envelope = SealedEnvelope::from(raw_session(&pool, GOLDEN_DID, GOLDEN_SESSION_ID).await);
+    let opened = sealer
+        .open(&golden_subject("client_session"), &envelope)
+        .await
+        .expect("the blob opens under the golden subject");
+
+    let reopened: ClientSessionData =
+        serde_json::from_slice(opened.expose()).expect("the blob holds the session");
+    assert_eq!(reopened, session);
+}
+
+/// An auth request's blob is sealed to the door's `auth_request` subject, built from
+/// the golden file's parts: the raw column opens under it to the request saved.
+#[tokio::test]
+async fn an_auth_request_is_sealed_to_the_door_subject() {
+    let (pool, _container) = test_support::pg::fresh_pool().await;
+    let sealer = test_custody().signin_secrets;
+    let store = AtprotoAuthStore::new(pool.clone(), sealer.clone());
+    let request = auth_request(GOLDEN_STATE);
+    store
+        .save_auth_req_info(&request)
+        .await
+        .expect("the golden auth request is saved");
+
+    let envelope = SealedEnvelope::from(raw_auth_request(&pool, GOLDEN_STATE).await);
+    let opened = sealer
+        .open(&golden_subject("auth_request"), &envelope)
+        .await
+        .expect("the blob opens under the golden subject");
+
+    let reopened: AuthRequestData =
+        serde_json::from_slice(opened.expose()).expect("the blob holds the auth request");
+    assert_eq!(reopened, request);
 }
 
 /// The store's `Debug` shows the sealer's purpose, never a key or a key id.

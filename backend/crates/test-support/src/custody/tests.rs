@@ -8,12 +8,55 @@ const RFC_5869_PRK: &str = "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec
 const RFC_5869_OKM: &str =
     "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865";
 
-/// The custody golden file adapter-hkdf's script writes.
-fn golden() -> serde_json::Value {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../adapter-hkdf/golden/custody-v1.json");
-    let text = std::fs::read_to_string(&path).expect("the golden file reads");
-    serde_json::from_str(&text).expect("the golden file is JSON")
+/// Each door subject's name in the golden file.
+const DOOR_SUBJECTS: [&str; 3] = ["account_keys", "client_session", "auth_request"];
+
+/// The hex parts of the golden subject named `name`, as text.
+fn golden_parts(name: &str) -> Vec<String> {
+    let golden = golden_file();
+    let pointer = format!("/subjects/{name}/parts");
+    let parts = golden
+        .pointer(&pointer)
+        .and_then(serde_json::Value::as_array)
+        .expect("the golden file has the subject");
+    parts
+        .iter()
+        .map(|part| part.as_str().expect("hex text").to_owned())
+        .collect()
+}
+
+#[test]
+fn each_door_subject_builds_to_the_golden_encoding() {
+    let golden = golden_file();
+
+    for name in DOOR_SUBJECTS {
+        let subject = golden_subject(name);
+
+        let encoding_pointer = format!("/subjects/{name}/encoding");
+        let expected = golden
+            .pointer(&encoding_pointer)
+            .and_then(serde_json::Value::as_str)
+            .expect("the golden file has the encoding");
+        assert_eq!(HEXLOWER.encode(subject.as_ref()), expected, "{name}");
+    }
+}
+
+#[test]
+#[should_panic(expected = "no_such_subject")]
+fn an_unknown_subject_name_panics_with_the_name() {
+    golden_subject("no_such_subject");
+}
+
+#[test]
+fn the_golden_inputs_are_parts_of_their_subjects() {
+    let did = HEXLOWER.encode(GOLDEN_DID.as_bytes());
+    let session_id = HEXLOWER.encode(GOLDEN_SESSION_ID.as_bytes());
+    let state = HEXLOWER.encode(GOLDEN_STATE.as_bytes());
+
+    assert!(golden_parts("account_keys").contains(&did));
+    assert!(golden_parts("client_session").contains(&did));
+    assert!(golden_parts("client_session").contains(&session_id));
+    assert!(golden_parts("auth_request").contains(&state));
 }
 
 #[test]
@@ -30,7 +73,7 @@ fn extract_and_expand_meet_rfc_5869_test_case_1() {
 
 #[test]
 fn the_canary_derives_the_golden_keys_and_key_ids() {
-    let golden = golden();
+    let golden = golden_file();
     let root_bytes = hex_bytes(golden["root"].as_str().expect("the golden root"));
     let root: [u8; KEY_BYTES] = root_bytes.try_into().expect("a 32-byte golden root");
 

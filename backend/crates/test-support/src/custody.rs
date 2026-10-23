@@ -91,6 +91,43 @@ pub const SIGNIN_CANARY_SECRETS: [(&str, &str); 5] = [
     ("the PKCE verifier", "canarypkceverifier5e8f3b"),
 ];
 
+/// The custody golden file adapter-hkdf's script writes, as committed.
+const GOLDEN_FILE: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../adapter-hkdf/golden/custody-v1.json"
+));
+
+/// The DID the golden script builds the `account_keys` and `client_session` subjects for.
+pub const GOLDEN_DID: &str = "did:plc:goldentestalice222222222";
+
+/// The session id the golden script builds the `client_session` subject for.
+pub const GOLDEN_SESSION_ID: &str = "golden-session-0001";
+
+/// The OAuth state the golden script builds the `auth_request` subject for.
+pub const GOLDEN_STATE: &str = "golden-state-0001";
+
+/// The custody golden file, parsed.
+fn golden_file() -> serde_json::Value {
+    serde_json::from_str(GOLDEN_FILE).expect("the golden file is JSON")
+}
+
+/// The door subject named `name` (`account_keys`, `client_session`, `auth_request`),
+/// built from the golden file's hex parts in their order; panics on a name it lacks.
+pub fn golden_subject(name: &str) -> CustodySubject {
+    let golden = golden_file();
+    let pointer = format!("/subjects/{name}/parts");
+    let hex_parts = golden
+        .pointer(&pointer)
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("the golden file has no subject {name:?}"));
+    let parts: Vec<Vec<u8>> = hex_parts
+        .iter()
+        .map(|part| hex_bytes(part.as_str().expect("a golden part is hex text")))
+        .collect();
+    let borrowed: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
+    CustodySubject::try_from(borrowed.as_slice()).expect("the golden parts encode")
+}
+
 /// The keys every legacy fixture holds: 32 bytes each of 0xAA, 0xBB and 0xCC, in role order.
 pub fn legacy_keys() -> AccountKeys {
     AccountKeys {

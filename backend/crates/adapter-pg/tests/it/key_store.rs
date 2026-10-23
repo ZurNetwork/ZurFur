@@ -8,12 +8,15 @@ use std::path::{Path, PathBuf};
 
 use adapter_pg::{PgKeyStore, PgPool};
 use domain::{
-    elements::{custody::CustodyError, did::Did},
+    elements::{
+        custody::{CustodyError, SealedEnvelope},
+        did::Did,
+    },
     ports::KeyStore,
 };
 use test_support::custody::{
-    LEGACY_ALICE_BLOB_HEX, LEGACY_ALICE_BLOB_STARTING_0X01_HEX, LEGACY_ALICE_DID, hex_bytes,
-    legacy_keys, test_custody,
+    GOLDEN_DID, LEGACY_ALICE_BLOB_HEX, LEGACY_ALICE_BLOB_STARTING_0X01_HEX, LEGACY_ALICE_DID,
+    golden_subject, hex_bytes, legacy_keys, test_custody,
 };
 
 /// The envelope's version byte.
@@ -165,6 +168,29 @@ async fn an_envelope_moved_onto_another_did_does_not_open() {
         read.is_err(),
         "an envelope opens only for the DID it was sealed for"
     );
+}
+
+/// A DID's keys are sealed to the door's `account_keys` subject, built from the golden
+/// file's parts: the raw column opens under it to the 96 bytes put in, in role order.
+#[tokio::test]
+async fn the_store_seals_to_the_door_subject() {
+    let (pool, _container) = fresh_pool().await;
+    let sealer = test_custody().did_custody;
+    let store = PgKeyStore::new(pool.clone(), sealer.clone());
+    store
+        .put(&did(GOLDEN_DID), &legacy_keys())
+        .await
+        .expect("the golden DID's keys are put");
+
+    let (_, sealed_keys, _) = stored_row(&pool, GOLDEN_DID).await;
+    let envelope = SealedEnvelope::from(sealed_keys.expect("the envelope is stored"));
+    let opened = sealer
+        .open(&golden_subject("account_keys"), &envelope)
+        .await
+        .expect("the envelope opens under the golden subject");
+
+    let keys_in_role_order = [[0xAAu8; 32], [0xBB; 32], [0xCC; 32]].concat();
+    assert_eq!(opened.expose(), keys_in_role_order.as_slice());
 }
 
 /// Every `.sql` file under `dir`, recursively.
