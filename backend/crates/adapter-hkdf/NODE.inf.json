@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/adapter-hkdf",
-  "charted": "2026-10-22",
+  "charted": "2026-10-23",
   "short": "The dev key custodian: HKDF-derived keys, the v1 envelope, the Den MAC",
   "is": "The dev implementation of the KeyCustodian port: one key per purpose, derived at construction with HKDF-SHA256 from a 32-byte root that is then dropped; secrets are sealed in the v1 envelope (XChaCha20-Poly1305, with the version, purpose, key id and subject bound as associated data) and Den records are tagged with HMAC-SHA256 under the Den key. A key-custody adapter, not a data boundary; only composition, and test-support for tests, are to link it.",
   "type": "code",
@@ -27,12 +27,12 @@
     },
     {
       "name": "golden/custody-v1.json",
-      "role": "the v1 format's golden values in lowercase hex: every constant, the test root (0x00..=0x1f), each purpose's key and key id, the door subjects' and MAC messages' encodings, each envelope's associated data and header, each MAC tag (all from the script) and each envelope's ciphertext (Rust's, `provenance.rust_only`); the tests read it with include_str!",
+      "role": "the v1 format's golden values in lowercase hex: every constant, the test root (0x00..=0x1f), each purpose's key and key id, the door subjects' and MAC messages' encodings, each envelope's associated data, header and ciphertext with its tag, and each MAC tag, every field computed by the script (`provenance.rust_only` is empty); the tests read it with include_str!",
       "node": false
     },
     {
       "name": "golden/custody_v1.py",
-      "role": "the independent computation of the golden file, standard library only (HKDF from RFC 5869 over hmac+hashlib, self-checked on test case 1); re-run with `python3 -I backend/crates/adapter-hkdf/golden/custody_v1.py --check` (exit 1 on any difference), `--write` to rewrite its fields and keep the ciphertexts",
+      "role": "the independent computation of every field of the golden file, the ciphertexts included, standard library only: HKDF from RFC 5869 over hmac+hashlib, self-checked on test case 1, and XChaCha20-Poly1305 from RFC 8439 and draft-arciszewski-xchacha-03, self-checked on the published Poly1305, HChaCha20, ChaCha20-Poly1305 and XChaCha20-Poly1305 vectors before anything is computed; re-run with `python3 -I backend/crates/adapter-hkdf/golden/custody_v1.py --check` (exit 1 on any difference), `--write` to rewrite the file",
       "node": false
     },
     {

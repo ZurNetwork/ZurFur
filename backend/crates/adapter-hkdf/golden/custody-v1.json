@@ -1,9 +1,7 @@
 {
   "provenance": {
-    "script": "golden/custody_v1.py computes every field but the rust_only ones",
-    "rust_only": [
-      "envelopes[].ciphertext"
-    ]
+    "script": "golden/custody_v1.py computes every field, the AEAD ciphertexts included",
+    "rust_only": []
   },
   "constants": {
     "version": "01",

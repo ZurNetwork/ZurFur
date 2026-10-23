@@ -5,12 +5,17 @@ Standard library only, so a reviewer can re-run it without installing anything:
     python3 -I backend/crates/adapter-hkdf/golden/custody_v1.py --check
     python3 -I backend/crates/adapter-hkdf/golden/custody_v1.py --write
 
---check recomputes every field this script owns and exits 1 on any difference from
-the committed JSON. --write rewrites those fields and keeps the AEAD ciphertexts,
-the only fields Rust computes (XChaCha20-Poly1305 is not in the standard library).
+--check recomputes every field, the AEAD ciphertexts included, and exits 1 on any
+difference from the committed JSON. --write rewrites the whole file from this script.
 
 HKDF-SHA256 is built here from RFC 5869 (Extract, then Expand) over `hmac` and
 `hashlib`, and checked against the RFC's test case 1 before anything is computed.
+
+XChaCha20-Poly1305 is built here too, from integer arithmetic alone: the ChaCha20
+block and Poly1305 from RFC 8439, HChaCha20 and the XChaCha construction from
+draft-arciszewski-xchacha-03. Before anything is computed it must reproduce the
+published vectors for Poly1305, HChaCha20, ChaCha20-Poly1305 and XChaCha20-Poly1305;
+otherwise the script exits non-zero with a one-line reason.
 """
 
 import argparse
@@ -85,8 +90,8 @@ MAC_MESSAGES = [
     },
 ]
 
-# The fields Rust computes; the script never owns them.
-RUST_ONLY_FIELDS = ["envelopes[].ciphertext"]
+# The fields Rust computes; this script computes every field, so there are none.
+RUST_ONLY_FIELDS = []
 
 # --- The primitives ----------------------------------------------------------------
 
@@ -138,6 +143,204 @@ def check_rfc5869_test_case_1():
         sys.exit("this script's HKDF does not reproduce RFC 5869 test case 1")
 
 
+WORD_MASK = 0xFFFFFFFF
+
+# RFC 8439 section 2.3: the first four words of the state, "expand 32-byte k".
+CHACHA20_CONSTANTS = [0x61707865, 0x3320646E, 0x79622D32, 0x6B206574]
+
+CHACHA20_BLOCK_LENGTH = 64
+
+# RFC 8439 section 2.5.1: the bits of r that are cleared ("clamped").
+POLY1305_CLAMP = 0x0FFFFFFC0FFFFFFC0FFFFFFC0FFFFFFF
+
+# RFC 8439 section 2.5.1: the prime 2^130 - 5.
+POLY1305_PRIME = (1 << 130) - 5
+
+
+def rotate_left(word, count):
+    """RFC 8439 section 2.1: a 32-bit word rotated left by `count` bits."""
+    return ((word << count) & WORD_MASK) | (word >> (32 - count))
+
+
+def quarter_round(state, a, b, c, d):
+    """RFC 8439 sections 2.1 and 2.2: the quarter round on four words of the state."""
+    state[a] = (state[a] + state[b]) & WORD_MASK
+    state[d] = rotate_left(state[d] ^ state[a], 16)
+    state[c] = (state[c] + state[d]) & WORD_MASK
+    state[b] = rotate_left(state[b] ^ state[c], 12)
+    state[a] = (state[a] + state[b]) & WORD_MASK
+    state[d] = rotate_left(state[d] ^ state[a], 8)
+    state[c] = (state[c] + state[d]) & WORD_MASK
+    state[b] = rotate_left(state[b] ^ state[c], 7)
+
+
+def chacha20_rounds(state):
+    """RFC 8439 section 2.3: 20 rounds, as 10 column rounds each followed by a diagonal round."""
+    for _ in range(10):
+        quarter_round(state, 0, 4, 8, 12)
+        quarter_round(state, 1, 5, 9, 13)
+        quarter_round(state, 2, 6, 10, 14)
+        quarter_round(state, 3, 7, 11, 15)
+        quarter_round(state, 0, 5, 10, 15)
+        quarter_round(state, 1, 6, 11, 12)
+        quarter_round(state, 2, 7, 8, 13)
+        quarter_round(state, 3, 4, 9, 14)
+
+
+def little_endian_words(data):
+    """The bytes read as 32-bit little-endian words."""
+    return [int.from_bytes(data[index : index + 4], "little") for index in range(0, len(data), 4)]
+
+
+def serialize_words(words):
+    """The 32-bit words written little-endian."""
+    return b"".join(word.to_bytes(4, "little") for word in words)
+
+
+def chacha20_block(key, counter, nonce):
+    """RFC 8439 section 2.3: one 64-byte block from a 32-byte key, a counter and a 12-byte nonce."""
+    key_words = little_endian_words(key)
+    nonce_words = little_endian_words(nonce)
+    initial_state = CHACHA20_CONSTANTS + key_words + [counter] + nonce_words
+    state = list(initial_state)
+    chacha20_rounds(state)
+    added = [(word + initial) & WORD_MASK for word, initial in zip(state, initial_state)]
+    return serialize_words(added)
+
+
+def chacha20_encrypt(key, counter, nonce, plaintext):
+    """RFC 8439 section 2.4: the plaintext XORed with the key stream from block `counter` on."""
+    ciphertext = bytearray()
+    for offset in range(0, len(plaintext), CHACHA20_BLOCK_LENGTH):
+        key_stream = chacha20_block(key, counter + offset // CHACHA20_BLOCK_LENGTH, nonce)
+        chunk = plaintext[offset : offset + CHACHA20_BLOCK_LENGTH]
+        ciphertext += bytes(left ^ right for left, right in zip(chunk, key_stream))
+    return bytes(ciphertext)
+
+
+def poly1305_mac(key, message):
+    """RFC 8439 section 2.5.1: the 16-byte tag of `message` under a 32-byte one-time key (r, s)."""
+    r = int.from_bytes(key[:16], "little") & POLY1305_CLAMP
+    s = int.from_bytes(key[16:32], "little")
+    accumulator = 0
+    for offset in range(0, len(message), 16):
+        block = int.from_bytes(message[offset : offset + 16] + b"\x01", "little")
+        accumulator = ((accumulator + block) * r) % POLY1305_PRIME
+    return ((accumulator + s) % (1 << 128)).to_bytes(16, "little")
+
+
+def poly1305_key_gen(key, nonce):
+    """RFC 8439 section 2.6: the one-time Poly1305 key, the first 32 bytes of block 0."""
+    return chacha20_block(key, 0, nonce)[:32]
+
+
+def pad16(data):
+    """RFC 8439 section 2.8: the zero bytes that bring `data` to a multiple of 16."""
+    return bytes(-len(data) % 16)
+
+
+def chacha20_poly1305_encrypt(key, nonce, associated_data, plaintext):
+    """RFC 8439 section 2.8: the ciphertext, then its 16-byte tag, under a 12-byte nonce."""
+    one_time_key = poly1305_key_gen(key, nonce)
+    ciphertext = chacha20_encrypt(key, 1, nonce, plaintext)
+    lengths = len(associated_data).to_bytes(8, "little") + len(ciphertext).to_bytes(8, "little")
+    mac_data = associated_data + pad16(associated_data) + ciphertext + pad16(ciphertext) + lengths
+    return ciphertext + poly1305_mac(one_time_key, mac_data)
+
+
+def hchacha20(key, nonce):
+    """draft-arciszewski-xchacha-03 section 2.2: a 32-byte subkey from a key and a 16-byte nonce."""
+    state = CHACHA20_CONSTANTS + little_endian_words(key) + little_endian_words(nonce)
+    chacha20_rounds(state)
+    return serialize_words(state[0:4] + state[12:16])
+
+
+def xchacha20_poly1305_encrypt(key, nonce, associated_data, plaintext):
+    """draft-arciszewski-xchacha-03 section 2.3: ChaCha20-Poly1305 under the HChaCha20 subkey
+    of the nonce's first 16 bytes, with four zero bytes and the nonce's last 8 as its nonce."""
+    subkey = hchacha20(key, nonce[:16])
+    chacha20_nonce = bytes(4) + nonce[16:24]
+    return chacha20_poly1305_encrypt(subkey, chacha20_nonce, associated_data, plaintext)
+
+
+# RFC 8439 section 2.8.2's key, associated data and plaintext, shared with the draft's
+# appendix A.1, as chacha20poly1305-0.10.1/tests/lib.rs quotes them (KEY, AAD, PLAINTEXT).
+AEAD_VECTOR_KEY = bytes.fromhex("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f")
+AEAD_VECTOR_ASSOCIATED_DATA = bytes.fromhex("50515253c0c1c2c3c4c5c6c7")
+AEAD_VECTOR_PLAINTEXT = (
+    b"Ladies and Gentlemen of the class of '99: "
+    b"If I could offer you only one tip for the future, sunscreen would be it."
+)
+AEAD_VECTOR_PLAINTEXT_LENGTH = 114
+
+
+def check_poly1305_vector():
+    """RFC 8439 section 2.5.2, as poly1305-0.8.0/tests/lib.rs quotes it (test_rfc7539_vector)."""
+    key = bytes.fromhex("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b")
+    message = bytes.fromhex("43727970746f6772617068696320466f72756d2052657365617263682047726f7570")
+    expected_tag = "a8061dc1305136c6c22b8baf0c0127a9"
+    if poly1305_mac(key, message).hex() != expected_tag:
+        sys.exit("this script's Poly1305 does not reproduce RFC 8439 section 2.5.2")
+
+
+def check_hchacha20_vector():
+    """draft-arciszewski-xchacha-03 section 2.2.1, as chacha20-0.9.1/src/xchacha.rs quotes it
+    (module hchacha20_tests, test_vector)."""
+    key = bytes.fromhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+    nonce = bytes.fromhex("000000090000004a0000000031415927")
+    expected_subkey = "82413b4227b27bfed30e42508a877d73a0f9e4d58a74a853c12ec41326d3ecdc"
+    if hchacha20(key, nonce).hex() != expected_subkey:
+        sys.exit("this script's HChaCha20 does not reproduce the XChaCha draft's section 2.2.1")
+
+
+def check_chacha20_poly1305_vector():
+    """RFC 8439 section 2.8.2, as chacha20poly1305-0.10.1/tests/lib.rs quotes it
+    (module chacha20)."""
+    nonce = bytes.fromhex("070000004041424344454647")
+    expected_ciphertext = (
+        "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d6"
+        "3dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b36"
+        "92ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc"
+        "3ff4def08e4b7a9de576d26586cec64b6116"
+    )
+    expected_tag = "1ae10b594f09e26a7e902ecbd0600691"
+    sealed = chacha20_poly1305_encrypt(
+        AEAD_VECTOR_KEY, nonce, AEAD_VECTOR_ASSOCIATED_DATA, AEAD_VECTOR_PLAINTEXT
+    )
+    if sealed.hex() != expected_ciphertext + expected_tag:
+        sys.exit("this script's ChaCha20-Poly1305 does not reproduce RFC 8439 section 2.8.2")
+
+
+def check_xchacha20_poly1305_vector():
+    """draft-arciszewski-xchacha-03 appendix A.1, as chacha20poly1305-0.10.1/tests/lib.rs
+    quotes it (module xchacha20)."""
+    nonce = bytes.fromhex("404142434445464748494a4b4c4d4e4f5051525354555657")
+    expected_ciphertext = (
+        "bd6d179d3e83d43b9576579493c0e939572a1700252bfaccbed2902c21396cbb"
+        "731c7f1b0b4aa6440bf3a82f4eda7e39ae64c6708c54c216cb96b72e1213b452"
+        "2f8c9ba40db5d945b11b69b982c1bb9e3f3fac2bc369488f76b2383565d3fff9"
+        "21f9664c97637da9768812f615c68b13b52e"
+    )
+    expected_tag = "c0875924c1c7987947deafd8780acf49"
+    sealed = xchacha20_poly1305_encrypt(
+        AEAD_VECTOR_KEY, nonce, AEAD_VECTOR_ASSOCIATED_DATA, AEAD_VECTOR_PLAINTEXT
+    )
+    if sealed.hex() != expected_ciphertext + expected_tag:
+        sys.exit(
+            "this script's XChaCha20-Poly1305 does not reproduce the XChaCha draft's appendix A.1"
+        )
+
+
+def check_aead_vectors():
+    """The published vectors, so the XChaCha20-Poly1305 above is the RFC's and the draft's."""
+    if len(AEAD_VECTOR_PLAINTEXT) != AEAD_VECTOR_PLAINTEXT_LENGTH:
+        sys.exit("this script's copy of the RFC 8439 section 2.8.2 plaintext is not 114 bytes")
+    check_poly1305_vector()
+    check_hchacha20_vector()
+    check_chacha20_poly1305_vector()
+    check_xchacha20_poly1305_vector()
+
+
 # --- The golden values -------------------------------------------------------------
 
 
@@ -167,10 +370,9 @@ def compute_keys():
     return keys
 
 
-def compute(committed):
-    """Every golden field; the ciphertexts are carried over from `committed`."""
+def compute():
+    """Every golden field, the AEAD ciphertexts included."""
     keys = compute_keys()
-    committed_envelopes = committed.get("envelopes", []) if committed else []
 
     constants = {
         "version": VERSION.hex(),
@@ -193,15 +395,16 @@ def compute(committed):
     }
 
     envelopes = []
-    for index, envelope in enumerate(ENVELOPES):
+    for envelope in ENVELOPES:
         purpose = envelope["purpose"]
+        key = bytes.fromhex(keys[purpose]["key"])
         key_id = keys[purpose]["key_id"].encode()
         subject_encoding = encode_parts(SUBJECTS[envelope["subject"]])
         associated_data = VERSION + lp(purpose.encode()) + lp(key_id) + lp(subject_encoding)
         header = VERSION + bytes([len(key_id)]) + key_id + envelope["nonce"]
-        ciphertext = ""
-        if index < len(committed_envelopes):
-            ciphertext = committed_envelopes[index].get("ciphertext", "")
+        ciphertext = xchacha20_poly1305_encrypt(
+            key, envelope["nonce"], associated_data, envelope["plaintext"]
+        )
         envelopes.append(
             {
                 "purpose": purpose,
@@ -210,7 +413,7 @@ def compute(committed):
                 "plaintext": envelope["plaintext"].hex(),
                 "associated_data": associated_data.hex(),
                 "header": header.hex(),
-                "ciphertext": ciphertext,
+                "ciphertext": ciphertext.hex(),
             }
         )
 
@@ -231,7 +434,7 @@ def compute(committed):
 
     return {
         "provenance": {
-            "script": "golden/custody_v1.py computes every field but the rust_only ones",
+            "script": "golden/custody_v1.py computes every field, the AEAD ciphertexts included",
             "rust_only": RUST_ONLY_FIELDS,
         },
         "constants": constants,
@@ -267,21 +470,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true", help="compare with the committed JSON")
-    mode.add_argument("--write", action="store_true", help="rewrite the script's fields")
+    mode.add_argument("--write", action="store_true", help="rewrite the golden file")
     arguments = parser.parse_args()
 
     check_rfc5869_test_case_1()
-    committed = json.loads(GOLDEN_PATH.read_text()) if GOLDEN_PATH.exists() else None
-    computed = compute(committed)
+    check_aead_vectors()
+    computed = compute()
 
     if arguments.write:
         GOLDEN_PATH.write_text(json.dumps(computed, indent=2) + "\n")
         print(f"wrote {GOLDEN_PATH}")
         return 0
 
-    if committed is None:
+    if not GOLDEN_PATH.exists():
         print(f"no golden file at {GOLDEN_PATH}", file=sys.stderr)
         return 1
+    committed = json.loads(GOLDEN_PATH.read_text())
     found = differences(computed, committed)
     if found:
         print("the golden file differs from this script at:", file=sys.stderr)
