@@ -49,9 +49,9 @@ pub trait DidOperations: Send + Sync {
 }
 
 /// Custody store for the private keys behind a minted `did:plc` — a private-store
-/// port. Implementations must never persist key material in the clear and must
-/// never log it ([`AccountKeys`] redacts its secrets in `Debug` and zeroizes them
-/// on drop).
+/// port. Implementations seal the keys through the key custodian's DID-custody
+/// handle, bound to the DID; they never persist key material in the clear and never
+/// log it ([`AccountKeys`] redacts its secrets in `Debug` and zeroizes them on drop).
 #[async_trait]
 pub trait KeyStore: Send + Sync {
     /// Persist the custody keys for `did`, encrypted at rest. Called once during

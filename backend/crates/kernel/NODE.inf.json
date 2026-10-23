@@ -1,8 +1,8 @@
 {
   "path": "backend/crates/kernel",
-  "charted": "2026-10-22",
+  "charted": "2026-10-23",
   "short": "The shared domain vocabulary",
-  "is": "The bottom domain crate: the vocabulary every other domain crate speaks — the DID, the text primitives, the rule for a name safe to show, the maturity posture, the three-level visibility, the Den node element, the blob and markdown stubs, the one clock type and the string-validation builder — and the node port and the write capability a gated port method takes, with no I/O and no workspace dependency (shared allowed).",
+  "is": "The bottom domain crate: the vocabulary every other domain crate speaks — the DID, the text primitives, the rule for a name safe to show, the maturity posture, the three-level visibility, the Den node element, key custody's vocabulary, the blob and markdown stubs, the one clock type and the string-validation builder — and the node port, the write capability a gated port method takes, and the key custody port with its purpose-typed handles, with no I/O and no workspace dependency (shared allowed).",
   "type": "code",
   "tags": [
     "category:source"
@@ -25,7 +25,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "chrono (the clock), cid (BlobId), serde, thiserror, derive_more, strum, uuid (NodeId), async-trait + anyhow (the node port); dev-deps proptest, serde_json (the shared segment cases), trybuild (the write capability's compile-fail cases)",
+      "role": "chrono (the clock), cid (BlobId), serde, thiserror, derive_more, strum, uuid (NodeId), async-trait + anyhow (the node and custody ports), zeroize (an opened custody secret); dev-deps proptest, serde_json (the shared segment cases), trybuild (the write capability's and custody's compile-fail cases)",
       "node": false
     },
     {
@@ -35,12 +35,22 @@
     },
     {
       "name": "src/elements.rs",
-      "role": "module index for elements/: did, text, maturity, name, level, node; blob and markdown are stubs",
+      "role": "module index for elements/: did, text, maturity, name, level, node, custody; blob and markdown are stubs",
       "node": false
     },
     {
       "name": "src/elements/blob.rs",
       "role": "BlobId, a blob's content address (stub)",
+      "node": false
+    },
+    {
+      "name": "src/elements/custody.rs",
+      "role": "key custody's vocabulary (façade): Purpose, SealPurpose, MacUse, the purpose markers, KeyId, CustodySubject, MacMessage, SealedEnvelope, MacTag, OpenedSecret, CustodyError; no value's Debug prints a secret, subject, tag or full key id",
+      "node": false
+    },
+    {
+      "name": "src/elements/custody/",
+      "role": "split of custody.rs: purpose.rs (Purpose did_custody/signin_secrets/den_mac, SealPurpose, MacUse den_node/den_changelog_entry; strum, typed Unknown* errors, literal token tests), purpose_marker.rs (ForDidCustody, ForSigninSecrets: uninhabited markers of the sealed SealPurposeMarker, const PURPOSE), values.rs (KeyId 1-255 bytes of [a-z0-9_:-], purpose() from the token between the first two colons, Debug prints the purpose only; CustodySubject and MacMessage from parts: a big-endian u32 count, then each part's u32 length and bytes, every length through u32::try_from; SealedEnvelope, Debug the length and the version-1 header's purpose; MacTag, 32 bytes, key_id() and stored_bytes(), no PartialEq or Clone; OpenedSecret, zeroized, expose()), errors.rs (CustodyError, Display the kind and at most the purpose); tests.rs beside each leaf, values/proptests.rs (distinct part lists encode distinctly)",
       "node": false
     },
     {
@@ -115,12 +125,12 @@
     },
     {
       "name": "src/ports.rs",
-      "role": "port façade: re-exports the node port, SegmentTaken and the write capability (WriteCapability, New, Creator)",
+      "role": "port façade: re-exports the node port, SegmentTaken, the write capability (WriteCapability, New, Creator) and key custody (KeyCustodian, ScopedSealer, ScopedMac)",
       "node": false
     },
     {
       "name": "src/ports/",
-      "role": "node.rs = NodeStore (pool reads: at_top by type, child, children bytewise), NodeReads (the same on a unit), NodeWrites (create, set_name -> bool, delete -> bool; a refusal ends the unit), NodeRepo; errors.rs = SegmentTaken; capability.rs = WriteCapability<T, R> (defined once, in capability.rs: no other production source in the workspace binds the name; a gated port method takes it in place of its id; private thing and PhantomData role; no Clone, Copy, Default, From or serde; a hand-written Debug that prints nothing of the thing; its surface is exactly gate_issued, banned by path in application, api and test-support, and thing()), New<T> (a thing not yet made: From and AsRef, no Default) and the marker Creator; R carries no bound, the role table lives with the gate; capability/tests.rs",
+      "role": "node.rs = NodeStore (pool reads: at_top by type, child, children bytewise), NodeReads (the same on a unit), NodeWrites (create, set_name -> bool, delete -> bool; a refusal ends the unit), NodeRepo; errors.rs = SegmentTaken; capability.rs = WriteCapability<T, R> (defined once, in capability.rs: no other production source in the workspace binds the name; a gated port method takes it in place of its id; private thing and PhantomData role; no Clone, Copy, Default, From or serde; a hand-written Debug that prints nothing of the thing; its surface is exactly gate_issued, banned by path in application, api and test-support, and thing()), New<T> (a thing not yet made: From and AsRef, no Default) and the marker Creator; R carries no bound, the role table lives with the gate; capability/tests.rs; custody.rs = KeyCustodian (async seal, open, mac, verify; held whole by composition only) and the handles every adapter holds: ScopedSealer<P> (P a SealPurposeMarker, passes P::PURPOSE itself) and ScopedMac (the Den's MAC key), each over an Arc<dyn KeyCustodian>, built with From, a hand-written Clone that shares the Arc and a Debug that prints the purpose only; custody/tests.rs (a recording fake custodian, test code only)",
       "node": false
     },
     {
@@ -145,7 +155,7 @@
     },
     {
       "name": "tests/ui/",
-      "role": "compile-fail cases for WriteCapability: by_literal.rs (private fields), not_clone.rs, no_from.rs, no_default.rs, not_kept.rs (a handler lent &WriteCapability can neither keep nor return it)",
+      "role": "compile-fail cases for WriteCapability: by_literal.rs (private fields), not_clone.rs, no_from.rs, no_default.rs, not_kept.rs (a handler lent &WriteCapability can neither keep nor return it); for custody: mac_tag_not_eq.rs, mac_tag_not_clone.rs, opened_secret_not_clone.rs, sealer_purpose_swap.rs (a sign-in sealer where the did:plc custody one is wanted), no_third_marker.rs (SealPurposeMarker is sealed)",
       "node": false
     }
   ],

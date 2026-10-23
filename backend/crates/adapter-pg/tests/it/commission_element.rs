@@ -869,7 +869,9 @@ async fn the_migration_backfills_skeleton_tabs_for_pre_composition_commissions()
     }
 
     // The world catches up: the remaining migrations (including the backfill) run.
-    adapter_pg::migrate(&pool).await.expect("catch-up migrates");
+    adapter_pg::migrate_fresh(&pool)
+        .await
+        .expect("catch-up migrates");
 
     let store = PgCommissionStore::new(pool.clone());
     for (id, visibility) in seeded {

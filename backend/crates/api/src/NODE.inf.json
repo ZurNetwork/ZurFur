@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/api/src",
-  "charted": "2026-10-22",
+  "charted": "2026-10-23",
   "short": "Composition + cross-cutting HTTP concerns",
   "is": "Composition (lib/main) plus the cross-cutting HTTP concerns (extractors, problem, wire_time, sweep) around the route groups and the generated contract module.",
   "type": "code",
@@ -20,7 +20,7 @@
   "fs": [
     {
       "name": "dev_profile.rs",
-      "role": "cfg(feature = \"dev-profile\"): the environment lock (OutsideDev), adapter-mem stores seeded with identity's and commission's fixtures, FixedSignIn as alice, an unreachable profile source and pool, sessions in tower-sessions' MemoryStore, served through http_stack::stack",
+      "role": "cfg(feature = \"dev-profile\"): the environment lock (OutsideDev), adapter-mem stores seeded with identity's and commission's fixtures, FixedSignIn as alice, an unreachable profile source and pool, the Den's ScopedMac from composition's one custody function (the root passed in from main, the DenMac purpose only, never a KeyCustodian), sessions in tower-sessions' MemoryStore, served through http_stack::stack",
       "node": false
     },
     {
@@ -45,7 +45,7 @@
     },
     {
       "name": "main.rs",
-      "role": "boot: .env, config, tracing, then the profile's app — everyday: pool, migrations, Postgres session layer (http-cookies), live pg/atproto adapters, sweeper + reaper; with the `dev-profile` feature: dev_profile::app instead — then http_stack::serve until Ctrl-C or SIGTERM, finishing the requests in flight within the shutdown deadline",
+      "role": "boot: .env, config, tracing, then the profile's app — everyday: the custody root from ZURFUR_DID_KEY_ROOT_KEY, Runtime::connect_migrating over every purpose, the CustodyMigrator run (counts logged at info), Postgres session layer (http-cookies), live pg/atproto adapters, sweeper + reaper; with the `dev-profile` feature: the root read, then dev_profile::app instead — then http_stack::serve until Ctrl-C or SIGTERM, finishing the requests in flight within the shutdown deadline",
       "node": false
     },
     {

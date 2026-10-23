@@ -87,8 +87,15 @@ tempfile = "3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 figment = { version = "0.10.19", features = ["env", "toml"] }
-# Parse `public_url` into the OAuth redirect URI (composition).
+# Parse `public_url` into the OAuth redirect URI (composition); the OAuth records'
+# URIs (adapter-atproto, test-support).
 fluent-uri = { version = "0.4.1", features = ["std"] }
+# jacquard's OAuth and common types: the sign-in store (adapter-atproto) and the
+# sign-in canary over the same records (test-support).
+jacquard-oauth = "0.12.0"
+jacquard-common = "0.12.0"
+# The interned strings jacquard's OAuth records carry.
+smol_str = "0.3.6"
 dotenvy = { version = "0.15.7" }
 anyhow = "1.0.103"
 # `derive(Error)` for the application layer's per-module error enums: `Display`,
@@ -135,6 +142,17 @@ base64 = "0.22"
 chacha20poly1305 = "0.10"
 # Wipe secret key material from memory on drop.
 zeroize = { version = "1", features = ["derive"] }
+# --- The dev key custodian (adapter-hkdf): one key per purpose, the Den MAC ---
+# HKDF-SHA256 (RFC 5869): Extract, then Expand, one key per custody purpose.
+hkdf = "0.13.0"
+# HMAC-SHA256 under the Den key; `zeroize` wipes the keyed state's buffer on drop.
+hmac = { version = "0.13.0", features = ["zeroize"] }
+# sha2 on the digest 0.11 line hkdf and hmac 0.13 build on, beside the 0.10 entry
+# above; `zeroize` wipes the hash state on drop. Default features off: `oid`
+# would bring const-oid 0.10 into the lock, and nothing here names an OID.
+sha2-0-11 = { package = "sha2", version = "0.11.0", default-features = false, features = [
+  "zeroize",
+] }
 # --- The guarded web client: identity fetches to hosts a visitor names ---
 # The DNS stub resolver on the system configuration, behind the address filter.
 # 0.26 on purpose: 0.24 carries RUSTSEC-2026-0119.

@@ -162,7 +162,9 @@ async fn shared() -> Arc<SharedPg> {
     let pool = adapter_pg::connect(&template_url)
         .await
         .expect("template pool connects");
-    adapter_pg::migrate(&pool).await.expect("migrations run");
+    adapter_pg::migrate_fresh(&pool)
+        .await
+        .expect("migrations run");
     pool.close().await;
 
     let container_id = container.id().to_owned();

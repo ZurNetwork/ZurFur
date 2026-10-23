@@ -8,6 +8,7 @@
 
 pub mod commission_standing_contract;
 pub mod contract;
+pub mod custody;
 pub mod cut;
 pub mod den;
 mod fixture;

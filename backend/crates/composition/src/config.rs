@@ -25,9 +25,6 @@ pub const CONFIG_DIR_ENV: &str = "ZURFUR_CONFIG_DIR";
 pub const DATABASE_URL_ENV: &str = "DATABASE_URL";
 /// The prefix every other `Config` field answers to (`ZURFUR_<FIELD>`).
 pub const ENV_PREFIX: &str = "ZURFUR_";
-/// `ENV_PREFIX` + [`Config::did_key_root_key`]; every harness that boots a
-/// runtime has to set it.
-pub const ROOT_KEY_ENV: &str = "ZURFUR_DID_KEY_ROOT_KEY";
 /// `ENV_PREFIX` + [`Config::build_id`]; read verbatim, never parsed as a number.
 const BUILD_ID_ENV: &str = "ZURFUR_BUILD_ID";
 /// [`Config::build_id`] when `ZURFUR_BUILD_ID` is unset.
@@ -91,11 +88,6 @@ pub struct Config {
         deserialize_with = "deserialize_handle_domain"
     )]
     pub handle_domain: HandleDomain,
-    /// **DEV-ONLY root key** (base64, 32 bytes) that envelope-encrypts every
-    /// account's minted `did:plc` custody keys at rest. Read from
-    /// `ZURFUR_DID_KEY_ROOT_KEY`, never committed to a profile TOML; refused in
-    /// production-like environments by [`ensure_custody_hardened`].
-    pub did_key_root_key: String,
     /// PLC directory base URL, used only when
     /// [`plc_directory_submit`](Config::plc_directory_submit) is on. Defaults
     /// to a local placeholder — never the canonical public append-only log,
@@ -292,18 +284,28 @@ impl Config {
                 return Err(LoadError::from(Box::new(build_id_error)));
             }
         };
-        let mut figment = Figment::new()
-            .merge(Toml::file(profile_file))
-            .merge(Env::raw().only(&[DATABASE_URL_ENV]))
-            .merge(Env::prefixed(ENV_PREFIX).ignore(&["build_id"]));
-        if let Some(text) = build_id_text {
-            figment = figment.merge(Serialized::default("build_id", text));
-        }
+        let figment = layered(profile_file, build_id_text);
         let config: Self = figment.extract().map_err(Box::new)?;
         config.ensure_fits_environment()?;
         Ok(config)
     }
+}
 
+/// The config's layers, lowest first: `profile_file`, the unprefixed `DATABASE_URL`, then
+/// `ZURFUR_*` env without the build id (layered verbatim from `build_id_text`) and without
+/// the custody root, which only a command holding a purpose reads.
+fn layered(profile_file: PathBuf, build_id_text: Option<String>) -> Figment {
+    let figment = Figment::new()
+        .merge(Toml::file(profile_file))
+        .merge(Env::raw().only(&[DATABASE_URL_ENV]))
+        .merge(Env::prefixed(ENV_PREFIX).ignore(&["build_id", "did_key_root_key"]));
+    match build_id_text {
+        Some(text) => figment.merge(Serialized::default("build_id", text)),
+        None => figment,
+    }
+}
+
+impl Config {
     /// Refuse a configuration its [`env`](Config::env) may not boot with:
     /// `DEV` only on this machine, `STG` and `PROD` only on an `https` origin
     /// named by a public domain, and `STG` never on or under production's

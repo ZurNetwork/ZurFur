@@ -13,13 +13,19 @@ domain = { path = "../domain" }
 application = { path = "../application" }
 adapter-pg = { path = "../adapter-pg" }
 adapter-atproto = { path = "../adapter-atproto" }
+# The dev key custodian the custody root is derived into.
+adapter-hkdf = { path = "../adapter-hkdf" }
+# The custodian a command holding no purpose gets: the port is an `#[async_trait]`.
+async-trait = { workspace = true }
+# The custody root, wiped once the custodian has derived its keys.
+zeroize = { workspace = true }
 figment = { workspace = true }
 serde = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 # The log filter both drivers install (`logging`): DNS-client events dropped.
 tracing-subscriber = { workspace = true }
-# Decode the DEV-ONLY did:plc custody root key (base64) at boot (ZMVP-49).
+# Decode the custody root (base64) from the environment into a wiped buffer.
 base64 = { workspace = true }
 # Build the OAuth redirect URI from `public_url`.
 fluent-uri = { workspace = true }
@@ -33,6 +39,10 @@ derive_more = { workspace = true }
 [dev-dependencies]
 # `figment::Jail` — the config-precedence test.
 figment = { workspace = true, features = ["test"] }
+# The runtime tests await the wired handles.
+tokio = { workspace = true }
+# The custody tests derive every `Purpose::VARIANTS`.
+strum = { workspace = true }
 
 [lints]
 workspace = true

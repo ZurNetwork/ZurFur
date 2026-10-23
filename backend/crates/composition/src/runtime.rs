@@ -1,19 +1,21 @@
 //! The [`Runtime`]: every live port behind one `Clone`-able bag, plus a
 //! convenience over the application layer's transaction orchestrator.
 
+use std::future::Future;
 use std::sync::Arc;
 
-use adapter_pg::PgPool;
-use base64::Engine as _;
+use adapter_pg::{CustodyMigrator, PgPool};
+use domain::elements::custody::Purpose;
 use domain::ports::character::CharacterStore;
 use domain::ports::{
     AccountStore, Authenticator, BugReportStore, ChangelogStore, ColumnStore, CommissionStore,
-    Database, DidMinter, FileStore, IdentityResolver, ProfileCache, ProfileSource, UnitOfWorkFn,
-    UserStore, WorkflowStore,
+    Database, DidMinter, FileStore, IdentityResolver, ProfileCache, ProfileSource, ScopedMac,
+    UnitOfWorkFn, UserStore, WorkflowStore,
 };
 use fluent_uri::Uri;
 
-use crate::{Config, ensure_custody_hardened};
+use crate::custody::{Custody, derive_keeping_legacy_root};
+use crate::{Config, RootSecret};
 
 /// The composition root's bag of dependencies — every live port behind an
 /// `Arc<dyn Trait>`, so the live adapter is picked once here and drivers stay
@@ -80,7 +82,17 @@ pub struct Runtime {
     pub database: Arc<dyn Database>,
     /// Mints a sovereign `did:plc` for a newly founded account.
     pub did_minter: Arc<dyn DidMinter>,
+    /// The Den's MAC handle: tags and verifies the Den's records under the Den's key.
+    /// Answers `PurposeNotHeld` in a runtime connected without that purpose.
+    pub den_mac: ScopedMac,
 }
+
+/// A runtime crosses threads and is cloned per request; a field that can't (the custody
+/// root) fails to compile here.
+const _: () = {
+    const fn crosses_threads_and_clones<T: Send + Sync + Clone>() {}
+    crosses_threads_and_clones::<Runtime>();
+};
 
 impl Runtime {
     /// The [`application::App`] orchestrator over this runtime's adapters.
@@ -101,26 +113,42 @@ impl Runtime {
 }
 
 impl Runtime {
-    /// Wire the live adapters over `config`: a Postgres pool (connected here —
-    /// migrations are NOT run, the caller calls [`adapter_pg::migrate`]), the
-    /// atproto [`Authenticator`], the `did:plc` custody chain, and every
-    /// pg-backed store.
-    ///
-    /// Fails if the pool cannot connect, `public_url` or the root key will not
-    /// parse, [`ensure_custody_hardened`] refuses the configuration, or the
-    /// system DNS configuration cannot be read; the error messages never echo
-    /// the secrets themselves.
-    pub async fn connect(config: Config) -> Result<Self, ConnectError> {
+    /// Wire every live adapter over `config` and `custody`'s handles, on a Postgres pool
+    /// connected here and never migrated: composition builds the [`CustodyMigrator`], the
+    /// driver runs it. Fails if the pool can't connect, `public_url` won't parse, or the
+    /// system DNS configuration can't be read.
+    pub async fn connect(config: Config, custody: Custody) -> Result<Self, ConnectError> {
         let pool = adapter_pg::connect(&config.database_url)
             .await
             .map_err(ConnectError::Database)?;
         tracing::info!("database pool established");
-        Self::wire(config, pool).map_err(ConnectError::Setup)
+        Self::wire(config, pool, custody).map_err(ConnectError::Setup)
+    }
+
+    /// [`connect`](Runtime::connect) with `purposes` derived from `root`, plus the
+    /// [`CustodyMigrator`] the driver runs. The root is guarded and consumed at the call;
+    /// a zeroizing copy of its bytes rides the returned future into the migrator, which
+    /// keeps it until `run` returns or the migrator is dropped.
+    pub fn connect_migrating(
+        config: Config,
+        root: RootSecret,
+        purposes: &[Purpose],
+    ) -> impl Future<Output = Result<(Self, CustodyMigrator), ConnectError>> + Send + 'static {
+        let derived =
+            derive_keeping_legacy_root(root, &config.env, config.plc_directory_submit, purposes);
+        async move {
+            let (custody, legacy_root) = derived.map_err(ConnectError::Setup)?;
+            let migrator_sealer = custody.did_custody.clone();
+            let runtime = Self::connect(config, custody).await?;
+            let custody_migrator =
+                CustodyMigrator::new(runtime.pool.clone(), legacy_root, migrator_sealer);
+            Ok((runtime, custody_migrator))
+        }
     }
 
     /// The pure-construction half of [`connect`](Runtime::connect), over an
     /// already-connected pool.
-    fn wire(config: Config, pool: PgPool) -> anyhow::Result<Self> {
+    fn wire(config: Config, pool: PgPool, custody: Custody) -> anyhow::Result<Self> {
         let public_url: &url::Url = config.public_url.as_ref();
         let callback = public_url
             .join("/signin-callback")
@@ -129,13 +157,10 @@ impl Runtime {
             anyhow::anyhow!("invalid public_url, cannot build redirect URI ({uri}): {e}")
         })?;
 
-        let root_key_bytes = base64::engine::general_purpose::STANDARD
-            .decode(config.did_key_root_key.trim())
-            .map_err(|e| anyhow::anyhow!("ZURFUR_DID_KEY_ROOT_KEY must be valid base64: {e}"))?;
-        ensure_custody_hardened(&config.env, &root_key_bytes, config.plc_directory_submit)?;
-        let root_key = adapter_pg::RootKey::from_bytes(&root_key_bytes)?;
-        let key_store = Arc::new(adapter_pg::PgKeyStore::new(pool.clone(), root_key));
-        let oauth_vault = adapter_atproto::SecretVault::from_bytes(&root_key_bytes)?;
+        let key_store = Arc::new(adapter_pg::PgKeyStore::new(
+            pool.clone(),
+            custody.did_custody,
+        ));
         let op_log = Arc::new(adapter_pg::PgPlcOperationLog::new(pool.clone()));
         let directory =
             adapter_atproto::plc_directory_from_config(&adapter_atproto::DirectoryConfig {
@@ -152,7 +177,7 @@ impl Runtime {
             auth: Arc::new(adapter_atproto::AtprotoAuthenticator::new(
                 redirect_uri,
                 pool.clone(),
-                oauth_vault,
+                custody.signin_secrets,
                 identity_resolver.clone(),
             )),
             users: Arc::new(adapter_pg::PgUserStore::new(pool.clone())),
@@ -175,6 +200,7 @@ impl Runtime {
             bug_reports: Arc::new(adapter_pg::PgBugReportStore::new(pool.clone())),
             files: Arc::new(adapter_pg::PgFileStore::new(pool.clone())),
             database: Arc::new(adapter_pg::PgDatabase::new(pool.clone())),
+            den_mac: custody.den_mac,
             pool,
         };
         Ok(runtime)
@@ -187,8 +213,8 @@ impl Runtime {
 pub enum ConnectError {
     /// The Postgres pool could not connect to [`Config::database_url`].
     Database(adapter_pg::SqlxError),
-    /// The configuration is unusable: bad `public_url` or root key, the
-    /// custody guard refused it, or the system DNS configuration is unreadable.
+    /// The configuration is unusable: bad `public_url`, the custody guard
+    /// refused the root, or the system DNS configuration is unreadable.
     Setup(anyhow::Error),
 }
 
@@ -209,3 +235,6 @@ impl std::error::Error for ConnectError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
