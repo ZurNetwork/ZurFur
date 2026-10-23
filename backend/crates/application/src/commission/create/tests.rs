@@ -88,7 +88,9 @@ async fn create_answers_the_row_as_stored() {
     assert_eq!(created.title.as_str(), summary.title.as_str());
     assert_eq!(created.visibility, summary.visibility);
     assert_eq!(created.lifecycle, stored.lifecycle_step);
-    assert_eq!(created.deadline, Some(deadline));
+    let held = DateTimeUtc::from(CommissionDeadline::from(deadline));
+    assert_eq!(created.deadline, Some(held), "held to whole microseconds");
+    assert_eq!(created.deadline, stored.deadline);
     assert_eq!(created.created_at, stored.created_at);
     assert!(stored.is_owned_by(&owner));
 }

@@ -28,7 +28,7 @@
 use adapter_mem::{CommissionSeed, MemBackend};
 use chrono::{DateTime, Utc};
 use domain::elements::{
-    commission::{Commission, CommissionId, CommissionTitle, LifecycleStep},
+    commission::{Commission, CommissionId, CommissionTitle, DeadlineStatus, LifecycleStep},
     did::Did,
     profile::Profile,
     user::User,
@@ -246,12 +246,13 @@ async fn extending_the_deadline_emits_deadline_extended() {
     assert_eq!(log[2].payload["to"], "2027-04-01T00:00:00Z");
 }
 
-// AC1 (clear) + AC4 — clearing the deadline empties the envelope field AND
-// wipes the deadline axis (a commission with no deadline never carries
-// deadline-axis statuses); the clear records as `deadline_set` with `to: null`.
-// Clearing an already-clear deadline is an idempotent no-op.
+// AC1 (clear) + AC4 — clearing the deadline empties the envelope field; a raised
+// Delayed flag stays stored but shows nowhere while there is no deadline (a
+// commission with no deadline never shows a deadline-axis status), and shows
+// again once a deadline is set. The clear records as `deadline_set` with
+// `to: null`. Clearing an already-clear deadline is an idempotent no-op.
 #[tokio::test]
-async fn clearing_the_deadline_wipes_the_axis() {
+async fn clearing_the_deadline_keeps_the_flag_hidden_until_a_deadline_returns() {
     let served = serve(
         test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
             Did::from("did:plc:artist".to_string()),
@@ -271,7 +272,7 @@ async fn clearing_the_deadline_wipes_the_axis() {
     )
     .await;
 
-    // Flag it as slipping first, so the clear has an axis value to wipe.
+    // Flag it as slipping first, so the clear has a flag to keep.
     assert_eq!(
         put_deadline_status(&client, &base, id, "delayed")
             .await
@@ -289,6 +290,11 @@ async fn clearing_the_deadline_wipes_the_axis() {
 
     let commission = stored(&backend, id).await;
     assert_eq!(commission.deadline, None, "the envelope field cleared");
+    assert_eq!(
+        commission.delayed_flag,
+        Some(DeadlineStatus::Delayed),
+        "the raised flag stays stored"
+    );
     assert_eq!(
         commission.deadline_status_at(Utc::now()),
         None,
@@ -310,6 +316,11 @@ async fn clearing_the_deadline_wipes_the_axis() {
         .expect("DELETE deadline again");
     assert_eq!(res.status(), 204, "clearing twice is idempotent");
     assert_eq!(entries(&backend, id).await.len(), 3, "no no-op entry");
+
+    // A new deadline brings the kept flag back into view.
+    let res = put_deadline(&client, &base, id, "2027-05-01T00:00:00Z").await;
+    assert_eq!(res.status(), 204, "a new deadline is set");
+    assert_eq!(stored_deadline_status(&backend, id).await, Some("delayed"));
 }
 
 // Re-setting the deadline already held is the set-side no-op: 204, no entry.

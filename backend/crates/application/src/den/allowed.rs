@@ -7,8 +7,8 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            CommissionId, CommissionStanding, CommissionState, CommissionTitle, DirectionStatus,
-            LifecycleStep,
+            CommissionDeadline, CommissionId, CommissionStanding, CommissionState, CommissionTitle,
+            DirectionStatus, LifecycleStep,
         },
         user::UserId,
     },
@@ -115,7 +115,7 @@ impl Probe<'_> {
     fn set_deadline(&self, deadline: DateTimeUtc) -> Result<Judged, DenWriteError> {
         let act = deadline::set::Act {
             commission: self.commission,
-            deadline,
+            deadline: CommissionDeadline::from(deadline),
         };
         let judged = judge(&act, self.standing, self.state, self.now);
         self.with_atta(judged, CommissionAct::SetDeadline(act))

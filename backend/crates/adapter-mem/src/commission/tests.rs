@@ -1,9 +1,9 @@
 use chrono::Utc;
 use domain::elements::account::AccountId;
 use domain::elements::commission::{
-    CommissionState, CommissionTitle, DirectionStatus, FileName, LateFacts, NewSlot, SKELETON,
-    SeatInvitation, SeatKind, SlotTitle, clear_deadline, clear_delayed, clear_direction,
-    move_lifecycle, owes_late, schedule_deadline, set_delayed, set_direction,
+    CommissionDeadline, CommissionState, CommissionTitle, DirectionStatus, FileName, LateFacts,
+    NewSlot, SKELETON, SeatInvitation, SeatKind, SlotTitle, clear_deadline, clear_delayed,
+    clear_direction, move_lifecycle, owes_late, schedule_deadline, set_delayed, set_direction,
 };
 use domain::elements::did::Did;
 use domain::elements::workflow::{ColumnName, WorkflowName};
@@ -50,7 +50,7 @@ async fn create_in(uow: &mut dyn UnitOfWork, created: &CommissionSeed) {
     };
     let chosen = NewCommission {
         maturity: created.maturity,
-        deadline: created.deadline,
+        deadline: created.deadline.map(CommissionDeadline::from),
     };
     let capability = WriteCapability::gate_issued(New::from(created.id));
     uow.commissions()
@@ -1098,11 +1098,13 @@ async fn deadline_and_delayed_set_and_clear_by_compare_and_set() {
     seed(&backend, &created).await;
     let capability = participant_on(id);
 
-    // A FUTURE deadline, so the derived Late never masks the manual flag.
+    // A FUTURE deadline, so the derived Late never masks the manual flag; held, as the store
+    // holds it, to whole microseconds.
     let now = Utc::now();
-    let deadline = now + chrono::Duration::days(30);
+    let in_a_month = CommissionDeadline::from(now + chrono::Duration::days(30));
+    let deadline = chrono::DateTime::<Utc>::from(in_a_month);
     let undated = state_of(&backend, id).await;
-    let scheduled = schedule_deadline(&undated, deadline)
+    let scheduled = schedule_deadline(&undated, in_a_month)
         .expect("allowed")
         .expect("a real set");
     let set = DeadlineChange::from(scheduled);
@@ -1212,7 +1214,8 @@ async fn a_dormant_flag_s_clear_compares_against_the_stored_flag() {
     let capability = participant_on(id);
     let now = Utc::now();
     let undated = state_of(&backend, id).await;
-    let scheduled = schedule_deadline(&undated, now + chrono::Duration::days(30))
+    let in_a_month = now + chrono::Duration::days(30);
+    let scheduled = schedule_deadline(&undated, in_a_month.into())
         .expect("allowed")
         .expect("a real set");
     let mut uow = database.begin().await.unwrap();
@@ -1275,7 +1278,7 @@ async fn late_is_derived_from_a_passed_deadline() {
     let two_days_ago = now - chrono::Duration::days(2);
 
     let undated = state_of(&backend, id).await;
-    let scheduled = schedule_deadline(&undated, yesterday)
+    let scheduled = schedule_deadline(&undated, yesterday.into())
         .expect("allowed")
         .expect("a real set");
     let dated = CommissionState::from(&Commission {
@@ -2641,8 +2644,8 @@ async fn delete_cascades_participants_files_and_grants() {
 /// JSON it stores.
 fn typed_entries(commission: &mut Commission) -> Vec<(NewChangelogEntry, Value)> {
     let at = Utc::now();
-    let march = "2026-03-01T12:00:00Z".parse().expect("an RFC 3339 instant");
-    let april = "2026-04-01T12:00:00Z".parse().expect("an RFC 3339 instant");
+    let march: chrono::DateTime<Utc> = "2026-03-01T12:00:00Z".parse().expect("an RFC 3339 instant");
+    let april: chrono::DateTime<Utc> = "2026-04-01T12:00:00Z".parse().expect("an RFC 3339 instant");
     let before_march = "2026-02-01T12:00:00Z".parse().expect("an RFC 3339 instant");
     let owner = commission.owner_id.clone();
     let id = commission.id;
@@ -2656,7 +2659,7 @@ fn typed_entries(commission: &mut Commission) -> Vec<(NewChangelogEntry, Value)>
     let lifecycle_moved = NewChangelogEntry::lifecycle_moved(id, owner.clone(), &moved, at);
     let direction = set_direction(&undated, DirectionStatus::WaitingForInput).expect("a real set");
     let direction_set = NewChangelogEntry::direction_set(id, owner.clone(), &direction, at);
-    let first = schedule_deadline(&undated, march)
+    let first = schedule_deadline(&undated, march.into())
         .expect("passes")
         .expect("a real set");
     let deadline_set = NewChangelogEntry::deadline_set(id, owner.clone(), &first, at);
@@ -2664,7 +2667,7 @@ fn typed_entries(commission: &mut Commission) -> Vec<(NewChangelogEntry, Value)>
     commission.deadline = Some(march);
     commission.direction_status = Some(DirectionStatus::ChangesRequested);
     let dated = CommissionState::from(&*commission);
-    let extended = schedule_deadline(&dated, april)
+    let extended = schedule_deadline(&dated, april.into())
         .expect("passes")
         .expect("a real set");
     let deadline_extended = NewChangelogEntry::deadline_set(id, owner.clone(), &extended, at);

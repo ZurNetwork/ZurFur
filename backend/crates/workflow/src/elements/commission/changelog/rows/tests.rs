@@ -79,15 +79,15 @@ fn gated_entries(commission: CommissionId) -> Vec<(NewChangelogEntry, &'static s
     .expect("a real clear");
     let direction_cleared = NewChangelogEntry::direction_cleared(commission, actor(), &cleared, at);
 
-    let first_deadline = schedule_deadline(&active(None, None, None), march())
+    let first_deadline = schedule_deadline(&active(None, None, None), march().into())
         .expect("passes")
         .expect("a real set");
     let deadline_first = NewChangelogEntry::deadline_set(commission, actor(), &first_deadline, at);
-    let extended = schedule_deadline(&active(Some(march()), None, None), april())
+    let extended = schedule_deadline(&active(Some(march()), None, None), april().into())
         .expect("passes")
         .expect("a real set");
     let deadline_extended = NewChangelogEntry::deadline_set(commission, actor(), &extended, at);
-    let pulled_in = schedule_deadline(&active(Some(april()), None, None), march())
+    let pulled_in = schedule_deadline(&active(Some(april()), None, None), march().into())
         .expect("passes")
         .expect("a real set");
     let deadline_pulled_in = NewChangelogEntry::deadline_set(commission, actor(), &pulled_in, at);

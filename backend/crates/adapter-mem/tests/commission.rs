@@ -13,8 +13,8 @@ use adapter_mem::{CommissionSeed, MemBackend};
 use chrono::Utc;
 use domain::elements::{
     commission::{
-        CommissionBirth, CommissionId, CommissionRole, CommissionStanding, CommissionStart,
-        CommissionSummary, CommissionTitle, LockedStanding, NewCommission,
+        CommissionBirth, CommissionDeadline, CommissionId, CommissionRole, CommissionStanding,
+        CommissionStart, CommissionSummary, CommissionTitle, LockedStanding, NewCommission,
     },
     did::Did,
     level::Level,
@@ -247,7 +247,7 @@ async fn a_created_commission_is_stored_in_the_domain_s_starting_state() {
         rating: MaturityRating::Suggestive,
         graphic: false,
     };
-    let deadline = created_at + chrono::Duration::days(30);
+    let deadline = CommissionDeadline::from(created_at + chrono::Duration::days(30));
     let chosen = NewCommission {
         maturity: Some(maturity),
         deadline: Some(deadline),
@@ -280,7 +280,8 @@ async fn a_created_commission_is_stored_in_the_domain_s_starting_state() {
         "the domain's starting state"
     );
     assert_eq!(found.maturity, Some(maturity), "the chosen maturity");
-    assert_eq!(found.deadline, Some(deadline), "the chosen deadline");
+    let chosen_deadline = chrono::DateTime::<Utc>::from(deadline);
+    assert_eq!(found.deadline, Some(chosen_deadline), "the chosen deadline");
     assert_eq!(found.owner_id, owner, "the gate's owner");
     assert_eq!(found.created_at, created_at, "the gate's time");
     let summary = backend

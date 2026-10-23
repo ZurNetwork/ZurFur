@@ -2,7 +2,7 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{CommissionRefusal, CommissionTitle, NewCommission},
+        commission::{CommissionDeadline, CommissionRefusal, CommissionTitle, NewCommission},
         maturity::Maturity,
         user::UserId,
     },
@@ -113,10 +113,11 @@ impl Commissions<'_> {
             maturity,
             deadline,
         } = cmd;
-        let act = Act {
-            title,
-            chosen: NewCommission { maturity, deadline },
+        let chosen = NewCommission {
+            maturity,
+            deadline: deadline.map(CommissionDeadline::from),
         };
+        let act = Act { title, chosen };
         let command = write::Command {
             actor: actor_id.into(),
             act: DenAct::Commission(CommissionAct::Create(act)),

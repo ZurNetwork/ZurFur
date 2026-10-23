@@ -11,14 +11,14 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
         AsParticipant, Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission,
-        CommissionBirth, CommissionComposition, CommissionFile, CommissionId, CommissionMarkup,
-        CommissionRole, CommissionStanding, CommissionStart, CommissionSummary, CommissionTitle,
-        DeadlineChange, DeadlineStatus, DelayedChange, DirectionChange, DirectionStatus, ElementId,
-        ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel, LapsedDeadline,
-        LifecycleMove, LifecycleStep, LockedNode, LockedStanding, NewChangelogEntry, NewCommission,
-        NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink,
-        SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode,
-        declared_tabs, declares_surface,
+        CommissionBirth, CommissionComposition, CommissionDeadline, CommissionFile, CommissionId,
+        CommissionMarkup, CommissionRole, CommissionStanding, CommissionStart, CommissionSummary,
+        CommissionTitle, DeadlineChange, DeadlineStatus, DelayedChange, DirectionChange,
+        DirectionStatus, ElementId, ElementPayload, ElementRow, ElementType, FileKey, FileSummary,
+        GrantLevel, LapsedDeadline, LifecycleMove, LifecycleStep, LockedNode, LockedStanding,
+        NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
+        SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId,
+        TabName, TabRow, VisibilityMode, declared_tabs, declares_surface,
     },
     did::Did,
     invitation::InvitationState,
@@ -180,7 +180,7 @@ pub(crate) fn insert_commission(
             node_id: node.id,
             owner_id: birth.owner_id.clone(),
             lifecycle_step,
-            deadline: commission.deadline,
+            deadline: commission.deadline.map(DateTimeUtc::from),
             maturity: commission.maturity,
             direction_status,
             delayed_flag,
@@ -1806,7 +1806,7 @@ impl MemBackend {
         };
         let chosen = NewCommission {
             maturity: seed.maturity,
-            deadline: seed.deadline,
+            deadline: seed.deadline.map(CommissionDeadline::from),
         };
         insert_commission(&unit.staged, seed.id, &birth, &chosen)?;
         Box::new(unit).commit().await?;

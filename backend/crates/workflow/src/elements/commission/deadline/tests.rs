@@ -80,15 +80,15 @@ fn a_disputed_commission_s_deadline_cannot_change() {
     let dated = state(LifecycleStep::Disputed, Some(march()), None);
 
     assert_eq!(
-        schedule_deadline(&undated, march()),
+        schedule_deadline(&undated, march().into()),
         Err(CommissionRefusal::CommissionDisputed)
     );
     assert_eq!(
-        schedule_deadline(&dated, april()),
+        schedule_deadline(&dated, april().into()),
         Err(CommissionRefusal::CommissionDisputed)
     );
     assert_eq!(
-        schedule_deadline(&dated, february()),
+        schedule_deadline(&dated, february().into()),
         Err(CommissionRefusal::CommissionDisputed)
     );
     assert_eq!(
@@ -104,7 +104,7 @@ fn a_deadline_set_tells_an_extension_from_a_set() {
     let undated = state(LifecycleStep::Active, None, None);
     let dated = state(LifecycleStep::Active, Some(march()), None);
 
-    let first = schedule_deadline(&undated, march())
+    let first = schedule_deadline(&undated, march().into())
         .expect("passes")
         .expect("a real set");
     assert_eq!(
@@ -112,7 +112,7 @@ fn a_deadline_set_tells_an_extension_from_a_set() {
         (None, march(), false)
     );
 
-    let later = schedule_deadline(&dated, april())
+    let later = schedule_deadline(&dated, april().into())
         .expect("passes")
         .expect("a real set");
     assert_eq!(
@@ -120,12 +120,12 @@ fn a_deadline_set_tells_an_extension_from_a_set() {
         (Some(march()), april(), true)
     );
 
-    let earlier = schedule_deadline(&dated, february())
+    let earlier = schedule_deadline(&dated, february().into())
         .expect("passes")
         .expect("a real set");
     assert!(!earlier.extends());
 
-    assert_eq!(schedule_deadline(&dated, march()), Ok(None));
+    assert_eq!(schedule_deadline(&dated, march().into()), Ok(None));
 
     let cleared = clear_deadline(&dated)
         .expect("passes")
@@ -135,6 +135,33 @@ fn a_deadline_set_tells_an_extension_from_a_set() {
 
     let write = DeadlineChange::from(cleared);
     assert_eq!((write.before(), write.after()), (Some(march()), None));
+}
+
+/// `instant` plus `nanos` nanoseconds: finer than the store holds.
+fn plus_nanos(instant: DateTimeUtc, nanos: i64) -> DateTimeUtc {
+    instant + chrono::Duration::nanoseconds(nanos)
+}
+
+// The held deadline asked again with sub-microsecond nanoseconds is the deadline held: no set,
+// so nothing extends it; after 2000 and before 1970 alike.
+#[test]
+fn a_held_deadline_asked_finer_changes_nothing() {
+    let before_the_epoch = instant("1969-07-20T20:17:40.123456Z");
+
+    for held in [march(), before_the_epoch] {
+        let dated = state(LifecycleStep::Active, Some(held), None);
+        for nanos in [1, 999] {
+            let finer = schedule_deadline(&dated, plus_nanos(held, nanos).into());
+
+            let extends = finer
+                .clone()
+                .ok()
+                .flatten()
+                .is_some_and(|set| set.extends());
+            assert_eq!(finer, Ok(None), "{held} + {nanos} ns");
+            assert!(!extends, "{held} + {nanos} ns");
+        }
+    }
 }
 
 // Late is derived at the time given: past the deadline on a working step it is Late whatever

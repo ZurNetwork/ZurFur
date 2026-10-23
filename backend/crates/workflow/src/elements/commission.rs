@@ -31,6 +31,7 @@ mod state;
 #[cfg(test)]
 mod test_commission;
 mod title;
+mod values;
 
 pub use changelog::{
     ChangelogEntry, ChangelogEntryKind, ChannelPointer, ChannelPointerError, NewChangelogEntry,
@@ -75,3 +76,4 @@ pub use standing::{CommissionStanding, LockedNode, LockedStanding};
 pub use start::CommissionStart;
 pub use state::{CommissionState, LateFacts};
 pub use title::CommissionTitle;
+pub use values::CommissionDeadline;

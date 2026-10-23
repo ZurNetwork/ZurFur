@@ -3,8 +3,8 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            AsParticipant, CommissionId, CommissionRefusal, CommissionState, DeadlineSet,
-            schedule_deadline,
+            AsParticipant, CommissionDeadline, CommissionId, CommissionRefusal, CommissionState,
+            DeadlineSet, schedule_deadline,
         },
         user::UserId,
     },
@@ -35,8 +35,8 @@ pub struct Output;
 pub(crate) struct Act {
     /// The commission it is anchored on.
     pub(crate) commission: CommissionId,
-    /// The deadline it sets.
-    pub(crate) deadline: DateTimeUtc,
+    /// The deadline it sets, at the store's precision.
+    pub(crate) deadline: CommissionDeadline,
 }
 
 impl Act {
@@ -80,10 +80,10 @@ impl Handler for Act {
 }
 
 impl Deadline<'_> {
-    /// Set or move the commission's deadline through the Den's write, as any Participant.
-    /// Re-setting the deadline it holds writes nothing; a Disputed commission's is refused. A
-    /// later deadline than the one held records `deadline_extended`, anything else
-    /// `deadline_set`.
+    /// Set or move the commission's deadline through the Den's write, as any Participant, held
+    /// to whole microseconds as the store holds it. Re-setting the deadline it holds writes
+    /// nothing, finer nanoseconds included; a Disputed commission's is refused. A later deadline
+    /// than the one held records `deadline_extended`, anything else `deadline_set`.
     #[use_case]
     pub async fn set(
         &self,
@@ -98,7 +98,7 @@ impl Deadline<'_> {
         } = cmd;
         let act = Act {
             commission: commission_id,
-            deadline,
+            deadline: CommissionDeadline::from(deadline),
         };
         let command = write::Command {
             actor: actor_id.into(),

@@ -1430,6 +1430,133 @@ async fn a_dormant_flag_s_clear_lands_and_records_no_status_on_postgres() {
     a_dormant_flag_s_clear_lands(&ports, &owner, commission).await;
 }
 
+/// A deadline before 1970, and so before 2000, where the store counts its microseconds from.
+fn before_the_epoch() -> chrono::DateTime<Utc> {
+    "1969-07-20T20:17:40.123456Z".parse().expect("a timestamp")
+}
+
+/// `instant` plus `nanos` nanoseconds: finer than the store holds.
+fn plus_nanos(instant: chrono::DateTime<Utc>, nanos: i64) -> chrono::DateTime<Utc> {
+    instant + chrono::Duration::nanoseconds(nanos)
+}
+
+/// The deadline kinds of `commission`'s entries, in stream order.
+async fn deadline_kinds(ports: &Ports, commission: CommissionId) -> Vec<ChangelogEntryKind> {
+    let deadline_kinds = [
+        ChangelogEntryKind::DeadlineSet,
+        ChangelogEntryKind::DeadlineExtended,
+    ];
+    let all = kinds(ports, commission).await;
+    all.into_iter()
+        .filter(|kind| deadline_kinds.contains(kind))
+        .collect()
+}
+
+/// A commission of `owner`'s with `deadline`, made by the create use case.
+async fn made_with(
+    ports: &Ports,
+    owner: &UserId,
+    deadline: Option<chrono::DateTime<Utc>>,
+) -> CommissionId {
+    let command = create::Command {
+        actor_id: owner.clone(),
+        title: "A dated piece".parse().expect("a title"),
+        maturity: None,
+        deadline,
+    };
+    let created = Commissions::new(ports)
+        .create(command, Utc::now())
+        .await
+        .expect("the commission is made");
+    created.id
+}
+
+/// `actor` sets `commission`'s deadline to `held`, then to `held` plus one and two nanoseconds:
+/// each finer set lands, changes no field and records nothing; the deadline reads back as
+/// `held`, and the one deadline entry is the first set's.
+async fn a_finer_set_changes_nothing(
+    ports: &Ports,
+    actor: &UserId,
+    commission: CommissionId,
+    held: chrono::DateTime<Utc>,
+) {
+    each_lands(ports, actor, commission, &[FieldCall::SetDeadline(held)]).await;
+    let finer = [
+        FieldCall::SetDeadline(plus_nanos(held, 1)),
+        FieldCall::SetDeadline(plus_nanos(held, 2)),
+    ];
+
+    each_changes_nothing(ports, actor, commission, &finer).await;
+
+    assert_eq!(fields_of(ports, commission).await.deadline(), Some(held));
+    assert_eq!(
+        deadline_kinds(ports, commission).await,
+        [ChangelogEntryKind::DeadlineSet]
+    );
+}
+
+// A deadline set finer than the store holds is the deadline the store would keep: set D, then
+// D + 1 ns and D + 2 ns land, write nothing and record nothing, after 2000 and before 1970.
+#[tokio::test]
+async fn a_sub_microsecond_move_writes_no_entry() {
+    let world = world().await;
+    let ports = &world.ports;
+
+    for held in [ahead(), before_the_epoch()] {
+        let commission = made_with(ports, &alice(), None).await;
+        a_finer_set_changes_nothing(ports, &alice(), commission, held).await;
+    }
+}
+
+// On PostgreSQL, the finer sets run no deadline write and append nothing, and the deadline
+// reads back as the one first set.
+#[tokio::test]
+async fn a_sub_microsecond_move_writes_no_entry_on_postgres() {
+    let statements = StatementLog::default();
+    let pg = pg_runtime_recording(&statements).await;
+    let ports = Ports::from(&pg.runtime);
+    let owner = provision(&*ports.database, "did:plc:den-write-pg-finer").await;
+
+    for held in [ahead(), before_the_epoch()] {
+        let commission = made_with(&ports, &owner, None).await;
+        let mark = statements.mark();
+        a_finer_set_changes_nothing(&ports, &owner, commission, held).await;
+        let written = field_writes_since(&statements, mark);
+        assert_eq!(written, ["commission/set_deadline", "changelog/append"]);
+    }
+}
+
+/// A commission of `owner`'s made with a deadline one nanosecond past [`before_the_epoch`]
+/// holds [`before_the_epoch`] itself, so a set of it changes nothing.
+async fn a_create_holds_the_stored_deadline(ports: &Ports, owner: &UserId) {
+    let held = before_the_epoch();
+    let commission = made_with(ports, owner, Some(plus_nanos(held, 1))).await;
+
+    assert_eq!(fields_of(ports, commission).await.deadline(), Some(held));
+    each_changes_nothing(ports, owner, commission, &[FieldCall::SetDeadline(held)]).await;
+    assert_eq!(
+        deadline_kinds(ports, commission).await,
+        Vec::<ChangelogEntryKind>::new()
+    );
+}
+
+// A create's deadline is held as the store would keep it, so both stores hold the same one.
+#[tokio::test]
+async fn a_create_holds_its_deadline_at_the_store_s_precision() {
+    let world = world().await;
+
+    a_create_holds_the_stored_deadline(&world.ports, &alice()).await;
+}
+
+#[tokio::test]
+async fn a_create_holds_its_deadline_at_the_store_s_precision_on_postgres() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let owner = provision(&*ports.database, "did:plc:den-write-pg-create-precision").await;
+
+    a_create_holds_the_stored_deadline(&ports, &owner).await;
+}
+
 /// The user `did`, recognized.
 pub(super) async fn provision(database: &dyn Database, did: &str) -> UserId {
     let did = Did::from(did.to_owned());

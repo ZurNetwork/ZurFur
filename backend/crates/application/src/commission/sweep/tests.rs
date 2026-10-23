@@ -142,3 +142,87 @@ async fn the_system_act_appends_one_entry_by_no_actor_on_postgres() {
 
     one_entry_by_no_actor(&ports, &owner).await;
 }
+
+/// `owner`'s deadline set on `commission` to `deadline`, at [`after_missed`].
+async fn set_deadline(
+    ports: &Ports,
+    owner: &UserId,
+    commission: CommissionId,
+    deadline: DateTimeUtc,
+) {
+    let command = crate::commission::deadline::set::Command {
+        actor_id: owner.clone(),
+        commission_id: commission,
+        deadline,
+    };
+    Commissions::new(ports)
+        .deadline()
+        .set(command, after_missed())
+        .await
+        .expect("the deadline set lands");
+}
+
+/// A commission of `owner`'s with no deadline, made through the use case.
+async fn undated(ports: &Ports, owner: &UserId) -> CommissionId {
+    let made_at = "2019-12-01T00:00:00Z".parse().expect("a timestamp");
+    let command = crate::commission::create::Command {
+        actor_id: owner.clone(),
+        title: "An undated piece".parse().expect("a title"),
+        maturity: None,
+        deadline: None,
+    };
+    let created = Commissions::new(ports)
+        .create(command, made_at)
+        .await
+        .expect("the commission is made");
+    created.id
+}
+
+/// A missed deadline set, a sweep that marks it, the same deadline set again one nanosecond
+/// later, and a second sweep: the second marks nothing, and the stream ends in the one set and
+/// the one `late`.
+async fn a_finer_set_re_arms_nothing(ports: &Ports, owner: &UserId) {
+    let missed: DateTimeUtc = MISSED.parse().expect("a timestamp");
+    let one_nano_later = missed + chrono::Duration::nanoseconds(1);
+    let commission = undated(ports, owner).await;
+    set_deadline(ports, owner, commission, missed).await;
+
+    let first = Commissions::new(ports)
+        .sweep_deadlines(after_missed())
+        .await
+        .expect("the sweep runs");
+    set_deadline(ports, owner, commission, one_nano_later).await;
+    let second = Commissions::new(ports)
+        .sweep_deadlines(after_missed())
+        .await
+        .expect("the sweep runs");
+
+    let entries = entries_of(ports, commission).await;
+    let kinds: Vec<ChangelogEntryKind> = entries.iter().map(|entry| entry.kind).collect();
+    let expected = [
+        ChangelogEntryKind::Created,
+        ChangelogEntryKind::DeadlineSet,
+        ChangelogEntryKind::Late,
+    ];
+    assert_eq!(first.marked_late, 1);
+    assert_eq!(second.marked_late, 0, "the finer set re-arms nothing");
+    assert_eq!(kinds, expected);
+}
+
+// A deadline set finer than the store holds is no new deadline, so a sweep after it marks
+// nothing new.
+#[tokio::test]
+async fn a_sub_microsecond_move_re_arms_no_late_mark() {
+    let world = test_world::world().await;
+
+    a_finer_set_re_arms_nothing(&world.ports, &alice()).await;
+}
+
+#[tokio::test]
+async fn a_sub_microsecond_move_re_arms_no_late_mark_on_postgres() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let owner = provision(&ports, "did:plc:sweep-finer-owner").await;
+
+    a_finer_set_re_arms_nothing(&ports, &owner).await;
+}

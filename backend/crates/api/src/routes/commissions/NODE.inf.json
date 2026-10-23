@@ -41,7 +41,7 @@
     },
     {
       "name": "deadline.rs",
-      "role": "PUT/DELETE deadline + manual Delayed flag → commission::deadline::* and deadline::status::* (a `late` token refused 422 here, before any use case)",
+      "role": "PUT/DELETE deadline + manual Delayed flag → commission::deadline::* and deadline::status::* (a `late` token refused 422 here, before any use case); the deadline's DELETE keeps a raised Delayed flag stored, shown nowhere until a deadline is set again",
       "node": false
     },
     {

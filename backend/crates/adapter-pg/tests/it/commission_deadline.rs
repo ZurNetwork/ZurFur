@@ -81,7 +81,7 @@ async fn deadline_and_status_round_trip_through_the_unit() {
     let deadline = ts("2027-03-01T00:00:00Z");
     let before_it = ts("2026-01-01T00:00:00Z");
     let undated = state_of(&store, &id).await;
-    let scheduled = schedule_deadline(&undated, deadline)
+    let scheduled = schedule_deadline(&undated, deadline.into())
         .expect("allowed")
         .expect("a real set");
     let set = DeadlineChange::from(scheduled);
@@ -131,7 +131,7 @@ async fn deadline_and_status_round_trip_through_the_unit() {
     // superseding the stored Delayed (and the column's CHECK forbids a persisted
     // `late` outright).
     let flagged = state_of(&store, &id).await;
-    let moved = schedule_deadline(&flagged, ts("2020-01-01T00:00:00Z"))
+    let moved = schedule_deadline(&flagged, ts("2020-01-01T00:00:00Z").into())
         .expect("allowed")
         .expect("a real move");
     let mut uow = db.begin().await.expect("begin");
@@ -372,7 +372,7 @@ async fn a_deadline_change_re_arms_the_owed_read() {
     let mark = owes_late(&late_facts, now).expect("a late entry is owed");
     let moved = schedule_deadline(
         &CommissionState::from(&commission),
-        ts("2020-03-01T00:00:00Z"),
+        ts("2020-03-01T00:00:00Z").into(),
     )
     .expect("allowed")
     .expect("a real set");

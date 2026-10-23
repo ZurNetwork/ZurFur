@@ -474,7 +474,7 @@ async fn a_created_commission_is_stored_in_the_domain_s_starting_state() {
     };
     let chosen = NewCommission {
         maturity: Some(maturity),
-        deadline: Some(deadline),
+        deadline: Some(deadline.into()),
     };
 
     let db = PgDatabase::new(pool.clone());

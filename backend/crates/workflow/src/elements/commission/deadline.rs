@@ -1,5 +1,6 @@
 use super::{
-    CommissionId, CommissionRefusal, CommissionState, DeadlineStatusError, LateFacts, LifecycleStep,
+    CommissionDeadline, CommissionId, CommissionRefusal, CommissionState, DeadlineStatusError,
+    LateFacts, LifecycleStep,
 };
 use kernel::datetime::DateTimeUtc;
 
@@ -63,12 +64,12 @@ pub(super) fn status_at(
     }
 }
 
-/// A deadline set a rule passed: the deadline held, if any, and the one set. Built only by
-/// [`schedule_deadline`].
+/// A deadline set a rule passed: the deadline held, if any, and the one set, at the store's
+/// precision. Built only by [`schedule_deadline`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeadlineSet {
     from: Option<DateTimeUtc>,
-    to: DateTimeUtc,
+    to: CommissionDeadline,
 }
 
 impl DeadlineSet {
@@ -77,14 +78,14 @@ impl DeadlineSet {
         self.from
     }
 
-    /// The deadline set.
+    /// The deadline set, as the store holds it.
     pub fn after(&self) -> DateTimeUtc {
-        self.to
+        DateTimeUtc::from(self.to)
     }
 
     /// Whether it moves a held deadline later: an extension, not a fresh set.
     pub fn extends(&self) -> bool {
-        self.from.is_some_and(|held| self.to > held)
+        self.from.is_some_and(|held| self.after() > held)
     }
 }
 
@@ -127,7 +128,7 @@ impl From<DeadlineSet> for DeadlineChange {
     fn from(set: DeadlineSet) -> Self {
         Self {
             from: set.from,
-            to: Some(set.to),
+            to: Some(set.after()),
         }
     }
 }
@@ -145,13 +146,13 @@ impl From<DeadlineCleared> for DeadlineChange {
 /// Sets `state`'s deadline to `to`: `None` when it already holds `to`; refused while Disputed.
 pub fn schedule_deadline(
     state: &CommissionState,
-    to: DateTimeUtc,
+    to: CommissionDeadline,
 ) -> Result<Option<DeadlineSet>, CommissionRefusal> {
     if state.is_disputed() {
         return Err(CommissionRefusal::CommissionDisputed);
     }
     let from = state.deadline();
-    if from == Some(to) {
+    if from == Some(DateTimeUtc::from(to)) {
         return Ok(None);
     }
     Ok(Some(DeadlineSet { from, to }))

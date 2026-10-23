@@ -9,8 +9,8 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            Commission, CommissionId, CommissionState, DeadlineStatus, DirectionStatus,
-            LifecycleStep, NewCommission,
+            Commission, CommissionDeadline, CommissionId, CommissionState, DeadlineStatus,
+            DirectionStatus, LifecycleStep, NewCommission,
         },
         did::Did,
         name::NodeName,
@@ -75,7 +75,7 @@ pub(crate) fn clear_direction_act(commission: CommissionId) -> DenAct {
 pub(crate) fn set_deadline_act(commission: CommissionId, deadline: DateTimeUtc) -> DenAct {
     let act = deadline::set::Act {
         commission,
-        deadline,
+        deadline: CommissionDeadline::from(deadline),
     };
     DenAct::Commission(CommissionAct::SetDeadline(act))
 }

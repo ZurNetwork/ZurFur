@@ -128,7 +128,9 @@ fn a_lifecycle_move_needs_a_participant_and_is_a_change() {
 // alone, never a value it carries.
 #[test]
 fn each_field_act_needs_a_participant_and_is_a_change() {
-    let deadline = "2099-03-01T00:00:00Z".parse().expect("a timestamp");
+    let instant: domain::datetime::DateTimeUtc =
+        "2099-03-01T00:00:00Z".parse().expect("a timestamp");
+    let deadline = domain::elements::commission::CommissionDeadline::from(instant);
     let commission = untitled();
     let acts = [
         CommissionAct::SetDirection(direction::set::Act {

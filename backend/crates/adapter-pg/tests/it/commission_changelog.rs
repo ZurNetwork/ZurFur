@@ -169,8 +169,8 @@ async fn entries_read_back_in_seq_order_with_the_full_envelope() {
 /// the literal JSON it stores.
 fn typed_entries(commission: &mut Commission) -> Vec<(NewChangelogEntry, serde_json::Value)> {
     let at = Utc::now();
-    let march = "2026-03-01T12:00:00Z".parse().expect("an RFC 3339 instant");
-    let april = "2026-04-01T12:00:00Z".parse().expect("an RFC 3339 instant");
+    let march: chrono::DateTime<Utc> = "2026-03-01T12:00:00Z".parse().expect("an RFC 3339 instant");
+    let april: chrono::DateTime<Utc> = "2026-04-01T12:00:00Z".parse().expect("an RFC 3339 instant");
     let owner = commission.owner_id.clone();
     let id = commission.id;
 
@@ -183,7 +183,7 @@ fn typed_entries(commission: &mut Commission) -> Vec<(NewChangelogEntry, serde_j
     let lifecycle_moved = NewChangelogEntry::lifecycle_moved(id, owner.clone(), &moved, at);
     let direction = set_direction(&undated, DirectionStatus::WaitingForInput).expect("a real set");
     let direction_set = NewChangelogEntry::direction_set(id, owner.clone(), &direction, at);
-    let first = schedule_deadline(&undated, march)
+    let first = schedule_deadline(&undated, march.into())
         .expect("passes")
         .expect("a real set");
     let deadline_set = NewChangelogEntry::deadline_set(id, owner.clone(), &first, at);
@@ -191,7 +191,7 @@ fn typed_entries(commission: &mut Commission) -> Vec<(NewChangelogEntry, serde_j
     commission.deadline = Some(march);
     commission.direction_status = Some(DirectionStatus::ChangesRequested);
     let dated = CommissionState::from(&*commission);
-    let extended = schedule_deadline(&dated, april)
+    let extended = schedule_deadline(&dated, april.into())
         .expect("passes")
         .expect("a real set");
     let deadline_extended = NewChangelogEntry::deadline_set(id, owner.clone(), &extended, at);

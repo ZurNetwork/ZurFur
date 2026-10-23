@@ -65,7 +65,8 @@ pub(super) async fn set_deadline(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// Clears the commission's deadline, wiping the deadline axis with it.
+/// Clears the commission's deadline. A raised Delayed flag stays stored: it shows nowhere
+/// while there is no deadline, and shows again once a deadline is set.
 /// Any-Participant-gated and idempotent. Returns `204 No Content`.
 pub(super) async fn clear_deadline(
     State(state): State<AppState>,

@@ -197,7 +197,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             uuid::Uuid::from(birth.node),
             birth.owner_id.as_ref(),
             <&'static str>::from(&lifecycle_step),
-            commission.deadline,
+            commission.deadline.map(DateTimeUtc::from),
             commission.maturity.map(|m| <&'static str>::from(m.rating)),
             commission.maturity.map(|m| m.graphic),
             birth.created_at,
