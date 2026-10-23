@@ -13,7 +13,7 @@
     "Composition builds the migrator; the driver runs it (`Runtime::connect_migrating` hands back the `CustodyMigrator`, `api` runs it at boot). Background tasks, sessions and cookies are explicitly NOT this crate's concern — left to the driver.",
     "The Runtime→`application::*Ports` conversion lives once in `src/ports.rs` (one `From<&Runtime>` per application module); drivers never hand-assemble a Ports struct.",
     "Never reaches the Den's node port nor names Atta's checked-name constructor: `application/tests/node_and_name_seams.rs` scans this crate's `src/` too.",
-    "The custody root never sits in `Config` nor in figment's value map (the env provider ignores `did_key_root_key`): only a command that holds a purpose reads it, as a `!Send` `RootSecret`, and `src/custody.rs` is the one file that names `KeyCustodian` or `adapter_hkdf` (held by `tests/one_custody_function.rs`, over composition's and the drivers' `src/`). No `KeyCustodian` is a `Runtime` field; `Runtime` stays `Send + Sync + Clone` (a compile-time assertion in `src/runtime.rs`)."
+    "The custody root never sits in `Config` nor in figment's value map (the env provider ignores `did_key_root_key`): only a command that holds a purpose reads it, as a `!Send` `RootSecret`, and `src/custody.rs` is the one file that names `KeyCustodian` or `adapter_hkdf` (held by `application/tests/custody_seams.rs`, over every driver crate's `src/`, aliases included, beside the check that the guard runs before the one derivation). No `KeyCustodian` is a `Runtime` field; `Runtime` stays `Send + Sync + Clone` (a compile-time assertion in `src/runtime.rs`)."
   ],
   "entry_points": [
     "Config::load",
@@ -72,11 +72,6 @@
     {
       "name": "tests/no_http_deps.rs",
       "role": "cargo-tree guard — composition and cli must never link an HTTP-server crate (axum, axum-core, tower-sessions)",
-      "node": false
-    },
-    {
-      "name": "tests/one_custody_function.rs",
-      "role": "source guard — only src/custody.rs (and its tests) names KeyCustodian, HkdfKeyCustodian or adapter_hkdf across composition's, api's and cli's src/; custody.rs calls the guard once, before its one derivation",
       "node": false
     }
   ],

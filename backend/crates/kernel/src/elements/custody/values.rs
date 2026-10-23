@@ -22,10 +22,13 @@ pub struct KeyId(String);
 /// Why text is not a [`KeyId`]. Carries no part of the text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum KeyIdError {
+    /// The text is empty.
     #[error("a key id is not empty")]
     Empty,
+    /// The text is longer than 255 bytes.
     #[error("a key id is at most 255 bytes")]
     TooLong,
+    /// The text holds a byte outside `[a-z0-9_:-]`.
     #[error("a key id holds only a-z, 0-9, _, : and -")]
     OutsideAlphabet,
 }
@@ -82,8 +85,10 @@ impl fmt::Debug for KeyId {
 /// Why a list of parts can't be encoded: a part, or the count, doesn't fit in a u32.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PartsError {
+    /// The count of parts doesn't fit in a u32.
     #[error("too many parts to encode")]
     TooManyParts,
+    /// A part's length doesn't fit in a u32.
     #[error("a part is too long to encode")]
     PartTooLong,
 }
@@ -192,6 +197,7 @@ pub struct MacTag {
 /// Why bytes are not a [`MacTag`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum MacTagError {
+    /// The bytes are `length` long, not 32.
     #[error("a MAC tag is 32 bytes, not {length}")]
     WrongLength { length: usize },
 }

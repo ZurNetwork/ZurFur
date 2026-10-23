@@ -72,7 +72,7 @@ pub async fn run(
 /// are a `config` problem, anything else `service_unavailable`. The text names counts
 /// only; the cause goes to stderr at debug.
 fn refusal(error: CustodyMigrationError) -> CliError {
-    tracing::debug!(error = ?error, "the custody migration stopped");
+    tracing::debug!(%error, "the custody migration stopped");
     match error {
         CustodyMigrationError::Unopenable { .. } => {
             CliError::infra("config", format!("migration refused: {error}"))

@@ -22,6 +22,7 @@ impl SealPurposeMarker for ForSigninSecrets {
 
 /// The private supertrait that keeps every other crate from adding a marker.
 mod sealed {
+    /// Implemented by this crate's purpose markers only.
     pub trait Sealed {}
 
     impl Sealed for super::ForDidCustody {}

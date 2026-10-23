@@ -1,18 +1,34 @@
 //! Custody fixtures: three real 0.1 custody rows and the root they open under, the test
-//! root and a test custodian's scoped handles over it, and a lying custodian for the
-//! self-check tests.
+//! root and a test custodian's scoped handles over it, a lying custodian for the
+//! self-check tests, and the log canary's printings of what a planted root derives,
+//! computed apart from the custodian's code.
 
 use std::sync::Arc;
 
+use adapter_atproto::AtprotoAuthStore;
 use adapter_hkdf::HkdfKeyCustodian;
+use adapter_pg::PgPool;
 use async_trait::async_trait;
 use composition::RootSecret;
+use data_encoding::{BASE64, HEXLOWER};
 use domain::elements::account_keys::{AccountKeys, SecretKey};
 use domain::elements::custody::{
     CustodyError, CustodySubject, ForDidCustody, ForSigninSecrets, MacMessage, MacTag, MacUse,
     OpenedSecret, Purpose, SealPurpose, SealedEnvelope,
 };
 use domain::ports::{KeyCustodian, ScopedMac, ScopedSealer};
+use fluent_uri::Uri;
+use hmac::{Hmac, KeyInit, Mac};
+use jacquard_common::types::did::Did;
+use jacquard_oauth::{
+    authstore::ClientAuthStore,
+    scopes::Scopes,
+    session::{AuthRequestData, ClientSessionData, DpopClientData, DpopReqData},
+    types::{OAuthTokenType, TokenSet},
+    utils::generate_key,
+};
+use sha2_0_11::Sha256;
+use smol_str::SmolStr;
 use strum::VariantArray as _;
 use zeroize::Zeroizing;
 
@@ -39,6 +55,34 @@ pub const TEST_ROOT: [u8; 32] = [0x5e; 32];
 
 /// The byte the lying custodian masks a secret with.
 const LYING_MASK: u8 = 0x5c;
+
+/// The HKDF salt every custody derivation extracts under.
+const CUSTODY_SALT: &[u8] = b"zurfur/custody/v1";
+
+/// The HKDF info of a purpose key, before the purpose's token.
+const KEY_INFO_PREFIX: &str = "zurfur/custody/v1/key/";
+
+/// The HKDF info of a key id's fingerprint, before the purpose's token.
+const KEY_ID_INFO_PREFIX: &str = "zurfur/custody/v1/key-id/";
+
+/// The length of a custody key and of the PRK, in bytes.
+const KEY_BYTES: usize = 32;
+
+/// The length of a key id's fingerprint, in bytes.
+const FINGERPRINT_BYTES: usize = 8;
+
+/// The DID the canary's sign-in session belongs to: a log may print it at debug only.
+pub const SIGNIN_CANARY_DID: &str = "did:plc:canarysigninsecrets7d";
+
+/// The canary sign-in's secrets, each named: what [`signin_secrets_round_trip`] seals,
+/// and no log may print at any level.
+pub const SIGNIN_CANARY_SECRETS: [(&str, &str); 5] = [
+    ("the session id", "canarysessionid4b8e2f"),
+    ("the OAuth state", "canarystate6a3c9d1e"),
+    ("the access token", "canaryaccesstoken2f7b5e"),
+    ("the refresh token", "canaryrefreshtoken9c1d4a"),
+    ("the PKCE verifier", "canarypkceverifier5e8f3b"),
+];
 
 /// The keys every legacy fixture holds: 32 bytes each of 0xAA, 0xBB and 0xCC, in role order.
 pub fn legacy_keys() -> AccountKeys {
@@ -79,14 +123,23 @@ pub struct TestCustody {
 /// An `HkdfKeyCustodian` holding every purpose over [`TEST_ROOT`], whole: for a
 /// test that builds a handle the scoped ones can't.
 pub fn test_custodian() -> Arc<dyn KeyCustodian> {
-    let root = Zeroizing::new(TEST_ROOT);
-    let derived = HkdfKeyCustodian::derive(root, Purpose::VARIANTS);
+    custodian_of(TEST_ROOT)
+}
+
+/// An `HkdfKeyCustodian` holding every purpose over `root`, whole.
+pub fn custodian_of(root: [u8; KEY_BYTES]) -> Arc<dyn KeyCustodian> {
+    let derived = HkdfKeyCustodian::derive(Zeroizing::new(root), Purpose::VARIANTS);
     Arc::new(derived)
 }
 
 /// The handles of [`test_custodian`].
 pub fn test_custody() -> TestCustody {
-    let custodian = test_custodian();
+    custody_of(TEST_ROOT)
+}
+
+/// The handles of [`custodian_of`] `root`: for a test that plants its own root.
+pub fn custody_of(root: [u8; KEY_BYTES]) -> TestCustody {
+    let custodian = custodian_of(root);
     TestCustody {
         did_custody: ScopedSealer::from(Arc::clone(&custodian)),
         signin_secrets: ScopedSealer::from(Arc::clone(&custodian)),
@@ -150,3 +203,181 @@ pub fn lying_did_custody() -> ScopedSealer<ForDidCustody> {
     let custodian: Arc<dyn KeyCustodian> = Arc::new(LyingCustodian);
     ScopedSealer::from(custodian)
 }
+
+/// HMAC-SHA256 under `key` of `parts`, one after another.
+fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> [u8; KEY_BYTES] {
+    let mut hmac =
+        <Hmac<Sha256> as KeyInit>::new_from_slice(key).expect("HMAC takes a key of any length");
+    for part in parts {
+        hmac.update(part);
+    }
+    hmac.finalize().into_bytes().into()
+}
+
+/// RFC 5869 Expand: the first `length` bytes of `T(1) | T(2) | …` from `prk` over `info`.
+fn expand(prk: &[u8; KEY_BYTES], info: &[u8], length: usize) -> Vec<u8> {
+    let mut okm = Vec::with_capacity(length);
+    let mut previous: Vec<u8> = Vec::new();
+    let mut counter: u8 = 1;
+    while okm.len() < length {
+        let block = hmac_sha256(prk, &[&previous, info, &[counter]]);
+        okm.extend_from_slice(&block);
+        previous = block.to_vec();
+        counter += 1;
+    }
+    okm.truncate(length);
+    okm
+}
+
+/// The PRK `root` extracts to: RFC 5869 Extract, HMAC-SHA256 keyed by the custody salt.
+pub fn prk_of(root: &[u8; KEY_BYTES]) -> [u8; KEY_BYTES] {
+    hmac_sha256(CUSTODY_SALT, &[root])
+}
+
+/// The key `root` derives for `purpose`, by RFC 5869 alone.
+pub fn purpose_key_of(root: &[u8; KEY_BYTES], purpose: Purpose) -> [u8; KEY_BYTES] {
+    let token: &'static str = purpose.into();
+    let info = format!("{KEY_INFO_PREFIX}{token}");
+    let okm = expand(&prk_of(root), info.as_bytes(), KEY_BYTES);
+    <[u8; KEY_BYTES]>::try_from(okm.as_slice()).expect("Expand gives the length asked for")
+}
+
+/// The id `root` names `purpose`'s key by: `hkdf:<purpose>:<16 lowercase hex>`, by RFC
+/// 5869 alone.
+pub fn key_id_of(root: &[u8; KEY_BYTES], purpose: Purpose) -> String {
+    let token: &'static str = purpose.into();
+    let info = format!("{KEY_ID_INFO_PREFIX}{token}");
+    let fingerprint = expand(&prk_of(root), info.as_bytes(), FINGERPRINT_BYTES);
+    let fingerprint_hex = HEXLOWER.encode(&fingerprint);
+    format!("hkdf:{token}:{fingerprint_hex}")
+}
+
+/// `bytes` as a log could print them: lowercase hex, standard base64, and the `Debug` of
+/// a byte slice (`[1, 2, …]`).
+pub fn printed_forms(bytes: &[u8]) -> [String; 3] {
+    [
+        HEXLOWER.encode(bytes),
+        BASE64.encode(bytes),
+        format!("{bytes:?}"),
+    ]
+}
+
+/// Each of [`printed_forms`] of `bytes`, named after `what`.
+pub fn named_printings(what: &str, bytes: &[u8]) -> [(String, String); 3] {
+    let [hex, base64, list] = printed_forms(bytes);
+    [
+        (format!("{what} as hex"), hex),
+        (format!("{what} as base64"), base64),
+        (format!("{what} as a byte list"), list),
+    ]
+}
+
+/// Every printing of what `root` derives, each named: its PRK and each purpose's key, in
+/// each of [`printed_forms`].
+pub fn derived_printings(root: &[u8; KEY_BYTES]) -> Vec<(String, String)> {
+    let prk = ("the PRK".to_owned(), prk_of(root));
+    let keys = Purpose::VARIANTS
+        .iter()
+        .map(|purpose| (format!("the {purpose} key"), purpose_key_of(root, *purpose)));
+    std::iter::once(prk)
+        .chain(keys)
+        .flat_map(|(what, bytes)| named_printings(&what, &bytes))
+        .collect()
+}
+
+/// The canary sign-in's secret named `what` in [`SIGNIN_CANARY_SECRETS`].
+fn signin_canary(what: &str) -> &'static str {
+    SIGNIN_CANARY_SECRETS
+        .iter()
+        .find(|(name, _)| *name == what)
+        .map(|(_, value)| *value)
+        .expect("a named canary secret")
+}
+
+/// The canary sign-in's session: [`SIGNIN_CANARY_DID`]'s, granting exactly `atproto`.
+fn canary_session() -> ClientSessionData {
+    let account_did = Did::new_static(SIGNIN_CANARY_DID).expect("a valid DID");
+    let host_url = Uri::parse("https://pds.canary.example")
+        .expect("a valid URI")
+        .to_owned();
+    let dpop_data = DpopClientData {
+        dpop_key: generate_key(&[SmolStr::new_static("ES256")]).expect("a DPoP key"),
+        dpop_authserver_nonce: SmolStr::default(),
+        dpop_host_nonce: SmolStr::default(),
+    };
+    let token_set = TokenSet {
+        iss: SmolStr::new_static("https://issuer.canary.example"),
+        sub: account_did.clone(),
+        aud: SmolStr::new_static("https://pds.canary.example"),
+        scope: Some(SmolStr::new_static("atproto")),
+        refresh_token: Some(SmolStr::new_static(signin_canary("the refresh token"))),
+        access_token: SmolStr::new_static(signin_canary("the access token")),
+        token_type: OAuthTokenType::DPoP,
+        expires_at: None,
+    };
+    ClientSessionData {
+        account_did,
+        session_id: SmolStr::new_static(signin_canary("the session id")),
+        host_url,
+        authserver_url: SmolStr::new_static("https://issuer.canary.example"),
+        authserver_token_endpoint: SmolStr::new_static("https://issuer.canary.example/token"),
+        authserver_revocation_endpoint: None,
+        scopes: Scopes::empty(),
+        dpop_data,
+        token_set,
+        resolved_scopes: None,
+    }
+}
+
+/// The canary sign-in's auth request, under its OAuth state.
+fn canary_auth_request() -> AuthRequestData {
+    let dpop_data = DpopReqData {
+        dpop_key: generate_key(&[SmolStr::new_static("ES256")]).expect("a DPoP key"),
+        dpop_authserver_nonce: None,
+    };
+    AuthRequestData {
+        state: SmolStr::new_static(signin_canary("the OAuth state")),
+        authserver_url: SmolStr::new_static("https://issuer.canary.example"),
+        account_did: Some(Did::new_static(SIGNIN_CANARY_DID).expect("a valid DID")),
+        scopes: Scopes::empty(),
+        request_uri: SmolStr::new_static("urn:ietf:params:oauth:request_uri:canary"),
+        authserver_token_endpoint: SmolStr::new_static("https://issuer.canary.example/token"),
+        authserver_revocation_endpoint: None,
+        pkce_verifier: SmolStr::new_static(signin_canary("the PKCE verifier")),
+        dpop_data,
+    }
+}
+
+/// Saves the canary sign-in's session and auth request through an [`AtprotoAuthStore`]
+/// over `pool`, sealed with `sealer`, and reads each back; panics unless both round-trip.
+pub async fn signin_secrets_round_trip(pool: PgPool, sealer: ScopedSealer<ForSigninSecrets>) {
+    let store = AtprotoAuthStore::new(pool, sealer);
+    let session = canary_session();
+    let request = canary_auth_request();
+    let did: Did = Did::new_static(SIGNIN_CANARY_DID).expect("a valid DID");
+
+    store
+        .upsert_session(session.clone())
+        .await
+        .expect("the session is sealed and saved");
+    let reopened_session = store
+        .get_session(&did, signin_canary("the session id"))
+        .await
+        .expect("the session opens")
+        .expect("the session is stored");
+    store
+        .save_auth_req_info(&request)
+        .await
+        .expect("the auth request is sealed and saved");
+    let reopened_request = store
+        .get_auth_req_info(signin_canary("the OAuth state"))
+        .await
+        .expect("the auth request opens")
+        .expect("the auth request is stored");
+
+    assert_eq!(reopened_session, session, "the session round-trips");
+    assert_eq!(reopened_request, request, "the auth request round-trips");
+}
+
+#[cfg(test)]
+mod tests;

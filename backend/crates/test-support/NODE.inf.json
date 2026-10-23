@@ -22,7 +22,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers, application for pg_app::den_world's Workflows (made through the create use case), reqwest multipart for its uploads, strum for pg_app::ProfileCacheState and node_contract's NodeType::VARIANTS, adapter-hkdf + zeroize for custody's test custodian and test root, data-encoding for its hex fixtures",
+      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers, application for pg_app::den_world's Workflows (made through the create use case), reqwest multipart for its uploads, strum for pg_app::ProfileCacheState and node_contract's NodeType::VARIANTS, adapter-hkdf + zeroize for custody's test custodian and test root, data-encoding for its hex fixtures, hmac + sha2-0-11 for custody's canary (RFC 5869 apart from adapter-hkdf), adapter-atproto + jacquard-oauth + jacquard-common + fluent-uri + smol_str for custody's sign-in round trip through the auth store",
       "node": false
     },
     {
@@ -37,7 +37,7 @@
     },
     {
       "name": "src/custody.rs",
-      "role": "custody fixtures: the test root TEST_ROOT [0x5e; 32], test_root() -> RootSecret (what every test runtime connects with) and root_of(bytes) for a test that plants its own; the three 0.1 legacy rows (alice, bob, alice starting 0x01) with LEGACY_ROOT [9; 32], legacy_keys and hex_bytes; test_custodian() → Arc<dyn KeyCustodian>, an HkdfKeyCustodian holding every purpose over TEST_ROOT, and test_custody() → TestCustody, its scoped handles; LyingCustodian and lying_did_custody(), whose open answers other bytes than were sealed",
+      "role": "custody fixtures: the test root TEST_ROOT [0x5e; 32], test_root() -> RootSecret (what every test runtime connects with) and root_of(bytes) for a test that plants its own; the three 0.1 legacy rows (alice, bob, alice starting 0x01) with LEGACY_ROOT [9; 32], legacy_keys and hex_bytes; test_custodian() → Arc<dyn KeyCustodian>, an HkdfKeyCustodian holding every purpose over TEST_ROOT, and test_custody() → TestCustody, its scoped handles (custodian_of(root) and custody_of(root) for a planted root); LyingCustodian and lying_did_custody(), whose open answers other bytes than were sealed; the log canary's helpers, computed by RFC 5869 over HMAC-SHA256 apart from adapter-hkdf's code: prk_of, purpose_key_of and key_id_of a planted root, printed_forms (lowercase hex, standard base64, a byte slice's Debug), named_printings and derived_printings (the PRK and every purpose key, three forms each); SIGNIN_CANARY_DID, SIGNIN_CANARY_SECRETS and signin_secrets_round_trip(pool, sealer), a sign-in session and an auth request sealed and opened through AtprotoAuthStore; tests in src/custody/tests.rs (RFC 5869's test case 1, the golden keys and key ids, the key ids the custodian writes)",
       "node": false
     },
     {
