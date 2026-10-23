@@ -33,9 +33,18 @@ const ISS: &str = "https://canaryissuer.example/x3k9";
 const ISS_IN_A_QUERY: &str = "https%3A%2F%2Fcanaryissuer.example%2Fx3k9";
 const BINDING: &str = "canarybinding2e6d9f4a7c";
 
-/// The planted root key, and how the config carries it.
+/// The planted root key, and its base64 as the environment would carry it.
 const ROOT_KEY: &str = "canary-root-key-7f3a9c1e5b2d8046";
 const ROOT_KEY_BASE64: &str = "Y2FuYXJ5LXJvb3Qta2V5LTdmM2E5YzFlNWIyZDgwNDY=";
+
+/// [`ROOT_KEY`] as the custody root the app is connected with.
+fn canary_root() -> composition::RootSecret {
+    let bytes: [u8; 32] = ROOT_KEY
+        .as_bytes()
+        .try_into()
+        .expect("the planted root is 32 bytes");
+    test_support::custody::root_of(bytes)
+}
 
 /// The Account the visit founds, so the Den lists something.
 const ACCOUNT_HANDLE: &str = "canarystudio.zurfur.app";
@@ -163,7 +172,8 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
             };
             api::app(state)
         },
-        |config| config.did_key_root_key = ROOT_KEY_BASE64.to_owned(),
+        canary_root(),
+        |_config| {},
     )
     .await;
     let profile = Profile::new(Did::from(USER_DID.to_owned()), USER_HANDLE);

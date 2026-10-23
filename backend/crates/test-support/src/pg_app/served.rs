@@ -2,14 +2,16 @@ use std::sync::Arc;
 
 use adapter_pg::PgSessionStore;
 use axum::Router;
-use base64::Engine as _;
-use composition::{Config, EXAMPLE_DEV_ROOT_KEY, Environment, Runtime};
+use composition::{Config, Custody, Environment, RootSecret, Runtime};
+use domain::elements::custody::Purpose;
 use domain::elements::profile::Profile;
 use http_cookies::ZurfurCookie;
 use http_stack::{Detach, Stacked};
 use reqwest::header::SET_COOKIE;
+use strum::VariantArray as _;
 
 use super::{InProcessPds, StatementLog, record_statements};
+use crate::custody::test_root;
 use crate::http::client_with_origin;
 use crate::pg::{TestDb, fresh_db};
 
@@ -39,18 +41,20 @@ pub struct SignedIn {
 
 /// Boots `app` on the composition root's live wiring over a fresh migrated
 /// database, with the sign-in and profile ports answered by an
-/// [`InProcessPds`] and sessions kept in PostgreSQL.
+/// [`InProcessPds`] and sessions kept in PostgreSQL. Every custody purpose is
+/// derived from [`TEST_ROOT`](crate::custody::TEST_ROOT).
 pub async fn serve(app: impl FnOnce(Runtime) -> Router) -> PgServed {
-    serve_through(app, None, |stacked| stacked, |_| {}).await
+    serve_through(app, None, |stacked| stacked, test_root(), |_| {}).await
 }
 
-/// As [`serve`], with `configure` changing the dev [`Config`] before the runtime connects:
-/// a test that plants its own root key, say.
+/// As [`serve`], over `root` and with `configure` changing the dev [`Config`] before the
+/// runtime connects.
 pub async fn serve_configured(
     app: impl FnOnce(Runtime) -> Router,
+    root: RootSecret,
     configure: impl FnOnce(&mut Config),
 ) -> PgServed {
-    serve_through(app, None, |stacked| stacked, configure).await
+    serve_through(app, None, |stacked| stacked, root, configure).await
 }
 
 /// As [`serve`], with `wrap` adding layers outside the whole stack.
@@ -58,7 +62,7 @@ pub async fn serve_wrapped(
     app: impl FnOnce(Runtime) -> Router,
     wrap: impl FnOnce(Stacked) -> Stacked,
 ) -> PgServed {
-    serve_through(app, None, wrap, |_| {}).await
+    serve_through(app, None, wrap, test_root(), |_| {}).await
 }
 
 /// As [`serve`], with the app reaching its database through a proxy that logs into
@@ -67,15 +71,24 @@ pub async fn serve_recording(
     app: impl FnOnce(Runtime) -> Router,
     statements: &StatementLog,
 ) -> PgServed {
-    serve_through(app, Some(statements), |stacked| stacked, |_| {}).await
+    serve_through(
+        app,
+        Some(statements),
+        |stacked| stacked,
+        test_root(),
+        |_| {},
+    )
+    .await
 }
 
 /// Boots `app` as [`serve`] says, through the recording proxy when `statements` is given,
-/// with `wrap` adding layers outside the whole stack and `configure` changing the config.
+/// with `wrap` adding layers outside the whole stack, every purpose derived from `root`,
+/// and `configure` changing the config.
 async fn serve_through(
     app: impl FnOnce(Runtime) -> Router,
     statements: Option<&StatementLog>,
     wrap: impl FnOnce(Stacked) -> Stacked,
+    root: RootSecret,
     configure: impl FnOnce(&mut Config),
 ) -> PgServed {
     let db = fresh_db().await;
@@ -91,7 +104,8 @@ async fn serve_through(
     let pds = Arc::new(InProcessPds::default());
     let mut config = config(&base_url, &database_url);
     configure(&mut config);
-    let live = Runtime::connect(config)
+    let custody = every_purpose(root, &config);
+    let live = Runtime::connect(config, custody)
         .await
         .expect("the live runtime connects to the test database");
     let runtime = Runtime {
@@ -151,7 +165,9 @@ async fn runtime_through(statements: Option<&StatementLog>) -> PgRuntime {
         None => db.url().to_owned(),
     };
     let pds = Arc::new(InProcessPds::default());
-    let live = Runtime::connect(config("http://localhost", &database_url))
+    let config = config("http://localhost", &database_url);
+    let custody = every_purpose(test_root(), &config);
+    let live = Runtime::connect(config, custody)
         .await
         .expect("the live runtime connects to the test database");
     let runtime = Runtime {
@@ -228,11 +244,20 @@ impl PgServed {
     }
 }
 
-/// A dev-profile [`Config`] on `database_url`, served at `public_url`: the
-/// shipped example root key with PLC submission off, so minting stays local.
-/// Panics when `public_url` is not a bare origin.
+/// Every custody purpose's handles, derived from `root` behind `config`'s guard.
+fn every_purpose(root: RootSecret, config: &Config) -> Custody {
+    Custody::derive(
+        root,
+        &config.env,
+        config.plc_directory_submit,
+        Purpose::VARIANTS,
+    )
+    .expect("the custody guard accepts a dev root with PLC submission off")
+}
+
+/// A dev-profile [`Config`] on `database_url`, served at `public_url`, with PLC
+/// submission off, so minting stays local. Panics when `public_url` is not a bare origin.
 fn config(public_url: &str, database_url: &str) -> Config {
-    let root_key = base64::engine::general_purpose::STANDARD.encode(EXAMPLE_DEV_ROOT_KEY);
     Config {
         env: Environment::DEV,
         http_addr: "127.0.0.1:0".parse().expect("loopback socket address"),
@@ -240,7 +265,6 @@ fn config(public_url: &str, database_url: &str) -> Config {
         database_url: database_url.to_string(),
         log_level: "info".to_string(),
         handle_domain: "zurfur.app".parse().expect("a valid handle domain"),
-        did_key_root_key: root_key,
         plc_directory_endpoint: "https://plc.directory".to_string(),
         plc_directory_submit: false,
         deadline_sweep_interval_secs: 60,

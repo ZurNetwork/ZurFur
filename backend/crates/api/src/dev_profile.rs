@@ -1,12 +1,16 @@
 //! The dev profile: the server on `adapter-mem`'s stores seeded with the
-//! fixture world, its sessions in memory, and every sign-in alice. Compiled
-//! only with the `dev-profile` feature; it refuses every environment but `DEV`.
+//! fixture world, its sessions in memory, every sign-in alice, and the Den's
+//! MAC key derived from the custody root. Compiled only with the `dev-profile`
+//! feature; it refuses every environment but `DEV`.
 
 use std::ffi::OsStr;
 use std::sync::Arc;
 
 use adapter_mem::fixture::{alice, bob, seed_commission, seed_identity, supreme_arts};
 use adapter_mem::{FixedSignIn, MemBackend, MemDidMinter, MemIdentityResolver, MemProfileSource};
+use composition::{Custody, RootSecret};
+use domain::elements::custody::Purpose;
+use domain::ports::ScopedMac;
 use http_stack::{Detach, Stacked};
 use tower_sessions::MemoryStore;
 
@@ -50,16 +54,18 @@ pub fn ensure_dev_variable(zurfur_env: Option<&OsStr>) -> Result<(), OutsideDev>
     }
 }
 
-/// The dev profile's app as served, its in-memory session layer included.
-/// Refuses with [`OutsideDev`] before anything else unless `config.env` is `DEV`.
-pub async fn app(config: Config) -> anyhow::Result<Stacked> {
+/// The dev profile's app as served, its in-memory session layer included, its Den MAC
+/// key derived from `root`. Refuses with [`OutsideDev`] before anything else unless
+/// `config.env` is `DEV`.
+pub async fn app(config: Config, root: RootSecret) -> anyhow::Result<Stacked> {
     ensure_dev(&config.env)?;
+    let den_mac = den_mac(root, &config.env, config.plc_directory_submit)?;
     tracing::warn!(
         "dev profile: the in-memory fixture world, where every sign-in is a fixture user"
     );
 
     let secure_cookies = config.env.secure_cookies();
-    let runtime = runtime(config).await?;
+    let runtime = runtime(config, den_mac).await?;
     let sessions = http_cookies::session_layer(MemoryStore::default(), secure_cookies);
     let app = http_stack::stack(crate::app(runtime), sessions, Detach::default());
     Ok(app)
@@ -74,9 +80,20 @@ fn ensure_dev(env: &Environment) -> Result<(), OutsideDev> {
     }
 }
 
+/// The Den's MAC handle from `root`, behind the custody guard: the one purpose the dev
+/// profile holds.
+fn den_mac(
+    root: RootSecret,
+    env: &Environment,
+    plc_directory_submit: bool,
+) -> anyhow::Result<ScopedMac> {
+    let custody = Custody::derive(root, env, plc_directory_submit, &[Purpose::DenMac])?;
+    Ok(custody.den_mac().clone())
+}
+
 /// Every port on `adapter-mem` over one backend seeded with identity's and
 /// commission's fixtures; sign-in always answers alice.
-async fn runtime(config: Config) -> anyhow::Result<AppState> {
+async fn runtime(config: Config, den_mac: ScopedMac) -> anyhow::Result<AppState> {
     let backend = MemBackend::new();
     seed_identity(&backend).await?;
     seed_commission(&backend, &alice(), &bob(), &supreme_arts()).await?;
@@ -104,6 +121,7 @@ async fn runtime(config: Config) -> anyhow::Result<AppState> {
         files: backend.file_store(),
         database: backend.database(),
         did_minter: Arc::new(MemDidMinter::new()),
+        den_mac,
     };
     Ok(runtime)
 }

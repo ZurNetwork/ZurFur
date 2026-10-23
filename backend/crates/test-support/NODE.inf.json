@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/test-support",
-  "charted": "2026-10-22",
+  "charted": "2026-10-23",
   "short": "Shared test rig: throwaway PDS, stub PLC, Postgres harness, the PostgreSQL app setup",
   "is": "The shared test rig: a hermetic throwaway PDS with an in-process stub PLC directory, a one-container/template-clone Postgres harness, the app served on PostgreSQL behind an in-process sign-in (`pg_app`) with the den world seeded on it (`pg_app::den_world`), and the cross-adapter PublicRecords conformance suite.",
   "type": "code",
@@ -22,7 +22,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers, base64 for pg_app's dev-profile root key, application for pg_app::den_world's Workflows (made through the create use case), reqwest multipart for its uploads, strum for pg_app::ProfileCacheState and node_contract's NodeType::VARIANTS, adapter-hkdf + zeroize for custody's test custodian, data-encoding for its hex fixtures",
+      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers, application for pg_app::den_world's Workflows (made through the create use case), reqwest multipart for its uploads, strum for pg_app::ProfileCacheState and node_contract's NodeType::VARIANTS, adapter-hkdf + zeroize for custody's test custodian and test root, data-encoding for its hex fixtures",
       "node": false
     },
     {
@@ -37,7 +37,7 @@
     },
     {
       "name": "src/custody.rs",
-      "role": "custody fixtures: the three 0.1 legacy rows (alice, bob, alice starting 0x01) with LEGACY_ROOT [9; 32], legacy_keys and hex_bytes; test_custodian() → Arc<dyn KeyCustodian>, an HkdfKeyCustodian holding every purpose over a fixed test root, and test_custody() → TestCustody, its scoped handles; LyingCustodian and lying_did_custody(), whose open answers other bytes than were sealed",
+      "role": "custody fixtures: the test root TEST_ROOT [0x5e; 32], test_root() -> RootSecret (what every test runtime connects with) and root_of(bytes) for a test that plants its own; the three 0.1 legacy rows (alice, bob, alice starting 0x01) with LEGACY_ROOT [9; 32], legacy_keys and hex_bytes; test_custodian() → Arc<dyn KeyCustodian>, an HkdfKeyCustodian holding every purpose over TEST_ROOT, and test_custody() → TestCustody, its scoped handles; LyingCustodian and lying_did_custody(), whose open answers other bytes than were sealed",
       "node": false
     },
     {
@@ -132,7 +132,7 @@
     },
     {
       "name": "src/pg_app/served.rs",
-      "role": "serve + serve_recording (the app's database reached through the statement proxy) + PgServed (base_url, live Runtime, the PDS, psql_command onto its database) + SignedIn + the dev-profile Config (example root key, PLC submission off); sessions through http-cookies' session_layer over PgSessionStore; served through http-stack's stack (serve_wrapped adds outer layers, PgServed carries the Detach); PgServed::sign_in / sign_in_with_cookie hand back a client sending Origin: base_url on every request (DenWorld's too); pg_runtime: the same live wiring served nowhere, for use-case tests on PostgreSQL, and pg_runtime_recording, the same through the statement proxy into a StatementLog; serve_configured changes the dev Config before connecting (the log canary plants its root key)",
+      "role": "serve + serve_recording (the app's database reached through the statement proxy) + PgServed (base_url, live Runtime, the PDS, psql_command onto its database) + SignedIn + the dev-profile Config (no root; PLC submission off), every custody purpose derived through Custody::derive from test_root(); sessions through http-cookies' session_layer over PgSessionStore; served through http-stack's stack (serve_wrapped adds outer layers, PgServed carries the Detach); PgServed::sign_in / sign_in_with_cookie hand back a client sending Origin: base_url on every request (DenWorld's too); pg_runtime: the same live wiring served nowhere, for use-case tests on PostgreSQL, and pg_runtime_recording, the same through the statement proxy into a StatementLog; serve_configured(app, root: RootSecret, configure) connects over the given root and changes the dev Config before connecting (the log canary plants its root, bug_reports its build id)",
       "node": false
     },
     {
@@ -157,7 +157,7 @@
     },
     {
       "name": "src/runtime.rs",
-      "role": "the in-memory Runtime every fast suite boots: mem(did) -> MemRuntimeBuilder (profile, public_url, max_upload_bytes, build_id setters) -> MemRuntime { runtime, backend }",
+      "role": "the in-memory Runtime every fast suite boots: mem(did) -> MemRuntimeBuilder (profile, public_url, max_upload_bytes, build_id setters) -> MemRuntime { runtime, backend }; den_mac is test_custody()'s",
       "node": false
     },
     {
@@ -192,6 +192,6 @@
     "See also: ZMVP-106 — determinism capstone that reuses `contract::fixed_created_at()` (src/contract.rs).",
     "See also: ZMVP-199 ruling 8 / Engineer ruling 2026-08-25 — one shared `MemRuntime` fixture instead of a copy per test file (src/runtime.rs).",
     "See also: uow 28ca4f — origin of the `default_image_matches_env_example` drift guard (src/lib.rs).",
-    "src/pg_app.rs — the PostgreSQL test setup. Only the sign-in and profile ports are swapped (both onto `InProcessPds`); every other port is composition's live wiring, so the DID minter is the real one with the example root key and PLC submission off (minting stays in PostgreSQL). The setup touches the app only through the sign-in routes, so a change to the sign-in seam is fixed here alone. A test that needs another port changed (a recording or silent profile source) swaps it inside the `app` closure, which receives the Runtime."
+    "src/pg_app.rs — the PostgreSQL test setup. Only the sign-in and profile ports are swapped (both onto `InProcessPds`); every other port is composition's live wiring, so the DID minter is the real one over the test root (`custody::TEST_ROOT`, every purpose) and PLC submission off (minting stays in PostgreSQL). The setup touches the app only through the sign-in routes, so a change to the sign-in seam is fixed here alone. A test that needs another port changed (a recording or silent profile source) swaps it inside the `app` closure, which receives the Runtime."
   ]
 }

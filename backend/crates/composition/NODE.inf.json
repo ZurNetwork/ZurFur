@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/composition",
-  "charted": "2026-10-22",
+  "charted": "2026-10-23",
   "short": "HTTP-free composition root: Config + Runtime",
   "is": "The HTTP-free composition root shared by every driving adapter (api, cli): loads Config and wires the live Runtime bag of domain ports.",
   "type": "code",
@@ -10,24 +10,28 @@
   ],
   "conventions": [
     "HTTP-free by construction, enforced by `tests/no_http_deps.rs` — never add axum/tower-sessions here or to `cli`.",
-    "Migrations, background tasks, sessions and cookies are explicitly NOT this crate's concern — left to the driver.",
+    "Composition builds the migrator; the driver runs it (`Runtime::connect_migrating` hands back the `CustodyMigrator`, `api` runs it at boot). Background tasks, sessions and cookies are explicitly NOT this crate's concern — left to the driver.",
     "The Runtime→`application::*Ports` conversion lives once in `src/ports.rs` (one `From<&Runtime>` per application module); drivers never hand-assemble a Ports struct.",
-    "Never reaches the Den's node port nor names Atta's checked-name constructor: `application/tests/node_and_name_seams.rs` scans this crate's `src/` too."
+    "Never reaches the Den's node port nor names Atta's checked-name constructor: `application/tests/node_and_name_seams.rs` scans this crate's `src/` too.",
+    "The custody root never sits in `Config` nor in figment's value map (the env provider ignores `did_key_root_key`): only a command that holds a purpose reads it, as a `!Send` `RootSecret`, and `src/custody.rs` is the one file that names `KeyCustodian` or `adapter_hkdf` (held by `tests/one_custody_function.rs`, over composition's and the drivers' `src/`). No `KeyCustodian` is a `Runtime` field; `Runtime` stays `Send + Sync + Clone` (a compile-time assertion in `src/runtime.rs`)."
   ],
   "entry_points": [
     "Config::load",
+    "RootSecret::from_env",
+    "Custody::derive",
     "Runtime::connect",
+    "Runtime::connect_migrating",
     "Runtime::transaction"
   ],
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "deps — domain, application, adapter-pg, adapter-atproto, adapter-hkdf (the custody root's derivation), zeroize, figment, serde, anyhow, tracing, tracing-subscriber (the shared log filter), base64, fluent-uri, url, thiserror, derive_more",
+      "role": "deps — domain, application, adapter-pg, adapter-atproto, adapter-hkdf (the custody root's derivation), async-trait (the no-purpose custodian), zeroize, figment, serde, anyhow, tracing, tracing-subscriber (the shared log filter), base64 (the root's decode), fluent-uri, url, thiserror, derive_more; dev: figment's Jail, tokio, strum",
       "node": false
     },
     {
       "name": "src/config.rs",
-      "role": "Config struct (public_url a BareOrigin; build_id a BuildId read verbatim from ZURFUR_BUILD_ID — layered past the env provider so a numeric id stays text — defaulting to \"unknown\", an invalid one failing the load), figment loader (Config::load/load_from, failing with LoadError: Figment or Refused) with the environment guard ConfigRefusal, Environment enum, boot-time custody guard ensure_custody_hardened",
+      "role": "Config struct (no custody root: the env provider ignores `did_key_root_key` beside `build_id`; public_url a BareOrigin; build_id a BuildId read verbatim from ZURFUR_BUILD_ID — layered past the env provider so a numeric id stays text — defaulting to \"unknown\", an invalid one failing the load), figment loader (Config::load/load_from over `layered`, failing with LoadError: Figment or Refused) with the environment guard ConfigRefusal, Environment enum, boot-time custody guard ensure_custody_hardened",
       "node": false
     },
     {
@@ -37,12 +41,12 @@
     },
     {
       "name": "src/custody.rs",
-      "role": "the one custody function, `seal_handles`: the boot guard on the raw root, then one HKDF derivation of both seal purposes, then `SealHandles` (the DID-custody sealer `PgKeyStore` holds, the sign-in-secrets sealer the atproto authenticator holds); tests in src/custody/tests.rs",
+      "role": "the one custody function: the boot guard on the raw root, then `HkdfKeyCustodian::derive` of the purposes asked for, then `Custody`, the scoped handles only (`ScopedSealer<ForDidCustody>` for `PgKeyStore`, `ScopedSealer<ForSigninSecrets>` for the atproto authenticator, `ScopedMac` for the Den); `Custody::derive(RootSecret, env, plc_directory_submit, purposes)`, `Custody::default()` (no purpose, no root read: every handle answers PurposeNotHeld), and the crate-private copy of the root the custody migrator takes; the only file naming `KeyCustodian` and `adapter_hkdf`; tests in src/custody/tests.rs",
       "node": false
     },
     {
       "name": "src/lib.rs",
-      "role": "crate doc + re-exports of Config and Runtime; runtime is pub(crate), ports and logging are pub",
+      "role": "crate doc + re-exports of Config, Custody, RootSecret (and ROOT_KEY_ENV, RootSecretError) and Runtime; runtime is pub(crate), ports and logging are pub",
       "node": false
     },
     {
@@ -56,24 +60,35 @@
       "node": false
     },
     {
+      "name": "src/root.rs",
+      "role": "RootSecret, the custody root: 32 zeroizing bytes, not Clone, `!Send`/`!Sync` (a PhantomData<*const ()>), a redacted Debug; RootSecret::from_env reads ROOT_KEY_ENV (ZURFUR_DID_KEY_ROOT_KEY) into a Zeroizing<String>, TryFrom<Zeroizing<String>> decodes trimmed base64 into a wiped buffer, From<Zeroizing<[u8; 32]>>; RootSecretError (unset / not base64 / not 32 bytes) names the variable and the rule, never a character of the value; compile_fail doctests for Clone, Send and Sync; tests in src/root/tests.rs",
+      "node": false
+    },
+    {
       "name": "src/runtime.rs",
-      "role": "Runtime bag of Arc<dyn Port> (AccountStore, Authenticator, BugReportStore, ChangelogStore, CommissionStore, Database, DidMinter, FileStore, IdentityResolver, ProfileCache, ProfileSource, UserStore) plus the process-wide ProfileLookups (built once in `wire`, shared by every clone), Runtime::connect wiring pg+atproto adapters (one AtprotoIdentityResolver shared by the authenticator and the profile source), transaction convenience",
+      "role": "Runtime bag of Arc<dyn Port> (AccountStore, Authenticator, BugReportStore, ChangelogStore, CommissionStore, Database, DidMinter, FileStore, IdentityResolver, ProfileCache, ProfileSource, UserStore) plus the process-wide ProfileLookups (built once in `wire`, shared by every clone) and `den_mac`, the Den's MAC handle (PurposeNotHeld in a runtime connected without that purpose); Runtime::connect(config, Custody) wiring pg+atproto adapters (one AtprotoIdentityResolver shared by the authenticator and the profile source), Runtime::connect_migrating(config, RootSecret, purposes), which derives at the call and returns a Send future of (Runtime, CustodyMigrator); a compile-time Send + Sync + Clone assertion; transaction convenience; tests in src/runtime/tests.rs",
       "node": false
     },
     {
       "name": "tests/no_http_deps.rs",
       "role": "cargo-tree guard — composition and cli must never link an HTTP-server crate (axum, axum-core, tower-sessions)",
       "node": false
+    },
+    {
+      "name": "tests/one_custody_function.rs",
+      "role": "source guard — only src/custody.rs (and its tests) names KeyCustodian, HkdfKeyCustodian or adapter_hkdf across composition's, api's and cli's src/; custody.rs calls the guard once, before its one derivation",
+      "node": false
     }
   ],
   "notes": [
     "**Live adapter per port** (`Runtime::wire`): `auth`/`profile_source`/`did_minter` → adapter-atproto (`AtprotoAuthenticator`, `AtprotoProfileSource`, `RealDidMinter` over `PgKeyStore` + `PgPlcOperationLog` + the directory); every other port → adapter-pg (`PgUserStore`, `PgAccountStore`, `PgCommissionStore`, `PgChangelogStore`, `PgWorkflowStore`, `PgColumnStore`, `PgBugReportStore`, `PgFileStore`, `PgProfileCache` at a one-hour TTL, `PgDatabase`). Tests swap in the mem fakes. Adding a capability = a field on `Runtime` plus a line in `wire`.",
     "Two ports are pool-backed on purpose, the documented exceptions to the unit of work: the `profile_cache` fill (a read-path write with no transactional invariant) and `files` (blob bytes cannot ride a transaction).",
-    "`Runtime::connect` connects the pool but deliberately does NOT run migrations — the driver runs them explicitly (`api` calls `adapter_pg::migrate_fresh` until drivers move onto `CustodyMigrator`).",
+    "`Runtime::connect` connects the pool but deliberately does NOT run migrations. Composition builds the migrator; the driver runs it: `Runtime::connect_migrating` returns the `CustodyMigrator` (probe and dry run, the migrations, the re-wrap) beside the runtime, and `api` runs it at boot. `adapter_pg::migrate_fresh` is for fresh databases only.",
     "Config layering, lowest first: `config/{profile}.toml` → the unprefixed `DATABASE_URL` (the name sqlx tooling expects) → `ZURFUR_*` env. `ZURFUR_ENV` both picks the profile file and deserializes into `Config::env`, so the two spellings must agree; it is validated as a bare name so it cannot walk out of the config dir. The config dir is anchored to `CARGO_MANIFEST_DIR`, never the CWD.",
     "`handle_domain` is parsed into a `HandleDomain` ONCE at load, so the claim checks and the `/.well-known/atproto-did` resolver cannot disagree about the namespace (DD 26607618).",
     "`Config::load` refuses a configuration its environment may not boot with (`ConfigRefusal`, ruling R-77, 2026-10-12; S1/N4 of security's review of #277). `public_url` is a `BareOrigin` (scheme, host, optional port; credentials, path, query and fragment fail the load, value-free, naming the rule; the Engineer's review of #285, 2026-10-12), so the guard checks only scheme, host and port: `DEV` only on `http://127.0.0.1` or `http://[::1]` (`BareOrigin::is_of_origin`, any port; never `localhost`, which Bluesky refuses as a loopback redirect host) with a loopback `http_addr`; `STG`/`PROD` only on `BareOrigin::is_public_https` (https on a domain name of two or more labels, not `localhost`, no IP literal, no trailing dot, port not 0); `STG` never on production's handle domain `zurfur.app` nor any subdomain of it (ruling R-79, 2026-10-12). The refusal comes back as `LoadError::Refused(ConfigRefusal)`, whose message names the setting and never echoes its value, so the CLI prints it as is; the CLI also prints `public_url`'s own value-free parse message.",
     "`ensure_custody_hardened` is a boot-time refusal, not documentation: `PROD`/`STG` are refused outright while custody is config/env-root-backed, and PLC submission is refused under the shipped `EXAMPLE_DEV_ROOT_KEY` in any environment.",
+    "Purposes per driver: `api`'s everyday profile connects with all three (DidCustody, SigninSecrets, DenMac); its dev profile derives the DenMac purpose only, through `Custody::derive`; the CLI reads the root only for `account …` and `migrate` (DidCustody) and connects `health`, `session` and `bug-reports list` with `Custody::default()`, never reading the root.",
     "`Config::DEFAULT_MAX_UPLOAD_BYTES` (50 MiB) is the one home for the upload cap. Raising it past `i32::MAX` bytes is a wire break — `byte_size` must then become an int64 decimal string (`contract/VERSIONING.md` §7.2).",
     "See also: ZMVP-200 (crate extracted from api::AppState).",
     "See also: ZMVP-3 (original composition root).",

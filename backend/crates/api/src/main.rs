@@ -1,8 +1,8 @@
 //! The Zurfur backend binary: the boot sequence and the live adapter wiring
 //! (the only place that names production adapters). [`main`] loads
 //! [`Config`], builds the profile's app, and serves. The everyday profile
-//! stands up Postgres and runs migrations; the `dev-profile` feature swaps in
-//! the in-memory fixture world instead, and nothing else chooses it.
+//! stands up Postgres and runs the custody migrator; the `dev-profile` feature
+//! swaps in the in-memory fixture world instead, and nothing else chooses it.
 
 use api::Config;
 use tracing_subscriber::{EnvFilter, util::SubscriberInitExt as _};
@@ -67,18 +67,27 @@ async fn shutdown_signal() {
     tracing::info!("shutdown signal received; finishing the requests in flight");
 }
 
-/// The everyday profile: the live Postgres and atproto adapters, migrations
-/// applied, sessions in Postgres, and the deadline sweeper and session reaper
-/// running.
+/// The everyday profile: the live Postgres and atproto adapters over every
+/// custody purpose, the custody migrator run, sessions in Postgres, and the
+/// deadline sweeper and session reaper running.
 #[cfg(not(feature = "dev-profile"))]
 async fn profile_app(config: Config) -> anyhow::Result<http_stack::Stacked> {
     use api::AppState;
+    use domain::elements::custody::Purpose;
     use tower_sessions::session_store::ExpiredDeletion;
 
-    // Migrations are the driver's explicit call, so one never runs by accident.
-    let app_state: AppState = composition::Runtime::connect(config).await?;
-    adapter_pg::migrate_fresh(&app_state.pool).await?;
-    tracing::info!("migrations applied");
+    let purposes = [Purpose::DidCustody, Purpose::SigninSecrets, Purpose::DenMac];
+    let root = composition::RootSecret::from_env()?;
+    let connecting = AppState::connect_migrating(config, root, &purposes);
+    let (app_state, custody_migrator) = connecting.await?;
+    // Composition builds the migrator; running it is this driver's explicit call.
+    let report = custody_migrator.run().await?;
+    tracing::info!(
+        applied = report.applied,
+        version = ?report.version,
+        rows_rewrapped = report.rows_rewrapped,
+        "migrations applied"
+    );
 
     let store = adapter_pg::PgSessionStore::new(app_state.pool.clone());
     let secure_cookies = app_state.config.env.secure_cookies();
@@ -115,10 +124,11 @@ async fn profile_app(config: Config) -> anyhow::Result<http_stack::Stacked> {
 
 /// The dev profile: the in-memory fixture world. Refuses to start unless
 /// `ZURFUR_ENV` is set (by the environment or `.env`) and names dev, whatever
-/// the config would default to.
+/// the config would default to, then unless the custody root is set.
 #[cfg(feature = "dev-profile")]
 async fn profile_app(config: Config) -> anyhow::Result<http_stack::Stacked> {
     let zurfur_env = std::env::var_os(composition::PROFILE_ENV);
     api::dev_profile::ensure_dev_variable(zurfur_env.as_deref())?;
-    api::dev_profile::app(config).await
+    let root = composition::RootSecret::from_env()?;
+    api::dev_profile::app(config, root).await
 }

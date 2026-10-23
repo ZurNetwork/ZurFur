@@ -43,8 +43,6 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "coo
 tracing-subscriber = { workspace = true }
 # the session layer the served app wraps in tests
 tower-sessions = { workspace = true }
-# `pg_app` encodes the shipped example root key into its dev-profile Config.
-base64 = { workspace = true }
 # ...built by the driver's own `session_layer`, so tests run the real session cookie
 http-cookies = { path = "../http-cookies" }
 # The served rigs mount the app through the stack `main` serves.

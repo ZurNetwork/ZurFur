@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{CommandFactory as _, Parser, Subcommand};
-use composition::{Config, ConnectError, LoadError, Runtime};
+use composition::{Config, ConnectError, Custody, LoadError, RootSecret, Runtime};
+use domain::elements::custody::Purpose;
 
 pub mod commands;
 mod confirm;
@@ -110,14 +111,14 @@ pub async fn run(cli: Cli) -> Result<Output, CliError> {
         // An operator command: no identity file, and its own stdout — fenced
         // text, or ASCII-only JSON — since the reports' texts are hostile.
         Command::Backend(command @ BackendCommand::BugReports { op }) => {
-            let runtime = connect(cli.config_dir).await?;
+            let runtime = connect(cli.config_dir, &command).await?;
             require_current_schema(&runtime, &command).await?;
             let listed = commands::bug_reports::list(&runtime, op).await?;
             Ok(Output::raw(listed.printed(format)))
         }
         Command::Backend(command) => {
             let identity_path = identity::default_path()?;
-            let runtime = connect(cli.config_dir).await?;
+            let runtime = connect(cli.config_dir, &command).await?;
             require_current_schema(&runtime, &command).await?;
             let value = dispatch(&runtime, &identity_path, command).await?;
             Ok(Output::json(value, format))
@@ -175,14 +176,42 @@ pub async fn require_current_schema(
     }
 }
 
-/// Load the [`Config`] (honoring `--config-dir`) and wire the live adapters.
-/// Every failure here is infrastructure: exit class 3.
-async fn connect(config_dir: Option<PathBuf>) -> Result<Runtime, CliError> {
+/// Load the [`Config`] (honoring `--config-dir`), take `command`'s custody, and wire
+/// the live adapters. Every failure here is infrastructure: exit class 3.
+async fn connect(
+    config_dir: Option<PathBuf>,
+    command: &BackendCommand,
+) -> Result<Runtime, CliError> {
     let config = Config::load_from(config_dir).map_err(|e| config_problem(&e))?;
-    Runtime::connect(config).await.map_err(|e| match e {
-        // service_unavailable = down dependency; internal_error = broken boot.
-        ConnectError::Database(_) => CliError::infra("service_unavailable", e),
-        ConnectError::Setup(_) => CliError::infra("internal_error", e),
+    let custody = custody(&config, command)?;
+    Runtime::connect(config, custody)
+        .await
+        .map_err(|e| match e {
+            // service_unavailable = down dependency; internal_error = broken boot.
+            ConnectError::Database(_) => CliError::infra("service_unavailable", e),
+            ConnectError::Setup(_) => CliError::infra("internal_error", e),
+        })
+}
+
+/// The custody `command` holds: DID custody for the commands that mint or migrate,
+/// read from the root before any database connect; none for the rest, which never
+/// read the root.
+fn custody(config: &Config, command: &BackendCommand) -> Result<Custody, CliError> {
+    let purposes: &[Purpose] = match command {
+        BackendCommand::Account { .. } | BackendCommand::Migrate => &[Purpose::DidCustody],
+        BackendCommand::Health
+        | BackendCommand::Session { .. }
+        | BackendCommand::BugReports { .. } => &[],
+    };
+    if purposes.is_empty() {
+        return Ok(Custody::default());
+    }
+    let root = RootSecret::from_env().map_err(|refusal| CliError::infra("config", refusal))?;
+    Custody::derive(root, &config.env, config.plc_directory_submit, purposes).map_err(|refusal| {
+        CliError::infra(
+            "internal_error",
+            format!("runtime setup failed: {refusal:#}"),
+        )
     })
 }
 

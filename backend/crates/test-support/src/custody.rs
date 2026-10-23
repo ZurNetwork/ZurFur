@@ -1,10 +1,12 @@
-//! Custody fixtures: three real 0.1 custody rows and the root they open under, a test
-//! custodian's scoped handles, and a lying custodian for the self-check tests.
+//! Custody fixtures: three real 0.1 custody rows and the root they open under, the test
+//! root and a test custodian's scoped handles over it, and a lying custodian for the
+//! self-check tests.
 
 use std::sync::Arc;
 
 use adapter_hkdf::HkdfKeyCustodian;
 use async_trait::async_trait;
+use composition::RootSecret;
 use domain::elements::account_keys::{AccountKeys, SecretKey};
 use domain::elements::custody::{
     CustodyError, CustodySubject, ForDidCustody, ForSigninSecrets, MacMessage, MacTag, MacUse,
@@ -32,8 +34,8 @@ pub const LEGACY_BOB_BLOB_HEX: &str = "ac5871adc37fc19049ccf5d3073dfe6fededfd9b3
 /// A 0.1 blob: root `[9; 32]`, `did:plc:alice`, keys 0xAA/0xBB/0xCC; its first byte is 0x01.
 pub const LEGACY_ALICE_BLOB_STARTING_0X01_HEX: &str = "017c34555bb478e165076720364596499e1ab8c224c4a65ec7907f78b40ec4dc48043e5ed67aa6fad1053c4eba0306264a360d7492f45c95252c44fb91401ee504803dc33c351d65a2948edaec168ac913e8aacd09cfdc1ec3e86fcf28ecd37771cd31fe3f52054a6daa4dc49049dc6fdcaf0e61391320a9d4fab3551254e1ae2068ecdc45ba2def";
 
-/// The root the test custodian derives every purpose's key from.
-const TEST_CUSTODY_ROOT: [u8; 32] = [0x5e; 32];
+/// The root every test runtime and the test custodian derive their keys from.
+pub const TEST_ROOT: [u8; 32] = [0x5e; 32];
 
 /// The byte the lying custodian masks a secret with.
 const LYING_MASK: u8 = 0x5c;
@@ -54,6 +56,16 @@ pub fn hex_bytes(hex: &str) -> Vec<u8> {
         .expect("a hex fixture holds only lowercase hex digit pairs")
 }
 
+/// [`TEST_ROOT`] as the custody root a runtime is connected with.
+pub fn test_root() -> RootSecret {
+    root_of(TEST_ROOT)
+}
+
+/// `bytes` as a custody root: for a test that plants its own.
+pub fn root_of(bytes: [u8; 32]) -> RootSecret {
+    RootSecret::from(Zeroizing::new(bytes))
+}
+
 /// A test custodian's handles, each purpose's key derived from one fixed test root.
 pub struct TestCustody {
     /// Seals and opens the did:plc custody keys.
@@ -64,10 +76,10 @@ pub struct TestCustody {
     pub den_mac: ScopedMac,
 }
 
-/// An `HkdfKeyCustodian` holding every purpose over the fixed test root, whole: for a
+/// An `HkdfKeyCustodian` holding every purpose over [`TEST_ROOT`], whole: for a
 /// test that builds a handle the scoped ones can't.
 pub fn test_custodian() -> Arc<dyn KeyCustodian> {
-    let root = Zeroizing::new(TEST_CUSTODY_ROOT);
+    let root = Zeroizing::new(TEST_ROOT);
     let derived = HkdfKeyCustodian::derive(root, Purpose::VARIANTS);
     Arc::new(derived)
 }
