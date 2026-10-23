@@ -14,7 +14,7 @@
   "fs": [
     {
       "name": "act.rs + act/tests.rs",
-      "role": "CommissionAct, the commission's acts the Den's write carries (Create, Rename, MoveLifecycle, SetDirection, ClearDirection, SetDeadline, ClearDeadline, SetDelayed, ClearDelayed, MarkLate), each body beside its typed use case; spec() and a Debug that prints the variant alone; act/tests.rs: a create needs a create (Needs::Create), a rename the Owner and a lifecycle move any Participant (Needs::Role), each read from its capability marker, a create's six Private entries named by their words, a rename's shape its new name, a move's a Change; each direction, deadline and Delayed act needs any Participant, is a Change on its commission's place, and prints its variant alone",
+      "role": "CommissionAct, the commission's acts the Den's write carries (Create, Rename, MoveLifecycle, SetDirection, ClearDirection, SetDeadline, ClearDeadline, SetDelayed, ClearDelayed, MarkLate), each body beside its typed use case, and CommissionActKind, its bodiless kind in the acts list's order (strum EnumDiscriminants, VariantArray), whose exhaustive matches make a new act fail to compile until the gate judges it and the list tries it; spec() and a Debug that prints the variant alone; act/tests.rs: a create needs a create (Needs::Create), a rename the Owner and a lifecycle move any Participant (Needs::Role), each read from its capability marker, a create's six Private entries named by their words, a rename's shape its new name, a move's a Change; each direction, deadline and Delayed act needs any Participant, is a Change on its commission's place, and prints its variant alone",
       "node": false
     },
     {

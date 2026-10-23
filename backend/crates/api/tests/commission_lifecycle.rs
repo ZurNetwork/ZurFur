@@ -51,7 +51,7 @@ async fn lifecycle_of(client: &reqwest::Client, world: &DenWorld, commission: &s
     body["lifecycle"].as_str().expect("a lifecycle").to_owned()
 }
 
-// D-2 on the wire: no move enters Draft, so alice's move of a commission that left it back
+// On the wire, no move enters Draft, so alice's move of a commission that left it back
 // into Draft answers 409 `lifecycle_move_refused` and leaves the step where it was.
 #[tokio::test]
 async fn a_move_into_draft_answers_its_code() {

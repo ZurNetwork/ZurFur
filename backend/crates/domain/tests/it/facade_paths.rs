@@ -10,7 +10,7 @@ use std::any::type_name;
 /// the pin: a module that stops resolving fails to compile.
 #[allow(unused_imports, reason = "each import pins one façade path")]
 mod element_modules {
-    use domain::elements::commission::{AsOwner, AsParticipant};
+    use domain::elements::commission::{AsOwner, AsParticipant, AsSystem};
     use domain::elements::custody::{ForDidCustody, ForSigninSecrets, SealPurposeMarker};
     use domain::elements::node::{
         MAX_SEGMENT_BYTES, NewNode, NodeId, NodeRow, NodeSegment, NodeSegmentError, NodeType,

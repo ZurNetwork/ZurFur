@@ -975,7 +975,7 @@ async fn a_malformed_deadline_body_is_rejected() {
     assert_eq!(entries(&backend, id).await.len(), 1, "no entry appended");
 }
 
-// D-3 — while Disputed the deadline is frozen: a fresh set, an extension and a clear each
+// While Disputed the deadline is frozen: a fresh set, an extension and a clear each
 // answer `409 commission_disputed`, and no entry is written; the deadline stays as it was.
 #[tokio::test]
 async fn a_disputed_commission_s_deadline_is_frozen() {
