@@ -1,5 +1,5 @@
 # Project settings for the nodes pack ([tool], [refs], [root]) and for
-# design-sync ([design]).
+# corpus-sync ([design]).
 
 [tool]
 run = "just nodes"

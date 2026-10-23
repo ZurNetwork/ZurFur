@@ -28,7 +28,7 @@
 | integration | `feature/{slug}` | cut at main's tip. Zurfur's names stand for the pack's through 0.2 (R-215, 2026-10-19): for 0.2, `{slug}` is `release-0-2`, so `feature/release-0-2` ↔ the version `pre-alpha-v0.2.0` ↔ `<docs>/releases/0.2/`. `bug/{slug}` is an off-cycle fix's branch. The pack-shaped names are decided at 0.3's scope, with the release-model question |
 | slice | `feature/{slug}-{n}-{part}` | its PR targets the integration branch. A slice's base is the longest `feature/<x>` prefix of its name that exists on the remote; Machinery's slice-PR briefs name the base. The `feature/` prefix makes CI run on PRs into `feature/**` |
 | fix | `feature/{slug}-m{n}-{team}-fix` | a milestone fix round's branch; its PR targets the integration branch (R-215) |
-| engineer reviews | main | also the design corpus's and Vulpes's main |
+| engineer reviews | — | none since R-247 (2026-10-23): the Orchestrator merges into main, the design corpus's main and Vulpes's main once the top-level QA has reviewed the PR; one-way doors stay the Engineer's, asked as plain design questions (R-248) |
 | merge slice | merge | |
 | merge main | squash | `gh pr merge <N> --squash` queues it |
 
