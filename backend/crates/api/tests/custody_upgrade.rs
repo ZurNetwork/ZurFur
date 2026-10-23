@@ -443,26 +443,32 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
     assert_eq!(rerun, nothing_to_do);
     assert_eq!(custody::store_snapshot(&pool).await, before_rerun);
 
-    // 7. Rollback rehearsal: back to the parent's schema, where the 0.1 opener opens both.
+    // 7. Rollback rehearsal: the rollback recipe's statements, in its order and in one
+    // transaction, back to the parent's schema, where the 0.1 opener opens both.
+    let mut rollback = pool.begin().await.expect("the rollback begins");
     sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ANY($1)")
         .bind(&id_1_versions)
-        .execute(&pool)
+        .execute(&mut *rollback)
         .await
         .expect("forget the upgrade's migrations");
-    sqlx::query("DELETE FROM account_keys WHERE did = $1")
-        .bind(&third_did)
-        .execute(&pool)
+    sqlx::query("DELETE FROM account_keys WHERE wrapped_keys IS NULL")
+        .execute(&mut *rollback)
         .await
-        .expect("drop the envelope-only custody row");
+        .expect("drop every envelope-only custody row");
     sqlx::query(
         "ALTER TABLE account_keys
              DROP CONSTRAINT account_keys_holds_keys,
              DROP COLUMN sealed_keys,
              ALTER COLUMN wrapped_keys SET NOT NULL",
     )
-    .execute(&pool)
+    .execute(&mut *rollback)
     .await
     .expect("restore the parent's custody table");
+    sqlx::query("TRUNCATE atproto_oauth.client_session, atproto_oauth.auth_request")
+        .execute(&mut *rollback)
+        .await
+        .expect("drop the sign-in rows sealed in the envelope");
+    rollback.commit().await.expect("the rollback commits");
 
     let rolled_back = boot_migrator(&database_url, LEGACY_ROOT)
         .await
@@ -474,6 +480,11 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
     let after_rollback = custody::store_snapshot(&pool).await;
     assert_eq!(after_rollback.columns, before.columns);
     assert_eq!(wrapped_keys(&pool).await, wrapped_before);
+    assert_eq!(
+        signin_rows(&pool).await,
+        Vec::new(),
+        "no sign-in row sealed in the envelope is left"
+    );
     assert_eq!(
         rolled_back, both_pending,
         "the 0.1 opener opens both rows on the rolled-back schema"
