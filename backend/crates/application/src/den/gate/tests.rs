@@ -19,6 +19,7 @@ use domain::{
     },
     ports::{Database, UnitOfWork},
 };
+use strum::VariantArray;
 use test_support::pg_app::{StatementLog, pg_runtime, pg_runtime_recording};
 
 use super::*;
@@ -31,8 +32,8 @@ use crate::{
         authority::{GrantKind, MINT_AS},
         host::DenHost,
         test_acts::{
-            commission_path, create_act, hand_built_create, hand_built_rename, move_act,
-            rename_act, set_deadline_act, state_at,
+            commission_path, create_act, hand_built_create, hand_built_rename, mark_late_act,
+            move_act, rename_act, set_deadline_act, state_at,
         },
         write::{Actor, Command, DenWriteError, WriteResult},
     },
@@ -1157,5 +1158,31 @@ fn an_act_that_writes_no_field_records_its_checked_change() {
         <Creator as RoleTable>::RECORD,
     ] {
         assert_eq!(record, Record::Landed);
+    }
+}
+
+// The acts list's judging refuses a create and the system's Late mark to every standing: no
+// user takes either on a stored commission.
+#[test]
+fn judging_refuses_a_create_and_the_late_mark_to_every_standing() {
+    let state = state_at(LifecycleStep::Active);
+    let now = Utc::now();
+    let roles = CommissionRole::VARIANTS
+        .iter()
+        .copied()
+        .map(Some)
+        .chain([None]);
+
+    for role in roles {
+        let standing = CommissionStanding {
+            role,
+            level: Level::Private,
+            archived: false,
+        };
+        for den_act in [create_act(TITLE), mark_late_act(untitled())] {
+            let DenAct::Commission(act) = den_act;
+            let judgement = judge_act(&act, standing, &state, now);
+            assert_eq!(judgement, Judgement::Refused, "{act:?} for {role:?}");
+        }
     }
 }

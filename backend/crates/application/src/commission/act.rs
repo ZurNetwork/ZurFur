@@ -7,7 +7,14 @@ use crate::{
     den::act::ActSpec,
 };
 
-/// Every commission act the Den's write carries.
+/// Every commission act the Den's write carries, in the order the acts list shows them. Its
+/// kind, [`CommissionActKind`], names each act without a body.
+#[derive(strum::EnumDiscriminants)]
+#[strum_discriminants(
+    name(CommissionActKind),
+    derive(strum::VariantArray),
+    doc = "Each commission act by its kind alone, in the acts list's order."
+)]
 pub(crate) enum CommissionAct {
     /// Creates a commission.
     Create(create::Act),

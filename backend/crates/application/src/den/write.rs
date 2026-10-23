@@ -191,7 +191,7 @@ pub(in crate::den) fn commission_directory() -> Option<RealPath> {
 /// What the den's builder anchors an act on: an existing commission at its own level, or a
 /// new one under the id a create's grant minted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::den) enum Target {
+enum Target {
     /// An existing commission, at its own level.
     Existing {
         /// The commission.
@@ -342,6 +342,15 @@ fn answer(applied: DenApplied) -> Result<WriteResult, DenWriteError> {
     Ok(written)
 }
 
+/// Atta's writer for `viewer`, with the den's caps: the one the write acts through and the one
+/// the acts list dry-runs, so the two meet the same checks.
+fn den_writer(viewer: Viewer) -> Writer {
+    Writer {
+        viewer,
+        caps: WriteCaps::default(),
+    }
+}
+
 /// Steps four and five on an open unit: build Atta's act from `grant`, then have Atta check it
 /// and the write host apply it. A refusal of any kind is an `Err`, so the unit rolls back.
 pub(in crate::den) async fn written(
@@ -353,10 +362,7 @@ pub(in crate::den) async fn written(
     let spec = act.spec();
     let target = Target::from(&grant);
     let atta_act = build(spec, act, &target)?;
-    let writer = Writer {
-        viewer: grant.actor().viewer(),
-        caps: WriteCaps::default(),
-    };
+    let writer = den_writer(grant.actor().viewer());
     let mut host = DenWriteHost::new(unit, grant, now);
     let applied = writer
         .act(&mut host, atta_act)
@@ -388,10 +394,7 @@ pub(in crate::den) fn atta_passes(
         body: (),
     };
     let host = DenHost::for_check(ports, viewer);
-    let writer = Writer {
-        viewer: DenHost::viewer_of(viewer),
-        caps: WriteCaps::default(),
-    };
+    let writer = den_writer(DenHost::viewer_of(viewer));
     let passes = writer.dry_run(&host, &bodiless).is_ok();
     Ok(passes)
 }

@@ -192,10 +192,7 @@ pub(super) async fn through_host(
     act: Act<DenAct>,
 ) -> Result<Result<DenApplied, DenRefusal>, WriteError> {
     let mut unit = database.begin().await.expect("begin");
-    let writer = Writer {
-        viewer,
-        caps: WriteCaps::default(),
-    };
+    let writer = den_writer(viewer);
     let mut host = DenWriteHost::new(&mut *unit, grant, Utc::now());
     let outcome = writer.act(&mut host, act).await;
     drop(host);

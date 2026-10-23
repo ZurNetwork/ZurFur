@@ -16,10 +16,16 @@ use domain::{
 
 use crate::{
     Ports,
-    commission::{act::CommissionAct, deadline, lifecycle::move_to, rename, status::direction},
+    commission::{
+        act::{CommissionAct, CommissionActKind},
+        deadline,
+        lifecycle::move_to,
+        rename,
+        status::direction,
+    },
     den::{
         act::DenAct,
-        gate::{Judgement, judge},
+        gate::{Judgement, judge_act},
         write::{DenWriteError, atta_passes},
     },
 };
@@ -57,10 +63,11 @@ struct Probe<'a> {
 }
 
 impl Probe<'_> {
-    /// `act`'s word and `judged`, the gate's own checks on it, unless Atta's checks refuse the
-    /// act the den's builder makes of it.
-    fn with_atta(&self, judged: Judgement, act: CommissionAct) -> Result<Judged, DenWriteError> {
+    /// `act`'s word and what the gate's own checks answer for it, unless Atta's checks refuse
+    /// the act the den's builder makes of it.
+    fn probe(&self, act: CommissionAct) -> Result<Judged, DenWriteError> {
         let word = ActWord(act.spec().word);
+        let judged = judge_act(&act, self.standing, self.state, self.now);
         let judgement = if judged.passes() {
             let level = self.standing.level;
             let body = DenAct::Commission(act);
@@ -71,99 +78,88 @@ impl Probe<'_> {
         };
         Ok(Judged { word, judgement })
     }
+}
 
-    /// The rename to `title`.
-    fn rename(&self, title: CommissionTitle) -> Result<Judged, DenWriteError> {
-        let act = rename::Act {
-            commission: self.commission,
-            title,
-        };
-        let judged = judge(&act, self.standing, self.state, self.now);
-        self.with_atta(judged, CommissionAct::Rename(act))
-    }
-
-    /// The lifecycle move to `to`.
-    fn move_to(&self, to: LifecycleStep) -> Result<Judged, DenWriteError> {
-        let act = move_to::Act {
-            commission: self.commission,
-            to,
-        };
-        let judged = judge(&act, self.standing, self.state, self.now);
-        self.with_atta(judged, CommissionAct::MoveLifecycle(act))
-    }
-
-    /// The direction status set to `to`.
-    fn set_direction(&self, to: DirectionStatus) -> Result<Judged, DenWriteError> {
-        let act = direction::set::Act {
-            commission: self.commission,
-            to,
-        };
-        let judged = judge(&act, self.standing, self.state, self.now);
-        self.with_atta(judged, CommissionAct::SetDirection(act))
-    }
-
-    /// The direction status clear.
-    fn clear_direction(&self) -> Result<Judged, DenWriteError> {
-        let act = direction::clear::Act {
-            commission: self.commission,
-        };
-        let judged = judge(&act, self.standing, self.state, self.now);
-        self.with_atta(judged, CommissionAct::ClearDirection(act))
-    }
-
-    /// The deadline set to `deadline`.
-    fn set_deadline(&self, deadline: DateTimeUtc) -> Result<Judged, DenWriteError> {
-        let act = deadline::set::Act {
-            commission: self.commission,
-            deadline: CommissionDeadline::from(deadline),
-        };
-        let judged = judge(&act, self.standing, self.state, self.now);
-        self.with_atta(judged, CommissionAct::SetDeadline(act))
-    }
-
-    /// The deadline clear.
-    fn clear_deadline(&self) -> Result<Judged, DenWriteError> {
-        let act = deadline::clear::Act {
-            commission: self.commission,
-        };
-        let judged = judge(&act, self.standing, self.state, self.now);
-        self.with_atta(judged, CommissionAct::ClearDeadline(act))
-    }
-
-    /// The Delayed flag raised.
-    fn set_delayed(&self) -> Result<Judged, DenWriteError> {
-        let act = deadline::status::set::Act {
-            commission: self.commission,
-        };
-        let judged = judge(&act, self.standing, self.state, self.now);
-        self.with_atta(judged, CommissionAct::SetDelayed(act))
-    }
-
-    /// The Delayed flag taken down.
-    fn clear_delayed(&self) -> Result<Judged, DenWriteError> {
-        let act = deadline::status::clear::Act {
-            commission: self.commission,
-        };
-        let judged = judge(&act, self.standing, self.state, self.now);
-        self.with_atta(judged, CommissionAct::ClearDelayed(act))
+/// The values the list tries of the act of `kind` on `commission`, at `now` and given its
+/// `title`: every lifecycle step, every direction status, the rename to `title`, a deadline at
+/// `now`, since the deadline rule refuses by state, never by the time set, and each clear and
+/// Delayed act once. None of a create or of the system's Late mark, which no user takes on a
+/// stored commission. A match over every kind, so a new act fails to compile until it is tried.
+fn tried(
+    kind: CommissionActKind,
+    commission: CommissionId,
+    title: &CommissionTitle,
+    now: DateTimeUtc,
+) -> Vec<CommissionAct> {
+    match kind {
+        CommissionActKind::Create | CommissionActKind::MarkLate => Vec::new(),
+        CommissionActKind::Rename => {
+            let act = rename::Act {
+                commission,
+                title: title.clone(),
+            };
+            vec![CommissionAct::Rename(act)]
+        }
+        CommissionActKind::MoveLifecycle => LifecycleStep::VARIANTS
+            .iter()
+            .map(|step| {
+                let act = move_to::Act {
+                    commission,
+                    to: step.clone(),
+                };
+                CommissionAct::MoveLifecycle(act)
+            })
+            .collect(),
+        CommissionActKind::SetDirection => DirectionStatus::VARIANTS
+            .iter()
+            .map(|status| {
+                let act = direction::set::Act {
+                    commission,
+                    to: *status,
+                };
+                CommissionAct::SetDirection(act)
+            })
+            .collect(),
+        CommissionActKind::ClearDirection => {
+            let act = direction::clear::Act { commission };
+            vec![CommissionAct::ClearDirection(act)]
+        }
+        CommissionActKind::SetDeadline => {
+            let act = deadline::set::Act {
+                commission,
+                deadline: CommissionDeadline::from(now),
+            };
+            vec![CommissionAct::SetDeadline(act)]
+        }
+        CommissionActKind::ClearDeadline => {
+            let act = deadline::clear::Act { commission };
+            vec![CommissionAct::ClearDeadline(act)]
+        }
+        CommissionActKind::SetDelayed => {
+            let act = deadline::status::set::Act { commission };
+            vec![CommissionAct::SetDelayed(act)]
+        }
+        CommissionActKind::ClearDelayed => {
+            let act = deadline::status::clear::Act { commission };
+            vec![CommissionAct::ClearDelayed(act)]
+        }
     }
 }
 
-/// The act's word when some value of it passes: every value `judged` names is one act's.
-fn listed(judged: &[Judged]) -> Option<ActWord> {
-    judged
-        .iter()
-        .find(|value| value.judgement.passes())
-        .map(|value| value.word)
+/// The step a lifecycle move moves to; `None` for every other act.
+fn move_target(act: &CommissionAct) -> Option<LifecycleStep> {
+    let CommissionAct::MoveLifecycle(move_to) = act else {
+        return None;
+    };
+    Some(move_to.to.clone())
 }
 
 /// What `viewer`, standing on `commission` as `standing` says, may do to it at `now`, given its
 /// stored `state` and its `title`, as the den's write would decide each act: the role its
 /// capability needs, its rule on `state`, then Atta's checks on the act the den builds, with
-/// nothing written. An act that takes a value is listed when some value passes: every lifecycle
-/// step, every direction status, the rename to `title`, and a deadline at `now`, since the
-/// deadline rule refuses by state, never by the time set. Someone who holds no role may do
-/// nothing.
+/// nothing written. Each act is tried with the values [`tried`] names, in its kind's order, and
+/// listed when some value passes; a step is a lifecycle target when its move changes the
+/// commission. Someone who holds no role may do nothing.
 pub(crate) fn allowed_acts(
     ports: &Ports,
     viewer: &UserId,
@@ -181,35 +177,22 @@ pub(crate) fn allowed_acts(
         state,
         now,
     };
-    let moves = LifecycleStep::VARIANTS
-        .iter()
-        .map(|step| probe.move_to(step.clone()))
-        .collect::<Result<Vec<Judged>, DenWriteError>>()?;
-    let lifecycle_targets = LifecycleStep::VARIANTS
-        .iter()
-        .zip(&moves)
-        .filter(|(_, judged)| judged.judgement == Judgement::Changes)
-        .map(|(step, _)| step.clone())
-        .collect();
-    let direction_sets = DirectionStatus::VARIANTS
-        .iter()
-        .map(|status| probe.set_direction(*status))
-        .collect::<Result<Vec<Judged>, DenWriteError>>()?;
-
-    let each_act = [
-        vec![probe.rename(title.clone())?],
-        moves,
-        direction_sets,
-        vec![probe.clear_direction()?],
-        vec![probe.set_deadline(now)?],
-        vec![probe.clear_deadline()?],
-        vec![probe.set_delayed()?],
-        vec![probe.clear_delayed()?],
-    ];
-    let acts = each_act
-        .iter()
-        .filter_map(|judged| listed(judged))
-        .collect();
+    let mut acts = Vec::new();
+    let mut lifecycle_targets = Vec::new();
+    for kind in CommissionActKind::VARIANTS {
+        let mut listed = None;
+        for act in tried(*kind, commission, title, now) {
+            let target = move_target(&act);
+            let judged = probe.probe(act)?;
+            if judged.judgement.passes() {
+                listed.get_or_insert(judged.word);
+            }
+            if let (Some(step), Judgement::Changes) = (target, judged.judgement) {
+                lifecycle_targets.push(step);
+            }
+        }
+        acts.extend(listed);
+    }
     let allowed = AllowedActs {
         acts,
         lifecycle_targets,

@@ -371,7 +371,7 @@ impl Judgement {
 /// The gate's checks on `handler` for a user whose standing on a stored commission is
 /// `standing`, written nowhere: the verdict on the role its capability needs, then its rule on
 /// the commission's stored `state` at `now`, as the gate runs it before any write.
-pub(in crate::den) fn judge<H>(
+fn judge<H>(
     handler: &H,
     standing: CommissionStanding,
     state: &CommissionState,
@@ -391,6 +391,28 @@ where
         Err(_) => Judgement::Refused,
         Ok(None) => Judgement::Unchanged,
         Ok(Some(_)) => Judgement::Changes,
+    }
+}
+
+/// [`judge`] on `act`, by an exhaustive match over the commission's acts: each act a user
+/// takes on a stored commission judged by its own handler; a create, which has no stored
+/// commission yet, and the system's Late mark, which no user takes, refused.
+pub(in crate::den) fn judge_act(
+    act: &CommissionAct,
+    standing: CommissionStanding,
+    state: &CommissionState,
+    now: DateTimeUtc,
+) -> Judgement {
+    match act {
+        CommissionAct::Create(_) | CommissionAct::MarkLate(_) => Judgement::Refused,
+        CommissionAct::Rename(rename) => judge(rename, standing, state, now),
+        CommissionAct::MoveLifecycle(move_to) => judge(move_to, standing, state, now),
+        CommissionAct::SetDirection(set) => judge(set, standing, state, now),
+        CommissionAct::ClearDirection(clear) => judge(clear, standing, state, now),
+        CommissionAct::SetDeadline(set) => judge(set, standing, state, now),
+        CommissionAct::ClearDeadline(clear) => judge(clear, standing, state, now),
+        CommissionAct::SetDelayed(set) => judge(set, standing, state, now),
+        CommissionAct::ClearDelayed(clear) => judge(clear, standing, state, now),
     }
 }
 

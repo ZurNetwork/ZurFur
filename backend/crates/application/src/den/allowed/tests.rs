@@ -151,54 +151,100 @@ async fn listed_for(
     allowed_acts(ports, &actor, commission, standing, &state, &title, now).expect("the list")
 }
 
-/// One real call a listed act's word stands for.
+/// One real call an act the list tries stands for.
 #[derive(Debug, Clone)]
 enum Call {
-    Rename,
+    Rename(CommissionTitle),
     Move(LifecycleStep),
     Field(FieldCall),
 }
 
-impl Call {
-    /// The word of the act this call makes.
-    fn word(&self) -> &'static str {
-        match self {
-            Call::Rename => "rename",
-            Call::Move(_) => "move_lifecycle",
-            Call::Field(FieldCall::SetDirection(_)) => "set_direction_status",
-            Call::Field(FieldCall::ClearDirection) => "clear_direction_status",
-            Call::Field(FieldCall::SetDeadline(_)) => "set_deadline",
-            Call::Field(FieldCall::ClearDeadline) => "clear_deadline",
-            Call::Field(FieldCall::SetDelayed) => "set_delayed",
-            Call::Field(FieldCall::ClearDelayed) => "clear_delayed",
+/// One real call, and the word of the act it makes.
+#[derive(Debug, Clone)]
+struct WordedCall {
+    word: &'static str,
+    call: Call,
+}
+
+/// The real call that makes `act`, through its typed use case.
+fn call_of(act: CommissionAct) -> Call {
+    match act {
+        CommissionAct::Create(_) | CommissionAct::MarkLate(_) => {
+            panic!("the list tries no create and no Late mark")
         }
+        CommissionAct::Rename(rename) => Call::Rename(rename.title),
+        CommissionAct::MoveLifecycle(move_to) => Call::Move(move_to.to),
+        CommissionAct::SetDirection(set) => Call::Field(FieldCall::SetDirection(set.to)),
+        CommissionAct::ClearDirection(_) => Call::Field(FieldCall::ClearDirection),
+        CommissionAct::SetDeadline(set) => {
+            let deadline = DateTimeUtc::from(set.deadline);
+            Call::Field(FieldCall::SetDeadline(deadline))
+        }
+        CommissionAct::ClearDeadline(_) => Call::Field(FieldCall::ClearDeadline),
+        CommissionAct::SetDelayed(_) => Call::Field(FieldCall::SetDelayed),
+        CommissionAct::ClearDelayed(_) => Call::Field(FieldCall::ClearDelayed),
     }
 }
 
-/// Every call a role holder could make, each value an act takes included.
-fn every_call(now: DateTimeUtc) -> Vec<Call> {
-    let moves = LifecycleStep::VARIANTS
+/// `act` as a real call, with its word.
+fn worded(act: CommissionAct) -> WordedCall {
+    let word = act.spec().word;
+    let call = call_of(act);
+    WordedCall { word, call }
+}
+
+/// The calls of the act of `kind` the list should try, written apart from the list: every
+/// lifecycle step, every direction status, the rename to the shown title, a deadline at `now` as
+/// the set act stores it, each clear and Delayed act once, and no create and no Late mark.
+fn expected_calls(kind: CommissionActKind, now: DateTimeUtc) -> Vec<Call> {
+    match kind {
+        CommissionActKind::Create | CommissionActKind::MarkLate => Vec::new(),
+        CommissionActKind::Rename => {
+            let title = TITLE.parse::<CommissionTitle>().expect("a valid title");
+            vec![Call::Rename(title)]
+        }
+        CommissionActKind::MoveLifecycle => LifecycleStep::VARIANTS
+            .iter()
+            .map(|step| Call::Move(step.clone()))
+            .collect(),
+        CommissionActKind::SetDirection => DirectionStatus::VARIANTS
+            .iter()
+            .map(|status| Call::Field(FieldCall::SetDirection(*status)))
+            .collect(),
+        CommissionActKind::ClearDirection => vec![Call::Field(FieldCall::ClearDirection)],
+        CommissionActKind::SetDeadline => {
+            let stored_now = DateTimeUtc::from(CommissionDeadline::from(now));
+            vec![Call::Field(FieldCall::SetDeadline(stored_now))]
+        }
+        CommissionActKind::ClearDeadline => vec![Call::Field(FieldCall::ClearDeadline)],
+        CommissionActKind::SetDelayed => vec![Call::Field(FieldCall::SetDelayed)],
+        CommissionActKind::ClearDelayed => vec![Call::Field(FieldCall::ClearDelayed)],
+    }
+}
+
+/// How many acts a user may take on a stored commission: each kind the list should try.
+fn user_acts(now: DateTimeUtc) -> usize {
+    CommissionActKind::VARIANTS
         .iter()
-        .map(|step| Call::Move(step.clone()));
-    let direction_sets = DirectionStatus::VARIANTS
+        .filter(|kind| !expected_calls(**kind, now).is_empty())
+        .count()
+}
+
+/// Every call the list tries on `commission` at `now`, and a deadline ahead and one past
+/// besides: every value the list judges is made for real.
+fn every_call(commission: CommissionId, now: DateTimeUtc) -> Vec<WordedCall> {
+    let title = TITLE.parse::<CommissionTitle>().expect("a valid title");
+    let listed = CommissionActKind::VARIANTS
         .iter()
-        .map(|status| Call::Field(FieldCall::SetDirection(*status)));
-    let fields = [
-        FieldCall::ClearDirection,
-        FieldCall::SetDeadline(now),
-        FieldCall::SetDeadline(future()),
-        FieldCall::SetDeadline(past()),
-        FieldCall::ClearDeadline,
-        FieldCall::SetDelayed,
-        FieldCall::ClearDelayed,
-    ]
-    .into_iter()
-    .map(Call::Field);
-    std::iter::once(Call::Rename)
-        .chain(moves)
-        .chain(direction_sets)
-        .chain(fields)
-        .collect()
+        .flat_map(|kind| tried(*kind, commission, &title, now));
+    let other_deadlines = [future(), past()].map(|deadline| {
+        let act = deadline::set::Act {
+            commission,
+            deadline: CommissionDeadline::from(deadline),
+        };
+        CommissionAct::SetDeadline(act)
+    });
+    listed.chain(other_deadlines).map(worded).collect()
 }
 
 /// What a real call answered: refused, or landed with or without a new changelog entry.
@@ -226,11 +272,11 @@ async fn answered(
         .len();
     let commissions = Commissions::new(ports);
     let result = match call {
-        Call::Rename => {
+        Call::Rename(title) => {
             let command = crate::commission::rename::Command {
                 actor_id: actor.clone(),
                 commission_id: commission,
-                title: TITLE.parse().expect("a valid title"),
+                title: title.clone(),
             };
             commissions.rename(command, now).await.map(|_| ())
         }
@@ -271,7 +317,7 @@ async fn answered(
 #[tokio::test]
 async fn the_acts_list_and_the_gate_agree_on_every_state() {
     let now = Utc::now();
-    let calls = every_call(now);
+    let user_acts = user_acts(now);
     let mut lists_every_act = false;
 
     for case in every_case() {
@@ -282,14 +328,14 @@ async fn the_acts_list_and_the_gate_agree_on_every_state() {
 
         let mut landed: Vec<&'static str> = Vec::new();
         let mut targets = Vec::new();
-        for call in &calls {
+        for WordedCall { word, call } in every_call(probed, now) {
             let fresh = seeded(&world, &case, now).await;
-            let answer = answered(&world, &case.actor(), fresh, call, now).await;
-            if answer != Answered::Refused && !landed.contains(&call.word()) {
-                landed.push(call.word());
+            let answer = answered(&world, &case.actor(), fresh, &call, now).await;
+            if answer != Answered::Refused && !landed.contains(&word) {
+                landed.push(word);
             }
             if let (Call::Move(step), Answered::Changed) = (call, answer) {
-                targets.push(step.clone());
+                targets.push(step);
             }
         }
 
@@ -302,9 +348,27 @@ async fn the_acts_list_and_the_gate_agree_on_every_state() {
             !allowed.lifecycle_targets.contains(&case.step),
             "the held step is no target: {case:?}"
         );
-        lists_every_act |= listed.len() == 8;
+        lists_every_act |= listed.len() == user_acts;
     }
     assert!(lists_every_act, "no state lists every act");
+}
+
+// The list tries each value of every act a user takes, as written apart from it, and nothing
+// of a create or the system's Late mark.
+#[test]
+fn the_list_tries_each_value_of_every_user_act() {
+    let now = Utc::now();
+    let commission = CommissionId::mint();
+    let title = TITLE.parse::<CommissionTitle>().expect("a valid title");
+
+    for kind in CommissionActKind::VARIANTS {
+        let calls: Vec<Call> = tried(*kind, commission, &title, now)
+            .into_iter()
+            .map(call_of)
+            .collect();
+        let expected = expected_calls(*kind, now);
+        assert_eq!(format!("{calls:?}"), format!("{expected:?}"), "{kind:?}");
+    }
 }
 
 // The list keeps one fixed order: the rename, the move, then the direction, deadline and
