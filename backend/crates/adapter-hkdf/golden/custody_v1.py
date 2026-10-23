@@ -128,7 +128,8 @@ def encode_parts(parts):
 
 
 def check_rfc5869_test_case_1():
-    """RFC 5869 Appendix A.1, so the HKDF above is the RFC's."""
+    """RFC 5869 (IETF), Appendix A.1, Test Case 1: its inputs and expected PRK and OKM, so
+    the HKDF above is the RFC's."""
     ikm = bytes([0x0B] * 22)
     salt = bytes(range(0x00, 0x0D))
     info = bytes(range(0xF0, 0xFA))
@@ -263,8 +264,9 @@ def xchacha20_poly1305_encrypt(key, nonce, associated_data, plaintext):
     return chacha20_poly1305_encrypt(subkey, chacha20_nonce, associated_data, plaintext)
 
 
-# RFC 8439 section 2.8.2's key, associated data and plaintext, shared with the draft's
-# appendix A.1, as chacha20poly1305-0.10.1/tests/lib.rs quotes them (KEY, AAD, PLAINTEXT).
+# RFC 8439 (IETF), section 2.8.2: its key, associated data and plaintext, shared with the
+# IETF Internet-Draft draft-arciszewski-xchacha-03, appendix A.1, as RustCrypto's
+# chacha20poly1305-0.10.1/tests/lib.rs quotes them (KEY, AAD, PLAINTEXT).
 AEAD_VECTOR_KEY = bytes.fromhex("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f")
 AEAD_VECTOR_ASSOCIATED_DATA = bytes.fromhex("50515253c0c1c2c3c4c5c6c7")
 AEAD_VECTOR_PLAINTEXT = (
@@ -275,7 +277,8 @@ AEAD_VECTOR_PLAINTEXT_LENGTH = 114
 
 
 def check_poly1305_vector():
-    """RFC 8439 section 2.5.2, as poly1305-0.8.0/tests/lib.rs quotes it (test_rfc7539_vector)."""
+    """RFC 8439 (IETF), section 2.5.2, as RustCrypto's poly1305-0.8.0/tests/lib.rs quotes it
+    (test_rfc7539_vector)."""
     key = bytes.fromhex("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b")
     message = bytes.fromhex("43727970746f6772617068696320466f72756d2052657365617263682047726f7570")
     expected_tag = "a8061dc1305136c6c22b8baf0c0127a9"
@@ -284,8 +287,8 @@ def check_poly1305_vector():
 
 
 def check_hchacha20_vector():
-    """draft-arciszewski-xchacha-03 section 2.2.1, as chacha20-0.9.1/src/xchacha.rs quotes it
-    (module hchacha20_tests, test_vector)."""
+    """The IETF Internet-Draft draft-arciszewski-xchacha-03, section 2.2.1, as RustCrypto's
+    chacha20-0.9.1/src/xchacha.rs quotes it (module hchacha20_tests, test_vector)."""
     key = bytes.fromhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
     nonce = bytes.fromhex("000000090000004a0000000031415927")
     expected_subkey = "82413b4227b27bfed30e42508a877d73a0f9e4d58a74a853c12ec41326d3ecdc"
@@ -294,8 +297,8 @@ def check_hchacha20_vector():
 
 
 def check_chacha20_poly1305_vector():
-    """RFC 8439 section 2.8.2, as chacha20poly1305-0.10.1/tests/lib.rs quotes it
-    (module chacha20)."""
+    """RFC 8439 (IETF), section 2.8.2, as RustCrypto's chacha20poly1305-0.10.1/tests/lib.rs
+    quotes it (module chacha20)."""
     nonce = bytes.fromhex("070000004041424344454647")
     expected_ciphertext = (
         "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d6"
@@ -312,8 +315,8 @@ def check_chacha20_poly1305_vector():
 
 
 def check_xchacha20_poly1305_vector():
-    """draft-arciszewski-xchacha-03 appendix A.1, as chacha20poly1305-0.10.1/tests/lib.rs
-    quotes it (module xchacha20)."""
+    """The IETF Internet-Draft draft-arciszewski-xchacha-03, appendix A.1, as RustCrypto's
+    chacha20poly1305-0.10.1/tests/lib.rs quotes it (module xchacha20)."""
     nonce = bytes.fromhex("404142434445464748494a4b4c4d4e4f5051525354555657")
     expected_ciphertext = (
         "bd6d179d3e83d43b9576579493c0e939572a1700252bfaccbed2902c21396cbb"

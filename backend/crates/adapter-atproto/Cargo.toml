@@ -15,10 +15,10 @@ jacquard = { version = "0.12.0", default-features = false, features = [
   "loopback",
   "derive",
 ] }
-jacquard-oauth = { version = "0.12.0" }
-jacquard-common = { version = "0.12.0" }
-fluent-uri = { version = "0.4.1", features = ["std"] }
-smol_str = "0.3.6"
+jacquard-oauth = { workspace = true }
+jacquard-common = { workspace = true }
+fluent-uri = { workspace = true }
+smol_str = { workspace = true }
 # Public-boundary record writes (ZMVP-105): content-address CIDs for blob refs,
 # raw request body bytes, and typed HTTP headers for uploadBlob's Content-Type.
 cid = { workspace = true }

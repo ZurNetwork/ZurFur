@@ -3,6 +3,7 @@ use strum::VariantArray;
 use super::*;
 use crate::golden::{bytes_at, golden, hex_bytes, text_at};
 
+/// RFC 5869 (IETF), Appendix A.1, Test Case 1: its inputs and expected OKM.
 #[test]
 fn reproduces_rfc5869_test_case_1() {
     let ikm = [0x0b_u8; 22];

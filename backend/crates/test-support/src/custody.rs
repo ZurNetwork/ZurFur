@@ -356,14 +356,14 @@ pub fn printed_forms(bytes: &[u8]) -> Vec<(String, String)> {
 }
 
 /// Each of [`printed_forms`] of `bytes`, named after `what`: "the PRK as uppercase hex",
-/// "the PRK's bytes 8..16 as hex".
+/// "the PRK, bytes 8..16 as hex".
 pub fn named_printings(what: &str, bytes: &[u8]) -> Vec<(String, String)> {
     let whole = whole_forms(bytes)
         .into_iter()
         .map(|(form, printed)| (format!("{what} {form}"), printed));
     let windows = window_forms(bytes)
         .into_iter()
-        .map(|(form, printed)| (format!("{what}'s {form}"), printed));
+        .map(|(form, printed)| (format!("{what}, {form}"), printed));
     whole.chain(windows).collect()
 }
 

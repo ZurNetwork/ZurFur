@@ -1,6 +1,7 @@
 use super::*;
 
-/// RFC 5869's test case 1: its input key, salt, info, PRK and 42 output bytes.
+/// RFC 5869 (IETF), Appendix A.1, Test Case 1: its input key, salt, info, PRK and 42
+/// output bytes.
 const RFC_5869_IKM: [u8; 22] = [0x0b; 22];
 const RFC_5869_SALT: &str = "000102030405060708090a0b0c";
 const RFC_5869_INFO: &str = "f0f1f2f3f4f5f6f7f8f9";
@@ -184,7 +185,7 @@ fn named_printings_name_the_whole_value_and_each_window() {
 
     let names: Vec<&str> = printings.iter().map(|(name, _)| name.as_str()).collect();
     assert!(names.contains(&"the signing key as uppercase hex"));
-    assert!(names.contains(&"the signing key's bytes 1..9 as hex"));
+    assert!(names.contains(&"the signing key, bytes 1..9 as hex"));
     assert_eq!(printings.len(), 9 + 2 * 2);
 }
 

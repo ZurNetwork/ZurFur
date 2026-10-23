@@ -69,10 +69,10 @@ sha2-0-11 = { workspace = true }
 # `custody::signin_secrets_round_trip`: sign-in secrets sealed and opened through the
 # auth store, over jacquard's OAuth records (already linked through composition).
 adapter-atproto = { path = "../adapter-atproto" }
-jacquard-oauth = { version = "0.12.0" }
-jacquard-common = { version = "0.12.0" }
-fluent-uri = { version = "0.4.1", features = ["std"] }
-smol_str = "0.3.6"
+jacquard-oauth = { workspace = true }
+jacquard-common = { workspace = true }
+fluent-uri = { workspace = true }
+smol_str = { workspace = true }
 
 [lints]
 workspace = true
