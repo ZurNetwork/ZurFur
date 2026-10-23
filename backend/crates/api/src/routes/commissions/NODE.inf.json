@@ -60,8 +60,18 @@
       "node": false
     },
     {
+      "name": "get.rs",
+      "role": "GET /{id} → commission::get, the read: the fields every opener may see (never the owner, never the linked channel), the deadline status derived at the request's time and the viewer's acts and lifecycle targets, rendered into GetCommissionResponse by an impl From<get::Output>; a stranger the Den doesn't open it to gets a made-up id's 404",
+      "node": false
+    },
+    {
       "name": "invitations.rs",
       "role": "POST/DELETE seat invitations → commission::invitations::issue / revoke",
+      "node": false
+    },
+    {
+      "name": "lifecycle.rs",
+      "role": "PUT /{id}/lifecycle → commission::lifecycle::move_to, answering 204; the step is parsed before any use case runs, so a token outside the vocabulary (case included) or a missing one → 422 with a field error at #/to, code unknown_value, its detail fixed",
       "node": false
     },
     {
@@ -76,7 +86,7 @@
     },
     {
       "name": "mod.rs",
-      "role": "router assembly, body limits, the CommissionError→Problem mapping (create and rename map through it too), title_refused (a title the name rule refuses at parse, as a field error at #/title), and require_owner — the last driver-side gate, kept only for the unmigrated channel/elements acts",
+      "role": "router assembly, body limits, the CommissionError→Problem mapping (create, rename, the read and the lifecycle move map through it too), title_refused (a title the name rule refuses at parse, as a field error at #/title), and require_owner — the last driver-side gate, kept only for the unmigrated channel/elements acts",
       "node": false
     },
     {

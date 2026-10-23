@@ -19,8 +19,8 @@ use domain::{
     elements::{
         commission::{
             AsOwner, AsParticipant, AsSystem, Commission, CommissionBirth, CommissionId,
-            CommissionRefusal, CommissionRole, CommissionState, DeadlineChange, DelayedChange,
-            DirectionChange, LateFacts, NewChangelogEntry,
+            CommissionRefusal, CommissionRole, CommissionStanding, CommissionState, DeadlineChange,
+            DelayedChange, DirectionChange, LateFacts, NewChangelogEntry,
         },
         node::{NewNode, NodeId, NodeRow, NodeSegment, NodeType},
         text::StoredText,
@@ -29,6 +29,7 @@ use domain::{
     ports::{CommissionRepo, Creator, New, NodeRepo, SegmentTaken, Unit, WriteCapability},
 };
 
+use crate::commission::den::{Verdict, verdict};
 use crate::commission::sweep;
 use crate::{
     commission::{
@@ -347,6 +348,50 @@ pub(crate) trait Handler: Sized {
 /// Who an act handled by `H` needs: its capability's role's.
 pub(crate) fn needs<H: Handler>() -> Needs {
     <H::Role as RoleTable>::NEEDS
+}
+
+/// What the gate's own checks answer for an act on a stored commission, with nothing written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::den) enum Judgement {
+    /// The role it needs is not held, or its rule refuses it.
+    Refused,
+    /// It passes, and writes nothing: what it sets is already held.
+    Unchanged,
+    /// It passes, and changes the commission.
+    Changes,
+}
+
+impl Judgement {
+    /// Whether the act passes, changing something or not.
+    pub(in crate::den) fn passes(self) -> bool {
+        self != Self::Refused
+    }
+}
+
+/// The gate's checks on `handler` for a user whose standing on a stored commission is
+/// `standing`, written nowhere: the verdict on the role its capability needs, then its rule on
+/// the commission's stored `state` at `now`, as the gate runs it before any write.
+pub(in crate::den) fn judge<H>(
+    handler: &H,
+    standing: CommissionStanding,
+    state: &CommissionState,
+    now: DateTimeUtc,
+) -> Judgement
+where
+    H: Handler,
+    H::Role: RoleTable<Facts = CommissionState>,
+{
+    let Needs::Role(needed) = needs::<H>() else {
+        return Judgement::Refused;
+    };
+    let Verdict::Granted(_) = verdict(Some(standing), needed) else {
+        return Judgement::Refused;
+    };
+    match handler.precondition(state, now) {
+        Err(_) => Judgement::Refused,
+        Ok(None) => Judgement::Unchanged,
+        Ok(Some(_)) => Judgement::Changes,
+    }
 }
 
 /// The write capability in role `R` that `grant` leaves, or `None`; the one issuer in the

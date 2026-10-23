@@ -1,4 +1,4 @@
-// The Reason's v1 surface: creating Commissions.
+// The Reason's v1 surface: creating, reading and changing Commissions.
 //
 // Only messages are generated; the service block declares routes only.
 // Every vocabulary here is a STRING with the known values documented (R8)
@@ -103,7 +103,132 @@ message RenameCommissionResponse {
   google.protobuf.Timestamp created_at = 10;
 }
 
-// The commissions service. Session-gated; Problems per problem.proto.
+// `GET /api/v1/commissions/{id}` — read one commission.
+message GetCommissionRequest {
+  // Opaque commission id, from the path.
+  string id = 1;
+}
+
+// `GET .../{id}` succeeds `200` with the commission as anyone who may open it sees it.
+// It carries only what every such viewer may see: never the owner and never the linked
+// channel. Field numbers match the other commission answers where they carry the same fact;
+// 9 is left unused because it holds the linked channel there.
+message GetCommissionResponse {
+  // Opaque commission id (R6).
+  string id = 1;
+  // The commission's title as the Den shows it: `Unnamed` for a title stored before
+  // today's name rule that the rule now refuses.
+  string title = 2;
+  // Lifecycle step. Vocabulary (R8): `draft` | `batched` | `active` |
+  // `completed` | `cancelled` | `disputed`.
+  string lifecycle = 3;
+  // Who may see it. Vocabulary (R8): `private` | `listed` | `public`.
+  string visibility = 4;
+  // The agreed deadline, if set. Absent = no deadline, nothing more (R4).
+  optional google.protobuf.Timestamp deadline = 5;
+  // The maturity posture, if rated.
+  optional Maturity maturity = 6;
+  // Direction axis of the two-dimensional status, if set (R8 vocabulary).
+  optional string direction_status = 7;
+  // Deadline axis of the two-dimensional status, if any, at the time of the request
+  // (R8 vocabulary): `late` once the deadline has passed on a step that isn't
+  // `completed` or `cancelled`, else `delayed` when a Participant raised it. Absent
+  // with no deadline.
+  optional string deadline_status = 8;
+  // When the commission was created.
+  google.protobuf.Timestamp created_at = 10;
+  // Whether the commission is archived.
+  bool archived = 11;
+  // What the viewer may do to it now, by each call's act word, in this order when present:
+  // `rename` (the owner only), `move_lifecycle`, `set_direction_status`,
+  // `clear_direction_status`, `set_deadline`, `clear_deadline`, `set_delayed`,
+  // `clear_delayed`. Empty for a viewer who holds no role on it. An act is listed when
+  // its call would succeed for some value it takes; a listed call may still answer `204`
+  // with nothing changed.
+  repeated string acts = 12;
+  // The steps `move_lifecycle` would really move it to now, in the vocabulary of
+  // `lifecycle`; never the step it holds. Empty for a viewer who holds no role on it.
+  repeated string lifecycle_targets = 13;
+}
+
+// `PUT /api/v1/commissions/{id}/lifecycle` — a Participant moves the lifecycle step.
+message MoveCommissionLifecycleRequest {
+  // Opaque commission id, from the path.
+  string id = 1;
+  // The step to move to, in the vocabulary of `GetCommissionResponse.lifecycle`. A token
+  // outside it → 422 with a field error at `#/to`.
+  string to = 2;
+}
+
+// `PUT .../lifecycle` succeeds `204`; there is no body.
+message MoveCommissionLifecycleResponse {}
+
+// `PUT /api/v1/commissions/{id}/status/direction` — a Participant sets the direction status.
+message SetCommissionDirectionStatusRequest {
+  // Opaque commission id, from the path.
+  string id = 1;
+  // The status to set (R8): `waiting_for_input` | `waiting_for_approval` |
+  // `changes_requested`. A set replaces the one held.
+  string status = 2;
+}
+
+// `PUT .../status/direction` succeeds `204`; there is no body.
+message SetCommissionDirectionStatusResponse {}
+
+// `DELETE /api/v1/commissions/{id}/status/direction` — a Participant clears the direction
+// status.
+message ClearCommissionDirectionStatusRequest {
+  // Opaque commission id, from the path.
+  string id = 1;
+}
+
+// `DELETE .../status/direction` succeeds `204`; there is no body.
+message ClearCommissionDirectionStatusResponse {}
+
+// `PUT /api/v1/commissions/{id}/deadline` — a Participant sets or moves the deadline.
+message SetCommissionDeadlineRequest {
+  // Opaque commission id, from the path.
+  string id = 1;
+  // The new deadline. Required.
+  google.protobuf.Timestamp deadline = 2;
+}
+
+// `PUT .../deadline` succeeds `204`; there is no body.
+message SetCommissionDeadlineResponse {}
+
+// `DELETE /api/v1/commissions/{id}/deadline` — a Participant clears the deadline.
+message ClearCommissionDeadlineRequest {
+  // Opaque commission id, from the path.
+  string id = 1;
+}
+
+// `DELETE .../deadline` succeeds `204`; there is no body.
+message ClearCommissionDeadlineResponse {}
+
+// `PUT /api/v1/commissions/{id}/status/deadline` — a Participant raises the Delayed flag.
+message SetCommissionDeadlineStatusRequest {
+  // Opaque commission id, from the path.
+  string id = 1;
+  // Only `delayed`. `late` is the system's word, derived from the deadline, and refused.
+  string status = 2;
+}
+
+// `PUT .../status/deadline` succeeds `204`; there is no body.
+message SetCommissionDeadlineStatusResponse {}
+
+// `DELETE /api/v1/commissions/{id}/status/deadline` — a Participant takes the Delayed flag
+// down.
+message ClearCommissionDeadlineStatusRequest {
+  // Opaque commission id, from the path.
+  string id = 1;
+}
+
+// `DELETE .../status/deadline` succeeds `204`; there is no body.
+message ClearCommissionDeadlineStatusResponse {}
+
+// The commissions service. Session-gated: signed out, every call answers `401`.
+// Problems per problem.proto. Someone who may not open a commission gets the same `404`
+// (`commission_not_found`) as an id that names nothing, on every call.
 service CommissionService {
   // Create a commission. `201` + the created commission, so the caller can
   // navigate straight to what it made — consistent with CreateAccount.
@@ -121,6 +246,86 @@ service CommissionService {
     option (google.api.http) = {
       patch: "/api/v1/commissions/{id}/title"
       body: "*"
+    };
+  }
+
+  // Read one commission. `200` + the commission as the viewer may see it, with the acts
+  // they may take. Anyone the commission doesn't open to gets the same `404` as an id that
+  // names nothing.
+  rpc GetCommission(GetCommissionRequest) returns (GetCommissionResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/commissions/{id}"
+    };
+  }
+
+  // Any Participant moves the lifecycle step. `204`, with nothing changed when it already
+  // holds the step. `422` with a field error at `#/to` for a token outside the vocabulary,
+  // before anyone's standing is checked. `404` for anyone who holds no role on it, alike
+  // for an id that names nothing. `409 commission_disputed` while it is disputed; else
+  // `409 lifecycle_move_refused` for a move from another step into `draft` or `disputed`.
+  rpc MoveCommissionLifecycle(MoveCommissionLifecycleRequest) returns (MoveCommissionLifecycleResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/commissions/{id}/lifecycle"
+      body: "*"
+    };
+  }
+
+  // Any Participant sets the direction status. `204`, with nothing changed when it already
+  // holds the status. `422` for a status outside the vocabulary. `404` for anyone who holds
+  // no role on it, alike for an id that names nothing.
+  rpc SetCommissionDirectionStatus(SetCommissionDirectionStatusRequest) returns (SetCommissionDirectionStatusResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/commissions/{id}/status/direction"
+      body: "*"
+    };
+  }
+
+  // Any Participant clears the direction status. `204`, with nothing changed when none is
+  // set. `404` for anyone who holds no role on it, alike for an id that names nothing.
+  rpc ClearCommissionDirectionStatus(ClearCommissionDirectionStatusRequest) returns (ClearCommissionDirectionStatusResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/commissions/{id}/status/direction"
+    };
+  }
+
+  // Any Participant sets or moves the deadline. `204`, with nothing changed when it already
+  // holds the deadline. `422` for a missing or malformed deadline. `404` for anyone who
+  // holds no role on it, alike for an id that names nothing. `409 commission_disputed`
+  // while it is disputed.
+  rpc SetCommissionDeadline(SetCommissionDeadlineRequest) returns (SetCommissionDeadlineResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/commissions/{id}/deadline"
+      body: "*"
+    };
+  }
+
+  // Any Participant clears the deadline. `204`, with nothing changed when none is set.
+  // `404` for anyone who holds no role on it, alike for an id that names nothing.
+  // `409 commission_disputed` while it is disputed.
+  rpc ClearCommissionDeadline(ClearCommissionDeadlineRequest) returns (ClearCommissionDeadlineResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/commissions/{id}/deadline"
+    };
+  }
+
+  // Any Participant raises the Delayed flag. `204`, with nothing changed when it is already
+  // raised. `422` for any status but `delayed`. `404` for anyone who holds no role on it,
+  // alike for an id that names nothing. `409 commission_late` while it stands late (see
+  // `GetCommissionResponse.deadline_status`); else `409 no_deadline` when it has no deadline.
+  rpc SetCommissionDeadlineStatus(SetCommissionDeadlineStatusRequest) returns (SetCommissionDeadlineStatusResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/commissions/{id}/status/deadline"
+      body: "*"
+    };
+  }
+
+  // Any Participant takes the Delayed flag down. `204`, with nothing changed when it isn't
+  // raised. `404` for anyone who holds no role on it, alike for an id that names nothing.
+  // `409 commission_late` while it stands late (see
+  // `GetCommissionResponse.deadline_status`).
+  rpc ClearCommissionDeadlineStatus(ClearCommissionDeadlineStatusRequest) returns (ClearCommissionDeadlineStatusResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/commissions/{id}/status/deadline"
     };
   }
 }

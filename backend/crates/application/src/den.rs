@@ -6,6 +6,7 @@
 pub(crate) mod access;
 pub(crate) mod act;
 mod admission;
+mod allowed;
 mod authority;
 mod context;
 mod den_type;
@@ -33,6 +34,7 @@ pub(crate) mod write;
 
 use crate::ports::WithPorts;
 
+pub use allowed::ActWord;
 pub use den_type::DenType;
 pub use kind::NodeKind;
 pub use name::{DenName, DenNameError};
@@ -43,6 +45,7 @@ pub use segment::DenSegment;
 pub use soft_delete::SoftDelete;
 pub use thing::DenThing;
 
+pub(crate) use allowed::{AllowedActs, allowed_acts};
 pub(crate) use atta::Segment;
 pub(crate) use context::{DenContext, RootNaming};
 pub(crate) use gate::{Handler, Lent, Unmade, needs};

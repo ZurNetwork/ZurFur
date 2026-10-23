@@ -33,10 +33,6 @@ impl FieldPointer {
     Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::IntoStaticStr, strum::VariantArray,
 )]
 #[strum(serialize_all = "snake_case")]
-#[expect(
-    clippy::enum_variant_names,
-    reason = "each variant spells its wire token; codes for fields other than names join later"
-)]
 pub enum FieldCode {
     /// A name that is empty once trimmed, or once the name rule strips what it strips.
     NameEmpty,
@@ -50,6 +46,8 @@ pub enum FieldCode {
     NameSeparator,
     /// A name that holds a character that can't be shown.
     NameReserved,
+    /// A token outside the field's vocabulary.
+    UnknownValue,
 }
 
 impl FieldCode {
@@ -62,6 +60,7 @@ impl FieldCode {
             Self::NameInvisible => "Leave out invisible and direction-changing characters.",
             Self::NameSeparator => "Keep it on one line.",
             Self::NameReserved => "Leave out characters that can't be shown.",
+            Self::UnknownValue => "Choose one of the listed values.",
         }
     }
 }

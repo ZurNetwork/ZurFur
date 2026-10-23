@@ -138,6 +138,7 @@ fn each_code_s_detail_is_these_words() {
         ),
         ("name_separator", "Keep it on one line."),
         ("name_reserved", "Leave out characters that can't be shown."),
+        ("unknown_value", "Choose one of the listed values."),
     ];
     assert_eq!(details, expected_details);
 }
@@ -185,6 +186,7 @@ fn field_codes_are_these_tokens() {
         "name_invisible",
         "name_separator",
         "name_reserved",
+        "unknown_value",
     ];
     assert_eq!(tokens, expected_tokens);
     assert_eq!(displayed, expected_tokens);

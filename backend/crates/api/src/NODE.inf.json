@@ -55,7 +55,7 @@
     },
     {
       "name": "problem/",
-      "role": "fields.rs: FieldPointer, FieldCode (From<NodeNameError>: each name-rule refusal its own code), FieldRefusal and Problem::invalid_fields, the one way a problem names the fields it refused; tests.rs, fields/tests.rs with the token pin and the source scan",
+      "role": "fields.rs: FieldPointer, FieldCode (From<NodeNameError>: each name-rule refusal its own code; unknown_value for a token outside a field's vocabulary), FieldRefusal and Problem::invalid_fields, the one way a problem names the fields it refused; tests.rs, fields/tests.rs with the token pin and the source scan",
       "node": false
     },
     {

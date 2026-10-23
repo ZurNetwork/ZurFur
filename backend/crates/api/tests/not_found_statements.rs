@@ -5,7 +5,7 @@
 //! the recording proxy; only bound values may differ.
 //! Requires a container runtime socket.
 
-use domain::elements::did::Did;
+use domain::elements::{did::Did, level::Level};
 use strum::VariantArray as _;
 use test_support::{
     den::{get, patch_title},
@@ -529,4 +529,42 @@ async fn a_stranger_s_rename_and_a_made_up_id_s_run_the_same_statements() {
         assert_eq!(opened, None, "{cause}: a unit opened");
     }
     assert_eq!(texts(&absent), texts(&not_yours));
+}
+
+/// Everything the commission read runs for someone it doesn't open to, and all of it: the
+/// session's load, then den's check, the narrow projection and the viewer's participant row.
+const GET_COMMISSION_MISS: [&str; 3] = [
+    "session/load",
+    "commission/find_summary",
+    "commission/is_participant",
+];
+
+#[tokio::test]
+async fn get_commission_runs_the_check_s_pair_alike_for_a_stranger_and_a_made_up_id() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let stranger = stranger(world);
+    let absent = format!("/commissions/{}", absent_commission());
+    let mut targets = stranger_targets(world).to_vec();
+    targets.push((world.untitled, Level::Listed));
+
+    for (target, visibility) in targets {
+        world.set_visibility(target.id, visibility).await;
+        let lifecycle = world.archived_or_live(&target);
+        let label = format!("{visibility} {lifecycle}, the commission read");
+        let pair = MissPair {
+            label: "the commission read",
+            absent: absent.clone(),
+            not_yours: format!("/commissions/{}", target.id),
+            home: format!("/commissions/{}", target.id),
+        };
+
+        let runs =
+            assert_same_statements(&recorded, &stranger, Root::NotNamed, &label, &pair).await;
+
+        for statements in runs {
+            assert_eq!(names(&statements), GET_COMMISSION_MISS, "{label}");
+            assert_runs_none_of(&statements, &[WHOLE_COMMISSION], &label);
+        }
+    }
 }

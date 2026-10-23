@@ -53,6 +53,11 @@
       "node": false
     },
     {
+      "name": "get.rs",
+      "role": "the commission read (Query { actor_id, commission_id }, a flat Output of domain values): den's check opens the commission's node (else NotAMember, so a stranger and a made-up id read only the check's pair), then its summary, its row and the viewer's standing; the title as the Den shows it, the deadline status derived at the read's time, never the owner nor the linked channel; for a viewer whose standing holds a role, den's allowed_acts, else no acts and no targets",
+      "node": false
+    },
+    {
       "name": "invitations.rs + invitations/{issue,revoke}.rs",
       "role": "issue/revoke a seat invitation",
       "node": false

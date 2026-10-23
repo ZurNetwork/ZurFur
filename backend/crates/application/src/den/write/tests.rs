@@ -543,7 +543,7 @@ fn the_builder_paths_the_grant_s_commission() {
     let spec = act.spec();
     let grant = owner_grant(&alice(), old_sketch(), NodeId::mint());
 
-    let built = build(spec, act, &grant).expect("the builder builds");
+    let built = build(spec, act, &Target::from(&grant)).expect("the builder builds");
 
     let Shape::Rename { node, .. } = built.shape else {
         panic!("a rename builds a rename: {:?}", built.shape);

@@ -25,6 +25,7 @@ pub mod deadline;
 pub mod delete;
 pub(crate) mod den;
 pub mod files;
+pub mod get;
 pub mod invitations;
 pub mod lifecycle;
 pub mod markup;

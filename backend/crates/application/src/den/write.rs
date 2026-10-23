@@ -7,8 +7,12 @@ use std::fmt;
 use atta::{Act, ActName, Born, Placed, RealPath, Shape, Viewer, WriteCaps, WriteError, Writer};
 use domain::{
     datetime::DateTimeUtc,
-    elements::{commission::CommissionRefusal, level::Level, user::UserId},
-    ports::Unit,
+    elements::{
+        commission::{CommissionId, CommissionRefusal},
+        level::Level,
+        user::UserId,
+    },
+    ports::{New, Unit},
 };
 
 use crate::{
@@ -184,19 +188,45 @@ pub(in crate::den) fn commission_directory() -> Option<RealPath> {
     Some(RealPath::from(vec![segment]))
 }
 
-/// The existing node the grant names, as Atta's act carries it: its path from the grant's
-/// commission id, its type the act's, its level the locked read's.
-fn granted_node(grant: &Grant, den_type: DenType) -> Result<Placed, DenWriteError> {
-    let (commission, level) = match grant.kind() {
-        authority::GrantKind::Existing {
-            commission, level, ..
+/// What the den's builder anchors an act on: an existing commission at its own level, or a
+/// new one under the id a create's grant minted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::den) enum Target {
+    /// An existing commission, at its own level.
+    Existing {
+        /// The commission.
+        commission: CommissionId,
+        /// Its own level.
+        level: Level,
+    },
+    /// A commission not made yet, under the id the den minted.
+    Minted(New<CommissionId>),
+}
+
+impl From<&Grant> for Target {
+    /// What the grant leaves its actor to write: its commission at the level the locked read
+    /// answered, or the id it minted.
+    fn from(grant: &Grant) -> Self {
+        match grant.kind() {
+            authority::GrantKind::Existing {
+                commission, level, ..
+            }
+            | authority::GrantKind::System {
+                commission, level, ..
+            } => Self::Existing {
+                commission: *commission,
+                level: *level,
+            },
+            authority::GrantKind::Create { commission } => Self::Minted(*commission),
         }
-        | authority::GrantKind::System {
-            commission, level, ..
-        } => (commission, level),
-        authority::GrantKind::Create { .. } => {
-            return Err(DenWriteError::Refused(RefusalClass::WrongGrant));
-        }
+    }
+}
+
+/// The existing node `target` names, as Atta's act carries it: its path from the commission's
+/// id, its type the act's, its level the target's.
+fn targeted_node(target: &Target, den_type: DenType) -> Result<Placed, DenWriteError> {
+    let Target::Existing { commission, level } = target else {
+        return Err(DenWriteError::Refused(RefusalClass::WrongGrant));
     };
     let place = Place::Commission(CommissionPlace::Commission(*commission));
     let path = place
@@ -223,10 +253,10 @@ fn born_entry(entry: BornEntry) -> Result<Born, DenWriteError> {
     Ok(born)
 }
 
-/// The den's one builder of Atta's act: every path from the grant's typed ids, an existing
-/// node's level from the locked read, a create's key from the id the grant minted; a field act
-/// is a change on the granted commission's node.
-fn build(spec: ActSpec, body: DenAct, grant: &Grant) -> Result<Act<DenAct>, DenWriteError> {
+/// The den's one builder of Atta's act: every path from the target's typed ids, an existing
+/// node's level from the target, a create's key from the id the grant minted; a field act is a
+/// change on the targeted commission's node.
+fn build(spec: ActSpec, body: DenAct, target: &Target) -> Result<Act<DenAct>, DenWriteError> {
     let ActSpec {
         word,
         den_type,
@@ -239,9 +269,9 @@ fn build(spec: ActSpec, body: DenAct, grant: &Grant) -> Result<Act<DenAct>, DenW
             level,
             entries,
         } => {
-            let minted = grant
-                .minted()
-                .ok_or(DenWriteError::Refused(RefusalClass::WrongGrant))?;
+            let Target::Minted(minted) = target else {
+                return Err(DenWriteError::Refused(RefusalClass::WrongGrant));
+            };
             let path =
                 commission_directory().ok_or_else(|| broken("`commission` is no segment"))?;
             let parent = Placed {
@@ -268,11 +298,11 @@ fn build(spec: ActSpec, body: DenAct, grant: &Grant) -> Result<Act<DenAct>, DenW
             }
         }
         ActShape::Rename { name } => Shape::Rename {
-            node: granted_node(grant, den_type)?,
+            node: targeted_node(target, den_type)?,
             name: names::display_name(&name),
         },
         ActShape::Change => Shape::Change {
-            node: granted_node(grant, den_type)?,
+            node: targeted_node(target, den_type)?,
         },
     };
     let act = Act {
@@ -321,7 +351,8 @@ pub(in crate::den) async fn written(
     now: DateTimeUtc,
 ) -> Result<WriteResult, DenWriteError> {
     let spec = act.spec();
-    let atta_act = build(spec, act, &grant)?;
+    let target = Target::from(&grant);
+    let atta_act = build(spec, act, &target)?;
     let writer = Writer {
         viewer: grant.actor().viewer(),
         caps: WriteCaps::default(),
@@ -333,6 +364,36 @@ pub(in crate::den) async fn written(
         .map_err(write_error)?
         .map_err(gate_refusal)?;
     answer(applied)
+}
+
+/// Whether Atta's checks pass the act the den's builder makes of `act` on the existing
+/// `commission` at `level`, for `viewer`, as a write would meet them; nothing is applied and no
+/// unit is opened. Atta never reads an act's body, so the checks run on the act without it.
+pub(in crate::den) fn atta_passes(
+    ports: &Ports,
+    viewer: &UserId,
+    commission: CommissionId,
+    level: Level,
+    act: DenAct,
+) -> Result<bool, DenWriteError> {
+    let target = Target::Existing { commission, level };
+    let spec = act.spec();
+    let Act {
+        name, typ, shape, ..
+    } = build(spec, act, &target)?;
+    let bodiless = Act {
+        name,
+        typ,
+        shape,
+        body: (),
+    };
+    let host = DenHost::for_check(ports, viewer);
+    let writer = Writer {
+        viewer: DenHost::viewer_of(viewer),
+        caps: WriteCaps::default(),
+    };
+    let passes = writer.dry_run(&host, &bodiless).is_ok();
+    Ok(passes)
 }
 
 impl Den<'_> {
