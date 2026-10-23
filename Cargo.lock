@@ -1005,6 +1005,7 @@ dependencies = [
  "anyhow",
  "application",
  "assert_cmd",
+ "base64",
  "chrono",
  "clap",
  "clap_complete",

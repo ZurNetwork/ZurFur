@@ -158,17 +158,15 @@ pub async fn schema_status(pool: &PgPool) -> Result<SchemaStatus, sqlx::Error> {
     }
 }
 
-/// Apply every pending embedded migration and report how many ran and the
-/// latest embedded version; it re-wraps nothing. The CLI's `migrate`.
-pub async fn migrate_reporting(pool: &PgPool) -> Result<MigrationReport, sqlx::Error> {
-    let applied = pending_migrations(pool).await?;
-    migrator().run(pool).await?;
-    let report = MigrationReport {
-        applied,
-        version: latest_embedded_version(),
-        rows_rewrapped: 0,
-    };
-    Ok(report)
+/// How many custody rows have no sealed envelope yet: rows a [`CustodyMigrator`] run
+/// still has to re-wrap. Zero before the custody table or its envelope column exists.
+pub async fn unsealed_custody_rows(pool: &PgPool) -> Result<usize, sqlx::Error> {
+    if !queries::key_store::sealed_column_exists(pool).await? {
+        return Ok(0);
+    }
+    let unsealed = queries::key_store::count_unsealed(pool).await?;
+    // A count is never negative.
+    Ok(usize::try_from(unsealed).unwrap_or_default())
 }
 
 /// How many embedded migrations the database hasn't applied.

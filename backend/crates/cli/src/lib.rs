@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use adapter_pg::CustodyMigrator;
 use clap::{CommandFactory as _, Parser, Subcommand};
 use composition::{Config, ConnectError, Custody, LoadError, RootSecret, Runtime};
 use domain::elements::custody::Purpose;
@@ -38,8 +39,9 @@ pub struct Cli {
     pub command: Command,
 }
 
-/// The root command tree: [`Command`]s that never touch the backend, plus
-/// the [`BackendCommand`]s that do — the split keeps [`dispatch`] exhaustive.
+/// The root command tree: `completions`, which never touches the backend; `migrate`,
+/// which boots with the custody migrator; and the [`BackendCommand`]s, which run over
+/// a booted [`Runtime`] — the split keeps [`dispatch`] exhaustive.
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Print a shell completion script to stdout.
@@ -47,6 +49,9 @@ pub enum Command {
         /// The shell to generate for.
         shell: clap_complete::Shell,
     },
+    /// Migrate the database and re-wrap the 0.1 custody rows — the ONLY way the
+    /// CLI changes the schema. `--check` counts and writes nothing.
+    Migrate(commands::migrate::MigrateArgs),
     #[command(flatten)]
     Backend(BackendCommand),
 }
@@ -59,8 +64,6 @@ pub enum BackendCommand {
     /// Probe the database the way `GET /health` does (reports the schema
     /// state; never refuses on it).
     Health,
-    /// Apply pending migrations — the ONLY way the CLI changes the schema.
-    Migrate,
     /// The acting identity: `login`, `logout`, `whoami`.
     Session {
         #[command(subcommand)]
@@ -100,6 +103,11 @@ pub async fn run(cli: Cli) -> Result<Output, CliError> {
             clap_complete::generate(shell, &mut Cli::command(), "zurfur", &mut buffer);
             Ok(Output::raw(buffer))
         }
+        Command::Migrate(args) => {
+            let custody_migrator = connect_migrating(cli.config_dir).await?;
+            let value = commands::migrate::run(custody_migrator, args).await?;
+            Ok(Output::json(value, format))
+        }
         // Logout must work even when config/database are broken — checked first.
         Command::Backend(BackendCommand::Session {
             op: commands::session::SessionOp::Logout,
@@ -136,7 +144,6 @@ pub async fn dispatch(
 ) -> Result<serde_json::Value, CliError> {
     match command {
         BackendCommand::Health => commands::health::run(runtime).await,
-        BackendCommand::Migrate => commands::migrate::run(runtime).await,
         BackendCommand::Session { op } => commands::session::run(runtime, identity_path, op).await,
         BackendCommand::Account { op } => commands::account::run(runtime, identity_path, op).await,
         BackendCommand::BugReports { op } => commands::bug_reports::run(runtime, op).await,
@@ -144,21 +151,22 @@ pub async fn dispatch(
 }
 
 /// The schema-drift gate: refuses a database whose applied migrations are
-/// behind the embedded set, ahead of it, or absent, so the CLI never runs
-/// against a schema it wasn't built for. `migrate` and `health` are exempt
-/// (the fix, and the reporter).
+/// behind the embedded set, ahead of it, or absent, and one whose custody rows
+/// still await their re-wrap, so the CLI never runs against a store it wasn't
+/// built for. `health` is exempt (the reporter), and `migrate` (the fix) never
+/// reaches it.
 pub async fn require_current_schema(
     runtime: &Runtime,
     command: &BackendCommand,
 ) -> Result<(), CliError> {
-    if matches!(command, BackendCommand::Migrate | BackendCommand::Health) {
+    if matches!(command, BackendCommand::Health) {
         return Ok(());
     }
     let status = adapter_pg::schema_status(&runtime.pool)
         .await
         .map_err(|e| CliError::infra("service_unavailable", format!("schema check failed: {e}")))?;
     match status {
-        adapter_pg::SchemaStatus::Current => Ok(()),
+        adapter_pg::SchemaStatus::Current => require_rewrapped_custody(runtime).await,
         adapter_pg::SchemaStatus::Behind { pending } => Err(CliError::infra(
             "service_unavailable",
             format!("schema is {pending} migration(s) behind — run `zurfur migrate`"),
@@ -176,43 +184,94 @@ pub async fn require_current_schema(
     }
 }
 
+/// The second half of the gate: refuses while any custody row has no sealed
+/// envelope, pointing at `zurfur migrate`, which re-wraps them.
+async fn require_rewrapped_custody(runtime: &Runtime) -> Result<(), CliError> {
+    let unsealed = adapter_pg::unsealed_custody_rows(&runtime.pool)
+        .await
+        .map_err(|e| {
+            CliError::infra("service_unavailable", format!("custody check failed: {e}"))
+        })?;
+    if unsealed > 0 {
+        let refusal = CliError::infra(
+            "service_unavailable",
+            format!("{unsealed} custody row(s) await their re-wrap — run `zurfur migrate`"),
+        );
+        return Err(refusal);
+    }
+    Ok(())
+}
+
+/// The purposes `migrate` holds: DID custody, which the custody migrator re-wraps into.
+const MIGRATE_PURPOSES: &[Purpose] = &[Purpose::DidCustody];
+
+/// The purposes `command` holds: DID custody for the commands that mint; none for the
+/// rest, which never read the root.
+fn purposes(command: &BackendCommand) -> &'static [Purpose] {
+    match command {
+        BackendCommand::Account { .. } => &[Purpose::DidCustody],
+        BackendCommand::Health
+        | BackendCommand::Session { .. }
+        | BackendCommand::BugReports { .. } => &[],
+    }
+}
+
 /// Load the [`Config`] (honoring `--config-dir`), take `command`'s custody, and wire
 /// the live adapters. Every failure here is infrastructure: exit class 3.
 async fn connect(
     config_dir: Option<PathBuf>,
     command: &BackendCommand,
 ) -> Result<Runtime, CliError> {
-    let config = Config::load_from(config_dir).map_err(|e| config_problem(&e))?;
-    let custody = custody(&config, command)?;
+    let config = load_config(config_dir)?;
+    let custody = custody(&config, purposes(command))?;
     Runtime::connect(config, custody)
         .await
-        .map_err(|e| match e {
-            // service_unavailable = down dependency; internal_error = broken boot.
-            ConnectError::Database(_) => CliError::infra("service_unavailable", e),
-            ConnectError::Setup(_) => CliError::infra("internal_error", e),
-        })
+        .map_err(connect_problem)
 }
 
-/// The custody `command` holds: DID custody for the commands that mint or migrate,
-/// read from the root before any database connect; none for the rest, which never
-/// read the root.
-fn custody(config: &Config, command: &BackendCommand) -> Result<Custody, CliError> {
-    let purposes: &[Purpose] = match command {
-        BackendCommand::Account { .. } | BackendCommand::Migrate => &[Purpose::DidCustody],
-        BackendCommand::Health
-        | BackendCommand::Session { .. }
-        | BackendCommand::BugReports { .. } => &[],
-    };
+/// Load the [`Config`], read the root and derive [`MIGRATE_PURPOSES`] from it, then
+/// connect and hand back the custody migrator, which keeps its own pool.
+async fn connect_migrating(config_dir: Option<PathBuf>) -> Result<CustodyMigrator, CliError> {
+    let config = load_config(config_dir)?;
+    let root = read_root()?;
+    let (_runtime, custody_migrator) = Runtime::connect_migrating(config, root, MIGRATE_PURPOSES)
+        .await
+        .map_err(connect_problem)?;
+    Ok(custody_migrator)
+}
+
+/// The [`Config`] under `config_dir`, or its value-free `config` problem.
+fn load_config(config_dir: Option<PathBuf>) -> Result<Config, CliError> {
+    Config::load_from(config_dir).map_err(|e| config_problem(&e))
+}
+
+/// The custody of `purposes`: none read no root; any reads the root before a database
+/// connect, and a bad root is a `config` problem.
+fn custody(config: &Config, purposes: &[Purpose]) -> Result<Custody, CliError> {
     if purposes.is_empty() {
         return Ok(Custody::default());
     }
-    let root = RootSecret::from_env().map_err(|refusal| CliError::infra("config", refusal))?;
+    let root = read_root()?;
     Custody::derive(root, &config.env, config.plc_directory_submit, purposes).map_err(|refusal| {
         CliError::infra(
             "internal_error",
             format!("runtime setup failed: {refusal:#}"),
         )
     })
+}
+
+/// The custody root from the environment; the problem names the variable and the rule only.
+fn read_root() -> Result<RootSecret, CliError> {
+    RootSecret::from_env().map_err(|refusal| CliError::infra("config", refusal))
+}
+
+/// A failed connect as a problem: `service_unavailable` for a down database,
+/// `internal_error` for a broken boot.
+fn connect_problem(error: ConnectError) -> CliError {
+    match error {
+        ConnectError::Database(_) => CliError::infra("service_unavailable", error),
+        ConnectError::Setup(_) => CliError::infra("internal_error", error),
+    }
 }
 
 /// Render a config-load failure without echoing any value. An environment

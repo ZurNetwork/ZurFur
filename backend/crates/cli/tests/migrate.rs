@@ -1,10 +1,26 @@
 //! `zurfur migrate` + the schema-drift gate end to end, on a
 //! **bare** throwaway Postgres: data commands refuse until `migrate` runs;
-//! `health` reports instead of refusing; `migrate` is idempotent.
+//! `health` reports instead of refusing; `migrate` is idempotent. Over the 0.1
+//! custody fixtures: `migrate` re-wraps and reports its counts, `--check` counts and
+//! writes nothing, and the gate refuses while a row awaits its re-wrap.
 
 mod common;
+use adapter_pg::PgPool;
 use assert_cmd::Command;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use common::problem as json;
+use test_support::custody::{
+    LEGACY_ALICE_BLOB_HEX, LEGACY_ALICE_DID, LEGACY_BOB_BLOB_HEX, LEGACY_BOB_DID, LEGACY_ROOT,
+    hex_bytes,
+};
+use test_support::pg::TestDb;
+
+/// The envelope's migration, as sqlx numbers it.
+const CUSTODY_ENVELOPE: i64 = 20261022231354;
+
+/// A root the legacy fixtures don't open under.
+const WRONG_ROOT: [u8; 32] = [8u8; 32];
 
 /// The shared harness plus the identity file redirected into `home`.
 fn zurfur(database_url: &str, home: &std::path::Path) -> Command {
@@ -73,4 +89,233 @@ async fn a_bare_database_is_refused_until_migrated() {
     })
     .await
     .unwrap();
+}
+
+/// `zurfur --json <args>` against `url` with `root` as the custody root and a fresh
+/// identity home, run off the async runtime.
+async fn zurfur_json(
+    url: &str,
+    root: [u8; 32],
+    args: &'static [&'static str],
+) -> std::process::Output {
+    let url = url.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let home = tempfile::tempdir().unwrap();
+        zurfur(&url, home.path())
+            .env(composition::ROOT_KEY_ENV, STANDARD.encode(root))
+            .arg("--json")
+            .args(args)
+            .output()
+            .expect("zurfur runs")
+    })
+    .await
+    .unwrap()
+}
+
+/// Store one 0.1 row, naming only the columns the table had before the envelope.
+async fn seed_legacy(pool: &PgPool, did: &str, wrapped_keys: &[u8]) {
+    sqlx::query(
+        "INSERT INTO account_keys (did, wrapped_keys, created_at)
+         VALUES ($1, $2, now())",
+    )
+    .bind(did)
+    .bind(wrapped_keys)
+    .execute(pool)
+    .await
+    .expect("seed a 0.1 row");
+}
+
+/// A database on the schema before the envelope, holding Alice's and Bob's 0.1 rows.
+async fn before_the_envelope_with_two_rows() -> (PgPool, TestDb) {
+    let db = test_support::pg::bare_db().await;
+    let pool = adapter_pg::connect(db.url()).await.expect("pool connects");
+    let mut embedded = adapter_pg::migrator();
+    let before_the_envelope: Vec<_> = embedded
+        .migrations
+        .iter()
+        .filter(|migration| migration.version < CUSTODY_ENVELOPE)
+        .cloned()
+        .collect();
+    assert!(
+        before_the_envelope.len() < embedded.migrations.len(),
+        "the envelope's version names an embedded migration"
+    );
+    embedded.migrations = before_the_envelope.into();
+    embedded
+        .run(&pool)
+        .await
+        .expect("the migrations before the envelope run");
+    seed_legacy(&pool, LEGACY_ALICE_DID, &hex_bytes(LEGACY_ALICE_BLOB_HEX)).await;
+    seed_legacy(&pool, LEGACY_BOB_DID, &hex_bytes(LEGACY_BOB_BLOB_HEX)).await;
+    (pool, db)
+}
+
+/// Everything a check must leave alone, whole, as text: the ledger's rows, the custody
+/// table's columns and its rows.
+#[derive(Debug, PartialEq, Eq)]
+struct StoreSnapshot {
+    ledger: Vec<String>,
+    columns: Vec<String>,
+    rows: Vec<String>,
+}
+
+/// The [`StoreSnapshot`] of `pool`'s database.
+async fn snapshot(pool: &PgPool) -> StoreSnapshot {
+    let ledger =
+        sqlx::query_scalar("SELECT to_jsonb(m)::text FROM _sqlx_migrations m ORDER BY version")
+            .fetch_all(pool)
+            .await
+            .expect("read the ledger");
+    let columns = sqlx::query_scalar(
+        "SELECT column_name::text FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'account_keys'
+         ORDER BY ordinal_position",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("read the custody columns");
+    let rows = sqlx::query_scalar("SELECT to_jsonb(k)::text FROM account_keys k ORDER BY did")
+        .fetch_all(pool)
+        .await
+        .expect("read the custody rows");
+    StoreSnapshot {
+        ledger,
+        columns,
+        rows,
+    }
+}
+
+/// The text a spawned run left on stderr.
+fn stderr_of(output: &std::process::Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+#[tokio::test]
+async fn migrate_check_writes_nothing() {
+    let (pool, db) = before_the_envelope_with_two_rows().await;
+    let before = snapshot(&pool).await;
+
+    let output = zurfur_json(db.url(), LEGACY_ROOT, &["migrate", "--check"]).await;
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr_of(&output));
+    let expected_counts = serde_json::json!({ "unopenable": 0, "pending": 2 });
+    assert_eq!(json(&output.stdout), expected_counts);
+    assert_eq!(snapshot(&pool).await, before, "the check wrote nothing");
+
+    let output = zurfur_json(db.url(), WRONG_ROOT, &["migrate", "--check"]).await;
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr_of(&output));
+    let expected_counts = serde_json::json!({ "unopenable": 2, "pending": 2 });
+    assert_eq!(json(&output.stdout), expected_counts);
+    assert_eq!(snapshot(&pool).await, before, "the check wrote nothing");
+}
+
+#[tokio::test]
+async fn a_wrong_root_refuses_the_migration_by_count() {
+    let (pool, db) = before_the_envelope_with_two_rows().await;
+    let before = snapshot(&pool).await;
+
+    let output = zurfur_json(db.url(), WRONG_ROOT, &["migrate"]).await;
+
+    assert_eq!(output.status.code(), Some(3), "{}", stderr_of(&output));
+    let problem = json(&output.stderr);
+    assert_eq!(problem["code"], "config");
+    assert_eq!(
+        problem["detail"],
+        "migration refused: 2 custody rows don't open under the configured root"
+    );
+    assert!(
+        !stderr_of(&output).contains("did:"),
+        "{}",
+        stderr_of(&output)
+    );
+    assert_eq!(snapshot(&pool).await, before, "nothing ran");
+}
+
+#[tokio::test]
+async fn migrate_reports_its_counts() {
+    let (pool, db) = before_the_envelope_with_two_rows().await;
+    let embedded = adapter_pg::migrator();
+    let from_the_envelope = embedded
+        .migrations
+        .iter()
+        .filter(|migration| migration.version >= CUSTODY_ENVELOPE)
+        .count();
+    let latest = embedded
+        .migrations
+        .last()
+        .map(|migration| migration.version);
+
+    let output = zurfur_json(db.url(), LEGACY_ROOT, &["migrate"]).await;
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr_of(&output));
+    let first_report = serde_json::json!({
+        "applied": from_the_envelope,
+        "version": latest,
+        "rowsRewrapped": 2,
+    });
+    assert_eq!(json(&output.stdout), first_report);
+
+    let output = zurfur_json(db.url(), LEGACY_ROOT, &["migrate"]).await;
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr_of(&output));
+    let second_report = serde_json::json!({
+        "applied": 0,
+        "version": latest,
+        "rowsRewrapped": 0,
+    });
+    assert_eq!(json(&output.stdout), second_report);
+    let unsealed = adapter_pg::unsealed_custody_rows(&pool)
+        .await
+        .expect("count");
+    assert_eq!(unsealed, 0);
+}
+
+#[tokio::test]
+async fn unrewrapped_custody_refuses_until_migrate() {
+    let (pool, db) = before_the_envelope_with_two_rows().await;
+    let unsealed = adapter_pg::unsealed_custody_rows(&pool)
+        .await
+        .expect("count");
+    assert_eq!(unsealed, 0, "no envelope column yet: nothing to count");
+    // The schema catches up past the envelope without the re-wrap.
+    adapter_pg::migrate_fresh(&pool)
+        .await
+        .expect("the remaining migrations run");
+    let unsealed = adapter_pg::unsealed_custody_rows(&pool)
+        .await
+        .expect("count");
+    assert_eq!(unsealed, 2);
+    let create: &'static [&'static str] = &[
+        "account",
+        "create",
+        "--name",
+        "Never Founded",
+        "--handle",
+        "never-founded.zurfur.app",
+    ];
+
+    let output = zurfur_json(db.url(), LEGACY_ROOT, create).await;
+
+    assert_eq!(output.status.code(), Some(3), "{}", stderr_of(&output));
+    let problem = json(&output.stderr);
+    assert_eq!(problem["code"], "service_unavailable");
+    assert_eq!(
+        problem["detail"],
+        "2 custody row(s) await their re-wrap — run `zurfur migrate`"
+    );
+    assert!(
+        !stderr_of(&output).contains("did:"),
+        "{}",
+        stderr_of(&output)
+    );
+
+    let output = zurfur_json(db.url(), LEGACY_ROOT, &["migrate"]).await;
+    assert_eq!(output.status.code(), Some(0), "{}", stderr_of(&output));
+
+    let output = zurfur_json(db.url(), LEGACY_ROOT, create).await;
+
+    // Past the gate: the next problem is the missing identity.
+    assert_eq!(output.status.code(), Some(1), "{}", stderr_of(&output));
+    assert_eq!(json(&output.stderr)["code"], "not_authenticated");
 }

@@ -1,8 +1,8 @@
 {
   "path": "backend/crates/cli/src/commands",
-  "charted": "2026-10-17",
+  "charted": "2026-10-23",
   "short": "One module per CLI namespace",
-  "is": "One module per domain namespace exposing a `clap::Subcommand` enum plus `run(&Runtime, op) -> Result<Value, CliError>`; the root dispatch in `lib.rs` routes to it.",
+  "is": "One module per domain namespace exposing a `clap::Subcommand` enum plus `run(&Runtime, op) -> Result<Value, CliError>`; the root dispatch in `lib.rs` routes to it. `migrate` is the exception: `run` hands it the custody migrator and its flags (`MigrateArgs`), not a runtime.",
   "type": "code",
   "tags": [
     "category:source"
@@ -33,7 +33,7 @@
     },
     {
       "name": "migrate.rs",
-      "role": "zurfur migrate — applies embedded sqlx migrations, idempotent, exempt from schema-drift gate",
+      "role": "zurfur migrate — runs the custody migrator `Runtime::connect_migrating` hands back (holding DID custody): probe, migrations, re-wrap; reports `applied`, `version`, `rowsRewrapped`. `--check` runs only `check()`, reporting `unopenable` and `pending` without writing. A root the 0.1 rows don't open under is a `config` refusal naming a count; exempt from the schema-drift gate",
       "node": false
     },
     {

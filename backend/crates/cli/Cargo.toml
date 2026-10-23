@@ -49,6 +49,9 @@ uuid = { workspace = true }
 # `tests/account_process.rs` writes a hostile bug-report row with raw SQL,
 # past every domain rule, to prove `bug-reports list` escapes what it loads.
 sqlx = { workspace = true }
+# `tests/migrate.rs` hands the spawned binary the 0.1 fixtures' root, base64 as the
+# environment carries it.
+base64 = { workspace = true }
 
 [lints]
 workspace = true
