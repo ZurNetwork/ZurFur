@@ -2210,6 +2210,13 @@ pub mod health {
 pub mod key_store {
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
+    pub struct FirstSealedRow {
+        pub did: String,
+        pub sealed_keys: Vec<u8>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
     pub struct LegacyProbeRow {
         pub did: String,
         pub wrapped_keys: Vec<u8>,
@@ -2235,6 +2242,18 @@ pub mod key_store {
     pub async fn count_unsealed(conn: impl sqlx::PgExecutor<'_>) -> sqlx::Result<i64> {
         sqlx::query_scalar(include_str!("../queries/key_store/count_unsealed.sql"))
             .fetch_one(conn)
+            .await
+    }
+
+    /// `queries/key_store/first_sealed.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The first row holding a sealed envelope, by DID: the one row a command
+    /// opens to check its root. Read only once `sealed_keys` exists.
+    pub async fn first_sealed(
+        conn: impl sqlx::PgExecutor<'_>,
+    ) -> sqlx::Result<Option<FirstSealedRow>> {
+        sqlx::query_as(include_str!("../queries/key_store/first_sealed.sql"))
+            .fetch_optional(conn)
             .await
     }
 

@@ -18,6 +18,6 @@ pub use config::{
     BareOrigin, BareOriginError, CONFIG_DIR_ENV, Config, ConfigRefusal, DATABASE_URL_ENV,
     ENV_PREFIX, EXAMPLE_DEV_ROOT_KEY, Environment, LoadError, PROFILE_ENV, ensure_custody_hardened,
 };
-pub use custody::Custody;
+pub use custody::{Custody, CustodyRootCheck};
 pub use root::{ROOT_KEY_ENV, RootSecret, RootSecretError};
 pub use runtime::{ConnectError, Runtime};

@@ -48,7 +48,7 @@ pub use commission::{
 pub use commission_changelog::{PgChangelogStore, PgChangelogWrites};
 pub use custody_migrator::{CustodyCheck, CustodyMigrationError, CustodyMigrator};
 pub use file_store::PgFileStore;
-pub use key_store::{PgKeyStore, ResealError, RewrapError};
+pub use key_store::{PgKeyStore, ResealError, RewrapError, SealedRowCheck};
 pub use key_vault::LegacyRootKey;
 pub use node::{PgNodeStore, PgNodeWrites};
 pub use plc_operation_log::PgPlcOperationLog;

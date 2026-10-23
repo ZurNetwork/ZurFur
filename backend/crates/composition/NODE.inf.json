@@ -41,7 +41,7 @@
     },
     {
       "name": "src/custody.rs",
-      "role": "the one custody function: the boot guard on the raw root, then `HkdfKeyCustodian::derive` of the purposes asked for, then `Custody`, the scoped handles only (`ScopedSealer<ForDidCustody>` for `PgKeyStore`, `ScopedSealer<ForSigninSecrets>` for the atproto authenticator, `ScopedMac` for the Den); `Custody::derive(RootSecret, env, plc_directory_submit, purposes)`, `Custody::default()` (no purpose, no root read: every handle answers PurposeNotHeld), and the crate-private copy of the root the custody migrator takes; the only file naming `KeyCustodian` and `adapter_hkdf`; tests in src/custody/tests.rs",
+      "role": "the one custody function: the boot guard on the raw root, then `HkdfKeyCustodian::derive` of the purposes asked for, then `Custody`, the scoped handles only (`ScopedSealer<ForDidCustody>` for `PgKeyStore`, `ScopedSealer<ForSigninSecrets>` for the atproto authenticator, `ScopedMac` for the Den); `Custody::derive(RootSecret, env, plc_directory_submit, purposes)`, `Custody::default()` (no purpose, no root read: every handle answers PurposeNotHeld), `Custody::root_check()` → `CustodyRootCheck` (a private clone of the DID-custody handle, exposing only `run(&PgPool)`, which opens the first sealed custody row through `PgKeyStore::check_root`; not a `Runtime` field; the CLI's root check), and the crate-private copy of the root the custody migrator takes; the only file naming `KeyCustodian` and `adapter_hkdf`; tests in src/custody/tests.rs",
       "node": false
     },
     {

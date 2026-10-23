@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use adapter_hkdf::HkdfKeyCustodian;
+use adapter_pg::{PgKeyStore, PgPool, SealedRowCheck, SqlxError};
 use async_trait::async_trait;
 use domain::elements::custody::{
     CustodyError, CustodySubject, ForDidCustody, ForSigninSecrets, MacMessage, MacTag, MacUse,
@@ -42,6 +43,29 @@ impl Custody {
     /// The Den's MAC handle.
     pub fn den_mac(&self) -> &ScopedMac {
         &self.den_mac
+    }
+
+    /// The check that this custody's DID-custody root opens the custody rows, split off
+    /// before [`Runtime::connect`](crate::Runtime::connect) takes the handles.
+    pub fn root_check(&self) -> CustodyRootCheck {
+        CustodyRootCheck {
+            sealer: self.did_custody.clone(),
+        }
+    }
+}
+
+/// Checks that a command's DID-custody root opens the first sealed custody row. Holds a
+/// copy of the DID-custody handle and lends it to nothing else.
+#[derive(Debug)]
+pub struct CustodyRootCheck {
+    sealer: ScopedSealer<ForDidCustody>,
+}
+
+impl CustodyRootCheck {
+    /// Opens the first sealed custody row on `pool` through the DID-custody handle;
+    /// writes nothing.
+    pub async fn run(&self, pool: &PgPool) -> Result<SealedRowCheck, SqlxError> {
+        PgKeyStore::check_root(pool, &self.sealer).await
     }
 }
 

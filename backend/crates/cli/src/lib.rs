@@ -9,7 +9,9 @@ use std::process::ExitCode;
 
 use adapter_pg::CustodyMigrator;
 use clap::{CommandFactory as _, Parser, Subcommand};
-use composition::{Config, ConnectError, Custody, LoadError, RootSecret, Runtime};
+use composition::{
+    Config, ConnectError, Custody, CustodyRootCheck, LoadError, ROOT_KEY_ENV, RootSecret, Runtime,
+};
 use domain::elements::custody::Purpose;
 
 pub mod commands;
@@ -119,15 +121,17 @@ pub async fn run(cli: Cli) -> Result<Output, CliError> {
         // An operator command: no identity file, and its own stdout — fenced
         // text, or ASCII-only JSON — since the reports' texts are hostile.
         Command::Backend(command @ BackendCommand::BugReports { op }) => {
-            let runtime = connect(cli.config_dir, &command).await?;
+            let (runtime, root_check) = connect(cli.config_dir, &command).await?;
             require_current_schema(&runtime, &command).await?;
+            require_custody_root(&runtime, &root_check, &command).await?;
             let listed = commands::bug_reports::list(&runtime, op).await?;
             Ok(Output::raw(listed.printed(format)))
         }
         Command::Backend(command) => {
             let identity_path = identity::default_path()?;
-            let runtime = connect(cli.config_dir, &command).await?;
+            let (runtime, root_check) = connect(cli.config_dir, &command).await?;
             require_current_schema(&runtime, &command).await?;
+            require_custody_root(&runtime, &root_check, &command).await?;
             let value = dispatch(&runtime, &identity_path, command).await?;
             Ok(Output::json(value, format))
         }
@@ -154,7 +158,7 @@ pub async fn dispatch(
 /// behind the embedded set, ahead of it, or absent, and one whose custody rows
 /// still await their re-wrap, so the CLI never runs against a store it wasn't
 /// built for. `health` is exempt (the reporter), and `migrate` (the fix) never
-/// reaches it.
+/// reaches it. [`require_custody_root`] then checks a custody-holding command's root.
 pub async fn require_current_schema(
     runtime: &Runtime,
     command: &BackendCommand,
@@ -202,6 +206,32 @@ async fn require_rewrapped_custody(runtime: &Runtime) -> Result<(), CliError> {
     Ok(())
 }
 
+/// The gate's root check, after the schema gate: a command holding DID custody refuses
+/// unless the first sealed custody row opens under its root, so a mistyped root writes
+/// nothing. A database with no sealed row passes; a command holding no purpose skips it.
+async fn require_custody_root(
+    runtime: &Runtime,
+    root_check: &CustodyRootCheck,
+    command: &BackendCommand,
+) -> Result<(), CliError> {
+    if !purposes(command).contains(&Purpose::DidCustody) {
+        return Ok(());
+    }
+    let checked = root_check.run(&runtime.pool).await.map_err(|e| {
+        CliError::infra("service_unavailable", format!("custody check failed: {e}"))
+    })?;
+    match checked {
+        adapter_pg::SealedRowCheck::NoSealedRow | adapter_pg::SealedRowCheck::Opens => Ok(()),
+        adapter_pg::SealedRowCheck::DoesNotOpen => {
+            let wrong_root = CliError::infra(
+                "config",
+                format!("custody doesn't open under the configured root — check {ROOT_KEY_ENV}"),
+            );
+            Err(wrong_root)
+        }
+    }
+}
+
 /// The purposes `migrate` holds: DID custody, which the custody migrator re-wraps into.
 const MIGRATE_PURPOSES: &[Purpose] = &[Purpose::DidCustody];
 
@@ -216,17 +246,20 @@ fn purposes(command: &BackendCommand) -> &'static [Purpose] {
     }
 }
 
-/// Load the [`Config`] (honoring `--config-dir`), take `command`'s custody, and wire
-/// the live adapters. Every failure here is infrastructure: exit class 3.
+/// Load the [`Config`] (honoring `--config-dir`), take `command`'s custody, split off
+/// its root check, and wire the live adapters. Every failure here is infrastructure:
+/// exit class 3.
 async fn connect(
     config_dir: Option<PathBuf>,
     command: &BackendCommand,
-) -> Result<Runtime, CliError> {
+) -> Result<(Runtime, CustodyRootCheck), CliError> {
     let config = load_config(config_dir)?;
     let custody = custody(&config, purposes(command))?;
-    Runtime::connect(config, custody)
+    let root_check = custody.root_check();
+    let runtime = Runtime::connect(config, custody)
         .await
-        .map_err(connect_problem)
+        .map_err(connect_problem)?;
+    Ok((runtime, root_check))
 }
 
 /// Load the [`Config`], read the root and derive [`MIGRATE_PURPOSES`] from it, then

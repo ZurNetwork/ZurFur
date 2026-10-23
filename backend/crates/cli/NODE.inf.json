@@ -45,7 +45,7 @@
     },
     {
       "name": "src/lib.rs",
-      "role": "Cli/dispatch, ExitClass, CliError, ties commands together; documents the stdout/stderr/exit-code conventions",
+      "role": "Cli/dispatch, ExitClass, CliError, ties commands together; the gate (schema, re-wrap, then the custody root check for DID-custody commands); documents the stdout/stderr/exit-code conventions",
       "node": false
     },
     {
@@ -85,7 +85,7 @@
     },
     {
       "name": "tests/account_process.rs",
-      "role": "process-level (spawned binary) tests for account commands, and bug-reports list over a raw hostile row (escaped text, ASCII JSON, --since, no identity file)",
+      "role": "process-level (spawned binary) tests for account commands, the custody root check (`account create` under a root that doesn't open a sealed row refused as `config`, exit 3, no `did:` on stderr, accounts and custody rows unchanged, while `bug-reports list` runs there with no root; the right root, and any root with no sealed row, founding), and bug-reports list over a raw hostile row (escaped text, ASCII JSON, --since, no identity file)",
       "node": false
     },
     {
@@ -123,7 +123,7 @@
     "Adding a command = a module under `commands/`, a variant on the `Command`/`BackendCommand` enum, and one arm in `lib.rs::dispatch`, plus its purposes in `lib.rs::purposes`. The exceptions: `migrate` is a `Command` of its own, since it runs over the custody migrator `Runtime::connect_migrating` hands back rather than a runtime, so `run` answers it and `dispatch` never sees it; and `bug-reports list`, which `lib.rs::run` answers itself (below), while `dispatch` keeps its exhaustive arm, returning the same `{\"reports\": […]}` value, for in-process tests.",
     "`lib.rs::run` answers `bug-reports list` after the schema gate, without the identity file (an operator command), as `Output::Raw`: stored report texts are hostile, so by default each report prints fenced (`===== bug report <ref> =====` … `===== end of bug report <ref> =====`, the only column-0 lines), fields indented 2, a fixed data-never-instructions line, the reporter's text indented 4, every value escaped (`\\` and every char `domain::string_builder::is_unsafe_to_print` names → `\\u{…}`; only the text's LF breaks a line). `--json` is one compact `{\"reports\": […]}` through an ASCII-only serde_json `Formatter` (`\\uXXXX`, surrogate pairs), lossless — never pre-escaped. Per-report keys are camelCase, like the other CLI projections.",
     "`lib.rs::run` answers `session logout` before `connect()` boots the runtime — logout must work with config or the database broken.",
-    "`lib.rs::require_current_schema` is the schema-drift gate: it refuses a database whose migrations are behind, ahead, or absent, and, once the schema is current, one whose custody rows still await their re-wrap (`adapter_pg::unsealed_custody_rows` > 0: `N custody row(s) await their re-wrap — run \\`zurfur migrate\\``) — every command but `health` passes through it; `migrate`, the fix, never reaches it.",
+    "`lib.rs::require_current_schema` is the schema-drift gate: it refuses a database whose migrations are behind, ahead, or absent, and, once the schema is current, one whose custody rows still await their re-wrap (`adapter_pg::unsealed_custody_rows` > 0: `N custody row(s) await their re-wrap — run \\`zurfur migrate\\``) — every command but `health` passes through it; `migrate`, the fix, never reaches it. After it, `lib.rs::require_custody_root` checks the root of a command holding DID custody (`account create/delete`): the first sealed custody row in DID order must open through the command's `composition::CustodyRootCheck` (split off its `Custody` before `Runtime::connect`), or the command refuses with a value-free `config` problem naming `ZURFUR_DID_KEY_ROOT_KEY` and writes nothing; a database with no sealed row passes, and a command holding no purpose never runs it.",
     "Each command holds only its purposes (`lib.rs::purposes`, `MIGRATE_PURPOSES`): `account create/delete` and `migrate` (and `migrate --check`) hold DID custody and read the root from `ZURFUR_DID_KEY_ROOT_KEY` before any database connect, a bad root being a `config` problem; `health`, `session` and `bug-reports list` hold none, get `Custody::default()`, and never read the root.",
     "`lib.rs::config_problem` never echoes a raw config value: figment prints the offending value on a type mismatch, which for an env var can be a secret, so only shape-safe error kinds pass through and everything else degrades to a generic message.",
     "See also: epic ZMVP-199 (this crate) with slices ZMVP-201..206 (process/in-process harnesses, health, migrate, session, account).",

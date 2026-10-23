@@ -165,3 +165,16 @@ fn debug_prints_no_root_bytes() {
         assert!(!shown.contains(form), "{shown} holds {form}");
     }
 }
+
+#[test]
+fn a_custody_without_a_purpose_hands_a_root_check() {
+    let custody = Custody::default();
+
+    let root_check = custody.root_check();
+
+    let shown = format!("{root_check:?}");
+    assert_eq!(
+        shown,
+        "CustodyRootCheck { sealer: ScopedSealer { purpose: DidCustody } }"
+    );
+}

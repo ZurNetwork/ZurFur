@@ -89,6 +89,17 @@ pub(crate) struct CustodyProbe {
     pub(crate) unopenable: usize,
 }
 
+/// What opening the first sealed custody row found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SealedRowCheck {
+    /// No row holds a sealed envelope, or the envelope's column doesn't exist yet.
+    NoSealedRow,
+    /// The first sealed row opens to three 32-byte keys.
+    Opens,
+    /// The first sealed row doesn't open, or opens to other than three 32-byte keys.
+    DoesNotOpen,
+}
+
 impl PgKeyStore {
     /// Build the store over a connection `pool` and the handle that seals every
     /// custody record.
@@ -134,6 +145,27 @@ impl PgKeyStore {
             unopenable: unopenable_dids.len(),
         };
         Ok(probe)
+    }
+
+    /// Opens the first sealed row in DID order through `sealer`, as a read opens it, to
+    /// check that `sealer`'s root is the one the custody rows are sealed under. Writes
+    /// nothing.
+    pub async fn check_root(
+        pool: &PgPool,
+        sealer: &ScopedSealer<ForDidCustody>,
+    ) -> Result<SealedRowCheck, sqlx::Error> {
+        if !sql::sealed_column_exists(pool).await? {
+            return Ok(SealedRowCheck::NoSealedRow);
+        }
+        let Some(row) = sql::first_sealed(pool).await? else {
+            return Ok(SealedRowCheck::NoSealedRow);
+        };
+        let opened = open_sealed(sealer, &row.did, row.sealed_keys).await;
+        if let Err(error) = opened {
+            tracing::debug!(%error, "the first sealed custody row doesn't open");
+            return Ok(SealedRowCheck::DoesNotOpen);
+        }
+        Ok(SealedRowCheck::Opens)
     }
 
     /// How many rows a re-wrap would seal: every 0.1 row of `probe` before the
