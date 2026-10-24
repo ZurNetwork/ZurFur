@@ -69,6 +69,13 @@
 - 2026100701 decided — My Den — Rulings from the First Slice's Design Study
 - 2026101201 decided — Zurfur Studio — a Core Painting Plugin, Forked from PhotoCraft, in Three Tiers
 - 2026101202 decided — Unofficial Telegram Clients — Mini in the Browser, Rusty on the Desktop, One Rust Core
+- 2026101701 decided — Bug Reports — Stored Privately, Read by an Operator Command
+- 2026102301 decided — The Front Door and the Voice — Sections over the Tree, the One-Page Commission and an Interface That Feels Alive
+- 2026102302 decided — Profiles, Fursonas and the Gallery — the Comms Tab, Let's Get Art!, Thumbnails and What a Gallery Item Carries
+- 2026102303 decided — Requests and Keeper Consent — Others' OCs, Surprise Art, the Request Form and the Artist's Cap
+- 2026102304 decided — Plugins on Screens and Page Configs — Tabs, the Dashed Frame and Plugins' Read-Only Files
+- 2026102305 decided — Invoices, Batches and Boards — Split-Off Invoices, Commission Batches and the Batch-Tag Filter
+- 2026102306 decided — Posting — a Pipeline of Stages and a Browser PostyBirb
 
 ## entities/
 - 786439 current — User
