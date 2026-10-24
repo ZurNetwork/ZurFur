@@ -8658,8 +8658,8 @@ fn dynamic_sql_findings(statement: &str, executors: &BTreeSet<String>) -> Vec<St
 /// no statement writes through one.
 const VIEW_MODIFIERS: [&str; 5] = ["OR", "REPLACE", "TEMP", "TEMPORARY", "RECURSIVE"];
 
-/// The words the tables a query reads follow.
-const READ_FROM: [&str; 2] = ["FROM", "JOIN"];
+/// The words the tables a query reads follow: `TABLE t` reads as `SELECT * FROM t`.
+const READ_FROM: [&str; 3] = ["FROM", "JOIN", "TABLE"];
 
 /// Each commission table a view that `words` define reads, at any depth of its query: the
 /// table after each of [`READ_FROM`] up to the end of the view's statement. A simple view
@@ -8978,6 +8978,7 @@ fn no_later_migration_defines_a_function_or_trigger_that_writes_a_commission_tab
         "CREATE FUNCTION archive_all() RETURNS void AS $$ BEGIN PERFORM run_sql('UPD' || 'ATE commission SET archived_at = now()'); END $$ LANGUAGE plpgsql;",
         "CREATE TRIGGER rerun AFTER UPDATE ON node FOR EACH ROW EXECUTE FUNCTION run_sql();",
         "CREATE VIEW heron_v AS SELECT id, node_id, archived_at FROM commission;",
+        "CREATE VIEW heron_v AS TABLE commission;",
         "CREATE OR REPLACE TEMP VIEW open_slots AS SELECT * FROM ONLY public.\"commission_slot\";",
         "CREATE VIEW open_nodes AS SELECT * FROM node WHERE id IN (SELECT node_id FROM commission);",
         "CREATE VIEW cards AS SELECT node.id FROM node JOIN commission ON commission.node_id = node.id;",
@@ -9222,8 +9223,13 @@ const ITEM_KEYWORDS: [&str; 12] = [
 /// The entry types: only the rows file declares them or gives them an inherent item.
 const ENTRY_TYPES: [&str; 2] = [NEW_CHANGELOG_ENTRY, OPEN_CHANGELOG_ENTRY];
 
-/// The one attribute each entry type carries beside its docs. Any other derive generates impls
-/// no scan here reads, such as a `From` of its fields or a deserializer.
+/// The attributes the rows file may carry beside docs, at any depth: its structs' derive and
+/// its unit tests' `cfg`. Any other derive or attribute macro generates code no scan here
+/// reads, such as a `From` of an entry's fields, or a deserializer of an entry or of a remote
+/// copy of one.
+const ROWS_ATTRIBUTES: [&str; 2] = ["#[derive(Debug)]", "#[cfg(test)]"];
+
+/// The one attribute each entry type carries beside its docs.
 const ENTRY_ATTRIBUTES: [&str; 1] = ["#[derive(Debug)]"];
 
 /// The rows file's one module, its unit tests: a child module sees an entry's private fields.
@@ -9672,6 +9678,47 @@ fn undocumented(attributes: &[syn::Attribute]) -> Vec<String> {
         .collect()
 }
 
+/// The attributes `rows` carries at any depth beyond docs and [`ROWS_ATTRIBUTES`], the entry
+/// types' own aside ([`entry_type_findings`] reads those), in one finding.
+fn rows_attribute_findings(rows: &syn::File) -> Vec<String> {
+    let mut others = rows.clone();
+    for item in &mut others.items {
+        if let Item::Struct(structure) = item
+            && ENTRY_TYPES.iter().any(|entry| structure.ident == entry)
+        {
+            structure.attrs.clear();
+        }
+    }
+    let mut extra = Vec::new();
+    for level in levels(others.to_token_stream()) {
+        for at in 0..level.len() {
+            if !punct_at(&level, at, '#') {
+                continue;
+            }
+            let inner = punct_at(&level, at + 1, '!');
+            let body_at = if inner { at + 2 } else { at + 1 };
+            let Some(TokenTree::Group(body)) = level.get(body_at) else {
+                continue;
+            };
+            if body.delimiter() != Delimiter::Bracket {
+                continue;
+            }
+            let opening: Vec<TokenTree> = body.stream().into_iter().take(1).collect();
+            let doc = ident_at(&opening, 0).as_deref() == Some("doc");
+            let bang = if inner { "!" } else { "" };
+            let written = squeezed(&format!("#{bang}{body}"));
+            if !doc && !ROWS_ATTRIBUTES.contains(&written.as_str()) {
+                extra.push(written);
+            }
+        }
+    }
+    if extra.is_empty() {
+        return Vec::new();
+    }
+    let finding = format!("{ROWS_FILE}: carries {extra:?} beside docs and {ROWS_ATTRIBUTES:?}");
+    vec![finding]
+}
+
 /// What breaks the entry types' declarations in `rows`: each is declared once, carries exactly
 /// [`ENTRY_ATTRIBUTES`] beside its docs, and keeps every field private.
 fn entry_type_findings(rows: &syn::File) -> Vec<String> {
@@ -9807,6 +9854,7 @@ fn rows_findings(source: &str) -> (Vec<String>, BTreeSet<String>) {
     let gated = gated_constructors(&rows);
     let found = entry_type_findings(&rows)
         .into_iter()
+        .chain(rows_attribute_findings(&rows))
         .chain(rows_module_findings(&rows))
         .chain(entry_surface_findings(&rows))
         .chain(rows_seal_findings(&rows, &gated))
@@ -9961,7 +10009,7 @@ fn the_gated_constructors_are_named_only_in_the_rows_file_and_the_act_file() {
     let entry_derive = "#[derive(Debug)]\npub struct NewChangelogEntry {";
     let open_entry = "#[derive(Debug)]\npub struct OpenChangelogEntry(NewChangelogEntry);";
     let tests_module = "#[cfg(test)]\nmod tests;\n";
-    let rows_refused: [(String, &[&str]); 21] = [
+    let rows_refused: [(String, &[&str]); 23] = [
         (
             rewritten(
                 entry_derive,
@@ -10011,6 +10059,19 @@ fn the_gated_constructors_are_named_only_in_the_rows_file_and_the_act_file() {
         (after_the_entry("mod system {\n    use super::*;\n}"), &[]),
         (rewritten(tests_module, "mod tests;\n"), &[]),
         (after_the_entry("declare_system!(system);"), &[]),
+        (
+            after_the_entry(
+                "#[derive(Debug, serde::Deserialize)]\n#[serde(remote = \"NewChangelogEntry\")]\npub struct Mirror { commission_id: CommissionId, kind: ChangelogEntryKind, actor_id: Option<UserId>, payload: Value, note: Option<String>, created_at: DateTimeUtc }",
+            ),
+            &[],
+        ),
+        (
+            rewritten(
+                "impl NewChangelogEntry {\n",
+                "#[forge::constructors]\nimpl NewChangelogEntry {\n",
+            ),
+            &[],
+        ),
         (
             in_entry_impl(
                 "pub fn lifecycle_moved_if(commission: CommissionId, actor: UserId, moved: Option<&LifecycleMove>, at: DateTimeUtc) -> Option<Self> { moved.map(|moved| Self::lifecycle_moved(commission, actor, moved, at)) }",
