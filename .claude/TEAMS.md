@@ -25,7 +25,7 @@
 | Key | Value | Notes |
 |---|---|---|
 | strategy | integration | |
-| integration | `feature/{slug}` | cut at main's tip. Zurfur's names stand for the pack's through 0.2 (R-215, 2026-10-19): for 0.2, `{slug}` is `release-0-2`, so `feature/release-0-2` ↔ the version `pre-alpha-v0.2.0` ↔ `<docs>/releases/0.2/`. `bug/{slug}` is an off-cycle fix's branch. The pack-shaped names are decided at 0.3's scope, with the release-model question |
+| integration | `feature/{slug}` | cut at main's tip. Zurfur's names stand for the pack's through 0.2 (R-215, 2026-10-19): for 0.2, `{slug}` is `release-0-2`, so `feature/release-0-2` ↔ the version `pre-alpha-v0.2.0` ↔ `<docs>/releases/0.2/`. `bug/{slug}` is an off-cycle fix's branch. Releases are tags on `main`; from the alpha, `release/<stage>-v<x.y>` is cut from a tag only to patch a shipped version, fixed on `main` first and cherry-picked, never merged back (R-238, 2026-10-21). `release/<stage>-v<x.y>` is the patch line for that x.y; each patch on it is tagged `<stage>-v<x.y.z>`. The pack-shaped names are decided at 0.3's scope |
 | slice | `feature/{slug}-{n}-{part}` | its PR targets the integration branch. A slice's base is the longest `feature/<x>` prefix of its name that exists on the remote; Machinery's slice-PR briefs name the base. The `feature/` prefix makes CI run on PRs into `feature/**` |
 | fix | `feature/{slug}-m{n}-{team}-fix` | a milestone fix round's branch; its PR targets the integration branch (R-215) |
 | engineer reviews | — | none since R-247 to R-249 (2026-10-23, until the Engineer says otherwise): the Orchestrator merges into main, the design corpus's main and Vulpes's main once the top-level QA has reviewed the PR's head, with CI and CodeRabbit's review still gating as before; a one-way door stays the Engineer's, asked as a plain design question with no code, and its merge waits for the Engineer's yes (R-248) |
@@ -120,11 +120,11 @@ The Orchestrator is the tech lead; the Engineer is Product Owner, manager and st
 
 | Team | Mission | Owns (paths) | Lead | Reviewers |
 |---|---|---|---|---|
-| den | Atta and the Den tree: nodes, metadata, payload, levels, links, mounts | `backend/crates/atta/**`, `backend/crates/application/src/den{.rs,/**}`, `backend/crates/api/src/routes/den{.rs,/**}` | Badger | — |
-| identity | User, Account, Character, handles, DIDs, profiles, the PDS boundary | `backend/crates/identity/**` (except `src/elements/achievement{.rs,/**}`, which is posts', and the bug-report files `src/{elements,ports}/bug_report{.rs,/**}`, which are shared ground), `backend/crates/kernel/src/elements/did{.rs,/**}`, `backend/crates/application/src/{user,account,character}{.rs,/**}`, `backend/crates/api/src/routes/accounts{.rs,/**}`, `backend/crates/adapter-atproto/**` | Fox | — |
-| commission | Commission, Workflow boards, slots, the changelog | `backend/crates/workflow/**`, `backend/crates/application/src/commission{.rs,/**}`, `backend/crates/api/src/routes/commissions/**` | Wolf | — |
-| web | The SvelteKit app | `frontend/web/**` | Fennec | — |
-| posts | Posts, /post and /blob, and the Gallery | `backend/crates/gallery/**`, `backend/crates/kernel/src/elements/blob{.rs,/**}`, `backend/crates/identity/src/elements/achievement{.rs,/**}`, `backend/crates/application/src/{post,gallery}{.rs,/**}`, `backend/crates/api/src/routes/{posts,gallery}{.rs,/**}` | Bowerbird | — |
+| den | Atta and the Den tree: nodes, metadata, payload, levels, links, mounts; the Lens engine and tags | `backend/crates/atta/**`, `backend/crates/application/src/den{.rs,/**}`, `backend/crates/api/src/routes/den{.rs,/**}` | Badger | — |
+| identity | User, Account, Character, handles, DIDs, profiles, the PDS boundary, friendship | `backend/crates/identity/**` (except `src/elements/achievement{.rs,/**}`, which is posts', and the bug-report files `src/{elements,ports}/bug_report{.rs,/**}`, which are shared ground), `backend/crates/kernel/src/elements/did{.rs,/**}`, `backend/crates/application/src/{user,account,character}{.rs,/**}`, `backend/crates/api/src/routes/accounts{.rs,/**}`, `backend/crates/adapter-atproto/**` | Fox | — |
+| commission | Commission, Workflow boards, slots, the changelog, reputation | `backend/crates/workflow/**`, `backend/crates/application/src/commission{.rs,/**}`, `backend/crates/api/src/routes/commissions/**` | Wolf | — |
+| web | The SvelteKit app and Zurfur inside Bluesky (the bsky.app extension, the labeler, custom feeds) | `frontend/web/**` | Fennec | — |
+| posts | Posts, /post and /blob, the Gallery, notifications, Seals and achievements | `backend/crates/gallery/**`, `backend/crates/kernel/src/elements/blob{.rs,/**}`, `backend/crates/identity/src/elements/achievement{.rs,/**}`, `backend/crates/application/src/{post,gallery}{.rs,/**}`, `backend/crates/api/src/routes/{posts,gallery}{.rs,/**}` | Bowerbird | — |
 | moderation | Platform safety: moderator actions, reports, scanning, kill switches, blocks | `backend/crates/moderation/**`, `backend/crates/application/src/moderation{.rs,/**}`, `backend/crates/api/src/routes/moderation{.rs,/**}` | Meerkat | — |
 | plugin | Plugins: Golems, Portals, the plugin API, plugin security and listings | `backend/crates/{plugin,plugin-api}/**`, `backend/crates/application/src/plugin{.rs,/**}`, `backend/crates/api/src/routes/plugins{.rs,/**}` | Octopus | — |
 | plugin/studio | Zurfur Studio (`~/code/zurfur-studio`), a core plugin; answers to the plugin lead too | — (own repo, `/home/zuri/code/zurfur-studio`) | Chameleon | — |
@@ -133,7 +133,7 @@ The Orchestrator is the tech lead; the Engineer is Product Owner, manager and st
 | wolven | Wolven (`~/code/wolven`): node graph and monotone policy fold over Vulpes | — (own repo, `/home/zuri/code/wolven`) | Lobo | — |
 | payments | How money moves around a commission | — | Pelican | — |
 | qa | Top-level QA: documents for the Engineer, every milestone, every PR into main | — | Owl | — |
-| internal | Finds the most effective way for the teams to work and spend their time; owns CI, scripts and the way-of-working files | `.github/**`, `scripts/**`, `Justfile`, `CLAUDE.md`, `.claude/settings.json`, `.claude/TEAMS.md`, `.claude/pins.md` | Beaver | — |
+| internal | Finds the most effective way for the teams to work and spend their time; owns CI, scripts and the way-of-working files; Kafka | `.github/**`, `scripts/**`, `Justfile`, `CLAUDE.md`, `.claude/settings.json`, `.claude/TEAMS.md`, `.claude/pins.md` | Beaver | — |
 | compliance | Release review: what Zurfur is legally bound to follow | — | Tortoise | Pangolin, Armadillo |
 | architects | Reviews every milestone, before QA; release review: correct architecture | — | Termite | Caddis, Oriole |
 | security | Every security-triggered slice (its plan, then its code), a triggered PR into main's cumulative diff, and the release review | — | Heron | Mongoose, Hedgehog |
