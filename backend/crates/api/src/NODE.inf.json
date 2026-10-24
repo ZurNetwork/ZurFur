@@ -55,7 +55,7 @@
     },
     {
       "name": "problem/",
-      "role": "fields.rs: FieldPointer, FieldCode (From<NodeNameError>: each name-rule refusal its own code), FieldRefusal and Problem::invalid_fields, the one way a problem names the fields it refused; tests.rs, fields/tests.rs with the token pin and the source scan",
+      "role": "fields.rs: FieldPointer, FieldCode (From<NodeNameError>: each name-rule refusal its own code; unknown_value for a token outside a field's vocabulary), FieldRefusal and Problem::invalid_fields, the one way a problem names the fields it refused; tests.rs, fields/tests.rs with the token pin and the source scan",
       "node": false
     },
     {
@@ -65,7 +65,7 @@
     },
     {
       "name": "sweep.rs",
-      "role": "deadline sweeper background task; single-writer via pg_try_advisory_xact_lock",
+      "role": "deadline sweeper background task over the app's Runtime: each tick (sweep_tick) a pass when this instance wins pg_try_advisory_xact_lock (sweep_pass_as_leader, the one caller of Commissions::sweep_deadlines, at Utc::now()), a failing pass logged by its error's fixed text alone; sweep/tests.rs: a pass skips while another instance holds the lock, and a failing system act and a failing pass log no DID, name or store detail",
       "node": false
     },
     {

@@ -1,8 +1,8 @@
 //! A commission route's `{id}` that isn't a commission id answers exactly what a
 //! well-formed id that names nothing answers: the one `application/problem+json` 404,
 //! byte for byte, never echoing the input. A signed-out caller gets 401 whatever the id.
-//! Checked on a write (`PATCH …/title`) and a read (`GET …/changelog`) on the in-memory
-//! runtime.
+//! Checked on the writes `PATCH …/title` and `PUT …/lifecycle` and the reads `GET …/changelog`
+//! and `GET /commissions/{id}` on the in-memory runtime.
 
 use domain::elements::{did::Did, profile::Profile};
 use serde_json::json;
@@ -89,6 +89,26 @@ async fn changelog(session: &reqwest::Client, base: &str, id: &str) -> reqwest::
         .expect("GET /commissions/{id}/changelog")
 }
 
+/// `GET /commissions/{id}`.
+async fn read(session: &reqwest::Client, base: &str, id: &str) -> reqwest::Response {
+    session
+        .get(format!("{base}/commissions/{id}"))
+        .send()
+        .await
+        .expect("GET /commissions/{id}")
+}
+
+/// `PUT /commissions/{id}/lifecycle` with a step the vocabulary names.
+async fn move_lifecycle(session: &reqwest::Client, base: &str, id: &str) -> reqwest::Response {
+    let body = json!({ "id": UNKNOWN_ID, "to": "active" });
+    session
+        .put(format!("{base}/commissions/{id}/lifecycle"))
+        .json(&body)
+        .send()
+        .await
+        .expect("PUT /commissions/{id}/lifecycle")
+}
+
 /// The answer's `content-type`, as text.
 fn content_type(answer: &Answer) -> String {
     let (_, value) = answer
@@ -152,6 +172,36 @@ async fn a_malformed_id_reads_the_changelog_like_an_id_that_names_nothing() {
 }
 
 #[tokio::test]
+async fn a_malformed_id_reads_the_commission_like_an_id_that_names_nothing() {
+    let base = world().await;
+    let session = as_artist(&base).await;
+
+    let unknown_response = read(&session, &base, UNKNOWN_ID).await;
+    let unknown = Answer::read(unknown_response).await;
+
+    for malformed in malformed_ids() {
+        let response = read(&session, &base, malformed.in_url).await;
+        let answer = Answer::read(response).await;
+        assert_answers_like_unknown(&malformed, &answer, &unknown);
+    }
+}
+
+#[tokio::test]
+async fn a_malformed_id_moves_the_lifecycle_like_an_id_that_names_nothing() {
+    let base = world().await;
+    let session = as_artist(&base).await;
+
+    let unknown_response = move_lifecycle(&session, &base, UNKNOWN_ID).await;
+    let unknown = Answer::read(unknown_response).await;
+
+    for malformed in malformed_ids() {
+        let response = move_lifecycle(&session, &base, malformed.in_url).await;
+        let answer = Answer::read(response).await;
+        assert_answers_like_unknown(&malformed, &answer, &unknown);
+    }
+}
+
+#[tokio::test]
 async fn a_signed_out_caller_gets_401_whatever_the_id() {
     let base = world().await;
     let signed_out = client();
@@ -160,7 +210,13 @@ async fn a_signed_out_caller_gets_401_whatever_the_id() {
         let renamed = rename(&signed_out, &base, malformed.in_url).await;
         common::assert_problem(renamed, 401, "not_authenticated").await;
 
-        let read = changelog(&signed_out, &base, malformed.in_url).await;
-        common::assert_problem(read, 401, "not_authenticated").await;
+        let read_changelog = changelog(&signed_out, &base, malformed.in_url).await;
+        common::assert_problem(read_changelog, 401, "not_authenticated").await;
+
+        let read_commission = read(&signed_out, &base, malformed.in_url).await;
+        common::assert_problem(read_commission, 401, "not_authenticated").await;
+
+        let moved = move_lifecycle(&signed_out, &base, malformed.in_url).await;
+        common::assert_problem(moved, 401, "not_authenticated").await;
     }
 }

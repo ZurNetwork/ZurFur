@@ -2,7 +2,7 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{CommissionTitle, NewCommission},
+        commission::{CommissionDeadline, CommissionRefusal, CommissionTitle, NewCommission},
         maturity::Maturity,
         user::UserId,
     },
@@ -12,7 +12,7 @@ use domain::{
 use crate::{
     commission::{CommissionResult, CommissionValues, Commissions, act::CommissionAct},
     den::{
-        Den, DenType, Handler, Lent, TopLevel,
+        Den, DenType, Handler, Lent, TopLevel, Unmade,
         act::{
             ActShape, ActSpec, Anchor, BornEntry, DenAct, EntryRule, GatedEntry, Handled,
             HandlerError,
@@ -77,11 +77,22 @@ impl Act {
 impl Handler for Act {
     type Role = Creator;
 
-    const ENTRY: EntryRule = EntryRule::Always(GatedEntry::CREATED);
+    type Checked = NewCommission;
+
+    const ENTRY: EntryRule<NewCommission> = EntryRule::Always(GatedEntry::CREATED);
+
+    /// What the create chose: nothing is made yet, so no rule refuses it.
+    fn precondition(
+        &self,
+        _facts: &Unmade,
+        _now: DateTimeUtc,
+    ) -> Result<Option<NewCommission>, CommissionRefusal> {
+        Ok(Some(self.chosen.clone()))
+    }
 
     /// Creates the commission at the node the gate made, then answers it as the unit holds it.
-    async fn handle(&self, lent: &mut Lent<'_, Creator>) -> Result<Handled, HandlerError> {
-        lent.create(&self.chosen).await?;
+    async fn handle(&self, lent: &mut Lent<'_, Self>) -> Result<Handled, HandlerError> {
+        lent.create().await?;
         let answer = lent.lent().await?;
         Ok(Handled { answer })
     }
@@ -102,16 +113,17 @@ impl Commissions<'_> {
             maturity,
             deadline,
         } = cmd;
-        let act = Act {
-            title,
-            chosen: NewCommission { maturity, deadline },
+        let chosen = NewCommission {
+            maturity,
+            deadline: deadline.map(CommissionDeadline::from),
         };
+        let act = Act { title, chosen };
         let command = write::Command {
-            actor: actor_id,
+            actor: actor_id.into(),
             act: DenAct::Commission(CommissionAct::Create(act)),
         };
         let written = Den::from(self.ports()).write(command, now).await?;
-        let values = CommissionValues::try_from(written)?;
+        let values = CommissionValues::answered(written, now)?;
         Ok(values)
     }
 }

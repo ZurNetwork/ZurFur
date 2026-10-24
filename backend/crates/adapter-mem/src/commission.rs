@@ -10,14 +10,15 @@ use async_trait::async_trait;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
-        Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission, CommissionBirth,
-        CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionRole,
-        CommissionStanding, CommissionStart, CommissionSummary, CommissionTitle, DeadlineStatus,
+        AsParticipant, Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission,
+        CommissionBirth, CommissionComposition, CommissionDeadline, CommissionFile, CommissionId,
+        CommissionMarkup, CommissionRole, CommissionStanding, CommissionStart, CommissionSummary,
+        CommissionTitle, DeadlineChange, DeadlineStatus, DelayedChange, DirectionChange,
         DirectionStatus, ElementId, ElementPayload, ElementRow, ElementType, FileKey, FileSummary,
-        GrantLevel, LapsedDeadline, LifecycleStep, LockedStanding, NewChangelogEntry,
-        NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId,
-        SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow,
-        VisibilityMode, declared_tabs, declares_surface, derive_deadline_status,
+        GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode, LockedStanding,
+        NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
+        SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId,
+        TabName, TabRow, VisibilityMode, declared_tabs, declares_surface,
     },
     did::Did,
     invitation::InvitationState,
@@ -171,7 +172,7 @@ pub(crate) fn insert_commission(
         let CommissionStart {
             lifecycle_step,
             direction_status,
-            deadline_status,
+            delayed_flag,
             linked_channel,
             archived_at,
         } = CommissionStart::default();
@@ -179,10 +180,10 @@ pub(crate) fn insert_commission(
             node_id: node.id,
             owner_id: birth.owner_id.clone(),
             lifecycle_step,
-            deadline: commission.deadline,
+            deadline: commission.deadline.map(DateTimeUtc::from),
             maturity: commission.maturity,
             direction_status,
-            deadline_status,
+            delayed_flag,
             linked_channel,
             archived_at,
             created_at: birth.created_at,
@@ -232,8 +233,9 @@ pub(crate) struct StoredCommission {
     maturity: Option<Maturity>,
     /// The direction-axis Status, or `None`; one cell, so a set replaces.
     direction_status: Option<DirectionStatus>,
-    /// The deadline-axis Status, or `None`; the same one-cell shape.
-    deadline_status: Option<DeadlineStatus>,
+    /// The stored manual Delayed flag, or `None`; the same one-cell shape. Late is never
+    /// stored.
+    delayed_flag: Option<DeadlineStatus>,
     /// The external linked-channel pointer, or `None` while none is declared.
     linked_channel: Option<ChannelPointer>,
     /// When the commission was archived, or `None` while active.
@@ -256,14 +258,6 @@ fn summarize(id: CommissionId, archived: bool, node: &NodeRow) -> CommissionSumm
 impl StoredCommission {
     /// Rebuild the aggregate from its stored parts.
     fn rebuild(&self, id: CommissionId) -> Commission {
-        // Late is derived fresh at lookup, never persisted; the stored
-        // `deadline_status` is the manual `Delayed` flag only.
-        let deadline_status = derive_deadline_status(
-            self.deadline,
-            &self.lifecycle_step,
-            self.deadline_status,
-            chrono::Utc::now(),
-        );
         Commission {
             id,
             owner_id: self.owner_id.clone(),
@@ -271,7 +265,7 @@ impl StoredCommission {
             deadline: self.deadline,
             maturity: self.maturity,
             direction_status: self.direction_status,
-            deadline_status,
+            delayed_flag: self.delayed_flag,
             linked_channel: self.linked_channel.clone(),
             archived_at: self.archived_at,
             created_at: self.created_at,
@@ -458,6 +452,31 @@ impl CommissionWrites for MemCommissionWrites<'_> {
             *self.1 = true;
         }
         inserted
+    }
+
+    /// Move the capability's commission to `change`'s new step, only while it still holds the
+    /// held step: the mem mirror of the pg compare-and-set. An absent commission, or one at
+    /// another step, changes nothing and answers `false`.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn set_lifecycle(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &LifecycleMove,
+    ) -> anyhow::Result<bool> {
+        let id = *capability.thing();
+        let mut commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        let Some(stored) = commissions.get_mut(&id) else {
+            return Ok(false);
+        };
+        if stored.lifecycle_step != *change.before() {
+            return Ok(false);
+        }
+        stored.lifecycle_step = change.after().clone();
+        Ok(true)
     }
 
     /// Contribute one element into a declared surface at `position = max + 1`
@@ -909,15 +928,16 @@ impl CommissionWrites for MemCommissionWrites<'_> {
             .is_some())
     }
 
-    /// Repoint (or clear) the direction-axis Status; one slot, so a set replaces
-    /// whole. An absent commission is a no-op.
+    /// Moves the direction status by compare-and-set: only while the stored one is `change`'s
+    /// held status, the mem mirror of the pg write. Otherwise, or with no such commission, it
+    /// changes nothing and answers `false`.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_direction_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DirectionStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DirectionChange,
     ) -> anyhow::Result<bool> {
-        let id = *id;
+        let id = *capability.thing();
         let mut commissions = self
             .0
             .commissions
@@ -926,21 +946,23 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         let Some(stored) = commissions.get_mut(&id) else {
             return Ok(false);
         };
-        if stored.direction_status == status {
+        if stored.direction_status != change.before() {
             return Ok(false);
         }
-        stored.direction_status = status;
+        stored.direction_status = change.after();
         Ok(true)
     }
 
-    /// Repoint (or clear) the stored deadline; an absent commission is a no-op.
+    /// Moves the deadline by compare-and-set: only while the stored one is `change`'s held
+    /// deadline, the mem mirror of the pg write. Otherwise, or with no such commission, it
+    /// changes nothing and answers `false`.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_deadline(
         &mut self,
-        id: &CommissionId,
-        deadline: Option<DateTimeUtc>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DeadlineChange,
     ) -> anyhow::Result<bool> {
-        let id = *id;
+        let id = *capability.thing();
         let mut commissions = self
             .0
             .commissions
@@ -949,22 +971,23 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         let Some(stored) = commissions.get_mut(&id) else {
             return Ok(false);
         };
-        if stored.deadline == deadline {
+        if stored.deadline != change.before() {
             return Ok(false);
         }
-        stored.deadline = deadline;
+        stored.deadline = change.after();
         Ok(true)
     }
 
-    /// Repoint (or clear) the deadline-axis Status; one slot, so a set replaces
-    /// whole. An absent commission is a no-op.
+    /// Moves the stored Delayed flag by compare-and-set: only while the stored flag is the one
+    /// `change` says the row held, the mem mirror of the pg write. Otherwise, or with no such
+    /// commission, it changes nothing and answers `false`.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_deadline_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DeadlineStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DelayedChange,
     ) -> anyhow::Result<bool> {
-        let id = *id;
+        let id = *capability.thing();
         let mut commissions = self
             .0
             .commissions
@@ -973,75 +996,40 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         let Some(stored) = commissions.get_mut(&id) else {
             return Ok(false);
         };
-        if stored.deadline_status == status {
+        if stored.delayed_flag != change.held() {
             return Ok(false);
         }
-        stored.deadline_status = status;
+        stored.delayed_flag = change.after();
         Ok(true)
     }
+}
 
-    /// The sweeper's candidate scan, answered on the unit's staged snapshot:
-    /// deadline strictly before `now`, not already Late, lifecycle not terminal;
-    /// ordered by deadline, id as tiebreak.
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
-        // Late is never persisted, so dedup on the changelog itself: skip only
-        // if the latest `late` entry is AFTER the latest deadline change, since a
-        // deadline set or extension re-arms the log.
-        let logged_since_change: std::collections::HashSet<CommissionId> = {
-            let changelog = self
-                .0
-                .changelog
-                .lock()
-                .expect("MemBackend changelog mutex poisoned");
-            let mut latest_late: std::collections::HashMap<CommissionId, i64> =
-                std::collections::HashMap::new();
-            let mut latest_change: std::collections::HashMap<CommissionId, i64> =
-                std::collections::HashMap::new();
-            for entry in changelog.iter() {
-                let target = match entry.kind {
-                    ChangelogEntryKind::Late => &mut latest_late,
-                    ChangelogEntryKind::DeadlineSet | ChangelogEntryKind::DeadlineExtended => {
-                        &mut latest_change
-                    }
-                    _ => continue,
-                };
-                target
-                    .entry(entry.commission_id)
-                    .and_modify(|seq| *seq = (*seq).max(entry.seq))
-                    .or_insert(entry.seq);
-            }
-            latest_late
-                .into_iter()
-                .filter(|(id, late_seq)| *late_seq > latest_change.get(id).copied().unwrap_or(0))
-                .map(|(id, _)| id)
-                .collect()
+/// The commissions `changelog` holds an entry of `late_kinds`' mark for since their last entry
+/// of its re-arming kinds, so each fresh miss is its own event.
+fn logged_since_change(
+    changelog: &[StoredChangelogEntry],
+    late_kinds: &LateKinds,
+) -> HashSet<CommissionId> {
+    let mut latest_late: HashMap<CommissionId, i64> = HashMap::new();
+    let mut latest_change: HashMap<CommissionId, i64> = HashMap::new();
+    for entry in changelog {
+        let target = if entry.kind == late_kinds.mark() {
+            &mut latest_late
+        } else if late_kinds.rearming().contains(&entry.kind) {
+            &mut latest_change
+        } else {
+            continue;
         };
-        let commissions = self
-            .0
-            .commissions
-            .lock()
-            .expect("MemBackend commissions mutex poisoned");
-        let mut lapsed: Vec<LapsedDeadline> = commissions
-            .iter()
-            .filter_map(|(id, stored)| {
-                let deadline = stored.deadline?;
-                if deadline >= now
-                    || stored.lifecycle_step.is_terminal()
-                    || logged_since_change.contains(id)
-                {
-                    return None;
-                }
-                Some(LapsedDeadline {
-                    id: *id,
-                    deadline,
-                    status: stored.deadline_status,
-                })
-            })
-            .collect();
-        lapsed.sort_by_key(|lapse| (lapse.deadline, uuid::Uuid::from(lapse.id)));
-        Ok(lapsed)
+        target
+            .entry(entry.commission_id)
+            .and_modify(|seq| *seq = (*seq).max(entry.seq))
+            .or_insert(entry.seq);
     }
+    latest_late
+        .into_iter()
+        .filter(|(id, late_seq)| *late_seq > latest_change.get(id).copied().unwrap_or(0))
+        .map(|(id, _)| id)
+        .collect()
 }
 
 /// In-memory [`ChangelogWrites`] view: appends land on the unit's staged
@@ -1061,12 +1049,12 @@ impl ChangelogWrites for MemChangelogWrites {
         let seq = changelog.last().map(|e| e.seq + 1).unwrap_or(1);
         changelog.push(StoredChangelogEntry {
             seq,
-            commission_id: entry.commission_id,
-            kind: entry.kind,
-            actor_id: entry.actor_id.clone(),
-            payload: entry.payload.clone(),
-            note: entry.note.clone(),
-            created_at: entry.created_at,
+            commission_id: entry.commission_id(),
+            kind: entry.kind(),
+            actor_id: entry.actor_id().cloned(),
+            payload: entry.payload().clone(),
+            note: entry.note_text().map(str::to_owned),
+            created_at: entry.created_at(),
         });
         Ok(())
     }
@@ -1117,6 +1105,54 @@ impl CommissionReads for MemCommissionWrites<'_> {
             .await?;
         let locked = standing.map(|standing| LockedStanding { standing, node });
         Ok(locked)
+    }
+
+    /// The node the commission points at and its level, over the unit's staged maps; there is
+    /// no row to lock. A commission whose node the unit doesn't hold answers `None`, as the
+    /// locked join does.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn lock_for_system(
+        &mut self,
+        commission: &CommissionId,
+    ) -> anyhow::Result<Option<LockedNode>> {
+        let bound = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned")
+            .get(commission)
+            .map(|stored| stored.node_id);
+        let Some(node) = bound else {
+            return Ok(None);
+        };
+        let locked = self
+            .0
+            .nodes
+            .lock()
+            .expect("MemBackend nodes mutex poisoned")
+            .get(&node)
+            .map(|row| LockedNode {
+                node,
+                level: row.level,
+            });
+        Ok(locked)
+    }
+
+    /// Whether the unit's staged changelog holds no `late` entry for `commission` since its
+    /// deadline last changed: the scan's anti-join, for one commission.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn late_owed(
+        &mut self,
+        commission: &CommissionId,
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<bool> {
+        let changelog = self
+            .0
+            .changelog
+            .lock()
+            .expect("MemBackend changelog mutex poisoned");
+        let logged = logged_since_change(&changelog, late_kinds);
+        Ok(!logged.contains(commission))
     }
 
     #[tracing::instrument(level = "debug", skip_all)]
@@ -1584,6 +1620,47 @@ impl CommissionStore for MemCommissionStore {
         found.sort_by_key(|slot| uuid::Uuid::from(slot.element_id));
         Ok(found)
     }
+
+    /// The sweep's scan over the shared maps: deadline strictly before `now`, step not in
+    /// `not_lapsing`, no Late mark since the last re-arming entry; ids ordered by deadline, id
+    /// as tiebreak.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn lapsed_deadlines(
+        &self,
+        now: DateTimeUtc,
+        not_lapsing: &[LifecycleStep],
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<Vec<CommissionId>> {
+        let logged = {
+            let changelog = self
+                .0
+                .changelog
+                .lock()
+                .expect("MemBackend changelog mutex poisoned");
+            logged_since_change(&changelog, late_kinds)
+        };
+        let commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        let mut lapsed: Vec<(DateTimeUtc, CommissionId)> = commissions
+            .iter()
+            .filter_map(|(id, stored)| {
+                let deadline = stored.deadline?;
+                let skipped = deadline >= now
+                    || not_lapsing.contains(&stored.lifecycle_step)
+                    || logged.contains(id);
+                if skipped {
+                    return None;
+                }
+                Some((deadline, *id))
+            })
+            .collect();
+        lapsed.sort_by_key(|(deadline, id)| (*deadline, uuid::Uuid::from(*id)));
+        let ids = lapsed.into_iter().map(|(_, id)| id).collect();
+        Ok(ids)
+    }
 }
 
 /// In-memory [`ChangelogStore`] read surface over the shared [`MemBackend`].
@@ -1733,7 +1810,7 @@ impl MemBackend {
         };
         let chosen = NewCommission {
             maturity: seed.maturity,
-            deadline: seed.deadline,
+            deadline: seed.deadline.map(CommissionDeadline::from),
         };
         insert_commission(&unit.staged, seed.id, &birth, &chosen)?;
         Box::new(unit).commit().await?;
@@ -1836,6 +1913,36 @@ impl MemBackend {
             .get_mut(&commission)
             .expect("seed_lifecycle_step: no such commission")
             .lifecycle_step = step;
+    }
+
+    /// Store one changelog entry exactly as given, beneath every rule a
+    /// [`NewChangelogEntry`] carries (seed helper): for a legacy row no constructor builds.
+    /// The log assigns its `seq`; it carries no note. Answers the stored entry.
+    pub fn seed_changelog_entry(
+        &self,
+        commission: CommissionId,
+        kind: ChangelogEntryKind,
+        actor: Option<UserId>,
+        payload: Value,
+        at: domain::datetime::DateTimeUtc,
+    ) -> ChangelogEntry {
+        let mut changelog = self
+            .changelog
+            .lock()
+            .expect("MemBackend changelog mutex poisoned");
+        let seq = changelog.last().map(|e| e.seq + 1).unwrap_or(1);
+        let stored = StoredChangelogEntry {
+            seq,
+            commission_id: commission,
+            kind,
+            actor_id: actor,
+            payload,
+            note: None,
+            created_at: at,
+        };
+        let seeded = stored.rebuild();
+        changelog.push(stored);
+        seeded
     }
 
     /// The commission's tabs, in declared order (inspect helper) — how a test

@@ -318,6 +318,29 @@ impl Problem {
         )
     }
 
+    /// `409` — the lifecycle move goes where no move may go: into Draft, which only a new
+    /// commission holds, or into Disputed.
+    pub fn lifecycle_move_refused() -> Self {
+        Self::new(
+            "urn:zurfur:error:lifecycle-move-refused",
+            "lifecycle_move_refused",
+            "Lifecycle move refused",
+            409,
+            "A commission can't be moved back to Draft, or into Disputed, by a move.",
+        )
+    }
+
+    /// `409` — the commission is Disputed, which holds what the act would change.
+    pub fn commission_disputed() -> Self {
+        Self::new(
+            "urn:zurfur:error:commission-disputed",
+            "commission_disputed",
+            "Commission is disputed",
+            409,
+            "The commission is Disputed; it can't be changed this way until the dispute ends.",
+        )
+    }
+
     /// `409` — the sole Owner tried to leave; transfer ownership or delete the
     /// account first.
     pub fn owner_cannot_leave() -> Self {

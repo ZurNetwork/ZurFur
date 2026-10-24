@@ -16,6 +16,7 @@
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
 use adapter_mem::MemBackend;
+use application::commission::SweepResult;
 use chrono::Utc;
 use domain::elements::{
     commission::{CommissionId, DeadlineStatus, DirectionStatus},
@@ -64,6 +65,21 @@ async fn stored(backend: &MemBackend, id: uuid::Uuid) -> domain::elements::commi
         .expect("commission exists")
 }
 
+/// One deadline sweep at `now` through the use case, over the served backend's stores.
+async fn sweep_at(backend: &MemBackend, now: chrono::DateTime<Utc>) -> SweepResult {
+    let sweeper = Did::from("did:plc:sweeper".to_owned());
+    let mut runtime = test_support::runtime::mem(&sweeper).build().runtime;
+    runtime.commissions = backend.commission_store();
+    runtime.changelog = backend.changelog_store();
+    runtime.database = backend.database();
+    runtime
+        .app()
+        .commissions()
+        .sweep_deadlines(now)
+        .await
+        .expect("sweep runs")
+}
+
 // The negative contract (Engineer ruling 2026-07-05): the upload endpoint NEVER
 // mutates any status. A commission holding a value on EVERY status axis —
 // Lifecycle (draft), direction (waiting_for_input), deadline (Late, via a real
@@ -95,9 +111,7 @@ async fn the_upload_endpoint_never_mutates_any_status() {
         json!({ "title": "Ref sheet", "deadline": past.to_rfc3339() }),
     )
     .await;
-    let swept = application::commission::sweep_deadlines(&*backend.database(), Utc::now())
-        .await
-        .expect("sweep runs");
+    let swept = sweep_at(&backend, Utc::now()).await;
     assert_eq!(swept.marked_late, 1, "the seeded commission is marked Late");
 
     // And a value on the direction axis, set explicitly (ZMVP-85 machinery).
@@ -115,7 +129,10 @@ async fn the_upload_endpoint_never_mutates_any_status() {
         before.direction_status,
         Some(DirectionStatus::WaitingForInput)
     );
-    assert_eq!(before.deadline_status, Some(DeadlineStatus::Late));
+    assert_eq!(
+        before.deadline_status_at(Utc::now()),
+        Some(DeadlineStatus::Late)
+    );
     let log_before = entries(&backend, id).await.len();
 
     // The upload smuggles a status two ways: a multipart field ahead of the
@@ -151,7 +168,7 @@ async fn the_upload_endpoint_never_mutates_any_status() {
         "an upload never moves the direction axis — not even a smuggled status"
     );
     assert_eq!(
-        after.deadline_status,
+        after.deadline_status_at(Utc::now()),
         Some(DeadlineStatus::Late),
         "an upload never moves the deadline axis"
     );

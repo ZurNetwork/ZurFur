@@ -1,4 +1,6 @@
-use super::{ChannelPointer, CommissionId, DeadlineStatus, DirectionStatus, LifecycleStep};
+use super::{
+    ChannelPointer, CommissionId, DeadlineStatus, DirectionStatus, LifecycleStep, deadline,
+};
 use identity::elements::user::UserId;
 use kernel::datetime::DateTimeUtc;
 use kernel::elements::maturity::Maturity;
@@ -27,10 +29,9 @@ pub struct Commission {
     /// a set replaces; only an explicit Participant act moves it, never a
     /// content event.
     pub direction_status: Option<DirectionStatus>,
-    /// The deadline-axis Status, or `None` while none is held. Holds a value
-    /// only while [`deadline`](Commission::deadline) is set; see
-    /// [`DeadlineStatus`] for who moves it.
-    pub deadline_status: Option<DeadlineStatus>,
+    /// The stored manual deadline-axis flag: `Delayed` or `None`, never Late, which
+    /// [`deadline_status_at`](Commission::deadline_status_at) derives.
+    pub delayed_flag: Option<DeadlineStatus>,
     /// The external linked-channel pointer — "where we talk" — or `None` while
     /// no channel is declared. Owner-set and changelog-recorded on set/clear.
     pub linked_channel: Option<ChannelPointer>,
@@ -51,6 +52,12 @@ impl Commission {
     /// Whether `user_id` is the commission's owner.
     pub fn is_owned_by(&self, user_id: &UserId) -> bool {
         self.owner_id == *user_id
+    }
+
+    /// The deadline-axis status at `now`: Late once the deadline is past on a step that isn't
+    /// terminal, else the stored flag; nothing with no deadline.
+    pub fn deadline_status_at(&self, now: DateTimeUtc) -> Option<DeadlineStatus> {
+        deadline::status_at(self.deadline, &self.lifecycle_step, self.delayed_flag, now)
     }
 }
 

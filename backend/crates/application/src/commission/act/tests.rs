@@ -9,7 +9,7 @@ use crate::{
     commission::den::CommissionPlace,
     den::{
         DenType, Place, TopLevel,
-        act::{ActShape, Anchor},
+        act::{ActShape, Anchor, Needs},
         needs,
     },
 };
@@ -42,12 +42,12 @@ fn create_needs_no_role_and_rename_needs_the_owner() {
     let created = create("A piece").spec();
     let renamed = rename("A new name").spec();
 
-    assert_eq!(created.needs, None);
+    assert_eq!(created.needs, Needs::Create);
     assert_eq!(created.needs, needs::<create::Act>());
     assert_eq!(created.anchor, Anchor::TopLevel(TopLevel::Commission));
     assert_eq!(created.den_type, DenType::Commission);
     let untitled_place = Place::Commission(CommissionPlace::Commission(untitled()));
-    assert_eq!(renamed.needs, Some(CommissionRole::Owner));
+    assert_eq!(renamed.needs, Needs::Role(CommissionRole::Owner));
     assert_eq!(renamed.needs, needs::<rename::Act>());
     assert_eq!(renamed.anchor, Anchor::Thing(untitled_place));
     assert_eq!(renamed.den_type, DenType::Commission);
@@ -100,4 +100,86 @@ fn an_act_s_debug_prints_no_title() {
     ];
 
     assert_eq!(printed, ["Create", "Rename"]);
+}
+
+// A lifecycle move needs any Participant, read from its capability marker, and changes the
+// commission's fields on its own node; its Debug prints the variant alone.
+#[test]
+fn a_lifecycle_move_needs_a_participant_and_is_a_change() {
+    let act = move_to::Act {
+        commission: untitled(),
+        to: domain::elements::commission::LifecycleStep::Active,
+    };
+    let moved = CommissionAct::MoveLifecycle(act);
+
+    let spec = moved.spec();
+
+    let untitled_place = Place::Commission(CommissionPlace::Commission(untitled()));
+    assert_eq!(spec.needs, Needs::Role(CommissionRole::Participant));
+    assert_eq!(spec.needs, needs::<move_to::Act>());
+    assert_eq!(spec.anchor, Anchor::Thing(untitled_place));
+    assert_eq!(spec.den_type, DenType::Commission);
+    assert_eq!(spec.shape, ActShape::Change);
+    assert_eq!(format!("{moved:?}"), "MoveLifecycle");
+}
+
+// Each direction, deadline and Delayed act needs any Participant, read from its capability
+// marker, and changes the commission's fields on its own node; its Debug prints the variant
+// alone, never a value it carries.
+#[test]
+fn each_field_act_needs_a_participant_and_is_a_change() {
+    let instant: domain::datetime::DateTimeUtc =
+        "2099-03-01T00:00:00Z".parse().expect("a timestamp");
+    let deadline = domain::elements::commission::CommissionDeadline::from(instant);
+    let commission = untitled();
+    let acts = [
+        CommissionAct::SetDirection(direction::set::Act {
+            commission,
+            to: domain::elements::commission::DirectionStatus::WaitingForInput,
+        }),
+        CommissionAct::ClearDirection(direction::clear::Act { commission }),
+        CommissionAct::SetDeadline(deadline::set::Act {
+            commission,
+            deadline,
+        }),
+        CommissionAct::ClearDeadline(deadline::clear::Act { commission }),
+        CommissionAct::SetDelayed(deadline::status::set::Act { commission }),
+        CommissionAct::ClearDelayed(deadline::status::clear::Act { commission }),
+    ];
+
+    let untitled_place = Place::Commission(CommissionPlace::Commission(untitled()));
+    for act in &acts {
+        let spec = act.spec();
+
+        assert_eq!(
+            spec.needs,
+            Needs::Role(CommissionRole::Participant),
+            "{act:?}"
+        );
+        assert_eq!(
+            spec.anchor,
+            Anchor::Thing(untitled_place.clone()),
+            "{act:?}"
+        );
+        assert_eq!(spec.den_type, DenType::Commission, "{act:?}");
+        assert_eq!(spec.shape, ActShape::Change, "{act:?}");
+    }
+    let printed: Vec<String> = acts.iter().map(|act| format!("{act:?}")).collect();
+    let variants = [
+        "SetDirection",
+        "ClearDirection",
+        "SetDeadline",
+        "ClearDeadline",
+        "SetDelayed",
+        "ClearDelayed",
+    ];
+    assert_eq!(printed, variants);
+    assert_eq!(
+        needs::<direction::set::Act>(),
+        Needs::Role(CommissionRole::Participant)
+    );
+    assert_eq!(
+        needs::<deadline::status::clear::Act>(),
+        Needs::Role(CommissionRole::Participant)
+    );
 }

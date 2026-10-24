@@ -4,7 +4,7 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            ChangelogEntryKind, CommissionFile, CommissionId, FileKey, FileName, NewChangelogEntry,
+            CommissionFile, CommissionId, FileKey, FileName, NewChangelogEntry, OpenKind,
         },
         user::UserId,
     },
@@ -101,9 +101,9 @@ impl Files<'_> {
             return Err(CommissionError::FileEmpty);
         }
 
-        let entry = NewChangelogEntry::event(
+        let entry: NewChangelogEntry = NewChangelogEntry::event(
             commission_id,
-            ChangelogEntryKind::FileAdded,
+            OpenKind::FileAdded,
             actor_id.clone(),
             json!({
                 "file_id": *key.as_ref(),
@@ -112,7 +112,8 @@ impl Files<'_> {
                 "byte_size": written,
             }),
             now,
-        );
+        )
+        .into();
         let file = CommissionFile {
             id: key,
             commission_id,

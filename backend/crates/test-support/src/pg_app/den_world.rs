@@ -3,7 +3,7 @@ use chrono::Utc;
 use composition::Runtime;
 use domain::elements::{
     account::AccountId,
-    commission::{CommissionId, ElementId, FileKey, SKELETON},
+    commission::{CommissionId, ElementId, FileKey, LifecycleStep, SKELETON},
     did::Did,
     level::Level,
     profile::Profile,
@@ -195,6 +195,18 @@ impl DenWorld {
             .await
             .expect("drop node_level_known in the world's database");
         self.store_level(commission, UNPARSABLE_LEVEL).await;
+    }
+
+    /// Puts `commission` at the lifecycle `step`, a test-only update: no route moves it into
+    /// Disputed.
+    pub async fn set_lifecycle_step(&self, commission: CommissionId, step: LifecycleStep) {
+        let updated = sqlx::query("UPDATE commission SET lifecycle = $1 WHERE id = $2")
+            .bind(step.to_string())
+            .bind(Uuid::from(commission))
+            .execute(&self.served.runtime.pool)
+            .await
+            .expect("update the commission's lifecycle");
+        assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
     }
 
     /// Stores a lifecycle token no parser reads on `commission`'s row, a test-only update.

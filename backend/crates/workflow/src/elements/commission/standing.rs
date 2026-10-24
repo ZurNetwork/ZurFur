@@ -24,3 +24,13 @@ pub struct LockedStanding {
     /// The node the commission points at.
     pub node: NodeId,
 }
+
+/// What the system's locked read answers, with no viewer: the node the commission points at
+/// and that node's level, read under the commission row's lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LockedNode {
+    /// The node the commission points at.
+    pub node: NodeId,
+    /// That node's level.
+    pub level: Level,
+}

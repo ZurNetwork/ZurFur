@@ -6,7 +6,8 @@ use super::{
     DenWorld, SeededCommission, absent_account, absent_commission, absent_file, absent_slot,
     absent_workflow,
 };
-use domain::elements::level::Level;
+use domain::elements::{commission::CommissionId, level::Level};
+use serde_json::json;
 
 /// Two causes of one miss at the same depth: a path to nothing, and a path to a real node
 /// that isn't the viewer's to open. Each must answer the same.
@@ -249,6 +250,139 @@ pub fn rename_stranger_pair(world: &DenWorld) -> MissPair {
         absent: format!("/commissions/{absent}/title"),
         not_yours: old_sketch.clone(),
         home: old_sketch,
+    }
+}
+
+/// One call on a commission, sent the same way to a real commission and to a made-up id.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommissionCall {
+    /// What the call is, for assertion messages.
+    pub label: &'static str,
+    /// The HTTP method.
+    pub method: reqwest::Method,
+    /// The path after `/commissions/{id}`: empty, or starting with `/`.
+    pub tail: &'static str,
+    /// The JSON body, when the call takes one: one the call's own parsing accepts, so the
+    /// answer is the standing's.
+    pub body: Option<serde_json::Value>,
+}
+
+impl CommissionCall {
+    /// The call's path on `commission`.
+    pub fn path(&self, commission: CommissionId) -> String {
+        format!("/commissions/{commission}{}", self.tail)
+    }
+
+    /// The call as `client` sends it to `path` on the server at `base`.
+    pub async fn send(
+        &self,
+        client: &reqwest::Client,
+        base: &str,
+        path: &str,
+    ) -> reqwest::Response {
+        let request = client.request(self.method.clone(), format!("{base}{path}"));
+        let request = match &self.body {
+            Some(body) => request.json(body),
+            None => request,
+        };
+        request.send().await.expect("the call is answered")
+    }
+
+    /// The pair of this call on `target`, a commission its viewer takes part in nothing of,
+    /// against a made-up id. `home` is the real one's path, which alice may call.
+    pub fn pair(&self, target: &SeededCommission) -> MissPair {
+        let real = self.path(target.id);
+        MissPair {
+            label: self.label,
+            absent: self.path(absent_commission()),
+            not_yours: real.clone(),
+            home: real,
+        }
+    }
+}
+
+/// The deadline every deadline call sends: far enough ahead that no sweep owes it.
+const FAR_DEADLINE: &str = "2099-03-01T00:00:00Z";
+
+/// The rename, `PATCH` with [`RENAME_TITLE`].
+pub fn rename_call() -> CommissionCall {
+    let body = json!({ "title": RENAME_TITLE });
+    CommissionCall {
+        label: "rename",
+        method: reqwest::Method::PATCH,
+        tail: "/title",
+        body: Some(body),
+    }
+}
+
+/// The seven write calls the commission's field acts add, each sent with a body its own
+/// parsing accepts: move the lifecycle, set and clear the direction, set and clear the
+/// deadline, set and clear Delayed.
+pub fn new_write_calls() -> [CommissionCall; 7] {
+    let move_body = json!({ "to": "active" });
+    let direction_body = json!({ "status": "waiting_for_input" });
+    let deadline_body = json!({ "deadline": FAR_DEADLINE });
+    let delayed_body = json!({ "status": "delayed" });
+    let move_lifecycle = CommissionCall {
+        label: "move the lifecycle",
+        method: reqwest::Method::PUT,
+        tail: "/lifecycle",
+        body: Some(move_body),
+    };
+    let set_direction = CommissionCall {
+        label: "set the direction",
+        method: reqwest::Method::PUT,
+        tail: "/status/direction",
+        body: Some(direction_body),
+    };
+    let clear_direction = CommissionCall {
+        label: "clear the direction",
+        method: reqwest::Method::DELETE,
+        tail: "/status/direction",
+        body: None,
+    };
+    let set_deadline = CommissionCall {
+        label: "set the deadline",
+        method: reqwest::Method::PUT,
+        tail: "/deadline",
+        body: Some(deadline_body),
+    };
+    let clear_deadline = CommissionCall {
+        label: "clear the deadline",
+        method: reqwest::Method::DELETE,
+        tail: "/deadline",
+        body: None,
+    };
+    let set_delayed = CommissionCall {
+        label: "set Delayed",
+        method: reqwest::Method::PUT,
+        tail: "/status/deadline",
+        body: Some(delayed_body),
+    };
+    let clear_delayed = CommissionCall {
+        label: "clear Delayed",
+        method: reqwest::Method::DELETE,
+        tail: "/status/deadline",
+        body: None,
+    };
+    [
+        move_lifecycle,
+        set_direction,
+        clear_direction,
+        set_deadline,
+        clear_deadline,
+        set_delayed,
+        clear_delayed,
+    ]
+}
+
+/// The commission read, `GET /commissions/{id}`.
+pub fn read_call() -> CommissionCall {
+    CommissionCall {
+        label: "the commission read",
+        method: reqwest::Method::GET,
+        tail: "",
+        body: None,
     }
 }
 

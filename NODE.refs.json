@@ -493,7 +493,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "files.rs: the download names its Content-Disposition with the file's Den name, as the use case hands it over (D6, D19); rename.rs: a stranger's rename and a made-up id's are the one commission_not_found, the title checked first for both (D21)"
+      "governs": "files.rs: the download names its Content-Disposition with the file's Den name, as the use case hands it over (D6, D19); rename.rs: a stranger's rename and a made-up id's are the one commission_not_found, the title checked first for both (D21); get.rs: a stranger the Den doesn't open the commission to and a made-up id answer the one commission_not_found, byte for byte (D21)"
     }
   ],
   "backend/crates/api/src/routes/den": [
@@ -646,7 +646,7 @@
     {
       "page": 2026100701,
       "title": "My Den — Rulings from the First Slice's Design Study",
-      "governs": "den.rs: a commission's name is its title (D6); its fixed entries (D9); archived commissions hidden from listings unless asked (D13); one not-found (D21), the node reading only the commission's summary and then the viewer's participation, both, every time. files/download.rs and changelog/read.rs ask den's check (`den::access::may_open`) on the node each serves: a Participant's standing covers the commission's real subtree, archived included by its typed path (D3), and each pair of not-found causes answers alike and reads alike (D21). files/download.rs: the save name is the file's Den name, the stored name when the name rule accepts it, else Unnamed (D6, D19). create.rs and rename.rs: through the Den's write, a commission's title is its node's name, which the gate writes (D6); a stranger's rename and one of a made-up id are the same not-found, and a non-owner Participant's is forbidden (D21)."
+      "governs": "den.rs: a commission's name is its title (D6); its fixed entries (D9); archived commissions hidden from listings unless asked (D13); one not-found (D21), the node reading only the commission's summary and then the viewer's participation, both, every time. files/download.rs and changelog/read.rs ask den's check (`den::access::may_open`) on the node each serves: a Participant's standing covers the commission's real subtree, archived included by its typed path (D3), and each pair of not-found causes answers alike and reads alike (D21). files/download.rs: the save name is the file's Den name, the stored name when the name rule accepts it, else Unnamed (D6, D19). create.rs and rename.rs: through the Den's write, a commission's title is its node's name, which the gate writes (D6); a stranger's rename and one of a made-up id are the same not-found, and a non-owner Participant's is forbidden (D21). get.rs asks den's check on the commission's node first, so a stranger and a made-up id read only the check's pair and are the same not-found (D21); its title is the commission's Den name, Unnamed for stored text the rule refuses (D6, D19)."
     },
     {
       "page": 2026101201,

@@ -9,7 +9,7 @@ use axum::{
 };
 use chrono::Utc;
 use domain::{
-    elements::commission::{ChangelogEntryKind, ChannelPointer, NewChangelogEntry},
+    elements::commission::{ChannelPointer, NewChangelogEntry, OpenKind},
     ports::UnitOfWork,
 };
 use serde::Deserialize;
@@ -46,13 +46,14 @@ pub(super) async fn link_channel(
     let pointer = ChannelPointer::try_from(body.channel)
         .map_err(|e| Problem::invalid_request(e.to_string()))?;
 
-    let entry = NewChangelogEntry::event(
+    let entry: NewChangelogEntry = NewChangelogEntry::event(
         commission_id,
-        ChangelogEntryKind::ChannelLinked,
+        OpenKind::ChannelLinked,
         actor_id,
         json!({ "channel": pointer.as_str() }),
         Utc::now(),
-    );
+    )
+    .into();
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
             #[expect(
@@ -91,13 +92,14 @@ pub(super) async fn clear_channel(
         return Ok(StatusCode::NO_CONTENT.into_response());
     };
 
-    let entry = NewChangelogEntry::event(
+    let entry: NewChangelogEntry = NewChangelogEntry::event(
         commission_id,
-        ChangelogEntryKind::ChannelUnlinked,
+        OpenKind::ChannelUnlinked,
         actor_id,
         json!({ "channel": previous.as_str() }),
         Utc::now(),
-    );
+    )
+    .into();
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
             #[expect(

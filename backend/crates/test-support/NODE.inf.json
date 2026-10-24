@@ -112,7 +112,7 @@
     },
     {
       "name": "src/pg_app/den_world.rs",
-      "role": "den_world(app) -> DenWorld, and den_world_recording(app, &StatementLog) through the statement proxy: alice, bob and a stranger signed in (profiles cached through GET /me); alice's Account \"Supreme Arts\" (Workflow \"Queue\") and bob's \"Night Shift\" (\"Backlog\"); \"Untitled\" and the archived \"Old sketch\", a file and a slot each, all through routes or use cases; bob a Participant of \"Untitled\" and test-only writes: set_visibility (the commission node's level and the commission's own visibility column, since no trigger copies a level), store_unparsable_level (drops node_level_known in the world's own database, then writes a level no parser reads onto both), store_legacy_title (the node's name and the created entry's payload); add_backlog_column adds a column to bob's \"Backlog\" through the add use case; set_profile_cache(ProfileCacheState::{Warm, Cold}) fixes the profile cache's state for all three users; absent_* ids no seed writes",
+      "role": "den_world(app) -> DenWorld, and den_world_recording(app, &StatementLog) through the statement proxy: alice, bob and a stranger signed in (profiles cached through GET /me); alice's Account \"Supreme Arts\" (Workflow \"Queue\") and bob's \"Night Shift\" (\"Backlog\"); \"Untitled\" and the archived \"Old sketch\", a file and a slot each, all through routes or use cases; bob a Participant of \"Untitled\" and test-only writes: set_visibility (the commission node's level and the commission's own visibility column, since no trigger copies a level), store_unparsable_level (drops node_level_known in the world's own database, then writes a level no parser reads onto both), store_legacy_title (the node's name and the created entry's payload); set_lifecycle_step (the commission row's step, Disputed included, which no route enters); add_backlog_column adds a column to bob's \"Backlog\" through the add use case; set_profile_cache(ProfileCacheState::{Warm, Cold}) fixes the profile cache's state for all three users; absent_* ids no seed writes",
       "node": false
     },
     {
@@ -127,7 +127,7 @@
     },
     {
       "name": "src/pg_app/pairs.rs",
-      "role": "the pairs of not-found causes on the den world, shared by the route, read and statement suites and the timing run: MissPair (absent, not_yours, home), stranger_targets (Untitled Private live; Old sketch Private, Public and Listed archived); the den routes' den_stranger_pairs (the commission, its changelog, its file), den_account_pair, den_character_pair (bob's user DID stands in: no Character on PostgreSQL yet) and den_participant_pairs (a file key, a slot, a Workflow); commission's commission_read_stranger_pairs, commission_read_live_pairs (with each pair's problem code), public_live_download_pair and download_participant_pair; the rename's rename_stranger_pair (PATCH …/title with RENAME_TITLE: a made-up id against alice's Old sketch, which bob takes no part in)",
+      "role": "the pairs of not-found causes on the den world, shared by the route, read and statement suites and the timing run: MissPair (absent, not_yours, home), stranger_targets (Untitled Private live; Old sketch Private, Public and Listed archived); the den routes' den_stranger_pairs (the commission, its changelog, its file), den_account_pair, den_character_pair (bob's user DID stands in: no Character on PostgreSQL yet) and den_participant_pairs (a file key, a slot, a Workflow); commission's commission_read_stranger_pairs, commission_read_live_pairs (with each pair's problem code), public_live_download_pair and download_participant_pair; the rename's rename_stranger_pair (PATCH …/title with RENAME_TITLE: a made-up id against alice's Old sketch, which bob takes no part in); CommissionCall (a method, a path tail and a body its own parsing accepts; path, send, and pair on a target) with rename_call, the seven field writes in new_write_calls and the commission read in read_call",
       "node": false
     },
     {
@@ -147,7 +147,7 @@
     },
     {
       "name": "src/recording.rs",
-      "role": "CallLog + recording wrappers over Database/UnitOfWork (nodes() delegates unrecorded), DidMinter, FileStore, CommissionStore (standing logged as standing), ChangelogStore (entries) and WorkflowStore (its find logged as find_workflow) — tests read the order of begin/commit/rollback, external calls and store reads; SubjectLog + recording wrappers over the identity reads (AccountStore, UserStore, CharacterStore, ProfileCache, ProfileSource) — tests read which reads ran and whose data each asked for",
+      "role": "CallLog + recording wrappers over Database/UnitOfWork (nodes() delegates unrecorded), DidMinter, FileStore, CommissionStore (standing logged as standing, the sweep's scan as lapsed_deadlines), ChangelogStore (entries) and WorkflowStore (its find logged as find_workflow) — tests read the order of begin/commit/rollback, external calls and store reads; SubjectLog + recording wrappers over the identity reads (AccountStore, UserStore, CharacterStore, ProfileCache, ProfileSource) — tests read which reads ran and whose data each asked for",
       "node": false
     },
     {
@@ -167,7 +167,7 @@
     },
     {
       "name": "src/store_doubles.rs",
-      "role": "scripted wrappers over AccountStore and UserStore: real answers until a shared script makes a listing list a membership the store wouldn't, a read fail, a role read answer a stale role (as a read taken before a concurrent change would), or a user row read as gone; and the standing double: StandingScript scripts the pool's standing (ScriptedStanding over a CommissionStore) and a unit's standing_for_update, a LockedStanding with its node (ScriptedStandingDatabase over a Database), apart per commission and viewer, so they can disagree; tests seed first, then script",
+      "role": "scripted wrappers over AccountStore and UserStore: real answers until a shared script makes a listing list a membership the store wouldn't, a read fail, a role read answer a stale role (as a read taken before a concurrent change would), or a user row read as gone; and the standing double: StandingScript scripts the pool's standing (ScriptedStanding over a CommissionStore) and a unit's standing_for_update, a LockedStanding with its node (ScriptedStandingDatabase over a Database), apart per commission and viewer, so they can disagree; and the sweep's: a change run once after the pool's lapsed_deadlines answers (after_scan, before any of the sweep's units), the scan failing once (fail_scan), and a unit's lock_for_system failing once for one commission (fail_system_lock); tests seed first, then script",
       "node": false
     },
     {

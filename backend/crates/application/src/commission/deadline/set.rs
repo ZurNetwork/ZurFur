@@ -1,17 +1,23 @@
-use crate::LazyUnit;
 use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{ChangelogEntryKind, CommissionId, NewChangelogEntry},
+        commission::{
+            AsParticipant, CommissionDeadline, CommissionId, CommissionRefusal, CommissionState,
+            DeadlineSet, schedule_deadline,
+        },
         user::UserId,
     },
 };
-use serde_json::json;
 
 use crate::{
     Ports,
-    commission::{CommissionResult, deadline::Deadline, require_participant},
+    commission::{CommissionResult, act::CommissionAct, deadline::Deadline, den::CommissionPlace},
+    den::{
+        Den, DenType, Handler, Lent, Place,
+        act::{ActShape, ActSpec, Anchor, DenAct, EntryRule, GatedEntry, Handled, HandlerError},
+        needs, write,
+    },
 };
 
 pub struct Command {
@@ -19,17 +25,69 @@ pub struct Command {
     pub commission_id: CommissionId,
     pub deadline: DateTimeUtc,
 }
+
+/// The act landed, or there was nothing to change.
+#[derive(Debug)]
 pub struct Output;
 
+/// The deadline set or moved: the commission it is anchored on and the deadline it sets.
+/// The den writes the commission its grant names, never the act's id.
+pub(crate) struct Act {
+    /// The commission it is anchored on.
+    pub(crate) commission: CommissionId,
+    /// The deadline it sets, at the store's precision.
+    pub(crate) deadline: CommissionDeadline,
+}
+
+impl Act {
+    /// A change to the commission's fields; it needs the role its capability's marker needs,
+    /// any Participant.
+    pub(crate) fn spec(&self) -> ActSpec {
+        let place = Place::Commission(CommissionPlace::Commission(self.commission));
+        ActSpec {
+            word: "set_deadline",
+            den_type: DenType::Commission,
+            anchor: Anchor::Thing(place),
+            needs: needs::<Self>(),
+            shape: ActShape::Change,
+        }
+    }
+}
+
+impl Handler for Act {
+    type Role = AsParticipant;
+
+    type Checked = DeadlineSet;
+
+    const ENTRY: EntryRule<DeadlineSet> = EntryRule::OnChange(GatedEntry::DEADLINE_SET);
+
+    /// The deadline rule on the stored state: the set, nothing when the deadline is held, or
+    /// refused while Disputed.
+    fn precondition(
+        &self,
+        facts: &CommissionState,
+        _now: DateTimeUtc,
+    ) -> Result<Option<DeadlineSet>, CommissionRefusal> {
+        schedule_deadline(facts, self.deadline)
+    }
+
+    /// Writes the checked set, then answers the commission as the unit holds it.
+    async fn handle(&self, lent: &mut Lent<'_, Self>) -> Result<Handled, HandlerError> {
+        lent.set_deadline().await?;
+        let answer = lent.lent().await?;
+        Ok(Handled { answer })
+    }
+}
+
 impl Deadline<'_> {
-    /// Set — or move — the commission's deadline, as a Participant. Re-setting
-    /// the deadline already held is a no-op. A later deadline than the one held
-    /// records as `DeadlineExtended`, anything else as `DeadlineSet`.
+    /// Set or move the commission's deadline through the Den's write, as any Participant, held
+    /// to whole microseconds as the store holds it. Re-setting the deadline it holds writes
+    /// nothing, finer nanoseconds included; a Disputed commission's is refused. A later deadline
+    /// than the one held records `deadline_extended`, anything else `deadline_set`.
     #[use_case]
     pub async fn set(
         &self,
         #[ports] ports: &Ports,
-        #[lazy_unit] uow: &mut LazyUnit<'_>,
         cmd: Command,
         now: DateTimeUtc,
     ) -> CommissionResult<Output> {
@@ -38,36 +96,18 @@ impl Deadline<'_> {
             commission_id,
             deadline,
         } = cmd;
-        let commission = require_participant(ports, &commission_id, &actor_id).await?;
-
-        // The no-op is "the stored deadline already IS the requested one" —
-        // never a comparison against `now`.
-        if commission.deadline == Some(deadline) {
-            return Ok(Output);
-        }
-
-        let kind = match commission.deadline {
-            Some(old) if deadline > old => ChangelogEntryKind::DeadlineExtended,
-            _ => ChangelogEntryKind::DeadlineSet,
+        let act = Act {
+            commission: commission_id,
+            deadline: CommissionDeadline::from(deadline),
         };
-
-        let entry = NewChangelogEntry::event(
-            commission.id,
-            kind,
-            actor_id,
-            json!({ "from": commission.deadline, "to": deadline }),
-            now,
-        );
-
-        let uow = uow.open().await?;
-        let mut commissions = uow.commissions();
-        let moved = commissions
-            .set_deadline(&commission.id, Some(deadline))
-            .await?;
-        drop(commissions);
-        if moved {
-            uow.changelog().append(&entry).await?;
-        }
+        let command = write::Command {
+            actor: actor_id.into(),
+            act: DenAct::Commission(CommissionAct::SetDeadline(act)),
+        };
+        Den::from(ports).write(command, now).await?;
         Ok(Output)
     }
 }
+
+#[cfg(test)]
+mod tests;

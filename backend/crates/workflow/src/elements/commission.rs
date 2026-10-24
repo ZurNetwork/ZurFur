@@ -27,14 +27,25 @@ mod role_marker;
 mod rows;
 mod standing;
 mod start;
+mod state;
+#[cfg(test)]
+mod test_commission;
 mod title;
+mod values;
 
 pub use changelog::{
-    ChangelogEntry, ChangelogEntryKind, ChannelPointer, ChannelPointerError, NewChangelogEntry,
+    ChangelogEntry, ChangelogEntryKind, ChannelPointer, ChannelPointerError, LateKinds,
+    NewChangelogEntry, OpenChangelogEntry, OpenKind,
 };
 pub use commission_role::CommissionRole;
-pub use deadline::{DeadlineStatus, LapsedDeadline, derive_deadline_status};
-pub use direction::DirectionStatus;
+pub use deadline::{
+    DeadlineChange, DeadlineCleared, DeadlineSet, DeadlineStatus, DelayedChange, DelayedCleared,
+    DelayedSet, LateMark, clear_deadline, clear_delayed, owes_late, schedule_deadline, set_delayed,
+};
+pub use direction::{
+    DirectionChange, DirectionCleared, DirectionSet, DirectionStatus, clear_direction,
+    set_direction,
+};
 pub use element::{
     Band, CommissionComposition, CompositionLabel, CompositionLabelError, DeclaredTab, ElementId,
     ElementPayload, ElementRow, ElementType, LABEL_MAX_CHARS, NewElement, SKELETON, SeatId,
@@ -42,22 +53,26 @@ pub use element::{
     declares_surface,
 };
 pub use entity::Commission;
-pub use errors::{DeadlineStatusError, UnknownDirectionStatus, UnknownLifecycleStep};
+pub use errors::{
+    CommissionRefusal, DeadlineStatusError, UnknownDirectionStatus, UnknownLifecycleStep,
+};
 pub use fact::Fact;
 pub use file::{
     CommissionFile, FileDownload, FileKey, FileMetadata, FileName, FileNameError, FileSummary,
 };
 pub use grant_level::GrantLevel;
 pub use id::CommissionId;
-pub use lifecycle::LifecycleStep;
+pub use lifecycle::{LifecycleMove, LifecycleStep, move_lifecycle};
 pub use markup::{CommissionMarkup, Markup, MarkupError, MarkupKey, MarkupShape};
-pub use role_marker::{AsOwner, AsParticipant};
+pub use role_marker::{AsOwner, AsParticipant, AsSystem};
 pub use rows::{CommissionBirth, CommissionSummary, NewCommission};
 pub use seat::{
     NewSeat, Seat, SeatKind, SeatKindError, SeatLink, SeatLinkError, SeatPrompt, SeatPromptError,
 };
 pub use seat_invitation::{SeatInvitation, SeatInvitationId};
 pub use slot::{NewSlot, Slot, SlotTitle, SlotTitleError};
-pub use standing::{CommissionStanding, LockedStanding};
+pub use standing::{CommissionStanding, LockedNode, LockedStanding};
 pub use start::CommissionStart;
+pub use state::{CommissionState, LateFacts};
 pub use title::CommissionTitle;
+pub use values::CommissionDeadline;

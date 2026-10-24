@@ -145,27 +145,47 @@ impl Writer {
         Ok(applied)
     }
 
+    /// Runs Atta's generic checks on `act` and nothing else: the refusal [`Writer::act`] would
+    /// meet, or `()`. No host applies anything, and no [`Checked`] is made.
+    pub fn dry_run<B: Send, P: Send>(
+        &self,
+        host: &dyn Host<Act = B, Applied = P>,
+        act: &Act<B>,
+    ) -> Result<(), Refusal> {
+        self.settled(host, act).map(|_| ())
+    }
+
     /// The five generic checks; the act, checked, or the first refusal.
     fn check<B: Send, P: Send>(
         &self,
         host: &dyn Host<Act = B, Applied = P>,
         act: Act<B>,
     ) -> Result<Checked<B>, Refusal> {
-        let settled = match &act.shape {
+        let settled = self.settled(host, &act)?;
+        let checked = Checked { act, settled };
+        Ok(checked)
+    }
+
+    /// The five generic checks on `act`, by reference: each born node's settled level, or the
+    /// first refusal.
+    fn settled<B: Send, P: Send>(
+        &self,
+        host: &dyn Host<Act = B, Applied = P>,
+        act: &Act<B>,
+    ) -> Result<Vec<Level>, Refusal> {
+        match &act.shape {
             Shape::Create {
                 parent,
                 node,
                 entries,
-            } => self.check_create(host, &act.typ, parent, node, entries)?,
+            } => self.check_create(host, &act.typ, parent, node, entries),
             Shape::Rename { node, .. } | Shape::Change { node } => {
                 if node.typ != act.typ {
                     return Err(Refusal::OtherType);
                 }
-                Vec::new()
+                Ok(Vec::new())
             }
-        };
-        let checked = Checked { act, settled };
-        Ok(checked)
+        }
     }
 
     /// The checks on a Create: its node is of the act's type; no node is made inside a file and

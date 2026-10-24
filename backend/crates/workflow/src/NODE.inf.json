@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/workflow/src",
-  "charted": "2026-10-22",
+  "charted": "2026-10-23",
   "short": "Workflow elements and ports",
   "is": "Two public modules: the commission and board nouns (elements) and the seams that store them (ports).",
   "type": "code",
@@ -37,7 +37,7 @@
     },
     {
       "name": "ports/",
-      "role": "trait seams: commission (incl. the standing reads: `standing` on the pool, `standing_for_update` locked in a unit, answering `LockedStanding`, the standing beside the commission's node; `CommissionWrites::create` takes the den's write gate's `&WriteCapability<New<CommissionId>, Creator>` and reads the id from it), changelog, workflow, file (FileStore); errors.rs (UnknownTab, UnknownSurface, ElementNotFound)",
+      "role": "trait seams: commission (incl. the standing reads: `standing` on the pool, `standing_for_update` locked in a unit, answering `LockedStanding`, the standing beside the commission's node; the system's viewer-less `lock_for_system`, answering `LockedNode`, and `late_owed` in a unit, and the sweep's scan `lapsed_deadlines` on the pool, answering ids, the non-lapsing steps passed in; both owed reads take the domain's `LateKinds`; `CommissionWrites::create` takes the den's write gate's `&WriteCapability<New<CommissionId>, Creator>` and reads the id from it, and `set_lifecycle`, `set_direction_status`, `set_deadline` and `set_deadline_status` a Participant's `&WriteCapability<CommissionId, AsParticipant>` beside the checked LifecycleMove, DirectionChange, DeadlineChange or DelayedChange, each a compare-and-set answering whether exactly one row changed), changelog, workflow, file (FileStore); errors.rs (UnknownTab, UnknownSurface, ElementNotFound)",
       "node": false
     }
   ],

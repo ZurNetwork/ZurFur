@@ -13,7 +13,7 @@ use domain::{
     elements::{
         commission::{
             ChangelogEntry, ChangelogEntryKind, CommissionId, CommissionRole, CommissionStanding,
-            LockedStanding,
+            CommissionState, DeadlineStatus, DirectionStatus, LifecycleStep, LockedStanding,
         },
         did::Did,
         level::Level,
@@ -38,8 +38,10 @@ use crate::{
         authority::{GrantKind, MINT_AS},
         gate::{DenApplied, DenRefusal},
         test_acts::{
-            commission_path, create_act, hand_built_create, hand_built_create_of,
-            hand_built_rename, hand_built_rename_of, rename_act,
+            FieldCall, clear_deadline_act, clear_delayed_act, clear_direction_act, commission_path,
+            create_act, field_call, fields_of, hand_built_create, hand_built_create_of,
+            hand_built_rename, hand_built_rename_of, move_act, rename_act, set_deadline_act,
+            set_delayed_act, set_direction_act, state_at, state_with,
         },
     },
     test_world, transaction,
@@ -127,7 +129,7 @@ pub(super) async fn write(
     act: DenAct,
 ) -> Result<WriteResult, DenWriteError> {
     let command = Command {
-        actor: actor.clone(),
+        actor: Actor::User(actor.clone()),
         act,
     };
     Den::from(ports).write(command, Utc::now()).await
@@ -190,10 +192,7 @@ pub(super) async fn through_host(
     act: Act<DenAct>,
 ) -> Result<Result<DenApplied, DenRefusal>, WriteError> {
     let mut unit = database.begin().await.expect("begin");
-    let writer = Writer {
-        viewer,
-        caps: WriteCaps::default(),
-    };
+    let writer = den_writer(viewer);
     let mut host = DenWriteHost::new(&mut *unit, grant, Utc::now());
     let outcome = writer.act(&mut host, act).await;
     drop(host);
@@ -205,15 +204,26 @@ pub(super) async fn through_host(
     outcome
 }
 
-/// An Owner's grant on `commission` to `actor`, bound to `node`.
-fn owner_grant(actor: &UserId, commission: CommissionId, node: NodeId) -> Grant {
+/// An Owner's grant on `commission` to `actor`, bound to `node`, carrying `state`.
+fn owner_grant_with(
+    actor: &UserId,
+    commission: CommissionId,
+    node: NodeId,
+    state: CommissionState,
+) -> Grant {
     let kind = GrantKind::Existing {
         commission,
         role: CommissionRole::Owner,
         level: Level::Private,
         node,
+        state,
     };
     Grant::for_test(actor, kind)
+}
+
+/// An Owner's grant on `commission` to `actor`, bound to `node`, its state at Draft.
+fn owner_grant(actor: &UserId, commission: CommissionId, node: NodeId) -> Grant {
+    owner_grant_with(actor, commission, node, state_at(LifecycleStep::Draft))
 }
 
 /// An Owner's grant on `commission` to `actor`, bound to its stored node.
@@ -530,7 +540,7 @@ fn the_builder_paths_the_grant_s_commission() {
     let spec = act.spec();
     let grant = owner_grant(&alice(), old_sketch(), NodeId::mint());
 
-    let built = build(spec, act, &grant).expect("the builder builds");
+    let built = build(spec, act, &Target::from(&grant)).expect("the builder builds");
 
     let Shape::Rename { node, .. } = built.shape else {
         panic!("a rename builds a rename: {:?}", built.shape);
@@ -696,7 +706,7 @@ async fn the_entry_lands_on_the_granted_commission_with_the_grant_s_actor() {
     let world = world().await;
     let now = Utc::now();
     let command = Command {
-        actor: alice(),
+        actor: Actor::User(alice()),
         act: owner_s_rename(),
     };
 
@@ -906,6 +916,642 @@ async fn an_archived_commission_refuses_nothing_yet() {
         node_name(&*world.ports.database, old_sketch()).await,
         NEW_NAME
     );
+}
+
+/// The lifecycle step `commission` holds.
+async fn step_of(ports: &Ports, commission: CommissionId) -> LifecycleStep {
+    let stored = ports
+        .commissions
+        .find(&commission)
+        .await
+        .expect("the store reads")
+        .expect("the commission is stored");
+    stored.lifecycle_step
+}
+
+/// `actor`'s move of `commission` to `to` through the Den's write.
+async fn move_by(
+    ports: &Ports,
+    actor: &UserId,
+    commission: CommissionId,
+    to: LifecycleStep,
+) -> Result<WriteResult, DenWriteError> {
+    write(ports, actor, move_act(commission, to)).await
+}
+
+/// `actor`'s move of `commission` to `to` through the move use case, which hands its act to
+/// the Den's write and holds no unit of its own.
+async fn move_through_the_use_case(
+    ports: &Ports,
+    actor: &UserId,
+    commission: CommissionId,
+    to: LifecycleStep,
+) -> Result<(), crate::commission::CommissionError> {
+    let command = crate::commission::lifecycle::move_to::Command {
+        actor_id: actor.clone(),
+        commission_id: commission,
+        to,
+    };
+    Commissions::new(ports)
+        .lifecycle()
+        .move_to(command, Utc::now())
+        .await?;
+    Ok(())
+}
+
+/// `actor`'s move of `commission`, held at Active, to Completed under a grant whose state says
+/// Draft: the rule checks a move from Draft, the compare-and-set matches no row, and the act
+/// fails, leaving the step and the entries as they were.
+async fn a_stale_move_fails(ports: &Ports, actor: &UserId, commission: CommissionId) {
+    let database = &*ports.database;
+    let before = entries(ports, commission).await.len();
+    let node = node_of(database, commission).await;
+    let stale = owner_grant_with(actor, commission, node, state_at(LifecycleStep::Draft));
+    let act = move_act(commission, LifecycleStep::Completed);
+
+    let moved = transaction(database, async move |uow: &mut dyn UnitOfWork| {
+        let result = written(uow, stale, act, Utc::now()).await?;
+        Ok(result)
+    })
+    .await;
+
+    assert!(moved.is_err(), "{moved:?}");
+    assert_eq!(step_of(ports, commission).await, LifecycleStep::Active);
+    assert_eq!(entries(ports, commission).await.len(), before);
+}
+
+/// A deadline far ahead, so no act here meets Late.
+fn ahead() -> chrono::DateTime<Utc> {
+    "2099-03-01T00:00:00Z".parse().expect("a timestamp")
+}
+
+/// A later deadline than [`ahead`].
+fn further_ahead() -> chrono::DateTime<Utc> {
+    "2099-04-01T00:00:00Z".parse().expect("a timestamp")
+}
+
+/// `actor`'s `act` on `commission`, under an Owner's grant whose state is `stale`: its rule
+/// checks a change from a value the row no longer holds, the compare-and-set matches no row,
+/// and the act fails, leaving the fields and the entries as they were.
+async fn a_stale_field_act_fails(
+    ports: &Ports,
+    actor: &UserId,
+    commission: CommissionId,
+    stale: CommissionState,
+    act: DenAct,
+) {
+    let database = &*ports.database;
+    let before = fields_of(ports, commission).await;
+    let logged = entries(ports, commission).await.len();
+    let node = node_of(database, commission).await;
+    let grant = owner_grant_with(actor, commission, node, stale);
+    let label = format!("{act:?}");
+
+    let written = transaction(database, async move |uow: &mut dyn UnitOfWork| {
+        let result = written(uow, grant, act, Utc::now()).await?;
+        Ok(result)
+    })
+    .await;
+
+    assert!(written.is_err(), "{label}: {written:?}");
+    assert_eq!(fields_of(ports, commission).await, before, "{label}");
+    assert_eq!(entries(ports, commission).await.len(), logged, "{label}");
+}
+
+/// Each field act's stale act on `commission`, `actor`'s: a direction set from no status and a
+/// clear of another status than the row holds; a deadline set from no deadline and a clear of
+/// another deadline than the row holds; a Delayed flag raised from no stored flag while the row
+/// holds one, and taken down while the row holds none.
+async fn each_stale_field_act_fails(ports: &Ports, actor: &UserId, commission: CommissionId) {
+    let held = [
+        FieldCall::SetDirection(DirectionStatus::WaitingForInput),
+        FieldCall::SetDeadline(ahead()),
+        FieldCall::SetDelayed,
+    ];
+    for call in held {
+        field_call(ports, actor, commission, call, Utc::now())
+            .await
+            .expect("the field lands");
+    }
+    let step = fields_of(ports, commission).await.lifecycle_step().clone();
+    let cases = [
+        (
+            state_with(step.clone(), None, None, None),
+            set_direction_act(commission, DirectionStatus::ChangesRequested),
+        ),
+        (
+            state_with(step.clone(), None, None, None),
+            set_deadline_act(commission, further_ahead()),
+        ),
+        (
+            state_with(
+                step.clone(),
+                None,
+                None,
+                Some(DirectionStatus::ChangesRequested),
+            ),
+            clear_direction_act(commission),
+        ),
+        (
+            state_with(step.clone(), Some(further_ahead()), None, None),
+            clear_deadline_act(commission),
+        ),
+        (
+            state_with(step.clone(), Some(ahead()), None, None),
+            set_delayed_act(commission),
+        ),
+    ];
+    for (stale, act) in cases {
+        a_stale_field_act_fails(ports, actor, commission, stale, act).await;
+    }
+    field_call(
+        ports,
+        actor,
+        commission,
+        FieldCall::ClearDelayed,
+        Utc::now(),
+    )
+    .await
+    .expect("the flag comes down");
+    let flagged = state_with(step, Some(ahead()), Some(DeadlineStatus::Delayed), None);
+    a_stale_field_act_fails(
+        ports,
+        actor,
+        commission,
+        flagged,
+        clear_delayed_act(commission),
+    )
+    .await;
+}
+
+// A grant whose state is stale checks a change from a value the row no longer holds: the
+// compare-and-set matches no row, so the act fails and nothing lands. So for the lifecycle
+// move, and for each field write: the direction status, the deadline and the Delayed flag.
+#[tokio::test]
+async fn a_stale_from_matches_no_row_and_fails_the_act() {
+    let world = world().await;
+    world
+        .backend
+        .seed_lifecycle_step(untitled(), LifecycleStep::Active);
+
+    a_stale_move_fails(&world.ports, &alice(), untitled()).await;
+    each_stale_field_act_fails(&world.ports, &alice(), untitled()).await;
+}
+
+#[tokio::test]
+async fn a_stale_from_matches_no_row_and_fails_the_act_on_postgres() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let (owner, commission) = pg_seed(&ports, "did:plc:den-write-pg-stale").await;
+    move_by(&ports, &owner, commission, LifecycleStep::Active)
+        .await
+        .expect("the owner moves it to Active");
+
+    a_stale_move_fails(&ports, &owner, commission).await;
+    each_stale_field_act_fails(&ports, &owner, commission).await;
+}
+
+/// `actor`'s move of `commission` from Draft to Active through the move use case on `ports`, its
+/// units recorded: one unit, committed, holding the new step and exactly one `lifecycle_moved`
+/// entry.
+async fn one_entry_in_the_move_s_unit(ports: &mut Ports, actor: &UserId, commission: CommissionId) {
+    let before = kinds(ports, commission).await;
+    let log = record_units(ports);
+
+    move_through_the_use_case(ports, actor, commission, LifecycleStep::Active)
+        .await
+        .expect("the move lands");
+
+    let after = kinds(ports, commission).await;
+    let (kept, added) = after.split_at(before.len());
+    assert_eq!(log.events(), ["begin", "commit"]);
+    assert_eq!(kept, before.as_slice());
+    assert_eq!(added, [ChangelogEntryKind::LifecycleMoved]);
+    assert_eq!(step_of(ports, commission).await, LifecycleStep::Active);
+}
+
+/// Each field act but the move, in order, on a commission that holds no status, deadline or
+/// flag, with the kind and the literal payload of the one entry each writes.
+fn field_acts_and_their_entries() -> [(FieldCall, ChangelogEntryKind, serde_json::Value); 7] {
+    let waiting = DirectionStatus::WaitingForInput;
+    [
+        (
+            FieldCall::SetDirection(waiting),
+            ChangelogEntryKind::StatusChanged,
+            serde_json::json!({ "from": null, "to": "waiting_for_input" }),
+        ),
+        (
+            FieldCall::ClearDirection,
+            ChangelogEntryKind::StatusChanged,
+            serde_json::json!({ "from": "waiting_for_input", "to": null }),
+        ),
+        (
+            FieldCall::SetDeadline(ahead()),
+            ChangelogEntryKind::DeadlineSet,
+            serde_json::json!({ "from": null, "to": "2099-03-01T00:00:00Z" }),
+        ),
+        (
+            FieldCall::SetDeadline(further_ahead()),
+            ChangelogEntryKind::DeadlineExtended,
+            serde_json::json!({ "from": "2099-03-01T00:00:00Z", "to": "2099-04-01T00:00:00Z" }),
+        ),
+        (
+            FieldCall::SetDelayed,
+            ChangelogEntryKind::Delayed,
+            serde_json::json!({
+                "from": null,
+                "to": "delayed",
+                "deadline": "2099-04-01T00:00:00Z",
+            }),
+        ),
+        (
+            FieldCall::ClearDelayed,
+            ChangelogEntryKind::Delayed,
+            serde_json::json!({
+                "from": "delayed",
+                "to": null,
+                "deadline": "2099-04-01T00:00:00Z",
+            }),
+        ),
+        (
+            FieldCall::ClearDeadline,
+            ChangelogEntryKind::DeadlineSet,
+            serde_json::json!({ "from": "2099-04-01T00:00:00Z", "to": null }),
+        ),
+    ]
+}
+
+/// `actor`'s field acts on `commission` through their typed use cases on `ports`, its units
+/// recorded: each one unit, committed, holding exactly one entry by `actor` with its literal
+/// payload; and the fields as the last act left them.
+async fn one_entry_in_each_field_act_s_unit(
+    ports: &mut Ports,
+    actor: &UserId,
+    commission: CommissionId,
+) {
+    let log = record_units(ports);
+    for (call, kind, payload) in field_acts_and_their_entries() {
+        let before = entries(ports, commission).await.len();
+        let units = log.events().len();
+
+        field_call(ports, actor, commission, call, Utc::now())
+            .await
+            .unwrap_or_else(|error| panic!("{call:?} lands: {error:?}"));
+
+        let stream = entries(ports, commission).await;
+        let [entry] = &stream[before..] else {
+            panic!("{call:?}: one entry, {} of them", stream.len() - before);
+        };
+        assert_eq!(log.events()[units..], ["begin", "commit"], "{call:?}");
+        assert_eq!(entry.kind, kind, "{call:?}");
+        assert_eq!(entry.payload, payload, "{call:?}");
+        assert_eq!(entry.actor_id.as_ref(), Some(actor), "{call:?}");
+        assert_eq!(entry.note, None, "{call:?}");
+    }
+    let left = fields_of(ports, commission).await;
+    assert_eq!(left.direction_status(), None);
+    assert_eq!(left.deadline(), None);
+    assert_eq!(left.delayed_flag(), None);
+}
+
+// A field act's write and its one entry land in the act's one unit: the lifecycle move, then
+// each direction, deadline and Delayed act.
+#[tokio::test]
+async fn each_field_act_writes_one_entry_in_its_unit() {
+    let mut world = world().await;
+
+    one_entry_in_the_move_s_unit(&mut world.ports, &bob(), untitled()).await;
+    one_entry_in_each_field_act_s_unit(&mut world.ports, &bob(), untitled()).await;
+}
+
+#[tokio::test]
+async fn each_field_act_writes_one_entry_in_its_unit_on_postgres() {
+    let pg = pg_runtime().await;
+    let mut ports = Ports::from(&pg.runtime);
+    let (owner, commission) = pg_seed(&ports, "did:plc:den-write-pg-field-entry").await;
+
+    one_entry_in_the_move_s_unit(&mut ports, &owner, commission).await;
+    one_entry_in_each_field_act_s_unit(&mut ports, &owner, commission).await;
+}
+
+// The move's entry can't be appended: the act's unit rolls back whole, so the step isn't moved.
+#[tokio::test]
+async fn a_refused_append_leaves_the_field_unwritten() {
+    let mut world = world().await;
+    let refusing = RefusingChangelogDatabase(world.ports.database.clone());
+    world.ports.database = Arc::new(refusing);
+
+    let moved =
+        move_through_the_use_case(&world.ports, &bob(), untitled(), LifecycleStep::Active).await;
+
+    assert!(moved.is_err(), "{moved:?}");
+    assert_eq!(
+        step_of(&world.ports, untitled()).await,
+        LifecycleStep::Draft
+    );
+}
+
+/// The field acts that change nothing on a commission holding no status, deadline or flag:
+/// each clear.
+const CLEARS_OF_NOTHING: [FieldCall; 3] = [
+    FieldCall::ClearDirection,
+    FieldCall::ClearDeadline,
+    FieldCall::ClearDelayed,
+];
+
+/// The field acts that set what [`CLEARS_OF_NOTHING`]'s commission then holds, and that
+/// change nothing when run again.
+fn sets_of_what_is_held() -> [FieldCall; 3] {
+    [
+        FieldCall::SetDirection(DirectionStatus::WaitingForInput),
+        FieldCall::SetDeadline(ahead()),
+        FieldCall::SetDelayed,
+    ]
+}
+
+/// Runs each of `calls`, `actor`'s, on `commission`: each lands, and leaves the fields and the
+/// entries as they were.
+async fn each_changes_nothing(
+    ports: &Ports,
+    actor: &UserId,
+    commission: CommissionId,
+    calls: &[FieldCall],
+) {
+    for call in calls {
+        let fields = fields_of(ports, commission).await;
+        let before = kinds(ports, commission).await;
+
+        field_call(ports, actor, commission, *call, Utc::now())
+            .await
+            .unwrap_or_else(|error| panic!("{call:?} lands: {error:?}"));
+
+        assert_eq!(fields_of(ports, commission).await, fields, "{call:?}");
+        assert_eq!(kinds(ports, commission).await, before, "{call:?}");
+    }
+}
+
+/// Runs each of `calls`, `actor`'s, on `commission`, each landing.
+async fn each_lands(ports: &Ports, actor: &UserId, commission: CommissionId, calls: &[FieldCall]) {
+    for call in calls {
+        field_call(ports, actor, commission, *call, Utc::now())
+            .await
+            .unwrap_or_else(|error| panic!("{call:?} lands: {error:?}"));
+    }
+}
+
+// A move to the step the commission holds lands, writes nothing and records nothing; so does
+// each clear of nothing held, and each set of the value held: the direction status, the
+// deadline, the Delayed flag already raised.
+#[tokio::test]
+async fn an_unchanged_value_writes_no_entry() {
+    let world = world().await;
+    let before = kinds(&world.ports, untitled()).await;
+
+    move_by(&world.ports, &bob(), untitled(), LifecycleStep::Draft)
+        .await
+        .expect("a move to the held step lands");
+
+    assert_eq!(kinds(&world.ports, untitled()).await, before);
+    assert_eq!(
+        step_of(&world.ports, untitled()).await,
+        LifecycleStep::Draft
+    );
+    each_changes_nothing(&world.ports, &bob(), untitled(), &CLEARS_OF_NOTHING).await;
+    let sets = sets_of_what_is_held();
+    each_lands(&world.ports, &bob(), untitled(), &sets).await;
+    each_changes_nothing(&world.ports, &bob(), untitled(), &sets).await;
+}
+
+// On PostgreSQL, a move to the held step runs no lifecycle write and appends nothing; nor does
+// a clear of nothing held, nor a set of the value held.
+#[tokio::test]
+async fn an_unchanged_value_writes_no_entry_on_postgres() {
+    let statements = StatementLog::default();
+    let pg = pg_runtime_recording(&statements).await;
+    let ports = Ports::from(&pg.runtime);
+    let (owner, commission) = pg_seed(&ports, "did:plc:den-write-pg-held-step").await;
+    let mark = statements.mark();
+
+    move_by(&ports, &owner, commission, LifecycleStep::Draft)
+        .await
+        .expect("a move to the held step lands");
+
+    let written = field_writes_since(&statements, mark);
+    assert_eq!(written, Vec::<String>::new());
+    assert_eq!(
+        kinds(&ports, commission).await,
+        [ChangelogEntryKind::Created]
+    );
+    let clears = statements.mark();
+    each_changes_nothing(&ports, &owner, commission, &CLEARS_OF_NOTHING).await;
+    assert_eq!(
+        field_writes_since(&statements, clears),
+        Vec::<String>::new()
+    );
+    let sets = sets_of_what_is_held();
+    each_lands(&ports, &owner, commission, &sets).await;
+    let again = statements.mark();
+    each_changes_nothing(&ports, &owner, commission, &sets).await;
+    assert_eq!(field_writes_since(&statements, again), Vec::<String>::new());
+}
+
+/// The field writes and changelog appends `statements` saw since `mark`, by query name; the
+/// reads between the acts are left out.
+fn field_writes_since(statements: &StatementLog, mark: usize) -> Vec<String> {
+    let writes = [
+        "commission/set_lifecycle",
+        "commission/set_direction_status",
+        "commission/set_deadline",
+        "commission/set_deadline_status",
+        "changelog/append",
+    ];
+    statements
+        .since(mark)
+        .iter()
+        .filter_map(|statement| statement.query_name())
+        .filter(|name| writes.contains(name))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// `actor` leaves `commission`'s Delayed flag dormant, raised with a deadline that is then
+/// cleared, and takes it down: the clear sees no status yet compares against the stored flag,
+/// so it lands and records `from`, `to` and `deadline` all null.
+async fn a_dormant_flag_s_clear_lands(ports: &Ports, actor: &UserId, commission: CommissionId) {
+    let raise = [
+        FieldCall::SetDeadline(ahead()),
+        FieldCall::SetDelayed,
+        FieldCall::ClearDeadline,
+    ];
+    each_lands(ports, actor, commission, &raise).await;
+    let dormant = fields_of(ports, commission).await;
+    assert_eq!(dormant.deadline(), None);
+    assert_eq!(dormant.delayed_flag(), Some(DeadlineStatus::Delayed));
+    let before = entries(ports, commission).await.len();
+
+    field_call(
+        ports,
+        actor,
+        commission,
+        FieldCall::ClearDelayed,
+        Utc::now(),
+    )
+    .await
+    .expect("the dormant flag's clear lands");
+
+    let stream = entries(ports, commission).await;
+    let [entry] = &stream[before..] else {
+        panic!("one entry: {} of them", stream.len() - before);
+    };
+    let payload = serde_json::json!({ "from": null, "to": null, "deadline": null });
+    assert_eq!(entry.kind, ChangelogEntryKind::Delayed);
+    assert_eq!(entry.payload, payload);
+    assert_eq!(fields_of(ports, commission).await.delayed_flag(), None);
+}
+
+// A Delayed flag left after its deadline was cleared is taken down: the compare-and-set reads
+// the stored flag, not the status the act saw.
+#[tokio::test]
+async fn a_dormant_flag_s_clear_lands_and_records_no_status() {
+    let world = world().await;
+
+    a_dormant_flag_s_clear_lands(&world.ports, &bob(), untitled()).await;
+}
+
+#[tokio::test]
+async fn a_dormant_flag_s_clear_lands_and_records_no_status_on_postgres() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let (owner, commission) = pg_seed(&ports, "did:plc:den-write-pg-dormant").await;
+
+    a_dormant_flag_s_clear_lands(&ports, &owner, commission).await;
+}
+
+/// A deadline before 1970, and so before 2000, where the store counts its microseconds from.
+fn before_the_epoch() -> chrono::DateTime<Utc> {
+    "1969-07-20T20:17:40.123456Z".parse().expect("a timestamp")
+}
+
+/// `instant` plus `nanos` nanoseconds: finer than the store holds.
+fn plus_nanos(instant: chrono::DateTime<Utc>, nanos: i64) -> chrono::DateTime<Utc> {
+    instant + chrono::Duration::nanoseconds(nanos)
+}
+
+/// The deadline kinds of `commission`'s entries, in stream order.
+async fn deadline_kinds(ports: &Ports, commission: CommissionId) -> Vec<ChangelogEntryKind> {
+    let deadline_kinds = [
+        ChangelogEntryKind::DeadlineSet,
+        ChangelogEntryKind::DeadlineExtended,
+    ];
+    let all = kinds(ports, commission).await;
+    all.into_iter()
+        .filter(|kind| deadline_kinds.contains(kind))
+        .collect()
+}
+
+/// A commission of `owner`'s with `deadline`, made by the create use case.
+async fn made_with(
+    ports: &Ports,
+    owner: &UserId,
+    deadline: Option<chrono::DateTime<Utc>>,
+) -> CommissionId {
+    let command = create::Command {
+        actor_id: owner.clone(),
+        title: "A dated piece".parse().expect("a title"),
+        maturity: None,
+        deadline,
+    };
+    let created = Commissions::new(ports)
+        .create(command, Utc::now())
+        .await
+        .expect("the commission is made");
+    created.id
+}
+
+/// `actor` sets `commission`'s deadline to `held`, then to `held` plus one and two nanoseconds:
+/// each finer set lands, changes no field and records nothing; the deadline reads back as
+/// `held`, and the one deadline entry is the first set's.
+async fn a_finer_set_changes_nothing(
+    ports: &Ports,
+    actor: &UserId,
+    commission: CommissionId,
+    held: chrono::DateTime<Utc>,
+) {
+    each_lands(ports, actor, commission, &[FieldCall::SetDeadline(held)]).await;
+    let finer = [
+        FieldCall::SetDeadline(plus_nanos(held, 1)),
+        FieldCall::SetDeadline(plus_nanos(held, 2)),
+    ];
+
+    each_changes_nothing(ports, actor, commission, &finer).await;
+
+    assert_eq!(fields_of(ports, commission).await.deadline(), Some(held));
+    assert_eq!(
+        deadline_kinds(ports, commission).await,
+        [ChangelogEntryKind::DeadlineSet]
+    );
+}
+
+// A deadline set finer than the store holds is the deadline the store would keep: set D, then
+// D + 1 ns and D + 2 ns land, write nothing and record nothing, after 2000 and before 1970.
+#[tokio::test]
+async fn a_sub_microsecond_move_writes_no_entry() {
+    let world = world().await;
+    let ports = &world.ports;
+
+    for held in [ahead(), before_the_epoch()] {
+        let commission = made_with(ports, &alice(), None).await;
+        a_finer_set_changes_nothing(ports, &alice(), commission, held).await;
+    }
+}
+
+// On PostgreSQL, the finer sets run no deadline write and append nothing, and the deadline
+// reads back as the one first set.
+#[tokio::test]
+async fn a_sub_microsecond_move_writes_no_entry_on_postgres() {
+    let statements = StatementLog::default();
+    let pg = pg_runtime_recording(&statements).await;
+    let ports = Ports::from(&pg.runtime);
+    let owner = provision(&*ports.database, "did:plc:den-write-pg-finer").await;
+
+    for held in [ahead(), before_the_epoch()] {
+        let commission = made_with(&ports, &owner, None).await;
+        let mark = statements.mark();
+        a_finer_set_changes_nothing(&ports, &owner, commission, held).await;
+        let written = field_writes_since(&statements, mark);
+        assert_eq!(written, ["commission/set_deadline", "changelog/append"]);
+    }
+}
+
+/// A commission of `owner`'s made with a deadline one nanosecond past [`before_the_epoch`]
+/// holds [`before_the_epoch`] itself, so a set of it changes nothing.
+async fn a_create_holds_the_stored_deadline(ports: &Ports, owner: &UserId) {
+    let held = before_the_epoch();
+    let commission = made_with(ports, owner, Some(plus_nanos(held, 1))).await;
+
+    assert_eq!(fields_of(ports, commission).await.deadline(), Some(held));
+    each_changes_nothing(ports, owner, commission, &[FieldCall::SetDeadline(held)]).await;
+    assert_eq!(
+        deadline_kinds(ports, commission).await,
+        Vec::<ChangelogEntryKind>::new()
+    );
+}
+
+// A create's deadline is held as the store would keep it, so both stores hold the same one.
+#[tokio::test]
+async fn a_create_holds_its_deadline_at_the_store_s_precision() {
+    let world = world().await;
+
+    a_create_holds_the_stored_deadline(&world.ports, &alice()).await;
+}
+
+#[tokio::test]
+async fn a_create_holds_its_deadline_at_the_store_s_precision_on_postgres() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let owner = provision(&*ports.database, "did:plc:den-write-pg-create-precision").await;
+
+    a_create_holds_the_stored_deadline(&ports, &owner).await;
 }
 
 /// The user `did`, recognized.

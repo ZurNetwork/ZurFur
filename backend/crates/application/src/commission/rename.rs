@@ -1,8 +1,10 @@
+use std::convert::Infallible;
+
 use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{AsOwner, CommissionId, CommissionTitle},
+        commission::{AsOwner, CommissionId, CommissionRefusal, CommissionState, CommissionTitle},
         user::UserId,
     },
 };
@@ -54,10 +56,21 @@ impl Act {
 impl Handler for Act {
     type Role = AsOwner;
 
-    const ENTRY: EntryRule = EntryRule::OnChange(GatedEntry::RENAMED);
+    type Checked = Infallible;
+
+    const ENTRY: EntryRule<Infallible> = EntryRule::OnChange(GatedEntry::RENAMED);
+
+    /// No field changes: the gate writes the node's name, so the rule checks nothing.
+    fn precondition(
+        &self,
+        _facts: &CommissionState,
+        _now: DateTimeUtc,
+    ) -> Result<Option<Infallible>, CommissionRefusal> {
+        Ok(None)
+    }
 
     /// Answers the renamed commission as the unit holds it; the gate wrote its node's name.
-    async fn handle(&self, lent: &mut Lent<'_, AsOwner>) -> Result<Handled, HandlerError> {
+    async fn handle(&self, lent: &mut Lent<'_, Self>) -> Result<Handled, HandlerError> {
         let answer = lent.lent().await?;
         Ok(Handled { answer })
     }
@@ -83,11 +96,11 @@ impl Commissions<'_> {
             title,
         };
         let command = write::Command {
-            actor: actor_id,
+            actor: actor_id.into(),
             act: DenAct::Commission(CommissionAct::Rename(act)),
         };
         let written = Den::from(self.ports()).write(command, now).await?;
-        let values = CommissionValues::try_from(written)?;
+        let values = CommissionValues::answered(written, now)?;
         Ok(values)
     }
 }

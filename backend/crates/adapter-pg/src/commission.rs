@@ -8,14 +8,15 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            Band, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
-            CommissionFile, CommissionId, CommissionMarkup, CommissionRole, CommissionStanding,
-            CommissionStart, CommissionSummary, DeadlineStatus, DirectionStatus, ElementId,
-            ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel,
-            LapsedDeadline, LifecycleStep, LockedStanding, Markup, MarkupKey, NewCommission,
-            NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind,
-            SeatLink, SeatPrompt, Slot, SurfaceAddress, SurfaceName, TabId, TabName, TabRow,
-            VisibilityMode, declared_tabs, declares_surface, derive_deadline_status,
+            AsParticipant, Band, ChannelPointer, Commission, CommissionBirth,
+            CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionRole,
+            CommissionStanding, CommissionStart, CommissionSummary, DeadlineChange, DeadlineStatus,
+            DelayedChange, DirectionChange, DirectionStatus, ElementId, ElementPayload, ElementRow,
+            ElementType, FileKey, FileSummary, GrantLevel, LateKinds, LifecycleMove, LifecycleStep,
+            LockedNode, LockedStanding, Markup, MarkupKey, NewCommission, NewElement, NewSeat,
+            NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
+            SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
+            declares_surface,
         },
         did::Did,
         invitation::InvitationState,
@@ -177,7 +178,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         let CommissionStart {
             lifecycle_step,
             direction_status: None,
-            deadline_status: None,
+            delayed_flag: None,
             linked_channel: None,
             archived_at: None,
         } = CommissionStart::default()
@@ -196,7 +197,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             uuid::Uuid::from(birth.node),
             birth.owner_id.as_ref(),
             <&'static str>::from(&lifecycle_step),
-            commission.deadline,
+            commission.deadline.map(DateTimeUtc::from),
             commission.maturity.map(|m| <&'static str>::from(m.rating)),
             commission.maturity.map(|m| m.graphic),
             birth.created_at,
@@ -227,6 +228,24 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         )
         .await?;
         Ok(())
+    }
+
+    /// Moves `commission.lifecycle` to `change`'s new step only while the row still holds its
+    /// held step; `true` only when exactly one row changed.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn set_lifecycle(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &LifecycleMove,
+    ) -> anyhow::Result<bool> {
+        let affected = sql::set_lifecycle(
+            &mut *self.conn,
+            uuid::Uuid::from(*capability.thing()),
+            <&'static str>::from(change.after()),
+            <&'static str>::from(change.before()),
+        )
+        .await?;
+        Ok(affected == 1)
     }
 
     /// Contributes one element into a declared surface behind
@@ -519,86 +538,68 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(affected > 0)
     }
 
-    /// Repoints or clears `commission.direction_status`; an absent commission is a
-    /// no-op.
+    /// Moves `commission.direction_status` by compare-and-set; `true` only when exactly one row
+    /// changed.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_direction_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DirectionStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DirectionChange,
     ) -> anyhow::Result<bool> {
         let affected = sql::set_direction_status(
             &mut *self.conn,
-            uuid::Uuid::from(*id),
-            status.map(<&'static str>::from),
+            uuid::Uuid::from(*capability.thing()),
+            change.after().map(<&'static str>::from),
+            change.before().map(<&'static str>::from),
         )
         .await?;
-        Ok(affected > 0)
+        Ok(affected == 1)
     }
 
-    /// Repoints or clears `commission.deadline`; an absent commission is a no-op.
+    /// Moves `commission.deadline` by compare-and-set; `true` only when exactly one row
+    /// changed.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_deadline(
         &mut self,
-        id: &CommissionId,
-        deadline: Option<DateTimeUtc>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DeadlineChange,
     ) -> anyhow::Result<bool> {
-        let affected = sql::set_deadline(&mut *self.conn, uuid::Uuid::from(*id), deadline).await?;
-        Ok(affected > 0)
+        let affected = sql::set_deadline(
+            &mut *self.conn,
+            uuid::Uuid::from(*capability.thing()),
+            change.after(),
+            change.before(),
+        )
+        .await?;
+        Ok(affected == 1)
     }
 
-    /// Repoints or clears `commission.deadline_status` (the manual `Delayed` flag
-    /// only — `Late` is derived fresh at read, never persisted).
+    /// Moves `commission.deadline_status`, the stored Delayed flag, by compare-and-set against
+    /// the flag the row held; `true` only when exactly one row changed. Late is never stored.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_deadline_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DeadlineStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DelayedChange,
     ) -> anyhow::Result<bool> {
         let affected = sql::set_deadline_status(
             &mut *self.conn,
-            uuid::Uuid::from(*id),
-            status.map(<&'static str>::from),
+            uuid::Uuid::from(*capability.thing()),
+            change.after().map(<&'static str>::from),
+            change.held().map(<&'static str>::from),
         )
         .await?;
-        Ok(affected > 0)
+        Ok(affected == 1)
     }
+}
 
-    /// The sweeper's candidate scan, on the open transaction: deadline strictly
-    /// before `now`, not already `late`, non-terminal lifecycle
-    /// ([`LifecycleStep::is_terminal`]).
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
-        let terminal: Vec<String> = {
-            use strum::VariantArray;
-            LifecycleStep::VARIANTS
-                .iter()
-                .filter(|step| step.is_terminal())
-                .map(|step| step.to_string())
-                .collect()
-        };
-        // Late is never persisted; dedup against the changelog's own last entry
-        // since the latest deadline change, so each fresh miss is its own event.
-        let rows = sql::lapsed_deadlines(&mut *self.conn, now, &terminal).await?;
-
-        rows.into_iter()
-            .map(|row| {
-                Ok(LapsedDeadline {
-                    id: CommissionId::from(row.id),
-                    deadline: row.deadline,
-                    status: row
-                        .deadline_status
-                        .as_deref()
-                        .map(|token| {
-                            DeadlineStatus::try_from(token).map_err(|_| {
-                                anyhow::anyhow!("unknown deadline_status token {token:?}")
-                            })
-                        })
-                        .transpose()?,
-                })
-            })
-            .collect()
-    }
+/// The stored tokens of the kinds that re-arm a Late, as the owed reads bind them.
+fn rearming_tokens(late_kinds: &LateKinds) -> Vec<String> {
+    late_kinds
+        .rearming()
+        .iter()
+        .map(ToString::to_string)
+        .collect()
 }
 
 /// Re-validates a stored `mode` token into [`VisibilityMode`]; the one gate
@@ -771,9 +772,9 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
     };
     let lifecycle_step = LifecycleStep::try_from(fields.lifecycle.as_str())
         .map_err(|_| anyhow::anyhow!("unknown lifecycle token {:?}", fields.lifecycle))?;
-    // The stored value is the manual `Delayed` flag only; derive the effective
-    // status fresh here from the deadline, matching the sweep's math.
-    let stored_deadline_status = fields
+    // The stored value is the manual `Delayed` flag only; Late is derived by whoever asks,
+    // at the time they ask.
+    let delayed_flag = fields
         .deadline_status
         .as_deref()
         .map(|token| {
@@ -781,12 +782,6 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
                 .map_err(|_| anyhow::anyhow!("unknown deadline_status token {token:?}"))
         })
         .transpose()?;
-    let deadline_status = derive_deadline_status(
-        fields.deadline,
-        &lifecycle_step,
-        stored_deadline_status,
-        chrono::Utc::now(),
-    );
     let commission = Commission {
         id,
         owner_id: UserId::from(Did::from(fields.owner_id)),
@@ -801,7 +796,7 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
                     .map_err(|_| anyhow::anyhow!("unknown direction_status token {token:?}"))
             })
             .transpose()?,
-        deadline_status,
+        delayed_flag,
         linked_channel: fields
             .linked_channel
             .map(ChannelPointer::try_from)
@@ -860,6 +855,46 @@ impl CommissionReads for PgCommissionWrites<'_> {
             node: NodeId::from(row.node_id),
         };
         Ok(Some(locked))
+    }
+
+    /// One locking select on the unit's connection: the commission inner-joined to its node,
+    /// `FOR NO KEY UPDATE OF commission`, reading no viewer. An absent id, or a commission
+    /// with no node, answers `None`; else the node and its level, read leniently.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn lock_for_system(
+        &mut self,
+        commission: &CommissionId,
+    ) -> anyhow::Result<Option<LockedNode>> {
+        let rows = sql::lock_for_system(&mut *self.conn, uuid::Uuid::from(*commission)).await?;
+        // The select is on the primary key: at most one row.
+        let Some(row) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+        let locked = LockedNode {
+            node: NodeId::from(row.node_id),
+            level: stored_level(&row.level),
+        };
+        Ok(Some(locked))
+    }
+
+    /// The sweep scan's anti-join for one commission, on the unit's connection after its lock.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn late_owed(
+        &mut self,
+        commission: &CommissionId,
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<bool> {
+        let mark = <&'static str>::from(late_kinds.mark());
+        let rearming = rearming_tokens(late_kinds);
+        let owed = sql::late_owed(
+            &mut *self.conn,
+            uuid::Uuid::from(*commission),
+            mark,
+            &rearming,
+        )
+        .await?;
+        // `NOT EXISTS` is never NULL; an unknown answer owes nothing.
+        Ok(owed.unwrap_or(false))
     }
 
     /// [`CommissionStore::is_participant`] on the unit's connection.
@@ -1241,5 +1276,23 @@ impl CommissionStore for PgCommissionStore {
                 to_commission(id, row.into())
             })
             .collect()
+    }
+
+    /// The sweep's scan on the pool: deadline strictly before `now`, step not in
+    /// `not_lapsing`, no Late mark since the last re-arming entry; ids ordered by deadline, then
+    /// id.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn lapsed_deadlines(
+        &self,
+        now: DateTimeUtc,
+        not_lapsing: &[LifecycleStep],
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<Vec<CommissionId>> {
+        let steps: Vec<String> = not_lapsing.iter().map(ToString::to_string).collect();
+        let mark = <&'static str>::from(late_kinds.mark());
+        let rearming = rearming_tokens(late_kinds);
+        let ids = sql::lapsed_deadlines(&self.pool, now, &steps, mark, &rearming).await?;
+        let lapsed = ids.into_iter().map(CommissionId::from).collect();
+        Ok(lapsed)
     }
 }
