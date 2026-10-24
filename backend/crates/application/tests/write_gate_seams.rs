@@ -21,10 +21,11 @@
 //! staging and merge, its rows built only by the insert path, and the view built only by the
 //! unit; each write statement and in-memory change named only in its own method, a capped
 //! write's other parameters only named values holding no id, the banned writes' sites frozen,
-//! the gated changelog constructors named only in the rows file and the act file and the rows
-//! file's entry surface pinned, no macro in a core crate, no later migration's function or
-//! trigger writing a commission table or running dynamic SQL, and no in-memory backend method or
-//! trait impl hiding a seeder.
+//! the gated changelog constructors named only in the rows file and the act file, the rows
+//! file's entry surface and entry declarations pinned, no module in it but its unit tests and
+//! no inherent impl of an entry type anywhere else, no macro in a core crate, no later
+//! migration's function or trigger writing a commission table or running dynamic SQL, and no
+//! in-memory backend method or trait impl hiding a seeder.
 
 mod seams;
 
@@ -8920,6 +8921,19 @@ const ITEM_KEYWORDS: [&str; 12] = [
     "use",
 ];
 
+/// The entry types: only the rows file declares them or gives them an inherent item.
+const ENTRY_TYPES: [&str; 2] = [NEW_CHANGELOG_ENTRY, OPEN_CHANGELOG_ENTRY];
+
+/// The one attribute each entry type carries beside its docs. Any other derive generates impls
+/// no scan here reads, such as a `From` of its fields or a deserializer.
+const ENTRY_ATTRIBUTES: [&str; 1] = ["#[derive(Debug)]"];
+
+/// The rows file's one module, its unit tests: a child module sees an entry's private fields.
+const ROWS_TESTS: &str = "tests";
+
+/// The attributes the unit-test module carries beside its docs.
+const ROWS_TESTS_ATTRIBUTES: [&str; 1] = ["#[cfg(test)]"];
+
 fn changelog_rows_file() -> PathBuf {
     crates().join(ROWS_FILE)
 }
@@ -9176,7 +9190,6 @@ fn rows_units(rows: &syn::File, names: &EntryNames) -> Vec<RowsUnit> {
                     Item::Fn(function) => Some(function.block.to_token_stream()),
                     Item::Const(constant) => Some(constant.expr.to_token_stream()),
                     Item::Static(stat) => Some(stat.expr.to_token_stream()),
-                    Item::Macro(called) => Some(called.mac.tokens.clone()),
                     Item::Verbatim(tokens) => Some(tokens.clone()),
                     _ => None,
                 };
@@ -9352,12 +9365,152 @@ fn constructor_ban_findings(settings: &str, gated: &BTreeSet<String>) -> Vec<Str
     unbanned.chain(ungated).collect()
 }
 
+/// Each of `attributes` but the docs, as written with its whitespace dropped.
+fn undocumented(attributes: &[syn::Attribute]) -> Vec<String> {
+    attributes
+        .iter()
+        .filter(|attribute| !attribute.path().is_ident("doc"))
+        .map(|attribute| squeezed(&attribute.to_token_stream().to_string()))
+        .collect()
+}
+
+/// What breaks the entry types' declarations in `rows`: each is declared once, carries exactly
+/// [`ENTRY_ATTRIBUTES`] beside its docs, and keeps every field private.
+fn entry_type_findings(rows: &syn::File) -> Vec<String> {
+    let mut out = Vec::new();
+    for entry in ENTRY_TYPES {
+        let declared: Vec<&syn::ItemStruct> = every_item(&rows.items)
+            .into_iter()
+            .filter_map(|item| match item {
+                Item::Struct(structure) if structure.ident == entry => Some(structure),
+                _ => None,
+            })
+            .collect();
+        let [structure] = declared.as_slice() else {
+            out.push(format!(
+                "{ROWS_FILE}: `{entry}` is declared {} times, not once",
+                declared.len()
+            ));
+            continue;
+        };
+        let attributes = undocumented(&structure.attrs);
+        if attributes != ENTRY_ATTRIBUTES {
+            out.push(format!(
+                "{ROWS_FILE}: `{entry}` carries {attributes:?}, not exactly {ENTRY_ATTRIBUTES:?}"
+            ));
+        }
+        let visible = structure
+            .fields
+            .iter()
+            .filter(|field| !matches!(field.vis, Visibility::Inherited));
+        for field in visible {
+            out.push(format!(
+                "{ROWS_FILE}: `{entry}` has a visible field: `{}`",
+                field.to_token_stream()
+            ));
+        }
+    }
+    out
+}
+
+/// Each module `rows` declares but its unit tests (`#[cfg(test)] mod tests;`, beside its docs),
+/// and each macro it calls in an item's place: a child module sees an entry's private fields,
+/// and a macro could declare one.
+fn rows_module_findings(rows: &syn::File) -> Vec<String> {
+    every_item(&rows.items)
+        .into_iter()
+        .filter_map(|item| match item {
+            Item::Mod(module) => {
+                let unit_tests = module.ident == ROWS_TESTS
+                    && module.content.is_none()
+                    && matches!(module.vis, Visibility::Inherited)
+                    && undocumented(&module.attrs) == ROWS_TESTS_ATTRIBUTES;
+                (!unit_tests).then(|| format!("{ROWS_FILE}: declares {}", item_name(item)))
+            }
+            Item::Macro(_) => Some(format!(
+                "{ROWS_FILE}: calls a macro in an item's place: {}",
+                item_name(item)
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether the `impl` at `at` in `level` opens an impl item, not an `impl Trait` type: it
+/// starts its level, or follows a `;`, a block, an attribute, `unsafe` or `default`.
+fn opens_an_impl_item(level: &[TokenTree], at: usize) -> bool {
+    let Some(before) = at.checked_sub(1) else {
+        return true;
+    };
+    let after_an_item = punct_at(level, before, ';')
+        || matches!(
+            &level[before],
+            TokenTree::Group(group)
+                if matches!(group.delimiter(), Delimiter::Brace | Delimiter::Bracket)
+        );
+    let qualified =
+        ident_at(level, before).is_some_and(|word| word == "unsafe" || word == "default");
+    after_an_item || qualified
+}
+
+/// The header (`impl` to its block) of each inherent impl in `tokens` naming one of `names`, at
+/// any depth: a trait impl's `for`, unlike a `for<…>` bound, sets an impl aside.
+fn inherent_impl_headers(tokens: TokenStream, names: &BTreeSet<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for level in levels(tokens) {
+        for at in 0..level.len() {
+            if ident_at(&level, at).as_deref() != Some("impl") || !opens_an_impl_item(&level, at) {
+                continue;
+            }
+            let header: Vec<TokenTree> = level[at + 1..]
+                .iter()
+                .take_while(|tree| !is_brace_group(tree))
+                .cloned()
+                .collect();
+            let for_a_trait = (0..header.len()).any(|index| {
+                ident_at(&header, index).as_deref() == Some("for")
+                    && !punct_at(&header, index + 1, '<')
+            });
+            let written: TokenStream = header.into_iter().collect();
+            let named = identifiers(written.clone())
+                .iter()
+                .any(|ident| names.contains(ident));
+            if named && !for_a_trait {
+                out.push(format!("impl {written}"));
+            }
+        }
+    }
+    out
+}
+
+/// Each inherent impl of an entry type in `files` (each by its path from the crates folder,
+/// with its source) outside the rows file, under any alias the files make, at any depth: in an
+/// inline or child module, a function or const body, or a macro's input.
+fn entry_impls_elsewhere(files: &[(String, String)]) -> Vec<String> {
+    let sources: Vec<String> = files.iter().map(|(_, source)| source.clone()).collect();
+    let names = token_aliases(&ENTRY_TYPES, &sources);
+    files
+        .iter()
+        .filter(|(file, _)| file != ROWS_FILE)
+        .flat_map(|(file, source)| {
+            let parsed = syn::parse_file(source).expect("the source parses");
+            inherent_impl_headers(parsed.to_token_stream(), &names)
+                .into_iter()
+                .map(move |header| {
+                    format!("{file}: `{header}` is an inherent impl of an entry type")
+                })
+        })
+        .collect()
+}
+
 /// Every seal finding in the rows file `source`, with the gated constructors it defines.
 fn rows_findings(source: &str) -> (Vec<String>, BTreeSet<String>) {
     let rows = syn::parse_file(source).expect("the rows file parses");
     let gated = gated_constructors(&rows);
-    let found = entry_surface_findings(&rows)
+    let found = entry_type_findings(&rows)
         .into_iter()
+        .chain(rows_module_findings(&rows))
+        .chain(entry_surface_findings(&rows))
         .chain(rows_seal_findings(&rows, &gated))
         .collect();
     (found, gated)
@@ -9368,18 +9521,27 @@ fn the_gated_constructors_are_named_only_in_the_rows_file_and_the_act_file() {
     let rows_source =
         std::fs::read_to_string(changelog_rows_file()).expect("the rows file is readable");
     let (in_rows, gated) = rows_findings(&rows_source);
-    let everywhere = workspace_production();
-
-    let found: Vec<String> = everywhere
+    let everywhere: Vec<(String, String)> = workspace_production()
         .iter()
-        .flat_map(|path| {
+        .map(|path| {
             let source = std::fs::read_to_string(path).expect("a readable source");
-            gated_constructor_findings(&relative(path, &crates()), &source, &gated)
+            (relative(path, &crates()), source)
         })
         .collect();
 
+    let found: Vec<String> = everywhere
+        .iter()
+        .flat_map(|(file, source)| gated_constructor_findings(file, source, &gated))
+        .collect();
+    let impls_elsewhere = entry_impls_elsewhere(&everywhere);
+
     assert_eq!(found, Vec::<String>::new());
     assert_eq!(in_rows, Vec::<String>::new());
+    assert_eq!(impls_elsewhere, Vec::<String>::new());
+    assert!(
+        everywhere.iter().any(|(file, _)| file == ROWS_FILE),
+        "the scan reads the rows file by its path"
+    );
     let expected: BTreeSet<String> = GATED_CONSTRUCTORS
         .iter()
         .map(|name| (*name).to_owned())
@@ -9493,7 +9655,64 @@ fn the_gated_constructors_are_named_only_in_the_rows_file_and_the_act_file() {
         1,
     );
     assert_ne!(re_signed, rows_source, "the accessor is re-signed");
-    let rows_refused: [(String, &[&str]); 11] = [
+    let rewritten = |from: &str, to: &str| {
+        let planted = rows_source.replacen(from, to, 1);
+        assert_ne!(planted, rows_source, "the rows file holds `{from}`");
+        planted
+    };
+    let entry_derive = "#[derive(Debug)]\npub struct NewChangelogEntry {";
+    let open_entry = "#[derive(Debug)]\npub struct OpenChangelogEntry(NewChangelogEntry);";
+    let tests_module = "#[cfg(test)]\nmod tests;\n";
+    let rows_refused: [(String, &[&str]); 21] = [
+        (
+            rewritten(
+                entry_derive,
+                "#[derive(Debug, serde::Deserialize)]\npub struct NewChangelogEntry {",
+            ),
+            &[],
+        ),
+        (
+            rewritten(
+                entry_derive,
+                "#[derive(Debug, derive_more::From)]\npub struct NewChangelogEntry {",
+            ),
+            &[],
+        ),
+        (
+            rewritten(tests_module, "#[cfg(test)]\nmod tests;\nmod system;\n"),
+            &[],
+        ),
+        (
+            rewritten(
+                open_entry,
+                "#[derive(Debug, Clone)]\npub struct OpenChangelogEntry(NewChangelogEntry);",
+            ),
+            &[],
+        ),
+        (
+            rewritten(
+                entry_derive,
+                "#[derive(Debug)]\n#[cfg_attr(test, derive(Default))]\npub struct NewChangelogEntry {",
+            ),
+            &[],
+        ),
+        (
+            rewritten(
+                "    kind: ChangelogEntryKind,\n    actor_id",
+                "    pub kind: ChangelogEntryKind,\n    actor_id",
+            ),
+            &[],
+        ),
+        (
+            rewritten(
+                open_entry,
+                "#[derive(Debug)]\npub struct OpenChangelogEntry(pub NewChangelogEntry);",
+            ),
+            &[],
+        ),
+        (after_the_entry("mod system {\n    use super::*;\n}"), &[]),
+        (rewritten(tests_module, "mod tests;\n"), &[]),
+        (after_the_entry("declare_system!(system);"), &[]),
         (
             in_entry_impl(
                 "pub fn lifecycle_moved_if(commission: CommissionId, actor: UserId, moved: Option<&LifecycleMove>, at: DateTimeUtc) -> Option<Self> { moved.map(|moved| Self::lifecycle_moved(commission, actor, moved, at)) }",
@@ -9563,6 +9782,86 @@ fn the_gated_constructors_are_named_only_in_the_rows_file_and_the_act_file() {
             .map(String::as_str)
             .collect();
         assert_eq!(added, newly_gated, "{found_here:?}");
+    }
+    let child = "workflow/src/elements/commission/changelog/rows/system.rs";
+    let herons_child = r#"//! The system's entries, split out of the rows file.
+
+use serde_json::Value;
+
+use super::{ChangelogEntryKind, NewChangelogEntry};
+use crate::elements::commission::CommissionId;
+use kernel::datetime::DateTimeUtc;
+
+impl NewChangelogEntry {
+    /// A system entry of `kind` with `payload` and no actor.
+    pub fn system(
+        commission: CommissionId,
+        kind: ChangelogEntryKind,
+        payload: Value,
+        at: DateTimeUtc,
+    ) -> Self {
+        Self {
+            commission_id: commission,
+            kind,
+            actor_id: None,
+            payload,
+            note: None,
+            created_at: at,
+        }
+    }
+}
+"#;
+    let fact = "workflow/src/elements/commission/fact.rs";
+    let impls_refused = [
+        (child, herons_child),
+        (
+            child,
+            "use super::NewChangelogEntry as Entry;\nimpl Entry {\n    pub fn forged() {}\n}",
+        ),
+        (
+            child,
+            "type Entry = super::OpenChangelogEntry;\nimpl Entry {}",
+        ),
+        (
+            "workflow/src/elements/commission/deadline.rs",
+            "fn hide() {\n    impl NewChangelogEntry {\n        pub fn forged() {}\n    }\n}",
+        ),
+        (
+            fact,
+            "const _: () = {\n    impl crate::elements::commission::NewChangelogEntry {}\n};",
+        ),
+        (
+            fact,
+            "#[doc = \"bound\"]\nimpl<T> NewChangelogEntry where T: for<'a> Fn(&'a str) {}",
+        ),
+    ];
+    for (file, source) in impls_refused {
+        let planted = [(file.to_owned(), source.to_owned())];
+
+        let found_here = entry_impls_elsewhere(&planted);
+
+        assert_eq!(found_here.len(), 1, "{file}: {source}: {found_here:?}");
+    }
+    let impls_kept = [
+        (
+            fact,
+            "impl std::fmt::Display for NewChangelogEntry {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { Ok(()) }\n}",
+        ),
+        (
+            fact,
+            "pub fn entries() -> impl Iterator<Item = NewChangelogEntry> {\n    std::iter::empty()\n}",
+        ),
+        (
+            ROWS_FILE,
+            "impl NewChangelogEntry {\n    pub fn forged() {}\n}",
+        ),
+    ];
+    for (file, source) in impls_kept {
+        let planted = [(file.to_owned(), source.to_owned())];
+
+        let found_here = entry_impls_elsewhere(&planted);
+
+        assert_eq!(found_here, Vec::<String>::new(), "{file}: {source}");
     }
     let closing = settings.rfind(']').expect("clippy.toml's list closes");
     let created_line = settings
