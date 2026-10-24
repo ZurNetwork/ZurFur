@@ -11,7 +11,7 @@ Zurfur's teams settings are in `.claude/TEAMS.md`. Where each former CLAUDE.md r
 
 ## Project
 
-Zurfur is an AT Protocol-native art commission platform built in Rust. ZurFur is to go private and closed source; libraries it builds (Vulpes and the like) may be open, each licensed when published, and no licence file goes on ZurFur. Until it goes private, every public-repo rule here holds (R-312, R-318, 2026-10-24).
+Zurfur is an AT Protocol-native art commission platform built in Rust. ZurFur is to go private and closed source; libraries Zurfur builds (Vulpes and the like) may be open, each licensed when published, and no license file goes on ZurFur. Until it goes private, every public-repo rule here holds. The protos and the lexicons Zurfur publishes will be open, their license chosen when the first lexicon is published (R-312, R-318, R-336, R-338, 2026-10-24).
 
 **All design lives in the design corpus — it is the single source of truth.** The corpus is the sibling repo `ZurNetwork/zurfur-design`, checked out at `~/code/zurfur-design` (`ZURFUR_DESIGN_DIR` overrides the path). One Markdown page per file, named `<id>-<slug>.md`, under `entities/` (the glossary: User, Account, Character, Commission, Golem, Plugin, …), `decisions/` (the DDs), `project/` (scope — "Project MVP" — philosophy, conventions), `data-layer/`, and `superseded/` (pages that govern nothing anymore). Do not create local design documents in this repo; read and update the corpus instead. Confluence DESIGN is a frozen read-only archive — it is neither read nor written.
 
@@ -26,14 +26,14 @@ Zurfur is an AT Protocol-native art commission platform built in Rust. ZurFur is
 ## Decisions and the corpus
 
 - Each merged change is reported to the Engineer with its PR and jj change id.
-- **The Engineer reviews no code** *(rulings R-247 to R-249, 2026-10-23, until the Engineer says otherwise)*: the Orchestrator merges PRs into `main` (ZurFur's, the design corpus's and Vulpes's) once the top-level QA (Owl, on Gemini) has reviewed the PR's head, with CI and CodeRabbit's review still gating as before. A one-way door still goes to the Engineer as a plain design question with no code, and its merge waits for the Engineer's yes. That yes, given in chat and recorded in the rulings file, is the door's signature; any migration that changes the shape of stored data is a door, and one that deletes the Engineer's real data always is. Domain choices inside a contract (protos, lexicons) come as plain questions too; the contract text itself gets QA (R-313, R-314, R-328, 2026-10-24).
+- **The Engineer reviews no code** *(rulings R-247 to R-249, 2026-10-23, until the Engineer says otherwise)*: the Orchestrator merges PRs into `main` (ZurFur's, the design corpus's and Vulpes's) once the top-level QA (Owl, on Gemini) has reviewed the PR's head, with CI and CodeRabbit's review still gating as before. A one-way door still goes to the Engineer as a plain design question with no code, and its merge waits for the Engineer's yes. That yes, given in chat and recorded in the rulings file, is the door's signature; any migration that changes the shape of stored data is a door, and one that deletes the Engineer's real data always is. Domain choices inside a contract (the protos) come as plain questions too; the contract text itself gets QA (R-313, R-314, R-328, 2026-10-24).
 - A general question, once ruled, lands in the corpus and is never re-asked; one that keeps coming back wasn't settled and deserves a DD.
 - **Big decision → offer a DD.** When a domain decision the Engineer makes is substantial — shapes an entity, sets an invariant, a real fork with lasting consequences — **offer to capture it as a Design Decision (DD) page** in the corpus's `decisions/` via `/design-decision`. Claude offers; the Engineer confirms before anything is written.
 - **Decisions/gaps → offer to update the corpus.** When gaps surface and the Engineer decides how to resolve them, **offer to fix the affected design pages to match those decisions** via `/corpus-sync`. The corpus is the single source of truth, so every decision and gap-resolution must land there — on the Engineer's confirmation, never silently.
 
 ## Definition of Done
 
-The teams pack's §8 applies, plus **design in sync**: if a documented entity/flow changed, the design corpus matches the Engineer's decisions (`/corpus-sync`); a big decision is captured as a DD (`/design-decision`). Each feature ships with its moderation hooks (scanning, the hide hold, blocks, the report button and its kill switch) as part of its definition of done (R-35, 2026-10-10).
+The teams pack's §8 applies, plus **design in sync**: if a documented entity/flow changed, the design corpus matches the Engineer's decisions (`/corpus-sync`); a big decision is captured as a DD (`/design-decision`); and each feature ships with its moderation hooks: scanning, the hide hold, blocks, the report button and its kill switch (R-35, 2026-10-10).
 
 ## Code style (semantic)
 
