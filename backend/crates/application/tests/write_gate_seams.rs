@@ -24,8 +24,9 @@
 //! the gated changelog constructors named only in the rows file and the act file, the rows
 //! file's entry surface and entry declarations pinned, no module in it but its unit tests and
 //! no inherent impl of an entry type anywhere else, no macro in a core crate, no later
-//! migration's function or trigger writing a commission table or running dynamic SQL, and no
-//! in-memory backend method or trait impl hiding a seeder.
+//! migration's function or trigger writing a commission table or running dynamic SQL, nor its
+//! view over one, body in a decoded string or change to how strings decode, and no in-memory
+//! backend method or trait impl hiding a seeder.
 
 mod seams;
 
@@ -8239,8 +8240,8 @@ fn the_mem_pin_refuses_each_planted_change() {
 /// every migration stamped after it is read, whether that migration is present or not.
 const LAST_UNREAD_MIGRATION: u64 = 20261022165210;
 
-/// The later migrations allowed to define a function or trigger that writes a commission
-/// table, by file name.
+/// The later migrations the migration rule reads past, by file name: each may define a
+/// function, trigger or view that writes a commission table.
 const COMMISSION_WRITING_MIGRATIONS: [&str; 0] = [];
 
 /// The objects a migration may define that write later, outside any use case.
@@ -8277,6 +8278,29 @@ fn past_the_string(characters: &[char], at: usize) -> usize {
     characters.len()
 }
 
+/// The index past the block comment opening at `at`, or the end: PostgreSQL's block comments
+/// nest.
+fn past_a_block_comment(characters: &[char], at: usize) -> usize {
+    let mut depth = 0usize;
+    let mut index = at;
+    while index < characters.len() {
+        let pair = (characters[index], characters.get(index + 1).copied());
+        if pair == ('/', Some('*')) {
+            depth += 1;
+            index += 2;
+        } else if pair == ('*', Some('/')) {
+            depth = depth.saturating_sub(1);
+            index += 2;
+            if depth == 0 {
+                return index;
+            }
+        } else {
+            index += 1;
+        }
+    }
+    characters.len()
+}
+
 /// The index past a quoted string, quoted identifier, dollar-quoted body or comment opening at
 /// `at`, if one opens there.
 fn past_a_quote(characters: &[char], at: usize) -> Option<usize> {
@@ -8285,7 +8309,7 @@ fn past_a_quote(characters: &[char], at: usize) -> Option<usize> {
         ('\'', _) => Some(past_the_string(characters, at)),
         ('"', _) => Some(past(characters, at + 1, &['"'])),
         ('-', Some('-')) => Some(past(characters, at + 2, &['\n'])),
-        ('/', Some('*')) => Some(past(characters, at + 2, &['*', '/'])),
+        ('/', Some('*')) => Some(past_a_block_comment(characters, at)),
         ('$', _) => {
             let end = (at + 1..characters.len())
                 .find(|index| !(characters[*index].is_alphanumeric() || characters[*index] == '_'))
@@ -8345,8 +8369,17 @@ fn sql_statements(sql: &str) -> Vec<String> {
     out
 }
 
+/// The index past the opening quote of a string that continues the one closed just before
+/// `at`: PostgreSQL joins two string constants with only whitespace between them, a newline
+/// among it.
+fn continued_at(characters: &[char], at: usize) -> Option<usize> {
+    let next = (at..characters.len()).find(|index| !characters[*index].is_whitespace())?;
+    let across_lines = characters[at..next].contains(&'\n');
+    (across_lines && characters[next] == '\'').then_some(next + 1)
+}
+
 /// `sql` with each single-quoted string's text read as SQL: the quotes dropped, a doubled or
-/// escaped quote inside read as a space.
+/// escaped quote inside read as a space, and a string continued on a later line read on as one.
 fn with_strings_opened(sql: &str) -> String {
     let characters: Vec<char> = sql.chars().collect();
     let mut out = String::new();
@@ -8366,7 +8399,10 @@ fn with_strings_opened(sql: &str) -> String {
                 at += 2;
             } else if characters[at] == '\'' {
                 at += 1;
-                break;
+                let Some(continued) = continued_at(&characters, at) else {
+                    break;
+                };
+                at = continued;
             } else {
                 out.push(characters[at]);
                 at += 1;
@@ -8618,11 +8654,225 @@ fn dynamic_sql_findings(statement: &str, executors: &BTreeSet<String>) -> Vec<St
     out
 }
 
+/// The words that may stand between `CREATE` and `VIEW`. A materialized view is not among them:
+/// no statement writes through one.
+const VIEW_MODIFIERS: [&str; 5] = ["OR", "REPLACE", "TEMP", "TEMPORARY", "RECURSIVE"];
+
+/// The words the tables a query reads follow.
+const READ_FROM: [&str; 2] = ["FROM", "JOIN"];
+
+/// Each commission table a view that `words` define reads, at any depth of its query: the
+/// table after each of [`READ_FROM`] up to the end of the view's statement. A simple view
+/// writes through to the table it reads.
+fn commission_views(words: &[SqlWord]) -> Vec<String> {
+    let mut out = Vec::new();
+    for at in 0..words.len() {
+        if !is_bare(words.get(at), "CREATE") {
+            continue;
+        }
+        let mut view = at + 1;
+        while VIEW_MODIFIERS
+            .iter()
+            .any(|modifier| is_bare(words.get(view), modifier))
+        {
+            view += 1;
+        }
+        if !is_bare(words.get(view), "VIEW") {
+            continue;
+        }
+        let end = (view..words.len())
+            .find(|index| words[*index] == SqlWord::Other(';'))
+            .unwrap_or(words.len());
+        for reads in view..end {
+            if !READ_FROM
+                .iter()
+                .any(|keyword| is_bare(words.get(reads), keyword))
+            {
+                continue;
+            }
+            let start = if is_bare(words.get(reads + 1), "ONLY") {
+                reads + 2
+            } else {
+                reads + 1
+            };
+            let table = table_name(words.get(table_name_at(words, start)));
+            if let Some(table) = table.filter(|table| is_a_commission_table(table)) {
+                out.push(table);
+            }
+        }
+    }
+    out
+}
+
+/// Each view over a commission table that one statement of a later migration defines, in its
+/// text or in a body it holds, whichever way the body is quoted.
+fn view_findings(statement: &str) -> Vec<String> {
+    let mut out: Vec<String> = body_texts(statement)
+        .iter()
+        .flat_map(|text| commission_views(&sql_words(text)))
+        .map(|table| format!("defines a view over `{table}`"))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// An escape string (`E'…'`) in a finding: PostgreSQL decodes its backslash escapes.
+const ESCAPE_STRING: &str = "an escape string (E'…')";
+
+/// A Unicode-escape string (`U&'…'`) in a finding: PostgreSQL decodes its `\XXXX` escapes.
+const UNICODE_STRING: &str = "a Unicode-escape string (U&'…')";
+
+/// What decodes the single-quoted string opening at `at`, by the prefix written right before
+/// its quote and ending `words` (the words before it at its level): `E` for an escape string,
+/// `U` and `&` for a Unicode-escape string; with how many of `words` the prefix takes.
+fn decoding_prefix(
+    characters: &[char],
+    at: usize,
+    words: &[String],
+) -> Option<(&'static str, usize)> {
+    let before = |back: usize| at.checked_sub(back).map(|index| characters[index]);
+    let word = |back: usize| {
+        words
+            .len()
+            .checked_sub(back)
+            .map(|index| words[index].as_str())
+    };
+    let escape = matches!(before(1), Some('E' | 'e'))
+        && word(1).is_some_and(|prefix| prefix.eq_ignore_ascii_case("e"));
+    let unicode = before(1) == Some('&')
+        && matches!(before(2), Some('U' | 'u'))
+        && word(1) == Some("&")
+        && word(2).is_some_and(|prefix| prefix.eq_ignore_ascii_case("u"));
+    if escape {
+        Some((ESCAPE_STRING, 1))
+    } else if unicode {
+        Some((UNICODE_STRING, 2))
+    } else {
+        None
+    }
+}
+
+/// Whether `words`, the words before a string at its level, end where a body follows: `AS`,
+/// `DO`, or `DO LANGUAGE` and the language's name.
+fn introduces_a_body(words: &[String]) -> bool {
+    let is = |back: usize, expected: &str| {
+        words
+            .len()
+            .checked_sub(back)
+            .is_some_and(|index| words[index].eq_ignore_ascii_case(expected))
+    };
+    is(1, "AS") || is(1, "DO") || (is(2, "LANGUAGE") && is(3, "DO"))
+}
+
+/// The text inside the quoted run from `at` to `end` that opens with `opener` characters and
+/// closes with the same ones, when it closes.
+fn quoted_text(characters: &[char], at: usize, end: usize, opener: usize) -> String {
+    let start = (at + opener).min(end);
+    let closes =
+        end >= start + opener && characters[end - opener..end] == characters[at..at + opener];
+    let close = if closes { end - opener } else { end };
+    characters[start..close].iter().collect()
+}
+
+/// What decodes each body `sql` writes in a decoded string, at any depth: a string right after
+/// `AS` or `DO` written as an escape or Unicode-escape string, in the text and in each
+/// dollar-quoted or plain string's text read as SQL. PostgreSQL decodes such a body before it
+/// reads it, so its statements may be spelled in escapes no scan here reads.
+fn decoded_bodies(sql: &str, out: &mut Vec<&'static str>) {
+    let characters: Vec<char> = sql.chars().collect();
+    let mut words: Vec<String> = Vec::new();
+    let mut at = 0;
+    while at < characters.len() {
+        let character = characters[at];
+        if let Some(end) = past_a_quote(&characters, at) {
+            match character {
+                '\'' => {
+                    match decoding_prefix(&characters, at, &words) {
+                        Some((decoder, taken)) => {
+                            if introduces_a_body(&words[..words.len() - taken]) {
+                                out.push(decoder);
+                            }
+                        }
+                        None => {
+                            let inner = quoted_text(&characters, at, end, 1).replace("''", "'");
+                            decoded_bodies(&inner, out);
+                        }
+                    }
+                    words.push("'".to_owned());
+                }
+                '$' => {
+                    let tag = (at + 1..end)
+                        .find(|index| characters[*index] == '$')
+                        .map_or(1, |tag_end| tag_end + 1 - at);
+                    decoded_bodies(&quoted_text(&characters, at, end, tag), out);
+                    words.push("$".to_owned());
+                }
+                '"' => words.push("\"".to_owned()),
+                _ => {}
+            }
+            at = end;
+        } else if character.is_alphanumeric() || character == '_' {
+            let start = at;
+            while at < characters.len()
+                && (characters[at].is_alphanumeric()
+                    || characters[at] == '_'
+                    || characters[at] == '$')
+            {
+                at += 1;
+            }
+            words.push(characters[start..at].iter().collect());
+        } else {
+            if !character.is_whitespace() {
+                words.push(character.to_string());
+            }
+            at += 1;
+        }
+    }
+}
+
+/// Each way one statement of a later migration writes a body in a decoded string.
+fn decoded_body_findings(statement: &str) -> Vec<String> {
+    let mut decoders = Vec::new();
+    decoded_bodies(statement, &mut decoders);
+    decoders.sort_unstable();
+    decoders.dedup();
+    decoders
+        .into_iter()
+        .map(|decoder| format!("writes a body as {decoder}"))
+        .collect()
+}
+
+/// The names that reach `standard_conforming_strings`: set off, it makes PostgreSQL decode
+/// backslash escapes in every string, a plain body's too.
+const STRING_SETTING_DOORS: [&str; 3] =
+    ["standard_conforming_strings", "set_config", "pg_settings"];
+
+/// What one statement of a later migration names that could change how its strings decode: one
+/// of [`STRING_SETTING_DOORS`], bare or quoted, in its text or its strings'; or a
+/// Unicode-escaped identifier, which can spell any name.
+fn string_setting_findings(statement: &str) -> Vec<String> {
+    let mut out: Vec<String> = body_texts(statement)
+        .iter()
+        .flat_map(|text| sql_words(text))
+        .filter_map(|word| table_name(Some(&word)))
+        .filter(|name| STRING_SETTING_DOORS.contains(&name.as_str()))
+        .map(|name| format!("names `{name}`, which sets how strings decode"))
+        .collect();
+    if holds_a_unicode_identifier(statement) {
+        out.push("holds a Unicode-escaped identifier".to_owned());
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// What breaks the migration rule in `files` (each by file name, with its SQL): each statement
 /// of a migration stamped after [`LAST_UNREAD_MIGRATION`] and not in `allowed` that
 /// [`running_write_findings`] refuses, against the writer functions any migration defines, or
 /// that [`dynamic_sql_findings`] refuses, against the functions any migration defines that run
-/// dynamic SQL; and a migration without a numeric stamp.
+/// dynamic SQL, or that defines a view over a commission table, writes a body in a decoded
+/// string or names a way to change how strings decode; and a migration without a numeric stamp.
 fn migration_findings(files: &[(String, String)], allowed: &[&str]) -> Vec<String> {
     let writers: BTreeSet<String> = files
         .iter()
@@ -8649,9 +8899,15 @@ fn migration_findings(files: &[(String, String)], allowed: &[&str]) -> Vec<Strin
             continue;
         }
         for statement in sql_statements(sql) {
-            let findings = running_write_findings(&statement, &writers)
+            let mut findings: Vec<String> = running_write_findings(&statement, &writers)
                 .into_iter()
-                .chain(dynamic_sql_findings(&statement, &executors));
+                .chain(dynamic_sql_findings(&statement, &executors))
+                .chain(view_findings(&statement))
+                .chain(decoded_body_findings(&statement))
+                .chain(string_setting_findings(&statement))
+                .collect();
+            findings.sort();
+            findings.dedup();
             for finding in findings {
                 out.push(format!("{shown}: {finding}"));
             }
@@ -8721,6 +8977,24 @@ fn no_later_migration_defines_a_function_or_trigger_that_writes_a_commission_tab
         "CREATE FUNCTION archive_all() RETURNS void AS $$ DECLARE dash text := '--'; BEGIN EXECUTE 'UPD' || 'ATE commission'; END $$ LANGUAGE plpgsql;",
         "CREATE FUNCTION archive_all() RETURNS void AS $$ BEGIN PERFORM run_sql('UPD' || 'ATE commission SET archived_at = now()'); END $$ LANGUAGE plpgsql;",
         "CREATE TRIGGER rerun AFTER UPDATE ON node FOR EACH ROW EXECUTE FUNCTION run_sql();",
+        "CREATE VIEW heron_v AS SELECT id, node_id, archived_at FROM commission;",
+        "CREATE OR REPLACE TEMP VIEW open_slots AS SELECT * FROM ONLY public.\"commission_slot\";",
+        "CREATE VIEW open_nodes AS SELECT * FROM node WHERE id IN (SELECT node_id FROM commission);",
+        "CREATE VIEW cards AS SELECT node.id FROM node JOIN commission ON commission.node_id = node.id;",
+        "DO $$ BEGIN CREATE VIEW heron_v AS SELECT * FROM commission; END $$;",
+        "CREATE FUNCTION heron_escape_unarchive() RETURNS trigger AS E'BEGIN \\x55PDATE commission SET archived_at = NULL WHERE node_id = NEW.id; RETURN NEW; END' LANGUAGE plpgsql;",
+        "CREATE FUNCTION archive_all() RETURNS void AS U&'\\0055PDATE commission SET archived_at = now()' LANGUAGE sql;",
+        "CREATE PROCEDURE archive_all() LANGUAGE sql AS /* the /* nested */ body */ u&'!0055PDATE commission SET archived_at = now()' UESCAPE '!';",
+        "CREATE FUNCTION archive_all() RETURNS void AS /* a /* b */ c */ e'\\x55PDATE commission SET archived_at = now()' LANGUAGE sql;",
+        "DO E'BEGIN \\x55PDATE commission SET archived_at = NULL; END';",
+        "DO LANGUAGE plpgsql e'BEGIN \\x55PDATE commission SET archived_at = NULL; END';",
+        "DO $$ BEGIN CREATE FUNCTION leak() RETURNS void AS E'\\x55PDATE commission SET archived_at = now()' LANGUAGE sql; END $$;",
+        "DO 'BEGIN CREATE FUNCTION leak() RETURNS void AS E''\\x55PDATE commission SET archived_at = now()'' LANGUAGE sql; END';",
+        "CREATE FUNCTION archive_all() RETURNS void AS 'UPDATE commi'\n  'ssion SET archived_at = now()' LANGUAGE sql;",
+        "SET standard_conforming_strings = off;",
+        "SELECT set_config(E'\\x73tandard_conforming_strings', 'off', false);",
+        "UPDATE pg_settings SET setting = 'off' WHERE name = E'\\x73tandard_conforming_strings';",
+        "SET U&\"\\0073tandard_conforming_strings\" = off;",
     ];
     for sql in refused {
         let planted = [
@@ -8756,6 +9030,11 @@ fn no_later_migration_defines_a_function_or_trigger_that_writes_a_commission_tab
         "CREATE TRIGGER name_node AFTER UPDATE ON node FOR EACH ROW EXECUTE PROCEDURE node_name_known();",
         "DO $$ BEGIN CREATE TRIGGER name_node AFTER INSERT ON node FOR EACH ROW EXECUTE FUNCTION node_name_known(); END $$;",
         "-- Executes nothing at run time.\nCREATE FUNCTION tidy() RETURNS void AS $$ DELETE FROM workflow WHERE false $$ LANGUAGE sql;",
+        "CREATE MATERIALIZED VIEW open_commissions AS SELECT id FROM commission WHERE archived_at IS NULL;",
+        "CREATE VIEW open_nodes AS SELECT id, name FROM node;",
+        "CREATE FUNCTION node_unmoved() RETURNS trigger AS $$ BEGIN IF NEW.parent_id = OLD.parent_id THEN RETURN NEW; END IF; RAISE EXCEPTION E'moved\\n'; END $$ LANGUAGE plpgsql;",
+        "ALTER TABLE bug_report ADD CONSTRAINT no_backslash CHECK (position(E'\\\\' in page) = 0);",
+        "CREATE FUNCTION tidy() RETURNS void AS 'DELETE FROM work'\n  'flow WHERE false' LANGUAGE sql;",
     ];
     for sql in kept {
         let planted = [
@@ -8779,6 +9058,25 @@ fn no_later_migration_defines_a_function_or_trigger_that_writes_a_commission_tab
     ];
     for finding in &expected {
         assert!(found.contains(finding), "{finding}: {found:?}");
+    }
+    let herons_view = "-- A view over the commission table, written by a trigger on another table.\nCREATE VIEW heron_v AS SELECT id, node_id, archived_at FROM commission;\n\nCREATE FUNCTION heron_view_unarchive() RETURNS trigger AS $$\nBEGIN\n    UPDATE heron_v SET archived_at = NULL WHERE node_id = NEW.id;\n    RETURN NEW;\nEND\n$$ LANGUAGE plpgsql;\n\nCREATE TRIGGER heron_view_unarchive AFTER UPDATE ON node FOR EACH ROW EXECUTE FUNCTION heron_view_unarchive();\n";
+    let herons_escape = "-- A function body in an escape string, its statement's first letter escaped.\nCREATE FUNCTION heron_escape_unarchive() RETURNS trigger AS E'BEGIN \\x55PDATE commission SET archived_at = NULL WHERE node_id = NEW.id; RETURN NEW; END' LANGUAGE plpgsql;\n\nCREATE TRIGGER heron_escape_unarchive AFTER UPDATE ON node FOR EACH ROW EXECUTE FUNCTION heron_escape_unarchive();\n";
+    let literal_plants = [
+        (
+            herons_view,
+            format!("{shown}: defines a view over `commission`"),
+        ),
+        (
+            herons_escape,
+            format!("{shown}: writes a body as {ESCAPE_STRING}"),
+        ),
+    ];
+    for (plant, finding) in literal_plants {
+        let planted = [(later.to_owned(), plant.to_owned())];
+
+        let found = migration_findings(&planted, &COMMISSION_WRITING_MIGRATIONS);
+
+        assert_eq!(found, [finding], "{plant}");
     }
     let earlier = [(earlier_writer.0.clone(), refused[0].to_owned())];
     assert_eq!(
