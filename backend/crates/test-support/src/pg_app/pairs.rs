@@ -315,10 +315,10 @@ pub fn rename_call() -> CommissionCall {
     }
 }
 
-/// The seven write calls the commission's field acts add, each sent with a body its own
+/// The ten write calls the commission's field acts add, each sent with a body its own
 /// parsing accepts: move the lifecycle, set and clear the direction, set and clear the
-/// deadline, set and clear Delayed.
-pub fn new_write_calls() -> [CommissionCall; 7] {
+/// deadline, set and clear Delayed, raise and clear the dispute, and the owner's rating.
+pub fn new_write_calls() -> [CommissionCall; 10] {
     let move_body = json!({ "to": "active" });
     let direction_body = json!({ "status": "waiting_for_input" });
     let deadline_body = json!({ "deadline": FAR_DEADLINE });
@@ -365,6 +365,25 @@ pub fn new_write_calls() -> [CommissionCall; 7] {
         tail: "/status/deadline",
         body: None,
     };
+    let rating_body = json!({ "rating": "suggestive", "graphic": false });
+    let raise_dispute = CommissionCall {
+        label: "raise a dispute",
+        method: reqwest::Method::PUT,
+        tail: "/dispute",
+        body: None,
+    };
+    let clear_dispute = CommissionCall {
+        label: "clear the dispute",
+        method: reqwest::Method::DELETE,
+        tail: "/dispute",
+        body: None,
+    };
+    let rate = CommissionCall {
+        label: "rate",
+        method: reqwest::Method::PUT,
+        tail: "/maturity",
+        body: Some(rating_body),
+    };
     [
         move_lifecycle,
         set_direction,
@@ -373,6 +392,9 @@ pub fn new_write_calls() -> [CommissionCall; 7] {
         clear_deadline,
         set_delayed,
         clear_delayed,
+        raise_dispute,
+        clear_dispute,
+        rate,
     ]
 }
 

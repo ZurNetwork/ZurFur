@@ -303,7 +303,7 @@ async fn a_stranger_s_rating_answers_like_a_made_up_id() {
     assert_eq!(stored(&world, old_sketch).await.maturity, None);
 }
 
-// The seven new writes and the read answer bob, who takes no part in "Old sketch", exactly as
+// The ten new writes and the read answer bob, who takes no part in "Old sketch", exactly as
 // they answer a made-up id: status, body and headers, and the code every one carries. A call
 // that answered otherwise is named by its label.
 #[tokio::test]
