@@ -1,8 +1,8 @@
 use super::*;
 use crate::elements::commission::{
-    CommissionState, DeadlineStatus, DirectionStatus, LateFacts, LifecycleStep, clear_deadline,
-    clear_delayed, clear_direction, move_lifecycle, owes_late, schedule_deadline, set_delayed,
-    set_direction, test_commission,
+    CommissionState, DeadlineStatus, DirectionStatus, ElementId, LateFacts, LifecycleStep, NewSlot,
+    SurfaceAddress, TabId, clear_deadline, clear_delayed, clear_direction, move_lifecycle,
+    owes_late, schedule_deadline, set_delayed, set_direction, test_commission,
 };
 use identity::elements::user::UserId;
 use kernel::elements::did::Did;
@@ -34,6 +34,25 @@ fn may() -> DateTimeUtc {
 /// When an act happens before either deadline.
 fn february() -> DateTimeUtc {
     instant("2026-02-01T12:00:00Z")
+}
+
+/// The element id the declared Slot in the tests is born as.
+const DECLARED_ELEMENT: &str = "0192f6f0-0000-7000-8000-00000000510d";
+
+/// A Slot's declaration under [`DECLARED_ELEMENT`], with `notes`.
+fn declaration(notes: Option<&str>) -> SlotDeclaration {
+    let address = SurfaceAddress::new(
+        TabId::from(uuid::Uuid::now_v7()),
+        "content".parse().expect("a surface name"),
+    );
+    let slot = NewSlot {
+        address,
+        notes: notes.map(str::to_owned),
+    };
+    let element = DECLARED_ELEMENT
+        .parse::<ElementId>()
+        .expect("an element id");
+    SlotDeclaration { element, slot }
 }
 
 /// The state of an Active commission with `deadline`, the stored `flag` and `direction`.
@@ -116,6 +135,9 @@ fn gated_entries(commission: CommissionId) -> Vec<(NewChangelogEntry, &'static s
     let mark = owes_late(&late_facts, may()).expect("a late entry is owed");
     let late = NewChangelogEntry::late(commission, &mark, may());
 
+    let slot_declared =
+        NewChangelogEntry::slot_declared(commission, actor(), &declaration(Some("notes")), at);
+
     vec![
         (created, "created", json!({})),
         (renamed, "renamed", json!({})),
@@ -174,6 +196,11 @@ fn gated_entries(commission: CommissionId) -> Vec<(NewChangelogEntry, &'static s
             "late",
             json!({ "deadline": "2026-03-01T12:00:00Z", "from": "delayed" }),
         ),
+        (
+            slot_declared,
+            "slot_declared",
+            json!({ "slot": DECLARED_ELEMENT }),
+        ),
     ]
 }
 
@@ -183,7 +210,7 @@ fn each_legacy_kind_s_typed_payload_is_its_stored_shape() {
     let commission = CommissionId::mint();
     let legacy = gated_entries(commission)
         .into_iter()
-        .filter(|(_, token, _)| *token != "lifecycle_moved");
+        .filter(|(_, token, _)| !matches!(*token, "lifecycle_moved" | "slot_declared"));
 
     for (entry, token, stored_shape) in legacy {
         assert_eq!(<&'static str>::from(entry.kind()), token);
@@ -208,6 +235,25 @@ fn each_new_kind_s_stored_shape_is_its_literal_json() {
     assert_eq!(entry.kind(), ChangelogEntryKind::LifecycleMoved);
     assert_eq!(entry.payload(), &lifecycle_moved);
     assert_eq!(entry.actor_id(), Some(&actor()));
+}
+
+// A declared Slot's entry stores its element id and nothing else: no title, no notes.
+#[test]
+fn a_slot_declared_entry_stores_only_its_slot() {
+    let canary = "Canary notes 51d0";
+    let entry = NewChangelogEntry::slot_declared(
+        CommissionId::mint(),
+        actor(),
+        &declaration(Some(canary)),
+        may(),
+    );
+
+    let literal = format!("{{\"slot\":\"{DECLARED_ELEMENT}\"}}");
+    assert_eq!(entry.kind(), ChangelogEntryKind::SlotDeclared);
+    assert_eq!(entry.payload().to_string(), literal);
+    assert_eq!(entry.actor_id(), Some(&actor()));
+    assert_eq!(entry.note_text(), None);
+    assert!(!format!("{entry:?}").contains(canary));
 }
 
 // No gated entry carries a note, whichever constructor built it.

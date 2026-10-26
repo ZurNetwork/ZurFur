@@ -43,4 +43,5 @@ mod schema_status;
 mod seed;
 mod session_store;
 mod single_binary_guard;
+mod slot_fill;
 mod unit_of_work;

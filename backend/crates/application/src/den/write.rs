@@ -1,6 +1,7 @@
-//! The Den's write: one use case every typed write hands its act to. It asks the pool's
-//! verdict, opens the unit, makes the grant from the locked standing, builds Atta's act from
-//! the grant alone, and has Atta check it and the write host apply it.
+//! The Den's write: one use case every typed write hands its acts to, one or several on one
+//! thing. It asks the pool's verdict, opens the unit, makes the grant from the locked standing,
+//! builds each act's Atta act from the grant alone, and has Atta check each and the write host
+//! apply it, all in the one unit.
 
 use std::fmt;
 
@@ -20,7 +21,7 @@ use crate::{
     commission::{den::CommissionPlace, sweep::SweepToken},
     den::{
         Den, DenName, DenThing, DenType, Place, TopLevel,
-        act::{ActShape, ActSpec, ArmAnswer, BornEntry, DenAct},
+        act::{ActShape, ActSpec, ArmAnswer, BornEntry, DenAct, HandlerRefusal},
         authority::{self, Grant},
         gate::{DenApplied, DenRefusal, DenWriteHost},
         host::{DenHost, type_key},
@@ -78,12 +79,13 @@ impl fmt::Debug for Actor {
     }
 }
 
-/// A write: who acts, and the act.
+/// A write: who acts, and their acts, each anchored on the same thing and needing the same,
+/// all written in one unit.
 pub(crate) struct Command {
     /// The session's user, or the system.
     pub(crate) actor: Actor,
-    /// What they do.
-    pub(crate) act: DenAct,
+    /// What they do, in order: one act, or several on one thing.
+    pub(crate) acts: Vec<DenAct>,
 }
 
 /// What a write answers, from what the gate wrote: the thing it acted on, the name it gave,
@@ -153,6 +155,7 @@ fn gate_refusal(refusal: DenRefusal) -> DenWriteError {
         DenRefusal::WiderThanPrivate => DenWriteError::Refused(RefusalClass::WiderThanPrivate),
         DenRefusal::SegmentTaken => DenWriteError::Refused(RefusalClass::SegmentTaken),
         DenRefusal::Precondition(refusal) => DenWriteError::Precondition(refusal),
+        DenRefusal::Handler(refusal) => DenWriteError::Handler(refusal),
     }
 }
 
@@ -172,6 +175,9 @@ pub(crate) enum DenWriteError {
     /// The act's own domain rule refused it, on the facts its grant read.
     #[error("the act's rule refused it")]
     Precondition(CommissionRefusal),
+    /// The act's handler refused it on what its lent view read, before its write.
+    #[error("the act's handler refused it")]
+    Handler(HandlerRefusal),
     /// A store behind the Den failed, or the den broke one of its own rules.
     #[error("the den could not be written")]
     Store(#[from] anyhow::Error),
@@ -254,8 +260,9 @@ fn born_entry(entry: BornEntry) -> Result<Born, DenWriteError> {
 }
 
 /// The den's one builder of Atta's act: every path from the target's typed ids, an existing
-/// node's level from the target, a create's key from the id the grant minted; a field act is a
-/// change on the targeted commission's node.
+/// node's level from the target, a create's key from the id the grant minted; a create in an
+/// entry is made under the targeted commission's entry, which it takes as Private, keyed by its
+/// own id; a field act is a change on the targeted commission's node.
 fn build(spec: ActSpec, body: DenAct, target: &Target) -> Result<Act<DenAct>, DenWriteError> {
     let ActSpec {
         word,
@@ -295,6 +302,40 @@ fn build(spec: ActSpec, body: DenAct, target: &Target) -> Result<Act<DenAct>, De
                 parent,
                 node,
                 entries,
+            }
+        }
+        ActShape::CreateInEntry {
+            entry,
+            entry_type,
+            key,
+            name,
+        } => {
+            let Target::Existing { commission, .. } = target else {
+                return Err(DenWriteError::Refused(RefusalClass::WrongGrant));
+            };
+            let place = Place::Commission(CommissionPlace::Commission(*commission));
+            let entry_segment =
+                names::fixed_segment(entry).ok_or_else(|| broken("a fixed word is no key"))?;
+            let path = place
+                .anchored_path()
+                .ok_or_else(|| broken("a commission id makes no path"))?
+                .join(entry_segment);
+            let parent = Placed {
+                path,
+                typ: type_key(entry_type),
+                level: atta::Level::Private,
+            };
+            let key = names::id_segment(key).ok_or_else(|| broken("an id is no key"))?;
+            let node = Born {
+                key,
+                typ: type_key(den_type),
+                name: names::display_name(&name),
+                level: None,
+            };
+            Shape::Create {
+                parent,
+                node,
+                entries: Vec::new(),
             }
         }
         ActShape::Rename { name } => Shape::Rename {
@@ -351,25 +392,51 @@ fn den_writer(viewer: Viewer) -> Writer {
     }
 }
 
-/// Steps four and five on an open unit: build Atta's act from `grant`, then have Atta check it
-/// and the write host apply it. A refusal of any kind is an `Err`, so the unit rolls back.
+/// Steps four and five on an open unit: build Atta's act of each of `acts` from `grant`, then
+/// have Atta check each and the write host apply it, in order, over one host and one unit. A
+/// refusal of any kind is an `Err`, so the unit rolls back whatever the earlier acts wrote.
+/// Answers the last act's result, which reads the thing after every act.
 pub(in crate::den) async fn written(
     unit: Unit<'_>,
     grant: Grant,
-    act: DenAct,
+    acts: Vec<DenAct>,
     now: DateTimeUtc,
 ) -> Result<WriteResult, DenWriteError> {
-    let spec = act.spec();
     let target = Target::from(&grant);
-    let atta_act = build(spec, act, &target)?;
+    let atta_acts = acts
+        .into_iter()
+        .map(|act| build(act.spec(), act, &target))
+        .collect::<Result<Vec<Act<DenAct>>, DenWriteError>>()?;
     let writer = den_writer(grant.actor().viewer());
     let mut host = DenWriteHost::new(unit, grant, now);
-    let applied = writer
-        .act(&mut host, atta_act)
-        .await
-        .map_err(write_error)?
-        .map_err(gate_refusal)?;
+    let mut last = None;
+    for atta_act in atta_acts {
+        let applied = writer
+            .act(&mut host, atta_act)
+            .await
+            .map_err(write_error)?
+            .map_err(gate_refusal)?;
+        last = Some(applied);
+    }
+    let applied = last.ok_or_else(|| broken("a write carries no act"))?;
     answer(applied)
+}
+
+/// The spec every one of `acts` shares: the first act's, when each is anchored where it is and
+/// needs what it needs. No act, or acts anchored apart, is a broken rule.
+fn shared_spec(acts: &[DenAct]) -> Result<ActSpec, DenWriteError> {
+    let (first, rest) = acts
+        .split_first()
+        .ok_or_else(|| broken("a write carries no act"))?;
+    let spec = first.spec();
+    let apart = rest
+        .iter()
+        .map(DenAct::spec)
+        .any(|other| other.anchor != spec.anchor || other.needs != spec.needs);
+    if apart {
+        return Err(broken("a write's acts are anchored apart"));
+    }
+    Ok(spec)
 }
 
 /// Whether Atta's checks pass the act the den's builder makes of `act` on the existing
@@ -401,7 +468,8 @@ pub(in crate::den) fn atta_passes(
 
 impl Den<'_> {
     /// Writes the Den: the pool's verdict first, refusing with no unit opened; then, in the
-    /// unit, the grant from the locked standing, Atta's checks and the write host's apply.
+    /// unit, the grant from the locked standing, and Atta's checks and the write host's apply
+    /// for each act in turn.
     #[use_case]
     pub(crate) async fn write(
         &self,
@@ -410,13 +478,13 @@ impl Den<'_> {
         command: Command,
         now: DateTimeUtc,
     ) -> Result<WriteResult, DenWriteError> {
-        let Command { actor, act } = command;
-        let spec = act.spec();
+        let Command { actor, acts } = command;
+        let spec = shared_spec(&acts)?;
         authority::admit(ports, &spec, &actor).await?;
 
         let unit = uow.open().await?;
         let grant = authority::grant(&mut *unit, &spec, actor).await?;
-        written(unit, grant, act, now).await
+        written(unit, grant, acts, now).await
     }
 }
 

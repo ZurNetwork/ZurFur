@@ -1509,14 +1509,16 @@ pub mod commission {
 
     /// `queries/commission/declare_slot_satellite.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// The declared Slot's interpreted half, keyed by the carrying
-    /// element's id — one identity, two rows. Deliberately no
-    /// occupant column of any kind: fill is the Character epic's.
+    /// Store one Slot's satellite row, keyed by its carrying element's id and bound to its
+    /// node, taking its title from that node's name until the title column goes. The node
+    /// must be a `slot` node whose segment is the element's id, under the `slots` entry of
+    /// this commission's own node; any other node inserts no row. No occupant column of
+    /// any kind: fill is the Character epic's.
     pub async fn declare_slot_satellite(
         conn: impl sqlx::PgExecutor<'_>,
         element_id: uuid::Uuid,
         commission_id: uuid::Uuid,
-        title: &str,
+        node_id: uuid::Uuid,
         notes: Option<&str>,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!(
@@ -1524,7 +1526,7 @@ pub mod commission {
         ))
         .bind(element_id)
         .bind(commission_id)
-        .bind(title)
+        .bind(node_id)
         .bind(notes)
         .execute(conn)
         .await
@@ -2138,8 +2140,8 @@ pub mod commission {
     /// `queries/commission/slots.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// Every Slot declared on one commission, in declaration order (the carrying
-    /// element ids are UUIDv7). Empty for a commission with none and for an
-    /// unknown one.
+    /// element ids are UUIDv7), each titled by its node's name. A Slot with no node
+    /// is left out. Empty for a commission with none and for an unknown one.
     pub async fn slots(
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,

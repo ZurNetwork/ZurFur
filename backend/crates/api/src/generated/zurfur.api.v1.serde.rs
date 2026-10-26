@@ -1534,6 +1534,347 @@ impl<'de> serde::Deserialize<'de> for CreateCommissionResponse {
         deserializer.deserialize_struct("zurfur.api.v1.CreateCommissionResponse", FIELDS, GeneratedVisitor)
     }
 }
+impl serde::Serialize for DeclareCommissionSlot {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.tab.is_empty() {
+            len += 1;
+        }
+        if !self.surface.is_empty() {
+            len += 1;
+        }
+        if !self.title.is_empty() {
+            len += 1;
+        }
+        if self.notes.is_some() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.DeclareCommissionSlot", len)?;
+        if !self.tab.is_empty() {
+            struct_ser.serialize_field("tab", &self.tab)?;
+        }
+        if !self.surface.is_empty() {
+            struct_ser.serialize_field("surface", &self.surface)?;
+        }
+        if !self.title.is_empty() {
+            struct_ser.serialize_field("title", &self.title)?;
+        }
+        if let Some(v) = self.notes.as_ref() {
+            struct_ser.serialize_field("notes", v)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for DeclareCommissionSlot {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "tab",
+            "surface",
+            "title",
+            "notes",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Tab,
+            Surface,
+            Title,
+            Notes,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "tab" => Ok(GeneratedField::Tab),
+                            "surface" => Ok(GeneratedField::Surface),
+                            "title" => Ok(GeneratedField::Title),
+                            "notes" => Ok(GeneratedField::Notes),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = DeclareCommissionSlot;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.DeclareCommissionSlot")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<DeclareCommissionSlot, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut tab__ = None;
+                let mut surface__ = None;
+                let mut title__ = None;
+                let mut notes__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Tab => {
+                            if tab__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("tab"));
+                            }
+                            tab__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Surface => {
+                            if surface__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("surface"));
+                            }
+                            surface__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Title => {
+                            if title__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("title"));
+                            }
+                            title__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Notes => {
+                            if notes__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("notes"));
+                            }
+                            notes__ = map_.next_value()?;
+                        }
+                    }
+                }
+                Ok(DeclareCommissionSlot {
+                    tab: tab__.unwrap_or_default(),
+                    surface: surface__.unwrap_or_default(),
+                    title: title__.unwrap_or_default(),
+                    notes: notes__,
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.DeclareCommissionSlot", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for DeclareCommissionSlotsRequest {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.id.is_empty() {
+            len += 1;
+        }
+        if !self.slots.is_empty() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.DeclareCommissionSlotsRequest", len)?;
+        if !self.id.is_empty() {
+            struct_ser.serialize_field("id", &self.id)?;
+        }
+        if !self.slots.is_empty() {
+            struct_ser.serialize_field("slots", &self.slots)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for DeclareCommissionSlotsRequest {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "id",
+            "slots",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Id,
+            Slots,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "id" => Ok(GeneratedField::Id),
+                            "slots" => Ok(GeneratedField::Slots),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = DeclareCommissionSlotsRequest;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.DeclareCommissionSlotsRequest")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<DeclareCommissionSlotsRequest, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut id__ = None;
+                let mut slots__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Id => {
+                            if id__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("id"));
+                            }
+                            id__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Slots => {
+                            if slots__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("slots"));
+                            }
+                            slots__ = Some(map_.next_value()?);
+                        }
+                    }
+                }
+                Ok(DeclareCommissionSlotsRequest {
+                    id: id__.unwrap_or_default(),
+                    slots: slots__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.DeclareCommissionSlotsRequest", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for DeclareCommissionSlotsResponse {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if !self.ids.is_empty() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("zurfur.api.v1.DeclareCommissionSlotsResponse", len)?;
+        if !self.ids.is_empty() {
+            struct_ser.serialize_field("ids", &self.ids)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for DeclareCommissionSlotsResponse {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "ids",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Ids,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "ids" => Ok(GeneratedField::Ids),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = DeclareCommissionSlotsResponse;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct zurfur.api.v1.DeclareCommissionSlotsResponse")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<DeclareCommissionSlotsResponse, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut ids__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Ids => {
+                            if ids__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("ids"));
+                            }
+                            ids__ = Some(map_.next_value()?);
+                        }
+                    }
+                }
+                Ok(DeclareCommissionSlotsResponse {
+                    ids: ids__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("zurfur.api.v1.DeclareCommissionSlotsResponse", FIELDS, GeneratedVisitor)
+    }
+}
 impl serde::Serialize for DeleteAccountRequest {
     #[allow(deprecated)]
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>

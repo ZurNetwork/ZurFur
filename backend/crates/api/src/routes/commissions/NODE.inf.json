@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/api/src/routes/commissions",
-  "charted": "2026-10-23",
+  "charted": "2026-10-26",
   "short": "The commission JSON API, one file per act",
   "is": "The user-scoped commission API, one file per act, all behind a uniform closed-door 404 for non-participants — each act a thin driver over the matching `application::commission::*` use case.",
   "type": "code",
@@ -111,7 +111,7 @@
     },
     {
       "name": "slots.rs",
-      "role": "POST /{id}/slots — all-or-nothing Slot batch → commission::slots::declare",
+      "role": "POST /{id}/slots — the owner's all-or-nothing Slot declare → commission::slots::declare: the body is the contract's DeclareCommissionSlot array, at most 32 (MAX_SLOTS_PER_DECLARE) and never empty, each refused title a field error at #/<i>/title, all before the use case; 201 with the contract's DeclareCommissionSlotsResponse",
       "node": false
     },
     {

@@ -1,19 +1,20 @@
 //! Declared Slots over PostgreSQL, against a throwaway container:
-//! `declare_slots` contributes an ordinary element into `commission_element`
-//! **plus** the Slot itself as its `commission_slot` satellite (required title,
-//! optional notes, keyed by the carrying element's id — the same satellite
-//! pattern the Seat table uses) in one transaction; the address gates
-//! match every other element write; and the satellite cascades away
-//! with its commission (what the commission's "gone entirely" hard-delete relies on).
-//! Requires a container runtime socket (DOCKER_HOST honored).
+//! `declare_slot` contributes an ordinary element into `commission_element`
+//! **plus** the Slot itself as its `commission_slot` satellite (optional notes, keyed by the
+//! carrying element's id, bound to its node, whose name is its title — the same satellite
+//! pattern the Seat table uses) in one transaction; the address gates match every other
+//! element write; the satellite insert binds only the Slot's own node under its own
+//! commission's `slots` entry; and the satellite cascades away with its commission (what the
+//! commission's "gone entirely" hard-delete relies on). Requires a container runtime socket
+//! (DOCKER_HOST honored).
 
-use crate::seed;
+use crate::seed::{self, declare_committed, declare_in, owner_on, slot_node, slots_entry_in};
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use chrono::Utc;
 use domain::{
     elements::{
         commission::{
-            Commission, CommissionId, ElementId, ElementType, NewSlot, SKELETON, SlotTitle,
+            Commission, ElementId, ElementType, NewSlot, SKELETON, SlotBirth, SlotDeclaration,
             SurfaceAddress, SurfaceName, TabId,
         },
         did::Did,
@@ -52,19 +53,10 @@ async fn composed_commission(
     title: &str,
 ) -> (Commission, SurfaceAddress) {
     let commission = seed::seed_stored(pool, &owner.id, title).await;
-    let address = address_of(pool, commission.id).await;
-    (commission, address)
-}
-
-/// The commission's one skeleton address — the placeholder skeleton declares
-/// exactly one tab holding exactly one surface, so this is unambiguous.
-async fn address_of(pool: &PgPool, commission: CommissionId) -> SurfaceAddress {
-    let composition = PgCommissionStore::new(pool.clone())
-        .load_composition(&commission)
+    let address = seed::only_address(pool, commission.id)
         .await
-        .expect("load composition")
-        .expect("every commission has its tabs");
-    SurfaceAddress::new(composition.tabs[0].id, only_surface())
+        .expect("the commission's address");
+    (commission, address)
 }
 
 /// The one surface the placeholder skeleton declares.
@@ -85,43 +77,47 @@ async fn slot_row(pool: &PgPool, element: ElementId) -> Option<(String, Option<S
     .expect("query commission_slot")
 }
 
+/// A fresh element id, as a declare mints one.
+fn fresh_element(address: &SurfaceAddress) -> ElementId {
+    let slot = NewSlot {
+        address: address.clone(),
+        notes: None,
+    };
+    SlotDeclaration::minted(slot).element
+}
+
 // AC1/AC2 (pg) — declaring persists the carrying element AND its satellite in
 // one unit: the element reads back typed `slot` with the empty payload, the
-// owner's envelope, and append order; the satellite carries title + notes (and
-// None for omitted notes); and a commission holds zero, then several, Slots.
+// owner's envelope, and append order; the satellite carries notes (and None for omitted notes)
+// and its title copied from its node's name; and a commission holds zero, then several, Slots.
 #[tokio::test]
 async fn declare_slot_persists_the_element_and_its_satellite() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:slot-owner").await;
     let (commission, address) = composed_commission(&pool, &owner, "Two characters").await;
 
-    let noted = NewSlot::contributed_at(
-        commission.id,
-        address.clone(),
-        "The knight".parse::<SlotTitle>().expect("valid"),
-        Some("full plate, no cape".to_string()),
-        owner.id.clone(),
-        Utc::now(),
-    );
-    let bare = NewSlot::contributed_at(
-        commission.id,
-        address.clone(),
-        "The mage".parse::<SlotTitle>().expect("valid"),
-        None,
-        owner.id.clone(),
-        Utc::now(),
-    );
-    let (noted_id, bare_id) = (noted.id, bare.id);
-
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
-    {
-        let mut commissions = uow.commissions();
-        commissions
-            .declare_slots(&[noted, bare])
-            .await
-            .expect("the slot batch");
-    }
+    let noted_id = declare_in(
+        &mut *uow,
+        commission.id,
+        &owner.id,
+        &address,
+        "The knight",
+        Some("full plate, no cape"),
+    )
+    .await
+    .expect("the knight");
+    let bare_id = declare_in(
+        &mut *uow,
+        commission.id,
+        &owner.id,
+        &address,
+        "The mage",
+        None,
+    )
+    .await
+    .expect("the mage");
     uow.commit().await.expect("commit");
 
     let composition = PgCommissionStore::new(pool.clone())
@@ -172,24 +168,14 @@ async fn declare_slot_refuses_bad_addresses_like_every_element_write() {
     let (_theirs, their_address) = composed_commission(&pool, &other, "Theirs").await;
 
     let db = PgDatabase::new(pool.clone());
-    let title = || "The knight".parse::<SlotTitle>().expect("valid");
-    let slot_at = |address: SurfaceAddress| {
-        NewSlot::contributed_at(
-            mine.id,
-            address,
-            title(),
-            None,
-            owner.id.clone(),
-            Utc::now(),
-        )
-    };
+    let fabricated = SurfaceAddress::new(TabId::mint(), only_surface());
+    let invented = SurfaceAddress::new(
+        my_address.tab,
+        "invented".parse::<SurfaceName>().expect("valid label"),
+    );
 
-    // A tab that exists nowhere.
-    let fabricated = slot_at(SurfaceAddress::new(TabId::mint(), only_surface()));
     let mut uow = db.begin().await.expect("begin");
-    let err = uow
-        .commissions()
-        .declare_slots(&[fabricated])
+    let err = declare_in(&mut *uow, mine.id, &owner.id, &fabricated, "Knight", None)
         .await
         .expect_err("absent tab refuses");
     assert!(
@@ -198,29 +184,25 @@ async fn declare_slot_refuses_bad_addresses_like_every_element_write() {
     );
     drop(uow);
 
-    // A real tab — in someone else's commission.
-    let cross = slot_at(their_address);
     let mut uow = db.begin().await.expect("begin");
-    let err = uow
-        .commissions()
-        .declare_slots(&[cross])
-        .await
-        .expect_err("foreign tab refuses");
+    let err = declare_in(
+        &mut *uow,
+        mine.id,
+        &owner.id,
+        &their_address,
+        "Knight",
+        None,
+    )
+    .await
+    .expect_err("foreign tab refuses");
     assert!(
         err.downcast_ref::<UnknownTab>().is_some(),
         "a foreign tab is indistinguishable from an absent one, got: {err:?}"
     );
     drop(uow);
 
-    // A surface the skeleton does not declare.
-    let invented = slot_at(SurfaceAddress::new(
-        my_address.tab,
-        "invented".parse::<SurfaceName>().expect("valid label"),
-    ));
     let mut uow = db.begin().await.expect("begin");
-    let err = uow
-        .commissions()
-        .declare_slots(&[invented])
+    let err = declare_in(&mut *uow, mine.id, &owner.id, &invented, "Knight", None)
         .await
         .expect_err("undeclared surface refuses");
     assert!(
@@ -236,6 +218,90 @@ async fn declare_slot_refuses_bad_addresses_like_every_element_write() {
     assert_eq!(count, 0, "no refused declaration left a satellite behind");
 }
 
+// The satellite insert binds only the Slot's own node: a declare on this commission whose node
+// is a slot node under another commission's `slots` entry inserts no row, and the declare errs
+// and ends its unit, whatever the commit tries after.
+#[tokio::test]
+async fn a_satellite_insert_on_another_commission_s_slot_node_fails_at_the_statement() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:slot-foreign-node").await;
+    let (mine, my_address) = composed_commission(&pool, &owner, "Mine").await;
+    let (theirs, _) = composed_commission(&pool, &owner, "Theirs").await;
+    let element = fresh_element(&my_address);
+
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let their_slots = slots_entry_in(&mut *uow, theirs.id)
+        .await
+        .expect("their slots entry");
+    let foreign = slot_node(their_slots, element, "Elsewhere").expect("a slot node");
+    uow.nodes()
+        .create(&foreign)
+        .await
+        .expect("a slot node under their slots entry");
+    let birth = SlotBirth {
+        element,
+        node: foreign.id,
+        created_by: owner.id.clone(),
+        created_at: Utc::now(),
+    };
+    let slot = NewSlot {
+        address: my_address,
+        notes: None,
+    };
+    let declared = uow
+        .commissions()
+        .declare_slot(&owner_on(mine.id), &birth, &slot)
+        .await;
+    let committed = uow.commit().await;
+
+    let refusal = declared.expect_err("the satellite insert matches no node");
+    assert!(
+        refusal.to_string().contains("not the slot's own"),
+        "{refusal}"
+    );
+    assert!(committed.is_err(), "the unit ends with the refusal");
+    assert!(slot_row(&pool, element).await.is_none(), "no satellite row");
+    let composition = PgCommissionStore::new(pool.clone())
+        .load_composition(&mine.id)
+        .await
+        .expect("load")
+        .expect("composed");
+    assert!(composition.elements.is_empty(), "no element row");
+}
+
+// A slot node no Slot points at is refused at commit, and nothing of its unit is kept.
+#[tokio::test]
+async fn a_slot_node_without_its_slot_is_refused_at_commit() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:slot-phantom").await;
+    let (commission, address) = composed_commission(&pool, &owner, "Phantom").await;
+    let element = fresh_element(&address);
+
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let slots = slots_entry_in(&mut *uow, commission.id)
+        .await
+        .expect("the slots entry");
+    let phantom = slot_node(slots, element, "Phantom").expect("a slot node");
+    uow.nodes()
+        .create(&phantom)
+        .await
+        .expect("a slot node on the unit");
+    let committed = uow.commit().await;
+
+    let refusal = committed.expect_err("a slot node without its slot is refused at commit");
+    assert!(
+        format!("{refusal:?}").contains("has no slot"),
+        "{refusal:?}"
+    );
+    let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM node WHERE type = 'slot'")
+        .fetch_one(&pool)
+        .await
+        .expect("count slot nodes");
+    assert_eq!(kept, 0, "the slot node is not kept");
+}
+
 // Transactionality — element and satellite land (or vanish) together: a
 // rolled-back unit leaves neither row.
 #[tokio::test]
@@ -244,22 +310,18 @@ async fn a_rolled_back_declaration_leaves_neither_row() {
     let owner = provision(&pool, "did:plc:slot-tx").await;
     let (commission, address) = composed_commission(&pool, &owner, "Tx").await;
 
-    let slot = NewSlot::contributed_at(
-        commission.id,
-        address,
-        "Never lands".parse::<SlotTitle>().expect("valid"),
-        None,
-        owner.id,
-        Utc::now(),
-    );
-    let slot_id = slot.id;
-
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .declare_slots(&[slot])
-        .await
-        .expect("stage");
+    let slot_id = declare_in(
+        &mut *uow,
+        commission.id,
+        &owner.id,
+        &address,
+        "Never lands",
+        None,
+    )
+    .await
+    .expect("stage");
     uow.rollback().await.expect("rollback");
 
     assert!(slot_row(&pool, slot_id).await.is_none(), "no satellite row");
@@ -273,29 +335,21 @@ async fn a_rolled_back_declaration_leaves_neither_row() {
 
 // Ruling E35 — the satellite cascades away with its commission (both through
 // its own commission FK and through the element's), so ZMVP-66's hard-delete
-// sweeps declared Slots for free.
+// sweeps declared Slots for free, their nodes with them.
 #[tokio::test]
 async fn slots_cascade_away_with_their_commission() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:slot-cascade").await;
     let (commission, address) = composed_commission(&pool, &owner, "Doomed").await;
-
-    let slot = NewSlot::contributed_at(
+    let slot_id = declare_committed(
+        &pool,
         commission.id,
-        address,
-        "Swept".parse::<SlotTitle>().expect("valid"),
-        Some("goes with the ship".to_string()),
-        owner.id,
-        Utc::now(),
-    );
-    let slot_id = slot.id;
-    let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .declare_slots(&[slot])
-        .await
-        .expect("declare");
-    uow.commit().await.expect("commit");
+        &owner.id,
+        &address,
+        "Swept",
+        Some("goes with the ship"),
+    )
+    .await;
     assert!(slot_row(&pool, slot_id).await.is_some(), "satellite landed");
 
     // No delete port exists yet (ZMVP-66); exercise the schema's own cascade.
@@ -309,4 +363,32 @@ async fn slots_cascade_away_with_their_commission() {
         slot_row(&pool, slot_id).await.is_none(),
         "the satellite cascades away with the commission"
     );
+    let slot_nodes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM node WHERE type = 'slot'")
+        .fetch_one(&pool)
+        .await
+        .expect("count slot nodes");
+    assert_eq!(slot_nodes, 0, "the Slot's node went with it");
+}
+
+// The Slot list reads each Slot's title from its node: a rename of the node is the new title.
+#[tokio::test]
+async fn a_slot_s_title_is_read_from_its_node() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:slot-node-title").await;
+    let (commission, address) = composed_commission(&pool, &owner, "Renamed").await;
+    let slot_id =
+        declare_committed(&pool, commission.id, &owner.id, &address, "Before", None).await;
+
+    sqlx::query("UPDATE node SET name = 'After' WHERE segment = $1 AND type = 'slot'")
+        .bind(slot_id.to_string())
+        .execute(&pool)
+        .await
+        .expect("rename the slot node");
+    let listed = PgCommissionStore::new(pool.clone())
+        .slots(&commission.id)
+        .await
+        .expect("the slots read");
+
+    let titles: Vec<&str> = listed.iter().map(|slot| slot.title.as_str()).collect();
+    assert_eq!(titles, ["After"]);
 }

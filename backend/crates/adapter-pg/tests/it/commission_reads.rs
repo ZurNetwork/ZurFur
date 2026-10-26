@@ -21,8 +21,7 @@ use domain::{
         account::{Account, AccountId, AccountName},
         commission::{
             CommissionFile, CommissionId, CommissionRole, CommissionStanding, CommissionSummary,
-            CommissionTitle, FileKey, FileName, LockedStanding, NewSlot, SlotTitle, SurfaceAddress,
-            SurfaceName,
+            CommissionTitle, FileKey, FileName, LockedStanding, SurfaceAddress, SurfaceName,
         },
         did::Did,
         handle::Handle,
@@ -354,28 +353,10 @@ async fn slot_list_holds_this_commissions_slots_in_declaration_order() {
     let other = seed_commission(&pool, &owner, "Other").await;
     let my_address = only_address(&pool, mine).await;
     let other_address = only_address(&pool, other).await;
-    let declared = |commission, address: &SurfaceAddress, title: &str| {
-        NewSlot::contributed_at(
-            commission,
-            address.clone(),
-            title.parse::<SlotTitle>().expect("slot title"),
-            None,
-            owner.id.clone(),
-            Utc::now(),
-        )
-    };
-    let slots = [
-        declared(mine, &my_address, "Abco"),
-        declared(other, &other_address, "Elsewhere"),
-        declared(mine, &my_address, "Ember"),
-    ];
-    let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .declare_slots(&slots)
-        .await
-        .expect("declare");
-    uow.commit().await.expect("commit");
+    crate::seed::declare_committed(&pool, mine, &owner.id, &my_address, "Abco", None).await;
+    crate::seed::declare_committed(&pool, other, &owner.id, &other_address, "Elsewhere", None)
+        .await;
+    crate::seed::declare_committed(&pool, mine, &owner.id, &my_address, "Ember", None).await;
     let store = PgCommissionStore::new(pool.clone());
 
     let listed = store.slots(&mine).await.expect("slots");

@@ -3,10 +3,14 @@
 // Each test binary uses its own share of the helpers.
 #![allow(dead_code)]
 
+use adapter_mem::MemBackend;
 use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::{
-    commission::{CommissionBirth, CommissionId, NewCommission},
+    commission::{
+        CommissionBirth, CommissionId, NewCommission, NewSlot, SKELETON, SlotBirth, SurfaceAddress,
+        SurfaceName,
+    },
     level::Level,
     node::{NewNode, NodeId, NodeSegment, NodeType},
     text::StoredText,
@@ -14,7 +18,7 @@ use domain::elements::{
 };
 use domain::ports::{New, UnitOfWork, WriteCapability};
 use strum::VariantArray;
-use test_support::seeder::CommissionSeeder;
+use test_support::seeder::{CommissionSeeder, SlotSeeder};
 
 /// Creates commission `id` on `unit` through the port, under a capability minted here.
 pub async fn create(
@@ -42,6 +46,35 @@ impl CommissionSeeder for MintingSeeder {
         commission: &NewCommission,
     ) -> anyhow::Result<()> {
         create(unit, id, birth, commission).await
+    }
+}
+
+/// The shared suites' [`SlotSeeder`]: the port's declare, under an Owner's capability minted
+/// here, at the committed commission's first tab and surface, read off its backend.
+pub struct MintingSlotSeeder(pub MemBackend);
+
+#[async_trait]
+impl SlotSeeder for MintingSlotSeeder {
+    async fn declare_slot(
+        &self,
+        unit: &mut dyn UnitOfWork,
+        id: CommissionId,
+        birth: &SlotBirth,
+    ) -> anyhow::Result<()> {
+        let tabs = self.0.tabs_of(id).await?;
+        let tab = tabs
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("a committed commission has its tab"))?
+            .id;
+        let surface = SKELETON[0].surfaces[0].parse::<SurfaceName>()?;
+        let slot = NewSlot {
+            address: SurfaceAddress::new(tab, surface),
+            notes: None,
+        };
+        let capability = WriteCapability::gate_issued(id);
+        unit.commissions()
+            .declare_slot(&capability, birth, &slot)
+            .await
     }
 }
 

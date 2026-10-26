@@ -98,7 +98,7 @@ impl Status<'_> {
         };
         let command = write::Command {
             actor: actor_id.into(),
-            act: DenAct::Commission(CommissionAct::SetDelayed(act)),
+            acts: vec![DenAct::Commission(CommissionAct::SetDelayed(act))],
         };
         Den::from(ports).write(command, now).await?;
         Ok(Output)

@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::{
-    commission::{CommissionBirth, CommissionId, NewCommission},
+    commission::{CommissionBirth, CommissionId, NewCommission, SlotBirth},
     did::Did,
     level::Level,
     node::{NewNode, NodeId, NodeSegment, NodeType},
@@ -31,6 +31,20 @@ pub trait CommissionSeeder: Send + Sync {
         id: CommissionId,
         birth: &CommissionBirth,
         commission: &NewCommission,
+    ) -> anyhow::Result<()>;
+}
+
+/// Declares Slots through the commission port, under an Owner's capability the adapter's own
+/// test code mints, on commissions its harness reads committed.
+#[async_trait]
+pub trait SlotSeeder: Send + Sync {
+    /// Declares on `unit` the Slot `birth` names on the committed commission `id`, its element
+    /// in that commission's first tab and surface, bound to `birth`'s node.
+    async fn declare_slot(
+        &self,
+        unit: &mut dyn UnitOfWork,
+        id: CommissionId,
+        birth: &SlotBirth,
     ) -> anyhow::Result<()>;
 }
 

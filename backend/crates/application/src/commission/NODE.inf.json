@@ -1,8 +1,8 @@
 {
   "path": "backend/crates/application/src/commission",
-  "charted": "2026-10-23",
+  "charted": "2026-10-26",
   "short": "Commission use cases",
-  "is": "Commission use cases — lifecycle (create/delete/archive/unarchive) and per-facet action trees (deadline, status, files, invitations, view, seats, slots, notes, maturity, markup, changelog), one Command/Query + Output + `#[use_case]` method file per action; the module root `../commission.rs` holds the `Commissions` namespace, `CommissionError` (with `From<DenWriteError>`), and `CommissionResult`; `sweep.rs` holds the system's Late mark and its `sweep_deadlines` use case; `act.rs` holds the commission's acts through the Den's write: create, rename, the lifecycle facet's move, the direction, deadline and Delayed sets and clears, and the system's Late mark.",
+  "is": "Commission use cases — lifecycle (create/delete/archive/unarchive) and per-facet action trees (deadline, status, files, invitations, view, seats, slots, notes, maturity, markup, changelog), one Command/Query + Output + `#[use_case]` method file per action; the module root `../commission.rs` holds the `Commissions` namespace, `CommissionError` (with `From<DenWriteError>`), and `CommissionResult`; `sweep.rs` holds the system's Late mark and its `sweep_deadlines` use case; `act.rs` holds the commission's acts through the Den's write: create, rename, the lifecycle facet's move, the direction, deadline and Delayed sets and clears, the Slot declare, and the system's Late mark.",
   "type": "code",
   "tags": [
     "category:source"
@@ -14,7 +14,7 @@
   "fs": [
     {
       "name": "act.rs + act/tests.rs",
-      "role": "CommissionAct, the commission's acts the Den's write carries (Create, Rename, MoveLifecycle, SetDirection, ClearDirection, SetDeadline, ClearDeadline, SetDelayed, ClearDelayed, MarkLate), each body beside its typed use case, and CommissionActKind, its bodiless kind in the acts list's order (strum EnumDiscriminants, VariantArray), whose exhaustive matches make a new act fail to compile until the gate judges it and the list tries it; spec() and a Debug that prints the variant alone; act/tests.rs: a create needs a create (Needs::Create), a rename the Owner and a lifecycle move any Participant (Needs::Role), each read from its capability marker, a create's six Private entries named by their words, a rename's shape its new name, a move's a Change; each direction, deadline and Delayed act needs any Participant, is a Change on its commission's place, and prints its variant alone",
+      "role": "CommissionAct, the commission's acts the Den's write carries (Create, Rename, MoveLifecycle, SetDirection, ClearDirection, SetDeadline, ClearDeadline, SetDelayed, ClearDelayed, DeclareSlot, MarkLate), each body beside its typed use case, and CommissionActKind, its bodiless kind in the acts list's order (strum EnumDiscriminants, VariantArray), whose exhaustive matches make a new act fail to compile until the gate judges it and the list tries it; spec() and a Debug that prints the variant alone; act/tests.rs: a create needs a create (Needs::Create), a rename the Owner and a lifecycle move any Participant (Needs::Role), each read from its capability marker, a create's six Private entries named by their words, a rename's shape its new name, a move's a Change; each direction, deadline and Delayed act needs any Participant, is a Change on its commission's place, and prints its variant alone; a Slot declare needs the Owner and is a create in the commission's `slots` entry keyed by its element id; no act's Debug prints a title",
       "node": false
     },
     {
@@ -94,7 +94,7 @@
     },
     {
       "name": "slots.rs + slots/declare.rs",
-      "role": "declare an all-or-nothing Slot batch",
+      "role": "the Slot declare act (declare::Act: the commission it is anchored on, the title its node is named by and its SlotDeclaration, under the element id the use case mints; its spec a create in the commission's `slots` entry (ActShape::CreateInEntry), Private, keyed by the element id, needing the Owner from the AsOwner marker; its Handler's precondition the declaration, refused by no rule of the commission's state; its handle the view's declare_slot, a tab or surface the commission doesn't hold its typed refusal (HandlerRefusal), then the lent commission; its ENTRY `EntryRule::Always(GatedEntry::SLOT_DECLARED)`; a hand-written Debug with no title or notes) and the use case, a pure #[use_case] delegation to Den::write with no unit: one act per Slot, all in the write's one unit, all or none; notes trimmed, blank stored as absent; no Slot is IncorrectContent; it answers the element ids in request order; slots/declare/tests.rs: the Slot points at the node the gate made (memory and PostgreSQL), only slot nodes under `slots` are made, a `slots` entry wider than Private fails closed, one bad tab declares none, a foreign tab and a missing one answer alike, one untitled `slot_declared` entry per Slot with its literal payload (memory and PostgreSQL), a Participant forbidden, a stranger and a made-up id the same not-found with no unit opened, deleting the commission leaves no slot node, and no Debug prints a title or notes",
       "node": false
     },
     {
@@ -126,6 +126,7 @@
     "`sweep_deadlines` is the only system actor here, and it acts only through the Den's write: it scans `lapsed_deadlines` on the pool, then hands each lapse to the write as the system, whose grant locks the row by the viewer-less `lock_for_system`, re-reads its state and whether a `late` entry is still owed (`late_owed`), and appends the `late` entry the domain's `owes_late` says is owed (a Disputed commission's deadline never lapses), built by the gate with no actor; its capability (`AsSystem`) is taken by no port method, so it can't move a lifecycle, a direction status or any field. `Late` is derived on read, never persisted. The deadline, Delayed and direction acts, like the lifecycle move, run their domain rules in the Den's write gate; `From<CommissionRefusal>` maps each refusal to its own answer (a Disputed commission's deadline act, like its lifecycle move, `CommissionDisputed`, a 409, while its Delayed acts are allowed; a Delayed act with no deadline `NoDeadline` and one while Late `CommissionLate`, 409s; a move into Draft or Disputed `LifecycleMoveRefused`, a 409); each comes through the Den's write as `DenWriteError::Precondition`.",
     "The streaming seam is `tokio::io::AsyncRead` in both directions — never a buffered `Vec<u8>` or a driver type.",
     "See also: ZMVP-88 (file entries streaming seam).",
-    "See also: ZMVP-86 (deadline sweep)."
+    "See also: ZMVP-86 (deadline sweep).",
+    "Slot declares run through the Den's write as the Owner: each Slot's node is a create in the commission's `slots` entry, made by the gate, Private, keyed by the Slot's element id and named by its title; the Slot's satellite binds that node, and its title is read from the node. Each Slot writes one `slot_declared` entry, `{\"slot\":\"<element id>\"}`, never its title or notes. A tab or surface the commission doesn't hold is the declare's typed refusal (`tab_not_found` or `unknown_surface`), and any refusal fails the whole declare."
   ]
 }

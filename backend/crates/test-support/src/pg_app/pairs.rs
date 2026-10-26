@@ -304,6 +304,15 @@ impl CommissionCall {
 /// The deadline every deadline call sends: far enough ahead that no sweep owes it.
 const FAR_DEADLINE: &str = "2099-03-01T00:00:00Z";
 
+/// The title of the one slot the declare call sends.
+const DECLARED_SLOT_TITLE: &str = "A made-up slot";
+
+/// A tab id no commission holds, for the declare's body: the route accepts it, and authority
+/// answers before any tab is looked up.
+fn absent_tab() -> uuid::Uuid {
+    uuid::Uuid::from_u128(0x0192_0000_0000_7000_8000_0000_0000_0001)
+}
+
 /// The rename, `PATCH` with [`RENAME_TITLE`].
 pub fn rename_call() -> CommissionCall {
     let body = json!({ "title": RENAME_TITLE });
@@ -315,14 +324,19 @@ pub fn rename_call() -> CommissionCall {
     }
 }
 
-/// The seven write calls the commission's field acts add, each sent with a body its own
-/// parsing accepts: move the lifecycle, set and clear the direction, set and clear the
-/// deadline, set and clear Delayed.
-pub fn new_write_calls() -> [CommissionCall; 7] {
+/// The eight write calls the commission's field acts and the slot declare add, each sent with a
+/// body its own parsing accepts: move the lifecycle, set and clear the direction, set and clear
+/// the deadline, set and clear Delayed, declare a slot.
+pub fn new_write_calls() -> [CommissionCall; 8] {
     let move_body = json!({ "to": "active" });
     let direction_body = json!({ "status": "waiting_for_input" });
     let deadline_body = json!({ "deadline": FAR_DEADLINE });
     let delayed_body = json!({ "status": "delayed" });
+    let declare_body = json!([{
+        "tab": absent_tab(),
+        "surface": "content",
+        "title": DECLARED_SLOT_TITLE,
+    }]);
     let move_lifecycle = CommissionCall {
         label: "move the lifecycle",
         method: reqwest::Method::PUT,
@@ -365,6 +379,12 @@ pub fn new_write_calls() -> [CommissionCall; 7] {
         tail: "/status/deadline",
         body: None,
     };
+    let declare_slots = CommissionCall {
+        label: "declare slots",
+        method: reqwest::Method::POST,
+        tail: "/slots",
+        body: Some(declare_body),
+    };
     [
         move_lifecycle,
         set_direction,
@@ -373,6 +393,7 @@ pub fn new_write_calls() -> [CommissionCall; 7] {
         clear_deadline,
         set_delayed,
         clear_delayed,
+        declare_slots,
     ]
 }
 

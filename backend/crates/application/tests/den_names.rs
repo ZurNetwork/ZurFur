@@ -17,13 +17,12 @@ use application::{
 };
 use chrono::Utc;
 use domain::elements::{
-    commission::{CommissionTitle, SurfaceAddress, TabId},
+    commission::{CommissionTitle, SlotTitle, SurfaceAddress},
     did::Did,
     handle::{Handle, HandleDomain},
     name::NodeNameError,
 };
 use test_support::recording::{CallLog, RecordingDidMinter};
-use uuid::Uuid;
 
 /// A name made only of the zero-width joiner, which the Den's rule counts as empty.
 const JOINER_ALONE: &str = "\u{200D}";
@@ -94,32 +93,11 @@ async fn a_file_named_with_a_joiner_alone_is_refused_as_empty() {
     ));
 }
 
-#[tokio::test]
-async fn a_slot_titled_with_a_joiner_alone_is_refused_as_empty() {
-    let runtime = world().await;
-    let tab = TabId::from(Uuid::from_u128(1));
-    let surface = SurfaceAddress::new(tab, "content".parse().expect("a surface name"));
-    let slot = SlotBody {
-        tab,
-        surface,
-        title: JOINER_ALONE
-            .parse()
-            .expect("the slot title rule keeps a joiner"),
-        notes: None,
-    };
-    let command = declare::Command {
-        user_id: alice(),
-        commission_id: untitled(),
-        slots: vec![slot],
-    };
+#[test]
+fn a_slot_titled_with_a_joiner_alone_is_refused_as_empty() {
+    let refused = JOINER_ALONE.parse::<SlotTitle>();
 
-    let app = runtime.app();
-    let declared = app.commissions().slots().declare(command, Utc::now()).await;
-
-    assert!(matches!(
-        declared,
-        Err(CommissionError::InvalidName(DenNameError::Empty))
-    ));
+    assert_eq!(refused, Err(NodeNameError::Empty));
 }
 
 #[tokio::test]
@@ -228,7 +206,6 @@ async fn a_slot_title_is_stored_as_the_den_s_rule_keeps_it() {
     let tab = composition.tabs.first().expect("Untitled has a tab").id;
     let surface = SurfaceAddress::new(tab, "content".parse().expect("a surface name"));
     let slot = SlotBody {
-        tab,
         surface,
         title: WITH_A_ZERO_WIDTH_SPACE.parse().expect("a valid slot title"),
         notes: None,

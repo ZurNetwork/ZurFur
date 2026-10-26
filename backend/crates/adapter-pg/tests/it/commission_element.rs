@@ -552,12 +552,15 @@ async fn a_satellite_claiming_another_commission_is_unrepresentable_at_the_datab
     .await;
     assert_satellite_desync_refused(seat, "commission_seat");
 
+    // A node id rides along, so the row's own node check passes and only the composite key
+    // is left to catch it.
     let slot = sqlx::query(
-        "INSERT INTO commission_slot (element_id, commission_id, title)
-         VALUES ($1, $2, 'Smuggled')",
+        "INSERT INTO commission_slot (element_id, commission_id, title, node_id)
+         VALUES ($1, $2, 'Smuggled', $3)",
     )
     .bind(uuid::Uuid::from(element_id))
     .bind(uuid::Uuid::from(theirs.id))
+    .bind(uuid::Uuid::now_v7())
     .execute(&pool)
     .await;
     assert_satellite_desync_refused(slot, "commission_slot");

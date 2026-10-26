@@ -15,7 +15,7 @@ use domain::{
 
 use crate::{
     common_error::{CommonError, NotFoundEntity},
-    den::{DenError, DenNameError, write::DenWriteError},
+    den::{DenError, DenNameError, act::HandlerRefusal, write::DenWriteError},
 };
 pub(crate) mod act;
 pub mod archive;
@@ -212,13 +212,15 @@ pub(crate) async fn require_owner(
 impl From<DenWriteError> for CommissionError {
     /// The Den's write refusal as a commission answer: its one not-found is the commission's,
     /// a role below the act's need is forbidden, an act's own rule's refusal is that rule's
-    /// answer, and any other refusal or a store failure is the store's, its cause kept on
-    /// `source()`.
+    /// answer, a handler's refusal of a tab or a surface the tab's or the surface's answer, and
+    /// any other refusal or a store failure is the store's, its cause kept on `source()`.
     fn from(refusal: DenWriteError) -> Self {
         match refusal {
             DenWriteError::NotFound => CommonError::commission_not_found().into(),
             DenWriteError::Forbidden => Self::InsufficientPermissions,
             DenWriteError::Precondition(rule) => Self::from(rule),
+            DenWriteError::Handler(HandlerRefusal::UnknownTab) => Self::TabNotFound,
+            DenWriteError::Handler(HandlerRefusal::UnknownSurface) => Self::UnknownSurface,
             failure @ (DenWriteError::Refused(_) | DenWriteError::Store(_)) => {
                 CommonError::Infrastructure(anyhow::Error::new(failure)).into()
             }
