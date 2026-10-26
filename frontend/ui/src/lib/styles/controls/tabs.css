@@ -1,1 +1,113 @@
 /* Tabs and the pill switch: one piece with pick options. */
+/* One pill-shaped piece, rounded only outside. Its options rest flat, lift on hover or focus, and the selected one stays lifted on the gold tint, bold. */
+.zf-tabs,
+.zf-seg {
+	display: inline-flex;
+	box-sizing: border-box;
+	width: fit-content;
+	max-width: 100%;
+	gap: var(--space-1);
+	padding: var(--space-half);
+	border-radius: var(--radius-full);
+}
+
+/* Tabs may outgrow the screen, so their piece scrolls; it clips, so a focused option's ring sits inside its pill. */
+.zf-tabs {
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+.zf-seg {
+	flex-wrap: wrap;
+}
+
+.zf-tab,
+.zf-seg__opt {
+	position: relative;
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-1);
+	box-sizing: border-box;
+	height: var(--size-control);
+	padding: 0 var(--space-3);
+	font: inherit;
+	font-size: var(--text-sm);
+	line-height: var(--leading-sm);
+	font-weight: var(--weight-regular);
+	white-space: nowrap;
+	color: var(--color-text-muted);
+	border: 0;
+	border-radius: var(--radius-full);
+	cursor: pointer;
+}
+
+.zf-tab:hover,
+.zf-tab:focus-visible,
+.zf-seg__opt:hover:not(:disabled),
+.zf-seg__opt:focus-visible {
+	color: var(--color-text);
+}
+
+.zf-tab:focus-visible,
+.zf-seg__opt:focus-visible {
+	outline: 2px solid var(--color-focus);
+	outline-offset: calc(-1 * var(--space-half));
+}
+
+.zf-tab[aria-selected='true'],
+.zf-seg__opt[aria-checked='true'],
+.zf-seg__opt[aria-checked='true']:hover {
+	color: var(--color-accent-text);
+	font-weight: var(--weight-bold);
+}
+
+.zf-seg__opt:disabled {
+	cursor: not-allowed;
+	opacity: 0.55;
+}
+
+/* A typed choice shows its type muted before the word, in the mono face. */
+.zf-seg__opt--typed {
+	font-family: var(--font-mono);
+}
+
+.zf-seg__prefix {
+	font-weight: var(--weight-regular);
+	opacity: 0.7;
+}
+
+/* A count is neutral and muted, never red. */
+.zf-tab__count {
+	min-width: var(--space-4);
+	padding: 0 var(--space-1);
+	border-radius: var(--radius-full);
+	background: var(--color-hover);
+	color: var(--color-text-muted);
+	font-size: var(--text-xs);
+	line-height: var(--leading-xs);
+	font-weight: var(--weight-regular);
+	text-align: center;
+}
+
+/* The tabs and the panel under them. */
+.zf-tabview {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	min-width: 0;
+}
+
+/* The panel can take focus, so it shows the one ring. */
+.zf-tabview__panel:focus-visible {
+	outline: 2px solid var(--color-focus);
+	outline-offset: var(--space-half);
+}
+
+@media (pointer: coarse) {
+	.zf-tab,
+	.zf-seg__opt {
+		height: var(--size-touch);
+	}
+}
