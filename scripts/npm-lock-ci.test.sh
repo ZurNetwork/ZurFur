@@ -276,7 +276,7 @@ expect_not_in "nothing ran on a failed verification" "$log" "copy="
 
 # A pull request whose HEAD^1 isn't the base it names: a side commit holding
 # the driver, so the step runs that copy and it refuses.
-side_sha="$(git -C "$repo" commit-tree -p "$base_sha" -m side "$base_sha^{tree}")"
+side_sha="$(git -C "$repo" -c user.email=t@example.com -c user.name=t commit-tree -p "$base_sha" -m side "$base_sha^{tree}")"
 step pull_request "$side_sha" block
 expect_status "a pull request whose HEAD^1 isn't the base exits 1" 1
 expect_in "it says why" "$out" "is not the base $side_sha"
