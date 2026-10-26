@@ -1,0 +1,151 @@
+/* The desk: the page the sheets lie on. */
+.paper {
+	overflow-x: clip;
+}
+
+/* A pile: sheets peeking out from under the top one. */
+.pile {
+	position: relative;
+	isolation: isolate;
+}
+
+.peek {
+	position: absolute;
+	left: calc(var(--space-peek-inset) * var(--k));
+	right: calc(var(--space-peek-inset) * var(--k));
+	top: calc(var(--space-peek-offset) * var(--k));
+	bottom: calc(var(--space-peek-offset) * var(--k) * -1);
+	z-index: calc(var(--k) * -1);
+	border-radius: inherit;
+	pointer-events: none;
+	background: color-mix(
+		in srgb,
+		var(--color-peek-into) calc(var(--size-peek-step) * var(--k)),
+		var(--pile-top, var(--color-pile-top))
+	);
+	box-shadow: var(--elevation-peek);
+}
+
+.pk1 {
+	--k: 1;
+}
+
+.pk2 {
+	--k: 2;
+}
+
+.pk3 {
+	--k: 3;
+}
+
+/* Small things that lift when touched; `.lifts` lifts the art inside it. */
+.lift,
+.lift-art {
+	box-shadow: var(--ring,) var(--elevation-art);
+}
+
+.lift {
+	transition:
+		transform var(--duration-spring) var(--easing-spring),
+		translate var(--duration-spring) var(--easing-spring),
+		box-shadow var(--duration-spring) var(--easing-standard);
+}
+
+.lifts .lift-art {
+	transition:
+		translate var(--duration-spring) var(--easing-spring),
+		box-shadow var(--duration-spring) var(--easing-standard);
+}
+
+.lift:hover,
+.lifts:hover .lift-art {
+	translate: 0 calc(-2 * var(--space-rise));
+	box-shadow: var(--ring,) var(--elevation-art-hover);
+}
+
+/* An object: anything you act on is a small sheet. */
+.obj {
+	background: var(--color-object);
+	border-radius: var(--radius-object);
+	box-shadow: var(--ring,) var(--elevation-art);
+}
+
+.obj.lift:hover,
+.lifts:hover .obj.lift-art {
+	box-shadow: var(--ring,) var(--elevation-art-hover);
+}
+
+/* A placed button: a small piece laid on the sheet, lifting on hover and flat on press. */
+.placed {
+	box-shadow: var(--elevation-button);
+	transition:
+		box-shadow var(--duration-spring) var(--easing-standard),
+		translate var(--duration-spring) var(--easing-spring),
+		transform var(--duration-spring) var(--easing-spring);
+}
+
+.placed:hover:not(:disabled) {
+	box-shadow: var(--elevation-button-hover);
+	translate: 0 calc(-1 * var(--space-rise));
+}
+
+.placed:active:not(:disabled) {
+	box-shadow: var(--elevation-button-press);
+	translate: 0 var(--space-sink);
+}
+
+/* A placed thing that glides keeps its glide. */
+.placed.glide,
+.placed.glidex,
+.placed.seg,
+.placed.glidebox {
+	transition-property: box-shadow, translate, transform, left, top, width;
+}
+
+/* A dense list is one piece on top; each row in it is a pick. */
+.piece {
+	background: var(--color-object);
+	border-radius: var(--radius-object);
+	box-shadow: var(--elevation-art);
+}
+
+:where(.pick) {
+	background: transparent;
+}
+
+.pick {
+	border-radius: var(--radius-pick);
+	transition:
+		background var(--duration-fast) var(--easing-standard),
+		box-shadow var(--duration-spring) var(--easing-standard),
+		translate var(--duration-spring) var(--easing-spring);
+}
+
+.pick:hover:not(.is-locked):not(:disabled):not([aria-disabled='true']),
+.pick:focus-visible:not(.is-locked) {
+	background: var(--color-object);
+	box-shadow: var(--elevation-art);
+	translate: 0 calc(-1 * var(--space-rise));
+}
+
+.pick[aria-selected='true'],
+.pick[aria-checked='true'],
+.pick[aria-current]:not([aria-current='false']),
+.pick[aria-pressed='true'],
+.pick.is-on {
+	background: var(--color-selected);
+	box-shadow: var(--elevation-art);
+	translate: 0 calc(-1 * var(--space-rise));
+}
+
+.pick:active:not(.is-locked):not(:disabled):not([aria-disabled='true']) {
+	background: var(--color-object);
+	box-shadow: var(--elevation-button);
+	translate: 0 var(--space-sink);
+}
+
+/* A field is a slip on the page. */
+.slip {
+	background: var(--color-object);
+	box-shadow: var(--elevation-art);
+}

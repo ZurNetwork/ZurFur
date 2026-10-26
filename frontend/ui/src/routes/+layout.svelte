@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import '@zurfur/ui/styles';
 	import GalleryNav from '$gallery/GalleryNav.svelte';
 	import { registry } from '$gallery/registry';
 

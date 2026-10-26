@@ -113,7 +113,9 @@ describe('the frontend workspace', () => {
 		expect(ui.name).toBe('@zurfur/ui');
 		expect(ui.private).toBe(true);
 		expect(ui.exports).toEqual({
-			'.': { types: './src/lib/index.ts', svelte: './src/lib/index.ts' }
+			'.': { types: './src/lib/index.ts', svelte: './src/lib/index.ts' },
+			'./styles': { types: './src/lib/styles/index.ts', svelte: './src/lib/styles/index.ts' },
+			'./tokens.json': './src/lib/styles/tokens.json'
 		});
 	});
 });

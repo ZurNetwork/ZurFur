@@ -4,13 +4,19 @@
 	"version": "0.0.0",
 	"type": "module",
 	"sideEffects": [
-		"**/*.css"
+		"**/*.css",
+		"./src/lib/styles/index.ts"
 	],
 	"exports": {
 		".": {
 			"types": "./src/lib/index.ts",
 			"svelte": "./src/lib/index.ts"
-		}
+		},
+		"./styles": {
+			"types": "./src/lib/styles/index.ts",
+			"svelte": "./src/lib/styles/index.ts"
+		},
+		"./tokens.json": "./src/lib/styles/tokens.json"
 	},
 	"scripts": {
 		"dev": "vite dev",
