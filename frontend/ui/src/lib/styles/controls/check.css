@@ -1,1 +1,84 @@
 /* Check: the checkbox. */
+.zf-check {
+	position: relative;
+	display: flex;
+	gap: var(--space-2);
+	align-items: flex-start;
+}
+
+/* The real input sits under the box: it takes the keyboard and the form, the box takes the press. */
+.zf-check__input {
+	position: absolute;
+	width: var(--size-icon);
+	height: var(--size-icon);
+	margin: var(--space-half) 0 0;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.zf-check__box {
+	flex: none;
+	display: grid;
+	place-items: center;
+	box-sizing: border-box;
+	width: var(--size-icon);
+	height: var(--size-icon);
+	margin-top: var(--space-half);
+	border: 1px solid var(--color-border-strong);
+	border-radius: var(--radius-xs);
+	background: var(--color-bg);
+	color: var(--color-on-accent);
+	cursor: pointer;
+	transition:
+		background-color var(--duration-fast) var(--easing-standard),
+		border-color var(--duration-fast) var(--easing-standard);
+}
+
+.zf-check__tick,
+.zf-check__dash {
+	display: none;
+	grid-area: 1 / 1;
+}
+
+.zf-check__input:checked + .zf-check__box,
+.zf-check__input:indeterminate + .zf-check__box {
+	background: var(--color-accent);
+	border-color: var(--color-accent-border);
+}
+
+.zf-check__input:checked:not(:indeterminate) + .zf-check__box .zf-check__tick,
+.zf-check__input:indeterminate + .zf-check__box .zf-check__dash {
+	display: block;
+}
+
+.zf-check__input:focus-visible + .zf-check__box {
+	outline: 2px solid var(--color-focus);
+	outline-offset: var(--space-half);
+}
+
+.zf-check__input:disabled + .zf-check__box,
+.zf-check__input:disabled ~ .zf-check__text {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.zf-check__text {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.zf-check__label {
+	cursor: pointer;
+	color: var(--color-text);
+}
+
+.zf-check__input:disabled ~ .zf-check__text .zf-check__label {
+	cursor: not-allowed;
+}
+
+.zf-check__desc {
+	font-size: var(--text-xs);
+	line-height: var(--leading-xs);
+	color: var(--color-text-muted);
+}

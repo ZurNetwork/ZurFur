@@ -30,6 +30,16 @@ export interface PillOption<Id extends string> {
 	readonly disabled?: boolean;
 }
 
+/** What a field's frame hands the control inside it, so the control can point at its label, hint and error. */
+export interface FieldIds {
+	/** The id of the element that holds the label's words. */
+	readonly labelId: string;
+	/** The ids of the hint and the error, whichever are shown, ready for `aria-describedby`. */
+	readonly describedBy: string | undefined;
+	/** `'true'` while the field has an error, otherwise absent. */
+	readonly invalid: 'true' | undefined;
+}
+
 /** One choice in a Select. */
 export interface SelectOption<V extends string> {
 	readonly value: V;
