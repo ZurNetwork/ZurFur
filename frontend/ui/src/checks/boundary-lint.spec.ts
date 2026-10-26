@@ -674,11 +674,11 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 			['an object', component('<object title={s}></object>')],
 			['an embed', component('<embed title={s} />')],
 			['an iframe in mixed case', component('<iFrame title={s}></iFrame>')],
-			['an object in mixed case', component('<oBJECT title={s}></oBJECT>')],
+			['an object in mixed case', component('<oBjEcT title={s}></oBjEcT>')],
 			['a script in a div', component('<div><script>console.log(s);</script></div>')],
 			['a script in svelte:head', component('<svelte:head><script>1</script></svelte:head>')],
 			['a script in an svg', component('<svg viewBox="0 0 1 1"><script>1</script></svg>')],
-			['a script in mixed case', component('<div><sCRIPT>1</sCRIPT></div>')],
+			['a script in mixed case', component('<div><sCrIpT>1</sCrIpT></div>')],
 			[
 				'an iframe in an svg foreignObject',
 				component('<svg><foreignObject><iframe title={s}></iframe></foreignObject></svg>')
