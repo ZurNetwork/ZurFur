@@ -455,9 +455,9 @@ export function judgeLicence(list, { name, version, manifest }) {
 		const legacy = Object.hasOwn(manifest, 'licenses') ? ', only a legacy "licenses" list' : '';
 		return fail(shown, `no licence field${legacy}${unmatched}`);
 	}
-	if (typeof licence !== 'string') return fail(shown, `the licence field is not a string${unmatched}`);
+	if (typeof licence !== 'string') return fail(shown, `the licence field is not a string (${shown})${unmatched}`);
 	const tree = parseLicenceExpression(licence);
-	if (tree === null) return fail(shown, `the licence field is not an SPDX expression this rule can read${unmatched}`);
+	if (tree === null) return fail(shown, `${JSON.stringify(licence)} is not an SPDX expression this rule can read${unmatched}`);
 	if (admits(list, tree, name, false)) {
 		const via = admits({ allow: list.allow, scoped: new Map() }, tree, name, false) ? 'allow' : 'scoped';
 		return Object.freeze({ pass: true, via, licence: shown });

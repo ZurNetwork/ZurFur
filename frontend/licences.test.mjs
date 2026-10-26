@@ -222,7 +222,7 @@ describe('the verdict: never passes alone', () => {
 			const verdict = judgeExpression(expression);
 			assert.equal(verdict.pass, false);
 			assert.equal(verdict.licence, expression);
-			assert.equal(verdict.problem, 'the licence field is not an SPDX expression this rule can read');
+			assert.equal(verdict.problem, `${JSON.stringify(expression)} is not an SPDX expression this rule can read`);
 		});
 	}
 
@@ -245,22 +245,37 @@ describe('the verdict: never passes alone', () => {
 describe('the verdict: unknown licences', () => {
 	const unknown = {
 		'no field': [{}, '(no licence field)', 'no licence field'],
-		'a null field': [{ license: null }, 'null', 'the licence field is not a string'],
+		'a null field': [{ license: null }, 'null', 'the licence field is not a string (null)'],
 		'a {type, url} field': [
 			{ license: { type: 'MIT', url: 'https://example.com' } },
 			'{"type":"MIT","url":"https://example.com"}',
-			'the licence field is not a string'
+			'the licence field is not a string ({"type":"MIT","url":"https://example.com"})'
 		],
-		'an array field': [{ license: ['MIT'] }, '["MIT"]', 'the licence field is not a string'],
+		'an array field': [{ license: ['MIT'] }, '["MIT"]', 'the licence field is not a string (["MIT"])'],
 		'only a legacy licenses list': [{ licenses: [{ type: 'MIT' }] }, '(no licence field)', 'no licence field, only a legacy "licenses" list'],
 		'UNLICENSED': [{ license: 'UNLICENSED' }, 'UNLICENSED', '"UNLICENSED" is not allowed'],
-		'SEE LICENSE IN x': [{ license: 'SEE LICENSE IN x' }, 'SEE LICENSE IN x', 'the licence field is not an SPDX expression this rule can read']
+		'SEE LICENSE IN x': [{ license: 'SEE LICENSE IN x' }, 'SEE LICENSE IN x', '"SEE LICENSE IN x" is not an SPDX expression this rule can read']
 	};
 	for (const [label, [manifest, licence, problem]] of Object.entries(unknown)) {
 		test(`${label} fails`, () => {
 			assert.deepEqual(judge(manifest), { pass: false, licence, problem });
 		});
 	}
+
+	test('an unreadable licence names its value in the finding', () => {
+		const license = 'https://www.highcharts.com/license';
+		const verdict = judge({ license }, { name: 'highcharts', version: '11.4.8' });
+		const problem = '"https://www.highcharts.com/license" is not an SPDX expression this rule can read';
+		assert.deepEqual(verdict, { pass: false, licence: license, problem });
+	});
+
+	test('a non-string licence names its value in the finding', () => {
+		const license = { type: 'MIT', url: 'https://github.com/kriskowal/q/raw/master/LICENSE' };
+		const verdict = judge({ license }, { name: 'q', version: '1.5.1' });
+		const shown = '{"type":"MIT","url":"https://github.com/kriskowal/q/raw/master/LICENSE"}';
+		const problem = `the licence field is not a string (${shown})`;
+		assert.deepEqual(verdict, { pass: false, licence: shown, problem });
+	});
 
 	test('a licence inherited through the prototype counts as missing', () => {
 		Object.prototype.license = 'MIT';
@@ -334,7 +349,7 @@ describe('the verdict: exceptions', () => {
 	test('a changed registry string is not admitted', () => {
 		const verdict = judge({ license: 'SEE LICENSE IN LICENCE.md' }, { name: 'odd-pkg', version: '1.2.3' });
 		assert.equal(verdict.pass, false);
-		assert.match(verdict.problem, /^the licence field is not an SPDX expression this rule can read \(the exception for odd-pkg@1\.2\.3 names registry "SEE LICENSE IN LICENSE"\)$/);
+		assert.match(verdict.problem, /^"SEE LICENSE IN LICENCE\.md" is not an SPDX expression this rule can read \(the exception for odd-pkg@1\.2\.3 names registry "SEE LICENSE IN LICENSE"\)$/);
 	});
 
 	test('registry null matches only a missing field, not an explicit null or another non-string', () => {
