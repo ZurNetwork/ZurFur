@@ -15,7 +15,7 @@
 		readonly onChange: (day: CalendarDay | undefined) => void;
 		/** Sets the order of the segments and the marks between them. */
 		readonly locale: LocaleTag;
-		/** The segments' names, and what an empty segment shows and says. */
+		/** Each segment's name, which an empty segment also shows, and the word an empty segment says. */
 		readonly words: DateFieldWords;
 		/** The first day the field hands on; an earlier one is never reported. */
 		readonly min?: CalendarDay | undefined;
@@ -210,7 +210,7 @@
 													aria-valuetext={filled ? undefined : words.empty}
 													aria-invalid={ids.invalid}
 													aria-required={required ? 'true' : undefined}
-													>{filled ? segment.value : words.empty}</span
+													>{filled ? segment.value : wordFor(part)}</span
 												>
 											{/snippet}
 										</DateField.Segment>

@@ -117,13 +117,35 @@ describe('DateField', () => {
 		]);
 	});
 
-	it('shows and says the empty word in every empty segment', () => {
+	it.each([
+		['de-DE', ['Tag', 'Monat', 'Jahr']],
+		['en-US', ['Monat', 'Tag', 'Jahr']]
+	])(
+		'shows each empty segment its own word in the order %s writes a date, and says leer',
+		(tag, order) => {
+			render(DateField, props({ locale: localeTag(tag) }));
+			const spinbuttons = [...document.querySelectorAll('[role="spinbutton"]')];
+			expect(spinbuttons.map((element) => element.textContent)).toEqual(order);
+			expect(spinbuttons.map((element) => element.getAttribute('aria-valuetext'))).toEqual([
+				'leer',
+				'leer',
+				'leer'
+			]);
+			expect(spinbuttons.map((element) => element.getAttribute('aria-label'))).toEqual(order);
+		}
+	);
+
+	it('shows digits in a typed day, and the words in the month and year still empty', async () => {
 		render(DateField, props());
-		expect(shown()).toEqual(['leer', 'leer', 'leer']);
+		await typeFromDay('04');
+		expect(shown()).toEqual(['04', 'Monat', 'Jahr']);
 		const { day: dayPart, month, year } = segments();
 		expect([dayPart, month, year].map((element) => element.getAttribute('aria-valuetext'))).toEqual(
-			['leer', 'leer', 'leer']
+			[null, 'leer', 'leer']
 		);
+		expect(
+			[dayPart, month, year].map((element) => element.classList.contains('zf-date__segment--empty'))
+		).toEqual([false, true, true]);
 	});
 
 	it('shows no word but the props, in the field or anything it points at', async () => {
@@ -202,7 +224,7 @@ describe('DateField', () => {
 		await typeFromDay('04032026');
 		expect(onChange).toHaveBeenLastCalledWith('2026-03-04');
 		await leave();
-		expect(shown()).toEqual(['leer', 'leer', 'leer']);
+		expect(shown()).toEqual(['Tag', 'Monat', 'Jahr']);
 	});
 
 	it('reports undefined once a segment is cleared', async () => {
@@ -216,9 +238,9 @@ describe('DateField', () => {
 		});
 		await typeFromDay('{Backspace}');
 		expect(onChange.mock.calls).toEqual([[undefined]]);
-		expect(shown()).toEqual(['leer', '03', '2026']);
+		expect(shown()).toEqual(['Tag', '03', '2026']);
 		await leave();
-		expect(shown()).toEqual(['leer', '03', '2026']);
+		expect(shown()).toEqual(['Tag', '03', '2026']);
 	});
 
 	it('hands on no day before min, and shows the parent’s day once the edit is over', async () => {
@@ -235,7 +257,7 @@ describe('DateField', () => {
 		expect(onChange).not.toHaveBeenCalled();
 		expect(shown()).toEqual(['31', '12', '2025']);
 		await leave();
-		expect(shown()).toEqual(['leer', 'leer', 'leer']);
+		expect(shown()).toEqual(['Tag', 'Monat', 'Jahr']);
 	});
 
 	it('hands on no day after max', async () => {
@@ -283,7 +305,7 @@ describe('DateField', () => {
 		setDay(undefined);
 		flushSync();
 		await tick();
-		expect(shown()).toEqual(['leer', 'leer', 'leer']);
+		expect(shown()).toEqual(['Tag', 'Monat', 'Jahr']);
 		setDay(day('2025-12-24'));
 		flushSync();
 		await tick();
@@ -294,7 +316,7 @@ describe('DateField', () => {
 		render(DateField, props({ startFrom: day('2030-07-09') }));
 		segments().day.focus();
 		await userEvent.keyboard('{ArrowUp}');
-		expect(shown()).toEqual(['09', 'leer', 'leer']);
+		expect(shown()).toEqual(['09', 'Monat', 'Jahr']);
 	});
 
 	it('moves between segments with the arrow keys', async () => {

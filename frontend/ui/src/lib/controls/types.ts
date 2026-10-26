@@ -69,10 +69,14 @@ export type MenuTrigger =
 			readonly icon: IconName;
 	  };
 
-/** The words a date field speaks for its segments, and for a segment with nothing in it. */
+/** The words a date field shows and speaks for its segments. */
 export interface DateFieldWords {
+	/** The day segment's name, shown in it while it is empty. */
 	readonly day: string;
+	/** The month segment's name, shown in it while it is empty. */
 	readonly month: string;
+	/** The year segment's name, shown in it while it is empty. */
 	readonly year: string;
+	/** What an empty segment says to a screen reader. */
 	readonly empty: string;
 }
