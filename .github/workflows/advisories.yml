@@ -1,12 +1,15 @@
 name: Advisories
 
-# The daily security-advisory check on main, as two jobs: `advisories` runs
-# cargo-deny's advisory check over Cargo.lock, and `npm-advisories` runs
-# scripts/npm-advisories.sh (the pinned osv-scanner) over frontend/yarn.lock
-# and lexicons/package-lock.json, each against its own root ignore file. PR
-# CI blocks on advisories only when a PR changes a lockfile, so a newly
-# published advisory against a dependency main already ships surfaces here, as
-# a failed run. GitHub notifies the account that last edited this schedule.
+# The daily security-advisory and licence check on main, as three jobs:
+# `advisories` runs cargo-deny's advisory check over Cargo.lock,
+# `npm-advisories` runs scripts/npm-advisories.sh (the pinned osv-scanner) over
+# frontend/yarn.lock and lexicons/package-lock.json, each against its own root
+# ignore file, and `npm-licences` sweeps every entry of both npm lockfiles
+# against the licences npm-licences.json allows. PR CI blocks on advisories
+# only when a PR changes a lockfile, so a newly published advisory against a
+# dependency main already ships surfaces here, as a failed run; PR CI checks
+# licences only on the packages a PR adds, so this sweep covers every package
+# main ships. GitHub notifies the account that last edited this schedule.
 on:
   schedule:
     - cron: '23 5 * * *'
@@ -39,3 +42,17 @@ jobs:
           ref: main
           persist-credentials: false
       - run: sh scripts/npm-advisories.sh
+
+  npm-licences:
+    name: npm-licences
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: env -i PATH="$PATH" HOME="$HOME" node frontend/lock-review.mjs --licence-sweep --licences npm-licences.json frontend/yarn.lock lexicons/package-lock.json

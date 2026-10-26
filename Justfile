@@ -353,12 +353,19 @@ scripts-test:
 npm-advisories:
     sh scripts/npm-advisories.sh
 
-# The 7-day floor over both npm lockfiles against jj revision <rev>: its
-# frontend/yarn.lock (else its frontend/web/yarn.lock, else an empty one) and
-# lexicons/package-lock.json (else an empty one) are the old lockfiles, and
-# this checkout's frontend/lock-review.mjs and lock-age-waivers.json judge
-# every entry added since. Needs the network (the npm registry). CI's npm-lock
-# job runs the same floor with the PR base's tools and waivers.
+# Sweep every entry of frontend/yarn.lock and lexicons/package-lock.json
+# against the licences npm-licences.json allows. Needs the network (the npm
+# registry). `just gate` runs it before the advisory scan.
+npm-licences:
+    env -i PATH="$PATH" HOME="$HOME" node frontend/lock-review.mjs --licence-sweep --licences npm-licences.json frontend/yarn.lock lexicons/package-lock.json
+
+# The 7-day floor and the licence rule over both npm lockfiles against jj
+# revision <rev>: its frontend/yarn.lock (else its frontend/web/yarn.lock, else
+# an empty one) and lexicons/package-lock.json (else an empty one) are the old
+# lockfiles, and this checkout's frontend/lock-review.mjs, npm-licences.json
+# and lock-age-waivers.json judge every entry added since. Needs the network
+# (the npm registry). CI's npm-lock job runs the same checks with the PR
+# base's tools, licence list and waivers.
 npm-lock-review rev:
     #!/usr/bin/env bash
     set -uo pipefail
@@ -386,7 +393,7 @@ npm-lock-review rev:
     for pair in "frontend frontend/yarn.lock" "lexicons lexicons/package-lock.json"; do
         set -- $pair
         echo "floor over $2"
-        node frontend/lock-review.mjs "$tmp/$1" "$2" --min-age-days 7 --waivers lock-age-waivers.json
+        node frontend/lock-review.mjs "$tmp/$1" "$2" --licences npm-licences.json --min-age-days 7 --waivers lock-age-waivers.json
         code=$?
         if [ "$code" -gt "$worst" ]; then worst="$code"; fi
     done
@@ -458,7 +465,8 @@ check:
 # the `buf` CLI at BUF_VERSION for the contract lint
 # (https://buf.build/docs/installation — a single Go binary).
 # The npm lockfiles' 7-day floor is CI-only (its npm-lock job): it compares
-# against a PR's base; `just npm-lock-review <rev>` runs it by hand.
+# against a PR's base; `just npm-lock-review <rev>` runs it by hand. The
+# licence sweep (`just npm-licences`) runs here, before the advisory scan.
 # Run it before a slice's first push for review and before handing it to QA;
 # base merges and fix rounds may use `just gate-light`.
 gate:
@@ -481,7 +489,7 @@ gate:
     just cargo-config-check
     buf lint contract
     just frontend-install
-    node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs
+    node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs frontend/licences.test.mjs
     yarn --cwd frontend/web run check
     yarn --cwd frontend/web run lint
     yarn --cwd frontend/web run test
@@ -492,6 +500,7 @@ gate:
     yarn --cwd frontend/ui run build
     node frontend/ui/src/checks/built-output.ts frontend/ui/build
     just engineer-tools-test
+    just npm-licences
     just npm-advisories
 
 # engineer-tools/review-pr.sh becomes ${XDG_BIN_HOME:-~/.local/bin}/review-pr,

@@ -86,7 +86,7 @@ expect_plan "a Markdown edit under frontend runs the web checks" "yarn --cwd fro
 
 # Every frontend plan: the guarded install, the guard's tests, web's and ui's four steps, then ui's built-output check.
 frontend_plan="just frontend-install
-node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs
+node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs frontend/licences.test.mjs
 yarn --cwd frontend/web run check
 yarn --cwd frontend/web run lint
 yarn --cwd frontend/web run test

@@ -13,7 +13,7 @@
     "The React auth frontend is deleted.",
     "Every install is the trio `node frontend/install-check.mjs`, `yarn --cwd frontend install --frozen-lockfile --ignore-scripts`, `node frontend/install-check.mjs --installed`: `just frontend-install` locally, the same three steps in CI's `ui`, `web` and `contract` jobs; `scripts/tools-check.sh` fails a workflow that installs any other way.",
     "`web` takes `@zurfur/ui` as a dev dependency at exactly `0.0.0`, resolved by the workspace symlink; `.npmrc` points the `@zurfur` scope at `registry.invalid`, so the package can never be fetched from npm.",
-    "A change to `yarn.lock` or `lexicons/package-lock.json` is checked by CI's `npm-lock` job (scripts/npm-lock-ci.sh): `lock-review.mjs --min-age-days 7` with the base's waivers, and osv-scanner; locally, `just npm-lock-review <rev>` runs the same floor (needs the network)."
+    "A change to `yarn.lock` or `lexicons/package-lock.json` is checked by CI's `npm-lock` job (scripts/npm-lock-ci.sh): `lock-review.mjs --licences --min-age-days 7` with the base's npm-licences.json and waivers, and osv-scanner; a change that edits npm-licences.json has both lockfiles swept against it by the base's `lock-review.mjs --licence-sweep`; locally, `just npm-lock-review <rev>` runs the same floor and licence rule (needs the network)."
   ],
   "entry_points": [
     "web/src/hooks.server.ts (the app)",
@@ -43,13 +43,23 @@
       "node": false
     },
     {
+      "name": "licences.mjs",
+      "role": "the licence rule: the SPDX expression parser, the strict loader of npm-licences.json (which refuses in `allow` any id of the AGPL, GPL, LGPL, MPL, OFL or SSPL families, matched by prefix ignoring case; scoped entries may still name them) and the verdict on one package version (bundled code fails, then an exception may admit it, then the licence must be readable and allowed by the list), plus the npm naming rule lock-review.mjs re-exports; pure, Node built-ins and install-check.mjs only",
+      "node": false
+    },
+    {
+      "name": "licences.test.mjs",
+      "role": "the licence rule's node:test fixtures, offline with a fixed date (run with node --test, in just gate, gate-light and CI's ui job)",
+      "node": false
+    },
+    {
       "name": "lock-review.mjs",
-      "role": "the npm lockfiles' floor and integrity check (it needs the network): CI's npm-lock job runs the base commit's copy through scripts/npm-lock-ci.sh, and `just npm-lock-review <rev>` runs it locally; reads two yarn v1 or two npm lockfileVersion 3 files (a v3 link or bundled entry, one without integrity or resolved outside registry.npmjs.org is refused), lists the entries a change removed and added, and checks each added entry against its full registry document, fetched once with no redirects: the integrity must match, and with --min-age-days N the version must be at least N days old unless --waivers names that exact name@version (a waiver never lifts the integrity check); names, versions, the document and the waiver file are read fail-closed; the registry lookup and the clock are injected only through main(), never the environment; exit 0 clean, 1 findings, 2 errors",
+      "role": "the npm lockfiles' review against the registry (it needs the network), in two modes. The review of a change, which CI's npm-lock job runs as the base commit's copy through scripts/npm-lock-ci.sh and `just npm-lock-review <rev>` runs locally: reads two yarn v1 or two npm lockfileVersion 3 files (a v3 link or bundled entry, one without integrity or resolved outside registry.npmjs.org is refused), lists the entries a change removed and added (an npm entry newly installed under an alias counts as added), and checks each added entry against its full registry document, fetched once with no redirects: the integrity must match; with --licences <file> the licence must pass the list (licences.mjs) and a package the list scopes must not be installed under an alias; with --min-age-days N (which needs --licences) the version must be at least N days old unless --waivers names that exact name@version (a waiver lifts only the age finding). The sweep, `--licence-sweep --licences <file> <lockfile>…`, which `just npm-licences` (in `just gate`), the daily advisories job and CI's npm-lock job (when a change edits the list) run: checks every entry of each lockfile, once per (name, version, integrity), against its per-version registry document (its own name, version and integrity must match), the list and the alias rule, prints a count per licence and notes each exception no entry used. Names, versions, the documents, the waiver file and the list are read fail-closed; the registry lookups and the clock are injected only through main(), never the environment; exit 0 clean, 1 findings, 2 errors",
       "node": false
     },
     {
       "name": "lock-review.test.mjs",
-      "role": "lock-review's node:test fixtures, offline through the injected lookup and clock: the age floor, waivers and the waiver file, fail-closed registry reads, the npm v3 reader, the CLI's exit codes, that lock-review.mjs and install-check.mjs import nothing outside the pair, and the naming rule and v3 reader over the real lockfiles",
+      "role": "lock-review's node:test fixtures, offline through the injected lookups and clock: the age floor, waivers and the waiver file, the licence rule and the sweep (aliases in both formats, bundles, exceptions, the per-version document, the counts) over fixture lists and the real npm-licences.json, fail-closed registry reads, the npm v3 reader, the CLI's exit codes, that each frontend tool on scripts/npm-lock-ci.sh's TOOLS line imports nothing outside that set, and the naming rule and v3 reader over the real lockfiles",
       "node": false
     },
     {
