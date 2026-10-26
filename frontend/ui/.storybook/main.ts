@@ -162,6 +162,8 @@ const config: GalleryConfig = {
 		disableWhatsNewNotifications: true,
 		disableProjectJson: true
 	},
+	// No onboarding checklist in the sidebar or the menu: the gallery is not a new project.
+	features: { sidebarOnboardingChecklist: false, menuOnboardingChecklist: false },
 	// A function replaces the composed Storybooks outright; an object would be
 	// merged with the ones Storybook finds in the dependencies on its own.
 	refs: () => ({}),
