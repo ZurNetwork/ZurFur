@@ -9,9 +9,8 @@
 //! - **AC2** — a non-owner cannot delete it: a caller who may not see the
 //!   commission gets the **uniform 404** (`commission_not_found`, the closed-door
 //!   policy) — identical for a hidden and a truly absent commission — and an
-//!   anonymous caller gets `401`. (The participant-but-not-owner `403` arm of the
-//!   shared `require_owner` seam is unreachable until non-owner
-//!   participants can be seated on a commission.)
+//!   anonymous caller gets `401`. (A Participant who isn't the owner gets the same
+//!   `404`, pinned by `commission_calls_postgres`.)
 //! - **AC3** — deleting a fact-bearing commission is rejected with the `409`
 //!   `commission_has_facts` problem whose detail points at Archive, and nothing is
 //!   deleted. No fact-minter exists yet, so the fact-bearing state is staged with

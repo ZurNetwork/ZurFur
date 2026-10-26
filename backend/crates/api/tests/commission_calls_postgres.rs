@@ -2,7 +2,7 @@
 //! with no role on it, byte for byte as it answers a made-up id: the reads, the board card's
 //! placement and every other call, over the stranger's targets, with a lifecycle word no
 //! parser reads and with each time of the row set to infinity; the card of an archived
-//! commission; and the Den's grid of what each role is shown at each level, on PostgreSQL and
+//! commission; what each call answers a Participant who isn't the owner; and the Den's grid of what each role is shown at each level, on PostgreSQL and
 //! on the in-memory stores. Requires a container runtime socket.
 
 #![allow(clippy::disallowed_methods, reason = "test seeding")]
@@ -25,8 +25,9 @@ use test_support::{
     den::{Answer, get},
     http::{client, serve, sign_in},
     pg_app::{
-        self, CommissionCall, CommissionTime, DenWorld, Infinity, SeededCommission,
-        absent_commission, every_commission_call, placement_call, stranger_targets,
+        self, COMMISSION_NOT_FOUND, CommissionCall, CommissionTime, DenWorld, Infinity,
+        SeededCommission, absent_commission, every_commission_call, placement_call,
+        stranger_targets,
     },
 };
 use uuid::Uuid;
@@ -180,6 +181,109 @@ async fn with_infinite_times_every_call_answers_a_stranger_alike() {
             let label = format!("{time} set to {infinity}");
 
             assert_every_call_answers_alike(&world, column, &label).await;
+        }
+    }
+}
+
+/// What a call answers a Participant who isn't the owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParticipantAnswer {
+    /// An owner-only call where a Participant learns nothing more: the closed door's 404.
+    NotFound,
+    /// An owner-only call where a Participant, who knows the commission exists, is told no.
+    Forbidden,
+    /// A call any Participant may make: anything but the two refusals above.
+    Allowed,
+}
+
+use ParticipantAnswer::{Allowed, Forbidden, NotFound as ClosedDoor};
+
+/// What each call of the table answers bob, a Participant of "Untitled" but not its owner,
+/// keyed by the call's label.
+const PARTICIPANT_ANSWERS: [(&str, ParticipantAnswer); 31] = [
+    ("the commission read", Allowed),
+    ("the changelog read", Allowed),
+    ("the download", Allowed),
+    ("place a card", Allowed),
+    ("rename", Forbidden),
+    ("move the lifecycle", Allowed),
+    ("set the direction", Allowed),
+    ("clear the direction", Allowed),
+    ("set the deadline", Allowed),
+    ("clear the deadline", Allowed),
+    ("set Delayed", Allowed),
+    ("clear Delayed", Allowed),
+    ("raise a dispute", Allowed),
+    ("clear the dispute", Allowed),
+    ("rate", Forbidden),
+    ("declare slots", Forbidden),
+    ("delete", ClosedDoor),
+    ("write a note", Allowed),
+    ("link the channel", Forbidden),
+    ("clear the channel", Forbidden),
+    ("archive", Forbidden),
+    ("unarchive", Forbidden),
+    ("grant a view", ClosedDoor),
+    ("revoke a view", ClosedDoor),
+    ("add an element", Forbidden),
+    ("remove an element", Forbidden),
+    ("declare a seat", Forbidden),
+    ("issue an invitation", Forbidden),
+    ("revoke an invitation", Forbidden),
+    ("upload a file", Allowed),
+    ("mark up a file", Allowed),
+];
+
+/// The `code` of a problem body, or none for a body that isn't one.
+fn problem_code(body: &[u8]) -> Option<String> {
+    let problem: Value = serde_json::from_slice(body).ok()?;
+    problem["code"].as_str().map(str::to_owned)
+}
+
+#[tokio::test]
+async fn every_commission_call_answers_a_participant_as_the_role_allows() {
+    let world = pg_app::den_world(api::app).await;
+    // The card goes on a column of bob's own, as it does in the other suites.
+    let column = world.add_backlog_column("Participant's column").await;
+    let calls = every_commission_call(column);
+    assert_eq!(
+        calls.len(),
+        PARTICIPANT_ANSWERS.len(),
+        "the answers name every call of the table, and no other"
+    );
+
+    for call in &calls {
+        let (_, expected) = PARTICIPANT_ANSWERS
+            .into_iter()
+            .find(|(label, _)| *label == call.label)
+            .unwrap_or_else(|| panic!("the answers name the call {}", call.label));
+        let path = call.path_on(&world.untitled);
+        let context = format!("{} {}", call.method, call.route);
+
+        let response = call.send(&world.bob, world.base_url(), &path).await;
+
+        let status = response.status().as_u16();
+        let body = response.bytes().await.expect("a body");
+        let code = problem_code(&body);
+        let answer = (status, code.as_deref());
+        match expected {
+            ClosedDoor => {
+                let closed_door = (404, Some(COMMISSION_NOT_FOUND));
+                assert_eq!(answer, closed_door, "{}: {context}", call.label);
+            }
+            Forbidden => {
+                let told_no = (403, Some("forbidden"));
+                assert_eq!(answer, told_no, "{}: {context}", call.label);
+            }
+            Allowed => {
+                let told_no = status == 403;
+                let closed_door = status == 404 && code.as_deref() == Some(COMMISSION_NOT_FOUND);
+                assert!(
+                    !told_no && !closed_door,
+                    "{}: {context} refused a Participant with {answer:?}",
+                    call.label
+                );
+            }
         }
     }
 }
