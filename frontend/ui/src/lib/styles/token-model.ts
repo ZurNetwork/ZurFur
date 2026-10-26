@@ -509,7 +509,7 @@ function parseType(raw: unknown, refusals: Refusal[]): TypeModel | undefined {
 }
 
 /** The keys of the token file that are not token groups. */
-const NOT_GROUPS: ReadonlySet<string> = new Set(['name', 'version', 'type']);
+const NOT_GROUPS: readonly string[] = ['name', 'version', 'type'];
 
 /** Reads the groups of one file, in file order. */
 function parseGroups(
@@ -520,7 +520,7 @@ function parseGroups(
 ): readonly DraftGroup[] {
 	const groups: DraftGroup[] = [];
 	for (const [id, raw] of Object.entries(root)) {
-		if (source === 'tokens' && NOT_GROUPS.has(id)) continue;
+		if (source === 'tokens' && NOT_GROUPS.includes(id)) continue;
 		const group = parseGroup(raw, id, source, skins, refusals);
 		if (group !== undefined) groups.push(group);
 	}

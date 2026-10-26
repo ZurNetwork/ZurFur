@@ -1,4 +1,5 @@
 import prettier from 'eslint-config-prettier';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import js from '@eslint/js';
 import svelte from 'eslint-plugin-svelte';
@@ -96,6 +97,85 @@ const DEN_HREF_PATTERN = {
 	importNames: ['denHref'],
 	message: DEN_HREF_IMPORT.message
 };
+
+/** Every file kind ESLint lints here, src/ and the package-root config files alike. */
+const LINTED_FILES = [
+	'**/*.js',
+	'**/*.mjs',
+	'**/*.cjs',
+	'**/*.ts',
+	'**/*.mts',
+	'**/*.cts',
+	'**/*.svelte'
+];
+
+/**
+ * The packages web declares, read from its own manifest when the config
+ * loads: `dependencies` and `devDependencies`.
+ *
+ * @returns {string[]}
+ */
+function declaredPackages() {
+	const manifest = JSON.parse(
+		readFileSync(path.resolve(import.meta.dirname, 'package.json'), 'utf8')
+	);
+	const section = (key) => Object.keys(Object(manifest[key]));
+	return [...section('dependencies'), ...section('devDependencies')];
+}
+
+/** `text` as a regular expression that matches it literally. */
+const literally = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The declared packages, each alone or with a subpath, as a regular expression. */
+const DECLARED = `(?:${declaredPackages().map(literally).join('|')})(?:/|$)`;
+
+/** What web may import besides its packages: Node's built-ins, Kit's aliases and relative paths. */
+const LOCAL = '(?:node:|\\$(?:app|lib|env)(?:/|$)|\\.{1,2}(?:/|$))';
+
+const UNDECLARED_MESSAGE = 'Import only packages web declares; `@zurfur/ui` wraps bits-ui.';
+
+/**
+ * Any import that is neither a declared package nor local, read
+ * case-sensitively, so no other spelling reaches past the manifest's names.
+ */
+const UNDECLARED_IMPORT = {
+	regex: `^(?!${DECLARED})(?!${LOCAL})`,
+	caseSensitive: true,
+	message: UNDECLARED_MESSAGE
+};
+
+/**
+ * The same allow-list for a dynamic import of a literal name, which
+ * no-restricted-imports never reads. A selector's regular expression can't
+ * hold a slash, so each is written as \u002F.
+ */
+const UNDECLARED_DYNAMIC_IMPORT = {
+	selector: `ImportExpression[source.type='Literal']:not([source.value=/${`^(?:${DECLARED}|${LOCAL})`.replaceAll('/', '\\u002F')}/])`,
+	message: UNDECLARED_MESSAGE
+};
+
+/**
+ * One no-restricted-imports entry holding every ban a block's files answer
+ * to: the allow-list always, and Effect's and the DenHref's bans where asked.
+ * A later flat-config block replaces an earlier one's options for the same
+ * rule, so each block carries its whole list. The test tools' bans join here,
+ * as one more flag, when they land.
+ *
+ * @param {{ readonly effect: boolean, readonly denHref: boolean }} bans
+ */
+function importRules({ effect, denHref }) {
+	return [
+		'error',
+		{
+			paths: [...(effect ? EFFECT_IMPORTS : []), ...(denHref ? [DEN_HREF_IMPORT] : [])],
+			patterns: [
+				UNDECLARED_IMPORT,
+				...(effect ? EFFECT_PATTERNS : []),
+				...(denHref ? [DEN_HREF_PATTERN] : [])
+			]
+		}
+	];
+}
 
 export default defineConfig(
 	includeIgnoreFile(gitignorePath),
@@ -216,7 +296,8 @@ export default defineConfig(
 						"ImportDeclaration[source.value='@sveltejs/kit'] ImportSpecifier[imported.name='error'][local.name!='error']",
 					message:
 						"Import SvelteKit's error() as `error`: the literal-message rule keys on that name."
-				}
+				},
+				UNDECLARED_DYNAMIC_IMPORT
 			]
 		}
 	},
@@ -235,37 +316,37 @@ export default defineConfig(
 		}
 	},
 	{
+		// Every file imports only the packages web declares. The blocks below
+		// replace this one's options for their files, each carrying the
+		// allow-list beside its own bans; a file none of them names (a server
+		// spec, the Den path builder, a config file) keeps the allow-list alone.
+		name: 'web/declared-imports',
+		files: LINTED_FILES,
+		rules: { 'no-restricted-imports': importRules({ effect: false, denHref: false }) }
+	},
+	{
 		// DD 39944194 containment: Effect exists only below the runes seam —
 		// src/lib/server/** and *.server.ts. Everything above the seam receives
 		// plain data and never sees a fiber. And only the Den path builder mints
 		// a DenHref (see DEN_HREF_IMPORT).
+		name: 'web/client-imports',
 		files: SOURCE_FILES,
 		ignores: [...SERVER_SIDE, ...DEN_HREF_MINTERS, ...SPECS],
-		rules: {
-			'no-restricted-imports': [
-				'error',
-				{
-					paths: [...EFFECT_IMPORTS, DEN_HREF_IMPORT],
-					patterns: [...EFFECT_PATTERNS, DEN_HREF_PATTERN]
-				}
-			]
-		}
+		rules: { 'no-restricted-imports': importRules({ effect: true, denHref: true }) }
 	},
 	{
 		// Above the seam, the DenHref minters and the specs keep only the Effect ban.
+		name: 'web/minter-and-spec-imports',
 		files: [...DEN_HREF_MINTERS, ...SPECS],
 		ignores: SERVER_SIDE,
-		rules: {
-			'no-restricted-imports': ['error', { paths: EFFECT_IMPORTS, patterns: EFFECT_PATTERNS }]
-		}
+		rules: { 'no-restricted-imports': importRules({ effect: true, denHref: false }) }
 	},
 	{
 		// Below the seam, only the Den path builder mints a DenHref.
+		name: 'web/server-imports',
 		files: SERVER_SIDE,
 		ignores: [...DEN_HREF_MINTERS, ...SPECS],
-		rules: {
-			'no-restricted-imports': ['error', { paths: [DEN_HREF_IMPORT], patterns: [DEN_HREF_PATTERN] }]
-		}
+		rules: { 'no-restricted-imports': importRules({ effect: false, denHref: true }) }
 	},
 	{
 		// Override or add rule settings here, such as:

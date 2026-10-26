@@ -11,6 +11,8 @@ import {
 	inlineHandlerMessage,
 	rawHtmlMessage,
 	scriptMarkupMessage,
+	scriptModuleMessage,
+	seamMotionMessage,
 	STORAGE_MESSAGE
 } from '../../eslint.config.js';
 import { isRemote } from './scan/network';
@@ -30,7 +32,10 @@ const planted = {
 	gallerySvelte: 'src/gallery/X.svelte',
 	routes: 'src/routes/x.ts',
 	routesSvelte: 'src/routes/X.svelte',
+	environment: 'src/lib/environment/x.ts',
+	runesModule: 'src/lib/motion/x.svelte.ts',
 	check: 'src/checks/planted.ts',
+	checkSvelte: 'src/checks/X.svelte',
 	spec: 'src/lib/planted.spec.ts'
 } as const;
 
@@ -41,7 +46,15 @@ const planted = {
 const plannedOrReal = {
 	skinStore: 'src/gallery/skin-store.ts',
 	colourPage: 'src/routes/components/colour/+page.svelte',
-	environment: 'src/lib/styles/environment.ts'
+	environment: 'src/lib/styles/environment.ts',
+	button: 'src/lib/controls/Button.svelte',
+	checkbox: 'src/lib/controls/Checkbox.svelte',
+	toggle: 'src/lib/controls/Toggle.svelte',
+	controlTypes: 'src/lib/controls/types.ts',
+	context: 'src/lib/environment/context.ts',
+	card: 'src/lib/surfaces/Card.svelte',
+	togglePage: 'src/routes/components/toggle/+page.svelte',
+	recording: 'src/checks/testing/RecordingEnvironment.svelte'
 } as const;
 
 const notOnDisk = (relative: string): boolean => !existsSync(`${uiRoot}${relative}`);
@@ -51,7 +64,8 @@ const plantedPaths = [...Object.values(planted), ...Object.values(plannedOrReal)
 /** Real files a case lints planted text at; the file on disk is never read or touched. */
 const real = {
 	publicEntry: 'src/lib/index.ts',
-	layoutLoad: 'src/routes/+layout.ts'
+	layoutLoad: 'src/routes/+layout.ts',
+	stylesEntry: 'src/lib/styles/index.ts'
 } as const;
 
 /**
@@ -90,7 +104,10 @@ const boundaryRuleIds: ReadonlySet<string> = new Set([
 	'svelte/no-at-html-tags',
 	'ui/import-tiers',
 	'ui/no-remote-string',
-	'ui/no-script-url'
+	'ui/no-script-url',
+	'ui/no-motion-import',
+	'ui/no-provide-environment',
+	'ui/spreads'
 ]);
 
 async function lintPlanted(filePath: string, code: string): Promise<readonly Linter.LintMessage[]> {
@@ -172,6 +189,9 @@ const SYNTAX = 'no-restricted-syntax';
 const TIERS = 'ui/import-tiers';
 const REMOTE = 'ui/no-remote-string';
 const SCRIPT_URL = 'ui/no-script-url';
+const MOTION_IMPORT = 'ui/no-motion-import';
+const PROVIDE = 'ui/no-provide-environment';
+const SPREADS = 'ui/spreads';
 
 type PathCase = readonly [label: string, filePath: string, code: string];
 
@@ -763,8 +783,9 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 		// re-exporting each other hang the type-aware rules.
 		const allowed: readonly PathCase[] = [
 			[
-				'a component importing the motion adapter',
-				planted.component,
+				// Only the public entry: no other component reaches the adapter (ui/no-motion-import).
+				'the public entry importing the motion adapter',
+				real.publicEntry,
 				"import { y } from './motion/y';\nexport { y };"
 			],
 			[
@@ -958,15 +979,24 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 			await expectScriptMarkupRefused(filePath, code);
 		});
 
-		const allowed: readonly Allowed[] = [
+		// A component may hold neither a module block nor <svelte:element>: the
+		// host and the card show them here.
+		it.each([
 			[
-				'the top-level script and module blocks',
+				'the top-level script and module blocks in a page',
+				planted.routesSvelte,
 				'<script lang="ts" module>\n\texport const m = \'x\';\n</script>\n\n<script lang="ts">\n\tconst s = \'x\';\n</script>\n\n<p>{s}</p>\n'
 			],
 			[
-				'svelte:element with a dynamic tag',
+				'svelte:element with a dynamic tag in the card',
+				plannedOrReal.card,
 				"<script lang=\"ts\">\n\tinterface Props {\n\t\treadonly tag: 'p' | 'span';\n\t}\n\tlet { tag }: Props = $props();\n</script>\n\n<svelte:element this={tag}>x</svelte:element>\n"
-			],
+			]
+		] as const)('allows %s', async (_label, filePath, code) => {
+			await expectAllowed(filePath, code);
+		});
+
+		const allowed: readonly Allowed[] = [
 			[
 				'ordinary markup',
 				component(
@@ -1593,6 +1623,8 @@ interface BoundaryOptions {
 	readonly tiers: RuleEntry;
 	readonly remote: RuleEntry;
 	readonly scriptUrl: RuleEntry;
+	readonly motionImport: RuleEntry;
+	readonly provide: RuleEntry;
 }
 
 async function effectiveBoundary(filePath: string): Promise<BoundaryOptions> {
@@ -1605,7 +1637,9 @@ async function effectiveBoundary(filePath: string): Promise<BoundaryOptions> {
 		syntax: rules['no-restricted-syntax'],
 		tiers: rules[TIERS],
 		remote: rules[REMOTE],
-		scriptUrl: rules[SCRIPT_URL]
+		scriptUrl: rules[SCRIPT_URL],
+		motionImport: rules[MOTION_IMPORT],
+		provide: rules[PROVIDE]
 	};
 }
 
@@ -1620,7 +1654,9 @@ function expectedBoundary(name: SetName): BoundaryOptions {
 		syntax: [2, ...rules.syntax],
 		tiers: [2, { tier: rules.tier }],
 		remote: [2],
-		scriptUrl: [2]
+		scriptUrl: [2],
+		motionImport: rules.seam.motionImport ? [2] : undefined,
+		provide: rules.seam.provideEnvironment ? [2] : undefined
 	};
 }
 
@@ -1631,7 +1667,9 @@ const noBoundary: BoundaryOptions = {
 	syntax: undefined,
 	tiers: undefined,
 	remote: undefined,
-	scriptUrl: undefined
+	scriptUrl: undefined,
+	motionImport: undefined,
+	provide: undefined
 };
 
 /** What ESLint's own matching makes of one path: the set's rules, or none for a check. */
@@ -1657,6 +1695,10 @@ describe('the file sets', { timeout: 120_000 }, () => {
 		['src/lib/motion/x.ts', 'motion'],
 		['src/lib/motion/deep/X.svelte', 'motion'],
 		['src/lib/lazy/x.ts', 'lazy'],
+		['src/lib/environment/context.ts', 'environment'],
+		['src/lib/environment/deep/X.svelte', 'environment'],
+		['src/lib/environmental.ts', 'components'],
+		['src/lib/controls/Button.svelte', 'components'],
 		['src/gallery/x.ts', 'gallery'],
 		['src/gallery/X.svelte', 'gallery'],
 		['src/gallery/other.ts', 'gallery'],
@@ -1677,6 +1719,8 @@ describe('the file sets', { timeout: 120_000 }, () => {
 		['src/lib/x.spec.ts'],
 		['src/lib/X.svelte.spec.ts'],
 		['src/lib/motion/x.spec.ts'],
+		['src/lib/environment/context.spec.ts'],
+		['src/lib/environment/X.svelte.spec.ts'],
 		['src/gallery/x.spec.ts'],
 		['src/gallery/skin-store.spec.ts'],
 		['src/routes/x.svelte.spec.ts']
@@ -1696,6 +1740,8 @@ describe('the file sets', { timeout: 120_000 }, () => {
 		'src/lib/x.svelte.ts',
 		'src/lib/motion/deep/X.svelte',
 		'src/lib/lazy/deep/x.js',
+		'src/lib/environment/deep/x.js',
+		'src/lib/environment/context.spec.ts',
 		'src/routes/components/button/+page.svelte',
 		'src/checks/deep/x.svelte',
 		'src/lib/X.svelte.spec.ts',
@@ -1729,5 +1775,665 @@ describe('the file sets', { timeout: 120_000 }, () => {
 		);
 		expect(results.length).toBeGreaterThan(0);
 		expect(problems).toEqual([]);
+	});
+});
+
+/** A component: its script holds `body`, then `markup` follows. */
+const component = (body: string, markup: string): string =>
+	`<script lang="ts">\n${body}\n</script>\n\n${markup}\n`;
+
+/** A component taking one `label` prop, destructured as `binding`. */
+const withProps = (binding: string, markup: string): string =>
+	component(
+		`\tinterface Props {\n\t\treadonly label: string;\n\t\treadonly value?: string | undefined;\n\t}\n\tlet ${binding}: Props = $props();`,
+		markup
+	);
+
+/** Every shipped set's plain module, and the component that stands for its .svelte files. */
+const shippedModules = [
+	['a control module', plannedOrReal.controlTypes],
+	['the seam', plannedOrReal.context],
+	['the motion adapter', planted.motion],
+	['the lazy loader', planted.lazy]
+] as const;
+
+/** The host's files, each with the message its sets refuse with. */
+const hostFiles = [
+	['a gallery page', plannedOrReal.togglePage],
+	['a page module', planted.routes],
+	['the frame', planted.gallery],
+	["the gallery's stores", plannedOrReal.skinStore]
+] as const;
+
+describe("the pattern's bans in what ships", { timeout: 120_000 }, () => {
+	describe('props come in named and read-only (P5)', () => {
+		it.each([
+			[
+				'$bindable()',
+				withProps('{ label, value = $bindable() }', '<p>{label}{value}</p>'),
+				[SYNTAX]
+			],
+			['a ...rest prop', withProps('{ label, ...rest }', '<p>{label}{rest.value}</p>'), [SYNTAX]],
+			['a rest element alone', withProps('{ ...all }', '<p>{all.label}</p>'), [SYNTAX]],
+			[
+				'let props = $props() with {...props}',
+				withProps('props', '<p {...props}>{props.label}</p>'),
+				[SYNTAX, SPREADS]
+			]
+		] as const)('refuses %s in a control', async (_label, code, ruleIds) => {
+			const messages = await lintPlanted(plannedOrReal.button, code);
+			const fired = messages.map((message) => message.ruleId);
+			for (const ruleId of ruleIds) expect(fired).toContain(ruleId);
+		});
+
+		it.each([
+			['destructured props', withProps('{ label, value }', '<p>{label}{value}</p>')],
+			[
+				'$props.id() beside them',
+				component(
+					'\tinterface Props {\n\t\treadonly label: string;\n\t}\n\tlet { label }: Props = $props();\n\tconst id = $props.id();',
+					'<p {id}>{label}</p>'
+				)
+			]
+		])('allows %s', async (_label, code) => {
+			await expectAllowed(plannedOrReal.button, code);
+		});
+	});
+
+	describe("no stores and no context of a component's own (P6, P7)", () => {
+		const contextImports = [
+			'setContext',
+			'getContext',
+			'hasContext',
+			'getAllContexts',
+			'createContext'
+		].map(
+			(name) => [name, `import { ${name} } from 'svelte';\nexport const r = ${name};`] as const
+		);
+
+		it.each([
+			['svelte/store', "import { writable } from 'svelte/store';\nexport const r = writable(0);"],
+			[
+				'svelte/store by type',
+				"import type { Readable } from 'svelte/store';\nexport type R = Readable<number>;"
+			],
+			...contextImports,
+			[
+				'svelte as a namespace',
+				"import * as svelte from 'svelte';\nexport const r = svelte.untrack;"
+			]
+		] as const)('refuses %s in a control module', async (_label, code) => {
+			await expectRefused(plannedOrReal.controlTypes, code, IMPORTS);
+		});
+
+		it.each(shippedModules.filter(([, filePath]) => filePath !== plannedOrReal.context))(
+			'refuses setContext in %s',
+			async (_label, filePath) => {
+				await expectRefused(
+					filePath,
+					"import { setContext } from 'svelte';\nexport const r = setContext;",
+					IMPORTS
+				);
+			}
+		);
+
+		it.each(shippedModules)('refuses svelte/store in %s', async (_label, filePath) => {
+			await expectRefused(
+				filePath,
+				"import { readable } from 'svelte/store';\nexport const r = readable(0);",
+				IMPORTS
+			);
+		});
+
+		it('refuses setContext in Button', async () => {
+			await expectRefused(
+				plannedOrReal.button,
+				component("\timport { setContext } from 'svelte';\n\tsetContext('k', 1);", '<p>x</p>'),
+				IMPORTS
+			);
+		});
+
+		it.each(hostFiles)('refuses getContext in %s', async (_label, filePath) => {
+			const code = filePath.endsWith('.svelte')
+				? component(
+						"\timport { getContext } from 'svelte';\n\tconst r = getContext('k');",
+						'<p>{r}</p>'
+					)
+				: "import { getContext } from 'svelte';\nexport const r = getContext('k');";
+			await expectRefused(filePath, code, IMPORTS);
+		});
+
+		it('allows the context functions in the seam', async () => {
+			await expectAllowed(
+				plannedOrReal.context,
+				"import { getContext, hasContext, setContext } from 'svelte';\nexport const r = [getContext, hasContext, setContext];"
+			);
+		});
+
+		it('allows setContext in a check', async () => {
+			await expectAllowed(
+				planted.check,
+				"import { setContext } from 'svelte';\nexport const r = setContext;"
+			);
+		});
+	});
+
+	describe('only the host and the checks take provideEnvironment (P7)', () => {
+		const refused: readonly PathCase[] = [
+			[
+				'Button, from the context module',
+				plannedOrReal.button,
+				component(
+					"\timport { provideEnvironment, STILL_ENVIRONMENT } from '../environment/context';\n\tprovideEnvironment(STILL_ENVIRONMENT);",
+					'<p>x</p>'
+				)
+			],
+			[
+				'Button, by its .ts name',
+				plannedOrReal.button,
+				component(
+					"\timport { provideEnvironment } from '../environment/context.ts';\n\tconst r = provideEnvironment;",
+					'<p>{r}</p>'
+				)
+			],
+			[
+				'Button, renamed, from the folder',
+				plannedOrReal.button,
+				component(
+					"\timport { provideEnvironment as provide } from '../environment';\n\tconst r = provide;",
+					'<p>{r}</p>'
+				)
+			],
+			[
+				'Button, through the public entry',
+				plannedOrReal.button,
+				component(
+					"\timport { provideEnvironment } from '@zurfur/ui';\n\tconst r = provideEnvironment;",
+					'<p>{r}</p>'
+				)
+			],
+			[
+				'Button, as a namespace',
+				plannedOrReal.button,
+				component(
+					"\timport * as seam from '../environment/context';\n\tconst r = seam;",
+					'<p>{r}</p>'
+				)
+			],
+			[
+				'a control module, re-exported',
+				plannedOrReal.controlTypes,
+				"export { provideEnvironment } from '../environment/context.ts';"
+			],
+			[
+				'a control module, with export *',
+				plannedOrReal.controlTypes,
+				"export * from '../environment/context.ts';"
+			],
+			[
+				'the motion adapter',
+				planted.motion,
+				"import { provideEnvironment } from '../environment/context.ts';\nexport const r = provideEnvironment;"
+			],
+			[
+				'the lazy loader',
+				planted.lazy,
+				"import { provideEnvironment } from '../environment/context.ts';\nexport const r = provideEnvironment;"
+			],
+			[
+				'the public entry, imported rather than re-exported',
+				real.publicEntry,
+				"import { provideEnvironment } from './environment/context.ts';\nexport const r = provideEnvironment;"
+			]
+		];
+
+		it.each(refused)('refuses it in %s', async (_label, filePath, code) => {
+			await expectRefused(filePath, code, PROVIDE);
+		});
+
+		const allowed: readonly PathCase[] = [
+			[
+				'useEnvironment in Button',
+				plannedOrReal.button,
+				component(
+					"\timport { useEnvironment } from '../environment/context';\n\tconst { moves } = useEnvironment();",
+					'<button {@attach moves.squish()}>x</button>'
+				)
+			],
+			[
+				"the public entry's re-export",
+				real.publicEntry,
+				"export { provideEnvironment, STILL_ENVIRONMENT } from './environment/context.ts';"
+			],
+			[
+				'a gallery page, through the public entry',
+				plannedOrReal.togglePage,
+				component(
+					"\timport { provideEnvironment } from '@zurfur/ui';\n\tconst r = provideEnvironment;",
+					'<p>{r}</p>'
+				)
+			],
+			[
+				'a check',
+				planted.check,
+				"import { provideEnvironment } from '../lib/environment/context.ts';\nexport const r = provideEnvironment;"
+			]
+		];
+
+		it.each(allowed)('allows %s', async (_label, filePath, code) => {
+			await expectAllowed(filePath, code);
+		});
+	});
+
+	describe('no module-level state in a shipped module (P6)', () => {
+		const refused: readonly Allowed[] = [
+			['a module-level let', 'let count = 0;\nexport const r = () => (count += 1);'],
+			['an exported let', 'export let count = 0;'],
+			['a module-level var', 'var count = 0;\nexport const r = () => count;'],
+			['a module-level new Map()', 'export const cache = new Map<string, number>();'],
+			['a module-level new Set()', 'const seen = new Set<string>();\nexport const r = seen;'],
+			['a module-level new WeakMap()', 'export const r = new WeakMap<object, number>();'],
+			['a module-level new WeakSet()', 'export const r = new WeakSet<object>();'],
+			[
+				'a new Map() in a class field',
+				'export class Cache {\n\treadonly entries = new Map<string, number>();\n}'
+			],
+			['$state(', 'export const r = $state(0);'],
+			['$derived(', 'export const r = $derived(1);'],
+			['$state.raw(', 'export const r = $state.raw([]);'],
+			['$derived.by(', 'export const r = $derived.by(() => 1);']
+		];
+
+		it.each(
+			shippedModules.flatMap(([set, filePath]) =>
+				refused.map(([label, code]) => [`${label} in ${set}`, filePath, code] as const)
+			)
+		)('refuses %s', async (_label, filePath, code) => {
+			await expectRefused(filePath, code, SYNTAX);
+		});
+
+		it('refuses $state( in a runes module of the motion adapter', async () => {
+			await expectRefused(planted.runesModule, 'export const r = $state(0);', SYNTAX);
+		});
+
+		const allowed: readonly Allowed[] = [
+			['a frozen constant', "export const NAMES: readonly string[] = Object.freeze(['a', 'b']);"],
+			[
+				'a let and a new Map() inside a function',
+				'export function count(names: readonly string[]): number {\n\tconst seen = new Map<string, number>();\n\tlet total = 0;\n\tfor (const name of names) {\n\t\tseen.set(name, 1);\n\t\ttotal += 1;\n\t}\n\treturn total + seen.size;\n}'
+			],
+			[
+				'a new Set() in an arrow function',
+				'export const r = (xs: readonly string[]) => new Set(xs);'
+			]
+		];
+
+		it.each(allowed)('allows %s in a control module', async (_label, code) => {
+			await expectAllowed(plannedOrReal.controlTypes, code);
+		});
+
+		it("allows state and a Map in a component's own script", async () => {
+			await expectAllowed(
+				plannedOrReal.button,
+				component(
+					'\tlet count = $state(0);\n\tconst doubled = $derived(count * 2);\n\tconst cache = new Map<string, number>();\n\tconst press = (): void => {\n\t\tcount += 1;\n\t};',
+					'<button onclick={press}>{doubled}{cache.size}</button>'
+				)
+			);
+		});
+	});
+
+	describe('no <script module> in what ships (P6)', () => {
+		const moduleBlock =
+			'<script lang="ts" module>\n\texport const m = 1;\n</script>\n\n<p>{m}</p>\n';
+		const contextModule =
+			'<script lang="ts" context="module">\n\texport const m = 1;\n</script>\n\n<p>{m}</p>\n';
+
+		it.each([
+			['<script module> in Button', plannedOrReal.button, moduleBlock],
+			['context="module" in Button', plannedOrReal.button, contextModule],
+			['<script module> in the motion adapter', planted.motionSvelte, moduleBlock],
+			['<script module> in the lazy loader', planted.lazySvelte, moduleBlock]
+		])('refuses %s', async (_label, filePath, code) => {
+			await expectSyntaxMessage(filePath, code, scriptModuleMessage);
+		});
+	});
+
+	describe('no clock reads in what ships (P6)', () => {
+		const refused: readonly Case[] = [
+			['Date.now()', 'export const r = Date.now();', PROPERTIES],
+			['performance.now()', 'export const r = performance.now();', PROPERTIES],
+			['Temporal.Now', 'export const r: unknown = Temporal.Now;', PROPERTIES],
+			['window.performance.now()', 'export const r = window.performance.now();', SYNTAX],
+			['globalThis.Date.now()', 'export const r = globalThis.Date.now();', SYNTAX],
+			['new Date()', 'export const r = new Date();', SYNTAX],
+			['new Date', 'export const r = new Date;', SYNTAX],
+			['new window.Date()', 'export const r = new window.Date();', SYNTAX],
+			['Date() called bare', "export const r = Date('x');", SYNTAX],
+			['self.Date()', 'export const r = self.Date();', SYNTAX],
+			['a destructured Date.now', 'const { now } = Date;\nexport const r = now;', PROPERTIES]
+		];
+
+		it.each(
+			shippedModules.flatMap(([set, filePath]) =>
+				refused.map(
+					([label, code, ruleId]) => [`${label} in ${set}`, filePath, code, ruleId] as const
+				)
+			)
+		)('refuses %s', async (_label, filePath, code, ruleId) => {
+			await expectRefused(filePath, code, ruleId);
+		});
+
+		it('refuses Date.now() in a control', async () => {
+			await expectRefused(
+				plannedOrReal.button,
+				component('\tconst at = Date.now();', '<p>{at}</p>'),
+				PROPERTIES
+			);
+		});
+
+		it.each([
+			['a given instant', 'export const r = new Date(0);'],
+			['a parsed date', "export const r = Date.parse('2026-10-26');"],
+			['a date from a prop', 'export const r = (iso: string) => new Date(iso);']
+		])('allows %s', async (_label, code) => {
+			await expectAllowed(plannedOrReal.controlTypes, code);
+		});
+
+		it('allows Date.now() in the host', async () => {
+			await expectAllowed(planted.routes, 'export const r = Date.now();');
+		});
+	});
+
+	describe('components move only through the seam', () => {
+		const declaringMoves =
+			'\tconst on = true;\n\tconst fade = (node: Element) => ({ duration: node.clientWidth });\n\tconst items = [1, 2];';
+
+		const refused: readonly Allowed[] = [
+			['transition:', component(declaringMoves, '<p transition:fade>{on}</p>')],
+			['in:', component(declaringMoves, '<p in:fade>{on}</p>')],
+			['out:', component(declaringMoves, '<p out:fade>{on}</p>')],
+			[
+				'animate:',
+				component(
+					declaringMoves,
+					'<ul>{#each items as item (item)}<li animate:fade>{item}</li>{/each}</ul>'
+				)
+			],
+			['a move class as text', component(declaringMoves, '<p class="zf-pill hop">{on}</p>')],
+			['a move class as class:', component(declaringMoves, '<p class:paperin={on}>x</p>')],
+			[
+				'a move class in a list',
+				component(declaringMoves, "<p class={['zf-pill', 'paperlift']}>{on}</p>")
+			],
+			['a move class as a key', component(declaringMoves, '<p class={{ deskdim: on }}>x</p>')]
+		];
+
+		it.each(refused)('refuses %s in Button', async (_label, code) => {
+			await expectSyntaxMessage(plannedOrReal.button, code, seamMotionMessage);
+		});
+
+		it.each(refused)('refuses %s in the lazy loader', async (_label, code) => {
+			await expectSyntaxMessage(planted.lazySvelte, code, seamMotionMessage);
+		});
+
+		it.each([
+			['the seam', component(declaringMoves, '<p class="zf-tip">{on}{items.length}{fade}</p>')],
+			[
+				'names that merely hold a move',
+				component(
+					declaringMoves,
+					'<p class="zf-hopper paperlife-shadowy">{on}{items.length}{fade}</p>'
+				)
+			]
+		])('allows %s', async (_label, code) => {
+			await expectAllowed(plannedOrReal.button, code);
+		});
+
+		it('allows a transition in the motion adapter', async () => {
+			await expectAllowed(
+				planted.motionSvelte,
+				component("\timport { fade } from 'svelte/transition';", '<p transition:fade>x</p>')
+			);
+		});
+
+		it('allows a move class on a gallery page', async () => {
+			await expectAllowed(
+				plannedOrReal.togglePage,
+				component('\tconst s = 1;', '<p class="hop">{s}</p>')
+			);
+		});
+
+		const motionImports: readonly PathCase[] = [
+			[
+				'Button, by path',
+				plannedOrReal.button,
+				component(
+					"\timport { PAPER_MOVES } from '../motion/paper-moves.ts';",
+					'<p>{PAPER_MOVES[0]}</p>'
+				)
+			],
+			[
+				'Button, a type',
+				plannedOrReal.button,
+				component(
+					"\timport type { PaperMove } from '../motion/paper-moves';\n\tconst m: PaperMove = 'hop';",
+					'<p>{m}</p>'
+				)
+			],
+			[
+				'Button, the stylesheet',
+				plannedOrReal.button,
+				component("\timport '../motion/paper-moves.css';", '<p>x</p>')
+			],
+			[
+				'Button, through the public entry',
+				plannedOrReal.button,
+				component("\timport { PAPER_MOVES } from '@zurfur/ui';", '<p>{PAPER_MOVES[0]}</p>')
+			],
+			[
+				'a control module re-exporting it',
+				plannedOrReal.controlTypes,
+				"export { PAPER_MOVES } from '../motion/paper-moves.ts';"
+			],
+			[
+				'the seam',
+				plannedOrReal.context,
+				"import { PAPER_MOVES } from '../motion/paper-moves.ts';\nexport const r = PAPER_MOVES;"
+			],
+			['the lazy loader', planted.lazy, "import { y } from '../motion/y';\nexport { y };"]
+		];
+
+		it.each(motionImports)(
+			'refuses an import of the motion adapter in %s',
+			async (_label, filePath, code) => {
+				await expectRefused(filePath, code, MOTION_IMPORT);
+			}
+		);
+
+		it.each([
+			[
+				"the public entry's re-export",
+				real.publicEntry,
+				"export { PAPER_MOVES, type PaperMove } from './motion/paper-moves.ts';"
+			],
+			["the styles entry's stylesheet", real.stylesEntry, "import '../motion/paper-moves.css';"],
+			['the adapter importing itself', planted.motion, "import { y } from './y';\nexport { y };"]
+		] as const)('allows %s', async (_label, filePath, code) => {
+			await expectAllowed(filePath, code);
+		});
+	});
+
+	describe('the seam imports only svelte, svelte/attachments and its own files', () => {
+		it.each([
+			['gsap', "import { gsap } from 'gsap';\nexport const r = gsap;"],
+			[
+				'the motion adapter',
+				"import { PAPER_MOVES } from '../motion/paper-moves.ts';\nexport const r = PAPER_MOVES;"
+			],
+			[
+				'a control module',
+				"import type { ButtonVariant } from '../controls/types';\nexport type R = ButtonVariant;"
+			],
+			['a path that climbs out', "import { y } from './../controls/y';\nexport const r = y;"],
+			[
+				'svelte in another letter case',
+				"import { untrack } from 'Svelte';\nexport const r = untrack;"
+			],
+			['svelte/store', "import { writable } from 'svelte/store';\nexport const r = writable;"],
+			['svelte/transition', "import { fade } from 'svelte/transition';\nexport const r = fade;"],
+			['bits-ui', "import { Switch } from 'bits-ui';\nexport const r = Switch;"],
+			['the public entry', "import { Icon } from '@zurfur/ui';\nexport const r = Icon;"]
+		])('refuses %s', async (_label, code) => {
+			await expectRefused(plannedOrReal.context, code, IMPORTS);
+		});
+
+		it.each([
+			[
+				'the context functions',
+				"import { getContext, hasContext, setContext } from 'svelte';\nexport const r = [getContext, hasContext, setContext];"
+			],
+			[
+				'the attachment type',
+				"import type { Attachment } from 'svelte/attachments';\nexport type R = Attachment<HTMLElement>;"
+			],
+			[
+				'its own files',
+				"import { y } from './y';\nimport { z } from './z.ts';\nexport const r = [y, z];"
+			]
+		])('allows %s', async (_label, code) => {
+			await expectAllowed(planted.environment, code);
+		});
+	});
+
+	describe('the host shows controls only through the public entry', () => {
+		const wrapped = [
+			['bits-ui', "import { Switch } from 'bits-ui';\nexport const r = Switch;"],
+			['a bits-ui subpath', "import 'bits-ui/x';"],
+			[
+				'@internationalized/date',
+				"import { CalendarDate } from '@internationalized/date';\nexport const r = CalendarDate;"
+			],
+			['another @internationalized package', "import '@internationalized/number';"]
+		] as const;
+
+		it.each(
+			hostFiles.flatMap(([set, filePath]) =>
+				wrapped.map(([name, line]) => [`${name} in ${set}`, filePath, line] as const)
+			)
+		)('refuses %s', async (_label, filePath, line) => {
+			const code = filePath.endsWith('.svelte')
+				? component(`\t${line.replaceAll('\n', '\n\t')}`, '<p>x</p>')
+				: line;
+			await expectRefused(filePath, code, IMPORTS);
+		});
+	});
+
+	describe('a spread carries only what bits-ui hands a {#snippet child(…)}', () => {
+		const head =
+			"\timport { Switch, Popover } from 'bits-ui';\n\tconst extra = { ONERROR: 'fetch(1)' };\n\tconst tag = 'p';";
+		const inToggle = (markup: string): string => component(head, markup);
+
+		const refused: readonly Allowed[] = [
+			['<img {...extra}>', inToggle('<img alt="" src="./a.png" {...extra} /><p>{tag}</p>')],
+			['<Switch.Root {...rest}>', inToggle('<Switch.Root {...extra}></Switch.Root><p>{tag}</p>')],
+			[
+				'a child prop spread inside a nested snippet',
+				inToggle(
+					'<Switch.Root>{#snippet child({ props })}{#snippet inner()}<button {...props}>x</button>{/snippet}{@render inner()}{/snippet}</Switch.Root><p>{tag}{extra.ONERROR}</p>'
+				)
+			],
+			[
+				'a spread of props.x',
+				inToggle(
+					'<Switch.Root>{#snippet child({ props })}<button {...props.x}>x</button>{/snippet}</Switch.Root><p>{tag}{extra.ONERROR}</p>'
+				)
+			],
+			[
+				'a spread inside {#snippet other({ props })}',
+				inToggle(
+					'<Switch.Root>{#snippet other({ props })}<button {...props}>x</button>{/snippet}</Switch.Root><p>{tag}{extra.ONERROR}</p>'
+				)
+			],
+			[
+				'the child props spread onto a component',
+				inToggle(
+					'<Switch.Root>{#snippet child({ props })}<Switch.Thumb {...props} />{/snippet}</Switch.Root><p>{tag}{extra.ONERROR}</p>'
+				)
+			],
+			[
+				'a name the each block shadows',
+				inToggle(
+					'<Switch.Root>{#snippet child({ props })}<span {...props}>x</span>{#each [extra] as props (props)}<button {...props}>x</button>{/each}{/snippet}</Switch.Root><p>{tag}</p>'
+				)
+			],
+			[
+				'a child parameter that is not destructured',
+				inToggle(
+					'<Switch.Root>{#snippet child(props)}<button {...props}>x</button>{/snippet}</Switch.Root><p>{tag}{extra.ONERROR}</p>'
+				)
+			],
+			[
+				'another name from the child snippet',
+				inToggle(
+					'<Switch.Root>{#snippet child({ checked })}<button {...checked}>x</button>{/snippet}</Switch.Root><p>{tag}{extra.ONERROR}</p>'
+				)
+			],
+			[
+				'<svelte:element> outside the card',
+				inToggle('<svelte:element this={tag}>{extra.ONERROR}</svelte:element><Switch.Root />')
+			]
+		];
+
+		it.each(refused)('refuses %s in a control', async (_label, code) => {
+			await expectRefused(plannedOrReal.toggle, code, SPREADS);
+		});
+
+		it.each([
+			['a page', planted.routesSvelte],
+			['the frame', planted.gallerySvelte],
+			['a check', planted.checkSvelte],
+			["a check's harness", plannedOrReal.recording]
+		])('refuses a spread and <svelte:element> in %s', async (_label, filePath) => {
+			const code = component(
+				"\tconst extra = { title: 'x' };\n\tconst tag = 'p';",
+				'<p {...extra}>x</p><svelte:element this={tag}>y</svelte:element>'
+			);
+			const messages = await lintPlanted(filePath, code);
+			expect(messages.filter((message) => message.ruleId === SPREADS)).toHaveLength(2);
+		});
+
+		it.each([
+			[
+				'{#snippet child({ props })}<button {...props}>',
+				inToggle(
+					'<Switch.Root>{#snippet child({ props })}<button {...props}>{tag}{extra.ONERROR}</button>{/snippet}</Switch.Root>'
+				)
+			],
+			[
+				'{#snippet child({ wrapperProps })}<div {...wrapperProps}>',
+				inToggle(
+					'<Popover.Root><Popover.Content>{#snippet child({ wrapperProps, props })}<div {...wrapperProps}><div {...props}>{tag}{extra.ONERROR}</div></div>{/snippet}</Popover.Content></Popover.Root>'
+				)
+			],
+			[
+				'the child props renamed',
+				inToggle(
+					'<Switch.Root>{#snippet child({ props: own })}<button {...own}>{tag}{extra.ONERROR}</button>{/snippet}</Switch.Root>'
+				)
+			]
+		])('allows %s', async (_label, code) => {
+			await expectAllowed(plannedOrReal.toggle, code);
+		});
+	});
+
+	it("switches off Kit's resolve() rule for Button's link alone", async () => {
+		const ruleOf = async (filePath: string): Promise<unknown> => {
+			const config = (await realLinter.calculateConfigForFile(filePath)) as Linter.Config;
+			const entry = config.rules?.['svelte/no-navigation-without-resolve'];
+			return Array.isArray(entry) ? entry[0] : entry;
+		};
+		expect(await ruleOf(plannedOrReal.button)).toBe(0);
+		expect(await ruleOf(plannedOrReal.checkbox)).toBe(2);
 	});
 });
