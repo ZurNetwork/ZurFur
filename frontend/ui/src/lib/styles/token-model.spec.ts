@@ -8,6 +8,7 @@ import {
 	resolveToken,
 	type ModelRefusalReason,
 	type ParseOutcome,
+	type Refusal,
 	type TokenModel
 } from './token-model';
 
@@ -45,6 +46,28 @@ function parsedOrFail(outcome: ParseOutcome): TokenModel {
 
 function reasons(outcome: ParseOutcome): readonly ModelRefusalReason[] {
 	return outcome.kind === 'refused' ? outcome.refusals.map((refusal) => refusal.reason) : [];
+}
+
+function refusalsOf(outcome: ParseOutcome): readonly Refusal[] {
+	return outcome.kind === 'refused' ? outcome.refusals : [];
+}
+
+/** A type section with one group of one style; the overrides replace the style's fields. */
+function typeSection(family: string, style: Fields = {}): Fields {
+	const heading = {
+		name: 'Heading',
+		fontSize: '24px',
+		lineHeight: '32px',
+		fontWeight: 600,
+		letterSpacing: '-0.01em',
+		sample: 'A heading',
+		usage: 'Used for a test.',
+		...style
+	};
+	const typeGroup = { name: 'UI', family, note: 'A note.', styles: [heading] };
+	return {
+		type: { fonts: [], families: { ui: 'sans-serif', mono: 'monospace' }, groups: [typeGroup] }
+	};
 }
 
 const none = {};
@@ -264,6 +287,52 @@ describe('the token files', () => {
 		['a name that is not text', { name: 7 }]
 	])('refuse %s', (_label, over) => {
 		expect(reasons(parseTokenModel(fixture(over), none))).toContain('malformed');
+	});
+
+	it.each([
+		[
+			'letterSpacing with a second declaration',
+			'letterSpacing',
+			'-0.01em; background-image: url(https://x.invalid/type.png)'
+		],
+		['fontSize with a second declaration', 'fontSize', '16px;color:red'],
+		['lineHeight with !important', 'lineHeight', '24px !important'],
+		['fontSize with a newline', 'fontSize', '16px\n']
+	])('refuse a type style whose %s', (_label, field, value) => {
+		const outcome = parseTokenModel(fixture(typeSection('ui', { [field]: value })), none);
+		const expected = [
+			{
+				reason: 'value-off-allow-list',
+				where: `type.groups[0].styles[0].${field}`,
+				detail: `"${field}" is not on the allow-list`
+			}
+		];
+		expect(refusalsOf(outcome)).toEqual(expected);
+	});
+
+	it.each(['ui);color:red;x:var(--a', 'Ui'])(
+		'refuse a type group whose family %j is not a token name',
+		(family) => {
+			const outcome = parseTokenModel(fixture(typeSection(family)), none);
+			const expected = [
+				{
+					reason: 'bad-name',
+					where: 'type.groups[0].family',
+					detail: '"family" must be a token name, such as ui'
+				}
+			];
+			expect(refusalsOf(outcome)).toEqual(expected);
+		}
+	);
+
+	it('read a type style with the design system values', () => {
+		const model = parsedOrFail(parseTokenModel(fixture(typeSection('mono')), none));
+		const style = model.type.groups[0]?.styles[0];
+		expect([model.type.groups[0]?.family, style?.fontSize, style?.letterSpacing]).toEqual([
+			'mono',
+			'24px',
+			'-0.01em'
+		]);
 	});
 
 	it('read a name such as constructor as an ordinary group name', () => {

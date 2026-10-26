@@ -1,5 +1,7 @@
 import { MOTION_ATTRIBUTE, SKIN_ATTRIBUTE, type Skin } from '../../lib/styles/environment.ts';
 import {
+	isAllowedFamilyList,
+	isAllowedValue,
 	parseTokenModel,
 	valueIn,
 	type ModelRefusalReason,
@@ -13,7 +15,6 @@ import {
 /** Why the generator turned the token files away, on top of the model's reasons. */
 export type GenerateRefusalReason =
 	| ModelRefusalReason
-	| 'value-off-allow-list'
 	| 'bad-font-family'
 	| 'skinned-outside-skin-blocks'
 	| 'unclassified-duration'
@@ -27,36 +28,6 @@ export type GenerateRefusal = Refusal<GenerateRefusalReason>;
 export type GenerateOutcome =
 	| { readonly kind: 'generated'; readonly css: string }
 	| { readonly kind: 'refused'; readonly refusals: readonly GenerateRefusal[] };
-
-// ---------------------------------------------------------------------------
-// The allow-list: what a token value may be once it reaches a stylesheet.
-// Spaces are literal spaces, so a newline or a tab never passes.
-// ---------------------------------------------------------------------------
-
-const NUMBER = String.raw`-?(?:\d+|\d*\.\d+)(?:px|rem|em|%|ms|s|deg)?`;
-const HEX = String.raw`#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})`;
-const IDENT = String.raw`[a-z][a-z0-9-]*`;
-const RGB = String.raw`rgba?\( *${NUMBER}(?: *, *${NUMBER}){2,3} *\)`;
-const CUBIC_BEZIER = String.raw`cubic-bezier\( *${NUMBER}(?: *, *${NUMBER}){3} *\)`;
-const ATOM = `(?:${NUMBER}|${HEX}|${IDENT}|${RGB}|${CUBIC_BEZIER})`;
-
-/** A space- and comma-separated list of hex colours, numbers with a unit or none, idents, rgb()/rgba() and cubic-bezier(). */
-const VALUE = new RegExp(`^${ATOM}(?: +${ATOM})*(?: *, *${ATOM}(?: +${ATOM})*)*$`, 'i');
-
-const FAMILY_NAME = String.raw`(?:"[A-Za-z0-9 ]+"|[A-Za-z][A-Za-z0-9-]*)`;
-
-/** A comma-separated list of quoted family names and idents. */
-const FAMILY_LIST = new RegExp(`^${FAMILY_NAME}(?:, *${FAMILY_NAME})*$`);
-
-/** True when a literal value may be written into a stylesheet. */
-export function isAllowedValue(text: string): boolean {
-	return VALUE.test(text);
-}
-
-/** True when a font family list may be written into a stylesheet. */
-export function isAllowedFamilyList(text: string): boolean {
-	return FAMILY_LIST.test(text);
-}
 
 // ---------------------------------------------------------------------------
 // What each group becomes.

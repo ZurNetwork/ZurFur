@@ -13,10 +13,39 @@ export function isTokenName(text: string): text is TokenName {
 	return TOKEN_NAME.test(text);
 }
 
+// The allow-list: what a value may be once it reaches a stylesheet or a style
+// attribute. Spaces are literal spaces, so a newline or a tab never passes.
+
+const NUMBER = String.raw`-?(?:\d+|\d*\.\d+)(?:px|rem|em|%|ms|s|deg)?`;
+const HEX = String.raw`#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})`;
+const IDENT = String.raw`[a-z][a-z0-9-]*`;
+const RGB = String.raw`rgba?\( *${NUMBER}(?: *, *${NUMBER}){2,3} *\)`;
+const CUBIC_BEZIER = String.raw`cubic-bezier\( *${NUMBER}(?: *, *${NUMBER}){3} *\)`;
+const ATOM = `(?:${NUMBER}|${HEX}|${IDENT}|${RGB}|${CUBIC_BEZIER})`;
+
+/** A space- and comma-separated list of hex colours, numbers with a unit or none, idents, rgb()/rgba() and cubic-bezier(). */
+const VALUE = new RegExp(`^${ATOM}(?: +${ATOM})*(?: *, *${ATOM}(?: +${ATOM})*)*$`, 'i');
+
+const FAMILY_NAME = String.raw`(?:"[A-Za-z0-9 ]+"|[A-Za-z][A-Za-z0-9-]*)`;
+
+/** A comma-separated list of quoted family names and idents. */
+const FAMILY_LIST = new RegExp(`^${FAMILY_NAME}(?:, *${FAMILY_NAME})*$`);
+
+/** True when a literal value may be written into a stylesheet or a style attribute. */
+export function isAllowedValue(text: string): boolean {
+	return VALUE.test(text);
+}
+
+/** True when a font family list may be written into a stylesheet. */
+export function isAllowedFamilyList(text: string): boolean {
+	return FAMILY_LIST.test(text);
+}
+
 /** Why the token files were turned away. */
 export type ModelRefusalReason =
 	| 'malformed'
 	| 'bad-name'
+	| 'value-off-allow-list'
 	| 'duplicate-name'
 	| 'embedded-reference'
 	| 'dangling-reference'
@@ -89,7 +118,8 @@ export interface TypeStyle {
 
 export interface TypeGroup {
 	readonly name: string;
-	readonly family: string;
+	/** The font family token's stem: `ui` names `--font-ui`. */
+	readonly family: TokenName;
 	readonly note: string;
 	readonly styles: readonly TypeStyle[];
 }
@@ -364,24 +394,52 @@ function parseFonts(raw: unknown, refusals: Refusal[]): readonly FontFile[] | un
 	return fonts;
 }
 
+/**
+ * A style field's text when it is on the allow-list; otherwise a refusal naming
+ * the field is recorded. The refusal leaves the text out, since pages show it.
+ */
+function allowedValue(
+	text: string | undefined,
+	field: string,
+	where: string,
+	refusals: Refusal[]
+): string | undefined {
+	if (text === undefined || isAllowedValue(text)) return text;
+	refusals.push(
+		refuse('value-off-allow-list', `${where}.${field}`, `"${field}" is not on the allow-list`)
+	);
+	return undefined;
+}
+
 function parseTypeStyle(raw: unknown, where: string, refusals: Refusal[]): TypeStyle | undefined {
 	if (!isFields(raw)) {
 		refusals.push(refuse('malformed', where, 'a type style is an object'));
 		return undefined;
 	}
 	const name = textField(raw, 'name', where, refusals);
-	const fontSize = textField(raw, 'fontSize', where, refusals);
-	const lineHeight = textField(raw, 'lineHeight', where, refusals);
+	const rawFontSize = textField(raw, 'fontSize', where, refusals);
+	const rawLineHeight = textField(raw, 'lineHeight', where, refusals);
 	const sample = textField(raw, 'sample', where, refusals);
 	const usage = textField(raw, 'usage', where, refusals);
 	const fontWeight = fieldOf(raw, 'fontWeight');
-	const letterSpacing = fieldOf(raw, 'letterSpacing');
+	const rawLetterSpacing = fieldOf(raw, 'letterSpacing');
 	if (typeof fontWeight !== 'number') {
 		refusals.push(refuse('malformed', where, '"fontWeight" must be a number'));
 	}
-	if (letterSpacing !== undefined && typeof letterSpacing !== 'string') {
+	const isLetterSpacingText =
+		rawLetterSpacing === undefined || typeof rawLetterSpacing === 'string';
+	if (!isLetterSpacingText) {
 		refusals.push(refuse('malformed', where, '"letterSpacing" must be text when present'));
 	}
+	const fontSize = allowedValue(rawFontSize, 'fontSize', where, refusals);
+	const lineHeight = allowedValue(rawLineHeight, 'lineHeight', where, refusals);
+	const letterSpacing = allowedValue(
+		typeof rawLetterSpacing === 'string' ? rawLetterSpacing : undefined,
+		'letterSpacing',
+		where,
+		refusals
+	);
+	const isLetterSpacingSound = rawLetterSpacing === undefined || letterSpacing !== undefined;
 	const isWhole =
 		name !== undefined &&
 		fontSize !== undefined &&
@@ -389,17 +447,9 @@ function parseTypeStyle(raw: unknown, where: string, refusals: Refusal[]): TypeS
 		sample !== undefined &&
 		usage !== undefined &&
 		typeof fontWeight === 'number' &&
-		(letterSpacing === undefined || typeof letterSpacing === 'string');
+		isLetterSpacingSound;
 	if (!isWhole) return undefined;
-	return {
-		name,
-		fontSize,
-		lineHeight,
-		fontWeight,
-		letterSpacing: typeof letterSpacing === 'string' ? letterSpacing : undefined,
-		sample,
-		usage
-	};
+	return { name, fontSize, lineHeight, fontWeight, letterSpacing, sample, usage };
 }
 
 function parseTypeGroup(raw: unknown, where: string, refusals: Refusal[]): TypeGroup | undefined {
@@ -410,6 +460,12 @@ function parseTypeGroup(raw: unknown, where: string, refusals: Refusal[]): TypeG
 	const name = textField(raw, 'name', where, refusals);
 	const family = textField(raw, 'family', where, refusals);
 	const note = textField(raw, 'note', where, refusals);
+	const isFamilyName = family !== undefined && isTokenName(family);
+	if (family !== undefined && !isFamilyName) {
+		refusals.push(
+			refuse('bad-name', `${where}.family`, '"family" must be a token name, such as ui')
+		);
+	}
 	const rawStyles = fieldOf(raw, 'styles');
 	if (!isList(rawStyles)) {
 		refusals.push(refuse('malformed', where, '"styles" must be a list'));
@@ -419,7 +475,7 @@ function parseTypeGroup(raw: unknown, where: string, refusals: Refusal[]): TypeG
 		const style = parseTypeStyle(entry, `${where}.styles[${String(index)}]`, refusals);
 		return style === undefined ? [] : [style];
 	});
-	if (name === undefined || family === undefined || note === undefined) return undefined;
+	if (name === undefined || !isFamilyName || note === undefined) return undefined;
 	return { name, family, note, styles };
 }
 

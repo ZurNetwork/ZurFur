@@ -2,13 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import additions from '../../lib/styles/tokens.additions.json';
 import tokens from '../../lib/styles/tokens.json';
-import {
-	generateTokensCss,
-	isAllowedFamilyList,
-	isAllowedValue,
-	type GenerateOutcome,
-	type GenerateRefusalReason
-} from './generate';
+import { isAllowedFamilyList, isAllowedValue } from '../../lib/styles/token-model';
+import { generateTokensCss, type GenerateOutcome, type GenerateRefusalReason } from './generate';
 
 const committed = readFileSync(new URL('../../lib/styles/tokens.css', import.meta.url), 'utf8');
 
