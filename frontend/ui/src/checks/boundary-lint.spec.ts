@@ -50,6 +50,7 @@ const plannedOrReal = {
 	button: 'src/lib/controls/Button.svelte',
 	checkbox: 'src/lib/controls/Checkbox.svelte',
 	toggle: 'src/lib/controls/Toggle.svelte',
+	iconButton: 'src/lib/controls/IconButton.svelte',
 	controlTypes: 'src/lib/controls/types.ts',
 	context: 'src/lib/environment/context.ts',
 	card: 'src/lib/surfaces/Card.svelte',
@@ -2348,6 +2349,8 @@ describe("the pattern's bans in what ships", { timeout: 120_000 }, () => {
 		const head =
 			"\timport { Switch, Popover } from 'bits-ui';\n\tconst extra = { ONERROR: 'fetch(1)' };\n\tconst tag = 'p';";
 		const inToggle = (markup: string): string => component(head, markup);
+		const handOffSnippet =
+			'{#snippet child({ props }: { readonly props: Record<string, unknown> })}<a {...props}>x</a>{/snippet}';
 
 		const refused: readonly Allowed[] = [
 			['<img {...extra}>', inToggle('<img alt="" src="./a.png" {...extra} /><p>{tag}</p>')],
@@ -2397,6 +2400,73 @@ describe("the pattern's bans in what ships", { timeout: 120_000 }, () => {
 			[
 				'<svelte:element> outside the card',
 				inToggle('<svelte:element this={tag}>{extra.ONERROR}</svelte:element><Switch.Root />')
+			],
+			[
+				'a top-level child snippet handed as trigger to our own component',
+				component(
+					"\timport Tooltip from './Tooltip.svelte';\n\tconst noop = (): void => {};",
+					`${handOffSnippet}\n<Tooltip words="x" trigger={child} onPress={noop} />`
+				)
+			],
+			[
+				'a top-level child snippet rendered by hand',
+				component(
+					'\tinterface Props {\n\t\treadonly raw: string;\n\t\treadonly label: string;\n\t}\n\tlet { raw, label }: Props = $props();',
+					`${handOffSnippet}\n{@render child({ props: { href: raw, ONCLICK: label, ping: raw } })}`
+				)
+			],
+			[
+				'a snippet passed as {child} to a bits-ui root and also rendered by hand',
+				inToggle(
+					'{#snippet child({ props })}<button {...props}>{tag}</button>{/snippet}<Switch.Root {child} />{@render child({ props: extra })}'
+				)
+			],
+			[
+				'a snippet passed as {child} to a bits-ui root and also named in the script',
+				component(
+					`${head}\n\tconst kept = child;`,
+					'{#snippet child({ props })}<button {...props}>{tag}{extra.ONERROR}{kept}</button>{/snippet}<Switch.Root {child} />'
+				)
+			],
+			[
+				'a snippet passed to a bits-ui root as another prop',
+				inToggle(
+					'{#snippet child({ props })}<button {...props}>{tag}{extra.ONERROR}</button>{/snippet}<Switch.Root thumb={child} />'
+				)
+			],
+			[
+				'a child snippet under a bits-ui root that also renders it by hand',
+				inToggle(
+					'<Switch.Root>{#snippet child({ props })}<button {...props}>{tag}</button>{/snippet}{@render child({ props: extra })}</Switch.Root>'
+				)
+			],
+			[
+				'a child snippet under a component that is not from bits-ui',
+				component(
+					"\timport Tooltip from './Tooltip.svelte';\n\tconst noop = (): void => {};",
+					'<Tooltip words="x" onPress={noop}>{#snippet child({ props })}<button {...props}>x</button>{/snippet}</Tooltip>'
+				)
+			],
+			[
+				'a child snippet under an alias of a bits-ui namespace',
+				component(
+					`${head}\n\tconst S = Switch;`,
+					'<S.Root>{#snippet child({ props })}<button {...props}>{tag}{extra.ONERROR}</button>{/snippet}</S.Root>'
+				)
+			],
+			[
+				'a snippet passed as {child} to an alias of a bits-ui namespace',
+				component(
+					`${head}\n\tconst S = Switch;`,
+					'{#snippet child({ props })}<button {...props}>{tag}{extra.ONERROR}</button>{/snippet}<S.Root {child} />'
+				)
+			],
+			[
+				'a child snippet under a same-named component that is not from bits-ui',
+				component(
+					"\timport Switch from './PillSwitch.svelte';",
+					'<Switch.Root>{#snippet child({ props })}<button {...props}>x</button>{/snippet}</Switch.Root>'
+				)
 			]
 		];
 
@@ -2436,9 +2506,49 @@ describe("the pattern's bans in what ships", { timeout: 120_000 }, () => {
 				inToggle(
 					'<Switch.Root>{#snippet child({ props: own })}<button {...own}>{tag}{extra.ONERROR}</button>{/snippet}</Switch.Root>'
 				)
+			],
+			[
+				'a top-level snippet passed as {child} to a bits-ui root',
+				inToggle(
+					'{#snippet child({ props })}<button {...props}>{tag}{extra.ONERROR}</button>{/snippet}<Switch.Root {child} /><Switch.Root {child} />'
+				)
+			],
+			[
+				'a top-level snippet passed as child={child} to a bits-ui root',
+				inToggle(
+					'{#snippet child({ props })}<button {...props}>{tag}{extra.ONERROR}</button>{/snippet}<Switch.Root child={child} />'
+				)
 			]
 		])('allows %s', async (_label, code) => {
 			await expectAllowed(plannedOrReal.toggle, code);
+		});
+
+		it("allows IconButton's hand-off to Tooltip in IconButton alone", async () => {
+			const iconButton = readFileSync(`${uiRoot}${plannedOrReal.iconButton}`, 'utf8');
+			expect(iconButton).toContain('trigger={child}');
+			await expectAllowed(plannedOrReal.iconButton, iconButton);
+			await expectRefused(plannedOrReal.toggle, iconButton, SPREADS);
+		});
+
+		it.each([
+			[
+				'rendered by hand',
+				'{#snippet child({ props })}<button {...props}>x</button>{/snippet}\n{@render child({ props: { title: label } })}'
+			],
+			[
+				'handed to Tooltip as another prop',
+				'{#snippet child({ props })}<button {...props}>x</button>{/snippet}\n<Tooltip words={label} trigger={child} label={child} onPress={noop} />'
+			],
+			[
+				'handed as trigger to another component of ours',
+				'{#snippet child({ props })}<button {...props}>x</button>{/snippet}\n<Toggle label={label} trigger={child} />'
+			]
+		])('refuses a child snippet %s in IconButton', async (_label, markup) => {
+			const code = component(
+				"\timport Tooltip from './Tooltip.svelte';\n\timport Toggle from './Toggle.svelte';\n\tconst label = 'x';\n\tconst noop = (): void => {};",
+				markup
+			);
+			await expectRefused(plannedOrReal.iconButton, code, SPREADS);
 		});
 	});
 
