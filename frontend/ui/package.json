@@ -22,7 +22,9 @@
 		"lint": "prettier --check . && eslint . --no-inline-config --max-warnings 0",
 		"format": "prettier --write .",
 		"test:unit": "vitest",
-		"test": "vitest --run"
+		"test": "vitest --run",
+		"tokens": "node src/checks/tokens/write.ts",
+		"tokens:copy": "node src/checks/tokens/copy.ts"
 	},
 	"peerDependencies": {
 		"svelte": "^5.56.1"

@@ -58,16 +58,30 @@ const forbiddenFolders: ReadonlySet<string> = new Set([
 const allowedExtensions: ReadonlySet<string> = new Set(['.ts', '.svelte', '.css']);
 
 /**
- * The one JSON file a folder may hold, its node. Any other `.json` could be a
- * `package.json` or `tsconfig.json` that sends an import outside src/.
+ * The JSON file a folder may hold, its node (the two token files below are the
+ * only others). Any other `.json` could be a `package.json` or `tsconfig.json`
+ * that sends an import outside src/.
  */
 const nodeFileName = 'NODE.inf.json';
 
 /** Kit's page shell, the one HTML file, and only at src/'s root. */
 const pageShell = 'app.html';
 
+/**
+ * The two token files, the only other JSON files, allowed by exact path
+ * relative to src/. `tokens.json` is read by the copy step and its match spec,
+ * the generator, and, through the package's `./tokens.json` export, the
+ * gallery's token pages; `tokens.additions.json` by the generator and the
+ * token model.
+ */
+const tokenFiles: ReadonlySet<string> = new Set([
+	'lib/styles/tokens.json',
+	'lib/styles/tokens.additions.json'
+]);
+
 function isAllowedFile(relative: string, name: string): boolean {
 	if (name === nodeFileName || relative === pageShell) return true;
+	if (tokenFiles.has(relative.split(/[/\\]/).join('/'))) return true;
 	const dot = name.lastIndexOf('.');
 	return dot !== -1 && allowedExtensions.has(name.slice(dot));
 }
@@ -211,6 +225,11 @@ describe('forbidden files', () => {
 		['a package manifest', 'lib/vendor/package.json'],
 		['a tsconfig', 'lib/tsconfig.json'],
 		['any other JSON file', 'lib/x.json'],
+		['another JSON file beside the tokens', 'lib/styles/other.json'],
+		['the token file name one folder up', 'lib/tokens.json'],
+		['the token file name one folder down', 'lib/styles/nested/tokens.json'],
+		['the token file name in the gallery', 'routes/tokens.json'],
+		['the token additions file name in the gallery', 'routes/tokens.additions.json'],
 		['an HTML file in lib', 'lib/evil.html'],
 		['a page shell below the root', 'routes/app.html'],
 		['a page shell in another case', 'App.html'],
@@ -230,6 +249,8 @@ describe('forbidden files', () => {
 		['a type declaration', 'lib/x.d.ts'],
 		['a runes module', 'lib/x.svelte.ts'],
 		['a stylesheet', 'lib/styles/tokens.css'],
+		['the token file', 'lib/styles/tokens.json'],
+		['the token additions file', 'lib/styles/tokens.additions.json'],
 		['a node file', 'NODE.inf.json'],
 		['a nested node file', 'lib/a/NODE.inf.json']
 	])('allows %s', (_label, relative) => {

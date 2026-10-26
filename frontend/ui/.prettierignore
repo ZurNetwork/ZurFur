@@ -11,3 +11,9 @@ bun.lockb
 # Node files are formatted by the nodes tool (canonical form); prettier must not fight it.
 **/NODE.inf.json
 
+
+# The committed copy of the design system's tokens (byte for byte, but two samples), the stylesheet
+# generated from it, and the page shell whose bytes a check pins by hash.
+src/lib/styles/tokens.json
+src/lib/styles/tokens.css
+src/app.html
