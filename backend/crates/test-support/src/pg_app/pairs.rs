@@ -289,6 +289,8 @@ pub struct CommissionCall {
     pub kind: CallKind,
     /// The HTTP method.
     pub method: reqwest::Method,
+    /// The commissions router's path this call is sent to, as the router writes it.
+    pub route: &'static str,
     /// The path after `/commissions/{id}`: empty, or starting with `/`; any id it names is
     /// made up, and `{file}` stands where the route names a file key.
     pub tail: String,
@@ -376,11 +378,12 @@ fn absent_tab() -> uuid::Uuid {
     uuid::Uuid::from_u128(0x0192_0000_0000_7000_8000_0000_0000_0001)
 }
 
-/// A call of `kind` whose tail names no file key.
+/// A call of `kind` to the router's `route`, sent to `tail` after the commission's id.
 fn call_of(
     label: &'static str,
     kind: CallKind,
     method: reqwest::Method,
+    route: &'static str,
     tail: impl Into<String>,
     body: CallBody,
 ) -> CommissionCall {
@@ -388,6 +391,7 @@ fn call_of(
         label,
         kind,
         method,
+        route,
         tail: tail.into(),
         body,
     }
@@ -400,6 +404,7 @@ pub fn rename_call() -> CommissionCall {
         "rename",
         CallKind::Call,
         reqwest::Method::PATCH,
+        "/commissions/{id}/title",
         "/title",
         CallBody::Json(body),
     )
@@ -424,6 +429,7 @@ pub fn new_write_calls() -> [CommissionCall; 11] {
         "move the lifecycle",
         CallKind::Call,
         reqwest::Method::PUT,
+        "/commissions/{id}/lifecycle",
         "/lifecycle",
         CallBody::Json(move_body),
     );
@@ -431,6 +437,7 @@ pub fn new_write_calls() -> [CommissionCall; 11] {
         "set the direction",
         CallKind::Call,
         reqwest::Method::PUT,
+        "/commissions/{id}/status/direction",
         "/status/direction",
         CallBody::Json(direction_body),
     );
@@ -438,6 +445,7 @@ pub fn new_write_calls() -> [CommissionCall; 11] {
         "clear the direction",
         CallKind::Call,
         reqwest::Method::DELETE,
+        "/commissions/{id}/status/direction",
         "/status/direction",
         CallBody::Empty,
     );
@@ -445,6 +453,7 @@ pub fn new_write_calls() -> [CommissionCall; 11] {
         "set the deadline",
         CallKind::Call,
         reqwest::Method::PUT,
+        "/commissions/{id}/deadline",
         "/deadline",
         CallBody::Json(deadline_body),
     );
@@ -452,6 +461,7 @@ pub fn new_write_calls() -> [CommissionCall; 11] {
         "clear the deadline",
         CallKind::Call,
         reqwest::Method::DELETE,
+        "/commissions/{id}/deadline",
         "/deadline",
         CallBody::Empty,
     );
@@ -459,6 +469,7 @@ pub fn new_write_calls() -> [CommissionCall; 11] {
         "set Delayed",
         CallKind::Call,
         reqwest::Method::PUT,
+        "/commissions/{id}/status/deadline",
         "/status/deadline",
         CallBody::Json(delayed_body),
     );
@@ -466,6 +477,7 @@ pub fn new_write_calls() -> [CommissionCall; 11] {
         "clear Delayed",
         CallKind::Call,
         reqwest::Method::DELETE,
+        "/commissions/{id}/status/deadline",
         "/status/deadline",
         CallBody::Empty,
     );
@@ -473,6 +485,7 @@ pub fn new_write_calls() -> [CommissionCall; 11] {
         "raise a dispute",
         CallKind::Call,
         reqwest::Method::PUT,
+        "/commissions/{id}/dispute",
         "/dispute",
         CallBody::Empty,
     );
@@ -480,6 +493,7 @@ pub fn new_write_calls() -> [CommissionCall; 11] {
         "clear the dispute",
         CallKind::Call,
         reqwest::Method::DELETE,
+        "/commissions/{id}/dispute",
         "/dispute",
         CallBody::Empty,
     );
@@ -487,6 +501,7 @@ pub fn new_write_calls() -> [CommissionCall; 11] {
         "rate",
         CallKind::Call,
         reqwest::Method::PUT,
+        "/commissions/{id}/maturity",
         "/maturity",
         CallBody::Json(rating_body),
     );
@@ -494,6 +509,7 @@ pub fn new_write_calls() -> [CommissionCall; 11] {
         "declare slots",
         CallKind::Call,
         reqwest::Method::POST,
+        "/commissions/{id}/slots",
         "/slots",
         CallBody::Json(declare_body),
     );
@@ -518,6 +534,7 @@ pub fn read_call() -> CommissionCall {
         "the commission read",
         CallKind::Read,
         reqwest::Method::GET,
+        "/commissions/{id}",
         "",
         CallBody::Empty,
     )
@@ -529,6 +546,7 @@ pub fn changelog_read_call() -> CommissionCall {
         "the changelog read",
         CallKind::Read,
         reqwest::Method::GET,
+        "/commissions/{id}/changelog",
         "/changelog",
         CallBody::Empty,
     )
@@ -541,6 +559,7 @@ pub fn download_call() -> CommissionCall {
         "the download",
         CallKind::Read,
         reqwest::Method::GET,
+        "/commissions/{id}/files/{file_id}",
         tail,
         CallBody::Empty,
     )
@@ -554,6 +573,7 @@ pub fn placement_call(column: ColumnId) -> CommissionCall {
         "place a card",
         CallKind::Placement,
         reqwest::Method::POST,
+        "/commissions/{id}/placements",
         "/placements",
         CallBody::Json(body),
     )
@@ -588,6 +608,7 @@ fn other_calls() -> [CommissionCall; 15] {
         "delete",
         CallKind::Call,
         reqwest::Method::DELETE,
+        "/commissions/{id}",
         "",
         CallBody::Empty,
     );
@@ -595,6 +616,7 @@ fn other_calls() -> [CommissionCall; 15] {
         "write a note",
         CallKind::Call,
         reqwest::Method::POST,
+        "/commissions/{id}/notes",
         "/notes",
         CallBody::Json(note_body),
     );
@@ -602,6 +624,7 @@ fn other_calls() -> [CommissionCall; 15] {
         "link the channel",
         CallKind::Call,
         reqwest::Method::PUT,
+        "/commissions/{id}/channel",
         "/channel",
         CallBody::Json(channel_body),
     );
@@ -609,6 +632,7 @@ fn other_calls() -> [CommissionCall; 15] {
         "clear the channel",
         CallKind::Call,
         reqwest::Method::DELETE,
+        "/commissions/{id}/channel",
         "/channel",
         CallBody::Empty,
     );
@@ -616,6 +640,7 @@ fn other_calls() -> [CommissionCall; 15] {
         "archive",
         CallKind::Call,
         reqwest::Method::POST,
+        "/commissions/{id}/archive",
         "/archive",
         CallBody::Empty,
     );
@@ -623,6 +648,7 @@ fn other_calls() -> [CommissionCall; 15] {
         "unarchive",
         CallKind::Call,
         reqwest::Method::POST,
+        "/commissions/{id}/unarchive",
         "/unarchive",
         CallBody::Empty,
     );
@@ -630,6 +656,7 @@ fn other_calls() -> [CommissionCall; 15] {
         "grant a view",
         CallKind::Call,
         reqwest::Method::POST,
+        "/commissions/{id}/grants",
         "/grants",
         CallBody::Json(grant_body),
     );
@@ -637,6 +664,7 @@ fn other_calls() -> [CommissionCall; 15] {
         "revoke a view",
         CallKind::Call,
         reqwest::Method::DELETE,
+        "/commissions/{id}/grants/{account_id}",
         format!("/grants/{account}"),
         CallBody::Json(revoke_body),
     );
@@ -644,6 +672,7 @@ fn other_calls() -> [CommissionCall; 15] {
         "add an element",
         CallKind::Call,
         reqwest::Method::POST,
+        "/commissions/{id}/elements",
         "/elements",
         CallBody::Json(element_body),
     );
@@ -651,6 +680,7 @@ fn other_calls() -> [CommissionCall; 15] {
         "remove an element",
         CallKind::Call,
         reqwest::Method::DELETE,
+        "/commissions/{id}/elements/{element}",
         format!("/elements/{element}"),
         CallBody::Empty,
     );
@@ -658,6 +688,7 @@ fn other_calls() -> [CommissionCall; 15] {
         "declare a seat",
         CallKind::Call,
         reqwest::Method::POST,
+        "/commissions/{id}/seats",
         "/seats",
         CallBody::Json(seat_body),
     );
@@ -665,6 +696,7 @@ fn other_calls() -> [CommissionCall; 15] {
         "issue an invitation",
         CallKind::Call,
         reqwest::Method::POST,
+        "/commissions/{id}/invitations",
         "/invitations",
         CallBody::Json(invitation_body.clone()),
     );
@@ -672,6 +704,7 @@ fn other_calls() -> [CommissionCall; 15] {
         "revoke an invitation",
         CallKind::Call,
         reqwest::Method::DELETE,
+        "/commissions/{id}/invitations",
         "/invitations",
         CallBody::Json(invitation_body),
     );
@@ -679,6 +712,7 @@ fn other_calls() -> [CommissionCall; 15] {
         "upload a file",
         CallKind::Call,
         reqwest::Method::POST,
+        "/commissions/{id}/files",
         "/files",
         CallBody::Upload,
     );
@@ -686,6 +720,7 @@ fn other_calls() -> [CommissionCall; 15] {
         "mark up a file",
         CallKind::Call,
         reqwest::Method::POST,
+        "/commissions/{id}/files/{file_id}/markup",
         format!("/files/{FILE_PLACEHOLDER}/markup"),
         CallBody::Json(markup_body),
     );
