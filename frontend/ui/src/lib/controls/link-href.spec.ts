@@ -12,7 +12,21 @@ const sameOriginPaths = [
 	'/a/b?x=a//b'
 ];
 
-const bareRoots = ['/', '.', './', '..', '../', '../..', '../../'];
+const bareRoots = [
+	'/',
+	'.',
+	'./',
+	'..',
+	'../',
+	'../..',
+	'../../',
+	'../../..',
+	'../../../',
+	'../../../../'
+];
+
+/** Near misses of the bare roots: each a stray dot or slash away from one. */
+const notBareRoots = ['.../', '../.', '.././', '..//', '../../.', '/..', '//', '..../', '../..//'];
 
 const refused = [
 	'/a/%2e%2e//evil.example/x',
@@ -60,7 +74,11 @@ describe('isSameOriginPath', () => {
 		expect(isSameOriginPath(text)).toBe(true);
 	});
 
-	it.each(['/', './', '..', '../..'])('refuses the bare root %j', (text) => {
+	it.each(bareRoots)('refuses the bare root %j', (text) => {
+		expect(isSameOriginPath(text)).toBe(false);
+	});
+
+	it.each(notBareRoots)('refuses %j', (text) => {
 		expect(isSameOriginPath(text)).toBe(false);
 	});
 
@@ -74,14 +92,17 @@ describe('isLinkHref', () => {
 		expect(isLinkHref(text)).toBe(true);
 	});
 
-	it.each(refused)('refuses %j', (text) => {
+	it.each([...refused, ...notBareRoots])('refuses %j', (text) => {
 		expect(isLinkHref(text)).toBe(false);
 	});
 
-	it.each([0, 1, 2])('accepts the relative paths SvelteKit emits %i folders deep', (depth) => {
-		const forms = kitRelativeForms(depth, '/den/commissions');
-		expect(forms.filter((form) => !isLinkHref(form))).toEqual([]);
-	});
+	it.each([0, 1, 2, 3, 4])(
+		'accepts the relative paths SvelteKit emits %i folders deep',
+		(depth) => {
+			const forms = kitRelativeForms(depth, '/den/commissions');
+			expect(forms.filter((form) => !isLinkHref(form))).toEqual([]);
+		}
+	);
 
 	it('accepts the absolute paths SvelteKit emits with no base', () => {
 		const forms = ['/', '/den/commissions', '/den/commissions/'];
@@ -89,7 +110,7 @@ describe('isLinkHref', () => {
 	});
 
 	it('mints only what it accepts, so every same-origin path is a link', () => {
-		const everything = [...sameOriginPaths, ...bareRoots, ...refused];
+		const everything = [...sameOriginPaths, ...bareRoots, ...refused, ...notBareRoots];
 		const paths = everything.filter((text) => isSameOriginPath(text));
 		expect(paths.filter((text) => !isLinkHref(text))).toEqual([]);
 	});
