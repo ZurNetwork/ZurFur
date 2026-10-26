@@ -12,8 +12,15 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-/** Installed packages allowed to carry an install script or a `binding.gyp`, by install name. */
-export const ALLOWED_INSTALL_SCRIPTS = Object.freeze([]);
+/**
+ * The install scripts an installed package may carry, by install name: each exactly as given, and nothing else.
+ * A `binding.gyp` is never allowed. esbuild's postinstall never runs: every install passes --ignore-scripts.
+ */
+export const ALLOWED_INSTALL_SCRIPTS = Object.freeze({
+	esbuild: Object.freeze({ postinstall: 'node install.js' })
+});
+
+const NO_INSTALL_SCRIPTS = Object.freeze({});
 
 /** The install command the guard wraps, named in its messages. */
 export const INSTALL_COMMAND = 'yarn --cwd frontend install --frozen-lockfile --ignore-scripts';
@@ -670,6 +677,19 @@ function realpathOrNull(file) {
 	}
 }
 
+/** Refuses every install script of the package `name` except one whose text its allowance gives exactly. */
+function checkInstallScripts(report, manifestFile, name, scripts) {
+	const allowance = Object.hasOwn(ALLOWED_INSTALL_SCRIPTS, name) ? ALLOWED_INSTALL_SCRIPTS[name] : NO_INSTALL_SCRIPTS;
+	for (const script of INSTALL_SCRIPTS) {
+		if (!Object.hasOwn(scripts, script)) continue;
+		if (!Object.hasOwn(allowance, script)) {
+			report.finding('install-script', manifestFile, `"${name}" has a "${script}" script`);
+		} else if (scripts[script] !== allowance[script]) {
+			report.finding('install-script', manifestFile, `"${name}" has a "${script}" script other than the allowed ${JSON.stringify(allowance[script])}`);
+		}
+	}
+}
+
 function checkPackage(report, ctx, pkgPath, name, atTop) {
 	const stat = lstatOrNull(pkgPath);
 	if (!stat) return;
@@ -688,22 +708,15 @@ function checkPackage(report, ctx, pkgPath, name, atTop) {
 	if (atTop && name === UI_NAME) {
 		report.finding('workspace-link', pkgPath, `is a real folder: it must be a symlink to ${report.relative(ctx.workspaceLinks.get(UI_NAME))}`);
 	}
-	const allowed = ALLOWED_INSTALL_SCRIPTS.includes(name);
 	const manifestFile = path.join(pkgPath, 'package.json');
 	if (!lstatOrNull(manifestFile)) {
 		report.finding('package-manifest', pkgPath, 'an installed folder with no package.json');
 	} else {
 		const manifest = readJson(report, manifestFile);
 		const scripts = manifest?.scripts;
-		if (!allowed && scripts !== null && typeof scripts === 'object') {
-			for (const script of INSTALL_SCRIPTS) {
-				if (Object.hasOwn(scripts, script)) {
-					report.finding('install-script', manifestFile, `"${name}" has a "${script}" script`);
-				}
-			}
-		}
+		if (scripts !== null && typeof scripts === 'object') checkInstallScripts(report, manifestFile, name, scripts);
 	}
-	if (!allowed && lstatOrNull(path.join(pkgPath, 'binding.gyp'))) {
+	if (lstatOrNull(path.join(pkgPath, 'binding.gyp'))) {
 		report.finding('binding-gyp', path.join(pkgPath, 'binding.gyp'), `"${name}" has a binding.gyp (an implicit install script)`);
 	}
 	walkNodeModules(report, ctx, path.join(pkgPath, 'node_modules'), false);
