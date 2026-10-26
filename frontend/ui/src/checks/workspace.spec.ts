@@ -115,7 +115,8 @@ describe('the frontend workspace', () => {
 		expect(ui.exports).toEqual({
 			'.': { types: './src/lib/index.ts', svelte: './src/lib/index.ts' },
 			'./styles': { types: './src/lib/styles/index.ts', svelte: './src/lib/styles/index.ts' },
-			'./tokens.json': './src/lib/styles/tokens.json'
+			'./tokens.json': './src/lib/styles/tokens.json',
+			'./tokens.additions.json': './src/lib/styles/tokens.additions.json'
 		});
 	});
 });

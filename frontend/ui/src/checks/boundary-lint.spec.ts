@@ -226,10 +226,14 @@ const htmlSinkRefusals: readonly Case[] = [
 	['document.write', "export const r = () => {\n\tdocument.write('x');\n};", PROPERTIES]
 ];
 
-/** The host's own spellings of its two subpath imports, and the rest it refuses. */
+/** The host's own spellings of its three subpath imports, and the rest it refuses. */
 const hostSubpathAllowed: readonly Allowed[] = [
 	['@zurfur/ui/styles', "import '@zurfur/ui/styles';"],
-	['@zurfur/ui/tokens.json', "import tokens from '@zurfur/ui/tokens.json';\nexport { tokens };"]
+	['@zurfur/ui/tokens.json', "import tokens from '@zurfur/ui/tokens.json';\nexport { tokens };"],
+	[
+		'@zurfur/ui/tokens.additions.json',
+		"import additions from '@zurfur/ui/tokens.additions.json';\nexport { additions };"
+	]
 ];
 
 const hostDeepImportRefusals: readonly Case[] = [
@@ -242,6 +246,12 @@ const hostDeepImportRefusals: readonly Case[] = [
 		IMPORTS
 	],
 	['styles?inline', "import '@zurfur/ui/styles?inline';", IMPORTS],
+	[
+		'tokens.additions.json?raw',
+		"import a from '@zurfur/ui/tokens.additions.json?raw';\nexport { a };",
+		IMPORTS
+	],
+	['a made-up json beside the tokens', "import '@zurfur/ui/tokens.extra.json';", IMPORTS],
 	['styles in another letter case', "import '@zurfur/ui/Styles';", IMPORTS],
 	['the package in another letter case', "import '@Zurfur/UI/styles';", IMPORTS],
 	['a re-export from inside the package', "export * from '@zurfur/ui/src/lib/x';", IMPORTS]
@@ -314,6 +324,11 @@ const componentRefusals: readonly Case[] = [
 	[
 		"the host's @zurfur/ui/tokens.json",
 		"import tokens from '@zurfur/ui/tokens.json';\nexport { tokens };",
+		IMPORTS
+	],
+	[
+		"the host's @zurfur/ui/tokens.additions.json",
+		"import a from '@zurfur/ui/tokens.additions.json';\nexport { a };",
 		IMPORTS
 	],
 	// Code Vite turns into a Worker or a WebAssembly loader.

@@ -71,8 +71,8 @@ const pageShell = 'app.html';
  * The two token files, the only other JSON files, allowed by exact path
  * relative to src/. `tokens.json` is read by the copy step and its match spec,
  * the generator, and, through the package's `./tokens.json` export, the
- * gallery's token pages; `tokens.additions.json` by the generator and the
- * token model.
+ * gallery's token pages; `tokens.additions.json` by the generator, its spec
+ * and, through the package's `./tokens.additions.json` export, the same pages.
  */
 const tokenFiles: ReadonlySet<string> = new Set([
 	'lib/styles/tokens.json',

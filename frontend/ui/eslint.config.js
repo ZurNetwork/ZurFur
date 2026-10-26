@@ -330,17 +330,18 @@ const anyCase = (text) =>
 		.join('');
 
 const HOST_SELF_MESSAGE =
-	'The host imports @zurfur/ui from its public entry, @zurfur/ui/styles and @zurfur/ui/tokens.json only, never a file inside it.';
+	'The host imports @zurfur/ui from its public entry, @zurfur/ui/styles, @zurfur/ui/tokens.json and @zurfur/ui/tokens.additions.json only, never a file inside it.';
 
 /**
  * The host's deep self imports: everything past the public entry but exactly
- * `@zurfur/ui/styles` and `@zurfur/ui/tokens.json`, as the exports map names
+ * `@zurfur/ui/styles`, `@zurfur/ui/tokens.json` and
+ * `@zurfur/ui/tokens.additions.json`, as the exports map names
  * them (no query, no case variant, no deeper path), read case-sensitively,
  * and the package's name in any other letter case.
  */
 const HOST_DEEP_SELF_IMPORTS = [
 	{
-		regex: '^@zurfur/ui/(?!(?:styles|tokens\\.json)$)',
+		regex: '^@zurfur/ui/(?!(?:styles|tokens\\.json|tokens\\.additions\\.json)$)',
 		caseSensitive: true,
 		message: HOST_SELF_MESSAGE
 	},

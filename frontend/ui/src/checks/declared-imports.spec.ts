@@ -259,7 +259,8 @@ const manifestWithSubpaths = manifestOf({
 	exports: {
 		'.': { types: './src/lib/index.ts', svelte: './src/lib/index.ts' },
 		'./styles': { types: './src/lib/styles/index.ts', svelte: './src/lib/styles/index.ts' },
-		'./tokens.json': './src/lib/styles/tokens.json'
+		'./tokens.json': './src/lib/styles/tokens.json',
+		'./tokens.additions.json': './src/lib/styles/tokens.additions.json'
 	}
 });
 
@@ -373,6 +374,11 @@ describe('declared imports', () => {
 				"import tokens from '@zurfur/ui/tokens.json';"
 			],
 			['the tokens in the frame', 'gallery/x.ts', "import tokens from '@zurfur/ui/tokens.json';"],
+			[
+				'the token additions in the frame',
+				'gallery/x.ts',
+				"import additions from '@zurfur/ui/tokens.additions.json';"
+			],
 			['the public entry in a route', 'routes/x.ts', "import * as ui from '@zurfur/ui';"]
 		])('allows %s, once the exports map names it', (_label, relative, text) => {
 			expect(reasonsWithSubpaths(relative, text)).toEqual([]);
@@ -382,6 +388,7 @@ describe('declared imports', () => {
 			['a file inside the styles', "import '@zurfur/ui/src/lib/styles/tokens.css';"],
 			['a path below the styles', "import '@zurfur/ui/styles/x';"],
 			['the tokens with a query', "import tokens from '@zurfur/ui/tokens.json?raw';"],
+			['the additions with a query', "import a from '@zurfur/ui/tokens.additions.json?raw';"],
 			['the styles in another letter case', "import '@zurfur/ui/Styles';"],
 			['the styles with a trailing slash', "import '@zurfur/ui/styles/';"]
 		])('refuses %s, a path the package does not export', (_label, text) => {
