@@ -1,13 +1,13 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
-	type Props = {
+	interface Props {
 		readonly states?: Snippet;
 		readonly example?: Snippet;
 		readonly keyboard?: Snippet;
 		readonly motion?: Snippet;
 		readonly tests?: Snippet;
-	};
+	}
 
 	let { states, example, keyboard, motion, tests }: Props = $props();
 

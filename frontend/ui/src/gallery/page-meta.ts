@@ -13,11 +13,11 @@ export function isSlug(text: string): text is Slug {
 }
 
 /** What a page tells the gallery about itself: where it sits and what to call its link. */
-export type PageMeta = {
+export interface PageMeta {
 	readonly slug: Slug;
 	readonly title: string;
 	readonly group: Group;
-};
+}
 
 /** Why a page's `meta` export was refused. */
 export type MetaRefusal = 'missing-meta' | 'malformed-meta' | 'unknown-group';
@@ -43,11 +43,11 @@ function refused(reason: MetaRefusal): MetaParse {
  */
 export function parseMeta(slug: Slug, module: unknown): MetaParse {
 	if (!isFields(module)) return refused('missing-meta');
-	const exported = module['meta'];
+	const exported = module.meta;
 	if (exported === undefined) return refused('missing-meta');
 	if (!isFields(exported)) return refused('malformed-meta');
-	const title = exported['title'];
-	const group = exported['group'];
+	const title = exported.title;
+	const group = exported.group;
 	if (typeof title !== 'string' || title.trim() === '') return refused('malformed-meta');
 	if (typeof group !== 'string') return refused('malformed-meta');
 	if (!isGroup(group)) return refused('unknown-group');

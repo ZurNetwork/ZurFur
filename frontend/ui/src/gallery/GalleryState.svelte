@@ -1,11 +1,11 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
-	type Props = {
+	interface Props {
 		/** The state's name, which a test harness finds it by. */
 		readonly name: string;
 		readonly children: Snippet;
-	};
+	}
 
 	let { name, children }: Props = $props();
 </script>

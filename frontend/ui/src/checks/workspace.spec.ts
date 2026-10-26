@@ -105,14 +105,14 @@ describe('the frontend workspace', () => {
 	it("pins web's @zurfur/ui to ui's version", () => {
 		const ui = readJson('ui/package.json');
 		const web = readJson('web/package.json');
-		expect(stringMap(web, 'devDependencies')['@zurfur/ui']).toBe(ui['version']);
+		expect(stringMap(web, 'devDependencies')['@zurfur/ui']).toBe(ui.version);
 	});
 
 	it('keeps ui private, with one public entry read from source', () => {
 		const ui = readJson('ui/package.json');
-		expect(ui['name']).toBe('@zurfur/ui');
-		expect(ui['private']).toBe(true);
-		expect(ui['exports']).toEqual({
+		expect(ui.name).toBe('@zurfur/ui');
+		expect(ui.private).toBe(true);
+		expect(ui.exports).toEqual({
 			'.': { types: './src/lib/index.ts', svelte: './src/lib/index.ts' }
 		});
 	});

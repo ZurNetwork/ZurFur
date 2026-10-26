@@ -5,7 +5,7 @@ import { createRawSnippet } from 'svelte';
 import GalleryState from './GalleryState.svelte';
 
 describe('GalleryState', () => {
-	it('wraps its content in an element carrying the state name', async () => {
+	it('wraps its content in an element carrying the state name', () => {
 		const children = createRawSnippet(() => ({ render: () => '<span>inside</span>' }));
 		render(GalleryState, { name: 'busy', children });
 		const wrapper = page.getByText('inside').element().closest('[data-gallery-state]');

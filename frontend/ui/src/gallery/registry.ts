@@ -4,16 +4,16 @@ import { isSlug, parseMeta, type MetaRefusal, type PageMeta } from './page-meta'
 /** Why a page file was left out of the registry. */
 export type RefusalReason = 'path-shape' | MetaRefusal | 'duplicate-slug';
 
-export type Refusal = {
+export interface Refusal {
 	readonly path: string;
 	readonly reason: RefusalReason;
-};
+}
 
 /** The pages the gallery lists, in nav order, and the files it turned away. */
-export type Registry = {
+export interface Registry {
 	readonly entries: readonly PageMeta[];
 	readonly refusals: readonly Refusal[];
-};
+}
 
 const pathPattern = /^\/src\/routes\/components\/([^/]+)\/meta\.ts$/;
 

@@ -3,7 +3,9 @@
 	import { groupNames } from './groups';
 	import type { PageMeta } from './page-meta';
 
-	type Props = { readonly entries: readonly PageMeta[] };
+	interface Props {
+		readonly entries: readonly PageMeta[];
+	}
 
 	let { entries }: Props = $props();
 

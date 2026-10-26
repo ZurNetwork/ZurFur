@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 function compilerOptionsOf(relative: string): unknown {
 	const path = fileURLToPath(new URL(relative, import.meta.url));
-	const read = ts.readConfigFile(path, ts.sys.readFile);
+	const read = ts.readConfigFile(path, (file) => ts.sys.readFile(file));
 	expect(read.error).toBeUndefined();
 	const config: unknown = read.config;
 	expect(config).toHaveProperty('compilerOptions');

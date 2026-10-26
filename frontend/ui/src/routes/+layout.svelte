@@ -3,7 +3,9 @@
 	import GalleryNav from '$gallery/GalleryNav.svelte';
 	import { registry } from '$gallery/registry';
 
-	type Props = { readonly children: Snippet };
+	interface Props {
+		readonly children: Snippet;
+	}
 
 	let { children }: Props = $props();
 </script>
