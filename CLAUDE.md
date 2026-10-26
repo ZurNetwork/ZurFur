@@ -59,7 +59,8 @@ just setup                 # First-time setup: copy .env, install tools (typos, 
 just gate                  # The full local mirror of CI (see "Branches and gates")
 just gate-light            # The light gate for base merges and fix rounds
 just frontend-install      # The guarded frontend install: the guard, the frozen install with scripts skipped, the guard again
-just gallery               # Build and serve the component gallery at http://127.0.0.1:5190 (no Docker)
+just gallery               # Storybook (the component gallery) at http://127.0.0.1:5190 (no Docker)
+just gallery-build         # Storybook's static build, then the built-output check over it (in just gate and gate-light)
 just tools-check           # Warn when local typos/cargo-deny/buf/just/nodes/rustc differ from CI's pins
 just npm-advisories        # osv-scanner over both npm lockfiles, each with its root ignore file (needs the network; gate's last step)
 just npm-lock-review <rev> # The 7-day floor, the registry integrity check and the licence rule (npm-licences.json) on what both npm lockfiles gained since <rev> (needs the network)

@@ -18,7 +18,8 @@
   "entry_points": [
     "web/src/hooks.server.ts (the app)",
     "ui/src/lib/index.ts (the library's public entry)",
-    "ui/src/routes/ (the component gallery; `just gallery`)",
+    "ui/.storybook/main.ts (the component gallery in Storybook; `just gallery`)",
+    "ui/src/routes/ (the old Kit gallery, still built until Storybook replaces it)",
     "install-check.mjs (the install guard)"
   ],
   "fs": [
@@ -34,7 +35,7 @@
     },
     {
       "name": "install-check.mjs",
-      "role": "the install guard, Node built-ins only: before install it pins the workspace's shape (root keys, the workspaces list, no .yarnrc, one .npmrc with its two lines), refuses yarn rc files in /etc, the home folder, yarn's config folder and every folder above the repo root, and any YARN_* or npm_config_* variable (named, never its value), refuses any spec that is not a plain range and any workspace range missing from the lockfile (yarn 1's --frozen-lockfile doesn't check workspace dependencies), and holds every lockfile block to what yarn writes: one package per block, only version, resolved, integrity, dependencies and optionalDependencies, every key and dependency range a plain range in the shapes the guard reads (*, X.Y.Z, =X.Y.Z, ^X.Y.Z, ~X.Y.Z, ^X, joined by ||), a version that satisfies each of its keys (yarn drops an entry that doesn't and resolves the range unlocked), resolved exactly that package's registry tarball with its sha1, sha512 integrity, no duplicate keys, and every dependency a block lists itself a lockfile key (yarn resolves a missing one from the registry, unlocked); with --installed it refuses install scripts and binding.gyp off an empty allow list and requires @zurfur/ui to be a symlink to ui/",
+      "role": "the install guard, Node built-ins only: before install it pins the workspace's shape (root keys, the workspaces list, no .yarnrc, one .npmrc with its two lines), refuses yarn rc files in /etc, the home folder, yarn's config folder and every folder above the repo root, and any YARN_* or npm_config_* variable (named, never its value), refuses any spec that is not a plain range and any workspace range missing from the lockfile (yarn 1's --frozen-lockfile doesn't check workspace dependencies), and holds every lockfile block to what yarn writes: one package per block, only version, resolved, integrity, dependencies and optionalDependencies, every key and dependency range a plain range in the shapes the guard reads (*, X.Y.Z, =X.Y.Z, ^X.Y.Z, ~X.Y.Z, ^X, joined by ||), a version that satisfies each of its keys (yarn drops an entry that doesn't and resolves the range unlocked), resolved exactly that package's registry tarball with its sha1, sha512 integrity, no duplicate keys, and every dependency a block lists itself a lockfile key (yarn resolves a missing one from the registry, unlocked); with --installed it refuses every install script but esbuild's exact `postinstall: node install.js` (any other script, or another text, is refused; it never runs, since every install skips scripts) and every binding.gyp and requires @zurfur/ui to be a symlink to ui/",
       "node": false
     },
     {

@@ -42,10 +42,48 @@ function recipeLines(justfile: string, recipe: string): readonly string[] | unde
 	return [lines[start] ?? '', ...body];
 }
 
+/**
+ * The gallery recipes, each with its exact body (trimmed, blank lines left
+ * out): `gallery` runs ui's `storybook` script, which alone sets the host and
+ * port; `gallery-build` runs `build-storybook`, then the built-output check in
+ * its Storybook mode.
+ */
+const galleryRecipes: ReadonlyMap<string, readonly string[]> = new Map([
+	[
+		'gallery',
+		[
+			'just frontend-install',
+			'@echo "Storybook (the component gallery): http://127.0.0.1:$(node frontend/ui/gallery-port.ts)"',
+			'yarn --cwd frontend/ui run storybook'
+		]
+	],
+	[
+		'gallery-build',
+		[
+			'yarn --cwd frontend/ui run build-storybook',
+			'node frontend/ui/src/checks/built-output.ts --storybook frontend/ui/storybook-static'
+		]
+	]
+]);
+
+/**
+ * Why the gallery recipes differ from their pins: a missing recipe, a host or
+ * port flag on any line, a header with parameters or dependencies, or a body
+ * that isn't its pinned lines (an extra `-h` line or a dropped check included).
+ */
 function justfileRefusals(justfile: string): readonly string[] {
-	const lines = recipeLines(justfile, 'gallery');
-	if (lines === undefined) return ['the gallery recipe is missing'];
-	return lines.filter((line) => hostOrPortFlag.test(line)).map((line) => line.trim());
+	return [...galleryRecipes].flatMap(([recipe, pinned]) => {
+		const lines = recipeLines(justfile, recipe);
+		if (lines === undefined) return [`the ${recipe} recipe is missing`];
+		const [header = '', ...rest] = lines;
+		const flagged = lines.filter((line) => hostOrPortFlag.test(line)).map((line) => line.trim());
+		const headerRefusals =
+			header.trim() === `${recipe}:` ? [] : [`${recipe}: the header is ${header}`];
+		const body = rest.map((line) => line.trim()).filter((line) => line !== '');
+		const isPinned = body.length === pinned.length && body.every((line, i) => line === pinned[i]);
+		const bodyRefusals = isPinned ? [] : [`${recipe}: the body is not its pinned lines`];
+		return [...flagged, ...headerRefusals, ...bodyRefusals];
+	});
 }
 
 const servingScripts = ['dev', 'build', 'preview'] as const;
@@ -530,38 +568,95 @@ describe('the svelte config file', () => {
 	});
 });
 
-describe('the gallery recipe', () => {
-	it('exists and passes no host or port', () => {
+describe('the gallery recipes', () => {
+	it('exist, pass no host or port, and hold their pinned lines', () => {
 		expect(recipeLines(repoJustfile, 'gallery')).toBeDefined();
+		expect(recipeLines(repoJustfile, 'gallery-build')).toBeDefined();
 		expect(justfileRefusals(repoJustfile)).toEqual([]);
 	});
 
-	const recipe = (line: string): string =>
-		`other:\n    echo --host\n\ngallery:\n    just frontend-install\n${line}\n\nlater:\n    echo --port\n`;
+	const echoLine =
+		'    @echo "Storybook (the component gallery): http://127.0.0.1:$(node frontend/ui/gallery-port.ts)"';
+	const storybookLine = '    yarn --cwd frontend/ui run storybook';
+	const buildLines = [
+		'    yarn --cwd frontend/ui run build-storybook',
+		'    node frontend/ui/src/checks/built-output.ts --storybook frontend/ui/storybook-static'
+	];
+
+	/** A Justfile with both recipes between two others that carry flags, `gallery`'s last line and `gallery-build`'s body given. */
+	const justfile = (galleryTail: string, build: readonly string[] = buildLines): string =>
+		[
+			'other:\n    echo --host\n',
+			`gallery:\n    just frontend-install\n${echoLine}\n${galleryTail}\n`,
+			`gallery-build:\n${build.join('\n')}\n`,
+			'later:\n    echo --port\n'
+		].join('\n');
 
 	it.each([
-		'    yarn --cwd frontend/ui run preview --host',
-		'    yarn --cwd frontend/ui run preview --host=0.0.0.0',
-		'    yarn --cwd frontend/ui run preview --host 0.0.0.0',
-		'    yarn --cwd frontend/ui run preview --port 80',
-		'    yarn --cwd frontend/ui run preview --port=80',
-		'\tyarn --cwd frontend/ui run preview --HOST'
-	])('refuses %j', (line) => {
-		expect(justfileRefusals(recipe(line))).not.toEqual([]);
+		'    yarn --cwd frontend/ui run storybook --host',
+		'    yarn --cwd frontend/ui run storybook --host=0.0.0.0',
+		'    yarn --cwd frontend/ui run storybook --host 0.0.0.0',
+		`${storybookLine}\n    yarn --cwd frontend/ui exec storybook dev --host 0.0.0.0`,
+		'    yarn --cwd frontend/ui run storybook --port 80',
+		'    yarn --cwd frontend/ui run storybook --port=80',
+		'\tyarn --cwd frontend/ui run storybook --HOST'
+	])('refuses a host or port flag in gallery: %j', (line) => {
+		expect(justfileRefusals(justfile(line))).toContain(line.split('\n').at(-1)?.trim());
 	});
 
-	it('refuses a flag on the recipe line itself', () => {
-		expect(justfileRefusals('gallery: (serve "--host")\n    echo\n')).not.toEqual([]);
+	it.each([
+		[
+			'a short host flag on its own line',
+			`${storybookLine}\n    yarn --cwd frontend/ui exec storybook dev -h 0.0.0.0`
+		],
+		['the Kit preview in place of Storybook', '    yarn --cwd frontend/ui run preview'],
+		['a dropped storybook line', ''],
+		['a line with the network guard skipped', '    yarn --cwd frontend/ui exec storybook dev']
+	])('refuses gallery with %s', (_name, line) => {
+		expect(justfileRefusals(justfile(line))).toEqual(['gallery: the body is not its pinned lines']);
 	});
 
-	it('refuses a missing recipe', () => {
-		expect(justfileRefusals('galleryx:\n    echo\ngallery-build:\n    echo\n')).toEqual([
-			'the gallery recipe is missing'
+	it.each([
+		['the built-output line dropped', [buildLines[0] ?? '']],
+		[
+			'the Storybook mode dropped',
+			[
+				buildLines[0] ?? '',
+				'    node frontend/ui/src/checks/built-output.ts frontend/ui/storybook-static'
+			]
+		],
+		[
+			'the Kit build in place of Storybook',
+			['    yarn --cwd frontend/ui run build', buildLines[1] ?? '']
+		],
+		['the check before the build', [buildLines[1] ?? '', buildLines[0] ?? '']]
+	])('refuses gallery-build with %s', (_name, build) => {
+		expect(justfileRefusals(justfile(storybookLine, build))).toEqual([
+			'gallery-build: the body is not its pinned lines'
 		]);
 	});
 
-	it("passes flags in other recipes and the recipe's own clean lines", () => {
-		expect(justfileRefusals(recipe('    yarn --cwd frontend/ui run preview'))).toEqual([]);
+	it('refuses a flag on the recipe line itself', () => {
+		const flagged = justfile(storybookLine).replace('gallery:\n', 'gallery: (serve "--host")\n');
+		expect(justfileRefusals(flagged)).toContain('gallery: (serve "--host")');
+	});
+
+	it('refuses a dependency on the header', () => {
+		const dependent = justfile(storybookLine).replace('gallery-build:\n', 'gallery-build: other\n');
+		expect(justfileRefusals(dependent)).toEqual([
+			'gallery-build: the header is gallery-build: other'
+		]);
+	});
+
+	it('refuses a missing recipe', () => {
+		const renamed = justfile(storybookLine).replace('gallery:\n', 'galleryx:\n');
+		expect(justfileRefusals(renamed)).toEqual(['the gallery recipe is missing']);
+		const dropped = justfile(storybookLine).replace('gallery-build:\n', 'gallery-buildx:\n');
+		expect(justfileRefusals(dropped)).toEqual(['the gallery-build recipe is missing']);
+	});
+
+	it('passes flags in other recipes and the pinned lines', () => {
+		expect(justfileRefusals(justfile(storybookLine))).toEqual([]);
 	});
 });
 

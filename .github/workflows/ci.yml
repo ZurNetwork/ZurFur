@@ -5,8 +5,11 @@ on:
     # Base-branch filter: include feature/bug branches so STACKED PRs (a PR
     # targeting another PR's branch) run the same gate as PRs into main.
     branches: [main, "feature/**", "bug/**"]
+  # Every push to main or to a release's integration branch
+  # (feature/release-<x>-<y>, never a slice branch below it) runs the full
+  # suite: the changes job runs everything on a push.
   push:
-    branches: [main]
+    branches: [main, 'feature/release-[0-9]+-[0-9]+']
   # The merge queue on main: every required check must also run on the
   # queue's group commit, or the queue waits until its check timeout.
   merge_group:
@@ -435,7 +438,8 @@ jobs:
 
   # The @zurfur/ui component library: the install guard's own tests, then its
   # type check, lint, browser-mode component tests and gallery build, then the
-  # built-output check over that build.
+  # built-output check over that build, then the Storybook gallery's build and
+  # its built-output check (`just gallery-build`).
   ui:
     name: ui
     needs: [changes, npm-lock]
@@ -471,3 +475,7 @@ jobs:
       - run: yarn run build
       # Refuses remote URLs in the built CSS and HTML.
       - run: node src/checks/built-output.ts build
+      # The Storybook gallery's static build, under the script's env -i and network guard.
+      - run: yarn run build-storybook
+      # Refuses remote loads and ZURFUR_ or DATABASE_URL text in the Storybook build.
+      - run: node src/checks/built-output.ts --storybook storybook-static
