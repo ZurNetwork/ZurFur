@@ -1,8 +1,10 @@
 #!/bin/sh
 # Pins the npm lockfile checks' wiring: the npm-lock job's shape and its inline
-# step in CI, the jobs that wait for it, the driver's tools, clean
+# step in CI (the base's driver and scripts folder read only as a regular file
+# and a folder), the jobs that wait for it, the driver's tools, clean
 # environments, floor and checks of the change's own waivers, ignore files and
-# licence list, the base's licence list for every floor, the daily npm
+# licence list (both read from HEAD), its read set (regular files only, at the
+# base and at HEAD), the base's licence list for every floor, the daily npm
 # advisory and licence jobs, the guard's tests in the gate, gate-light and CI,
 # `just npm-lock-review`'s licence list, the cargo config check in `just gate`
 # and the hooks job, and `just gate` ending on the licence sweep and then the
@@ -84,7 +86,7 @@ expect_line "npm-lock runs unless both code and npmlock are exactly false" "$npm
 
 # Its steps: exactly checkout, setup-node, then the driver step, in that order.
 steps="$(printf '%s\n' "$npm_lock" | awk '/^      - / { sub(/^      - /, ""); print }' | tr '\n' '|')"
-want_steps="uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1|uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0|name: The advisory check and the 7-day floor, with the base's tools|"
+want_steps="uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1|uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0|name: The advisory check, the 7-day floor and the licence rule, with the base's tools|"
 if [ "$steps" = "$want_steps" ]; then
     ok "npm-lock's three steps: checkout, setup-node, the driver step"
 else
@@ -132,6 +134,15 @@ expect_line "a failed tree read fails, apart from an absent driver" "$npm_lock" 
     "if ! listing=\$(git ls-tree --full-tree \"\$base\" -- scripts/npm-lock-ci.sh); then"
 expect_line "the base's driver is extracted" "$npm_lock" \
     "if ! git show \"\$base:scripts/npm-lock-ci.sh\" > \"\$RUNNER_TEMP/npm-lock-ci.sh\"; then"
+expect_line "the base's driver must be a regular file" "$npm_lock" "\"100644 blob \"*) ;;"
+expect_line "the step refuses a base driver that isn't a regular file" "$npm_lock" \
+    "echo \"::error::npm-lock: the base's scripts/npm-lock-ci.sh is mode \${listing%% *}, not a regular file (100644)\""
+expect_line "a base without the driver: its scripts entry is read" "$npm_lock" \
+    "if ! folder=\$(git ls-tree --full-tree \"\$base\" -- scripts); then"
+expect_line "the base's scripts entry must be absent or a folder" "$npm_lock" "case \"\$folder\" in"
+expect_line "the step's folder test" "$npm_lock" "\"\" | \"040000 tree \"*) ;;"
+expect_line "the step refuses a base scripts entry that isn't a folder" "$npm_lock" \
+    "echo \"::error::npm-lock: the base's scripts is mode \${folder%% *}, not a folder (040000)\""
 expect_line "the base's copy runs when it has one" "$npm_lock" "driver=\"\$RUNNER_TEMP/npm-lock-ci.sh\""
 expect_line "only a base without the driver runs the change's" "$npm_lock" "driver=scripts/npm-lock-ci.sh"
 expect_line "the fallback warns" "$npm_lock" \
@@ -166,11 +177,11 @@ expect_line "the base's advisory tool runs its allow-list alone" "$driver" \
     "sh \"\$tools/scripts/npm-advisories.sh\" --allow-list-only \\"
 expect_line "the allow-list gets the change's own ignore files" "$driver" \
     "--frontend-config osv-scanner.frontend.toml --lexicons-config osv-scanner.lexicons.toml"
-expect_line "the change's waivers are parsed when they differ from the base's" "$driver" \
-    "if [ \"\$waivers\" != lock-age-waivers.json ] && ! cmp -s \"\$waivers\" lock-age-waivers.json; then"
+expect_line "the change's waivers are parsed when HEAD's differ from the base's" "$driver" \
+    "if [ \"\$own_waivers_ok\" = 1 ] && [ \"\$waivers\" != \"\$own_waivers\" ] && ! cmp -s \"\$waivers\" \"\$own_waivers\"; then"
 expect_line "the base's lock-review parses them over an empty diff" "$driver" \
     "\"\$node_bin\" \"\$tools/frontend/lock-review.mjs\" \"\$old_frontend\" \"\$old_frontend\" \\"
-expect_line "the parse gets the change's own waivers file" "$driver" "--min-age-days 7 --waivers lock-age-waivers.json"
+expect_line "the parse gets HEAD's copy of the change's waivers" "$driver" "--min-age-days 7 --waivers \"\$own_waivers\""
 expect_line "the driver's tools include licences.mjs" "$driver" \
     "TOOLS=\"scripts/npm-advisories.sh frontend/lock-review.mjs frontend/install-check.mjs frontend/licences.mjs\""
 expect_line "a base with the driver must hold the licence list" "$driver" "if ! base_has npm-licences.json; then"
@@ -178,11 +189,35 @@ expect_line "a base without the list fails" "$driver" \
     "fail \"the base has scripts/npm-lock-ci.sh but no npm-licences.json, so no licence list to judge this change by\""
 expect_line "the list is extracted from the base" "$driver" "from_base npm-licences.json \"\$licences\""
 expect_count "both floors and the waivers parse get the list" "$driver" "--licences \"\$licences\" \\" 2
-expect_line "the change's list is swept when it differs from the base's" "$driver" \
-    "if [ \"\$licences\" != npm-licences.json ] && ! cmp -s \"\$licences\" npm-licences.json; then"
-expect_line "the base's lock-review sweeps both lockfiles against the change's list" "$driver" \
-    "\"\$node_bin\" \"\$tools/frontend/lock-review.mjs\" --licence-sweep --licences npm-licences.json frontend/yarn.lock lexicons/package-lock.json"
+expect_line "the change's list is swept when HEAD's differs from the base's" "$driver" \
+    "if [ \"\$own_licences_ok\" = 1 ] && [ \"\$licences\" != \"\$own_licences\" ] && ! cmp -s \"\$licences\" \"\$own_licences\"; then"
+expect_line "the base's lock-review sweeps both lockfiles against HEAD's copy of the change's list" "$driver" \
+    "\"\$node_bin\" \"\$tools/frontend/lock-review.mjs\" --licence-sweep --licences \"\$own_licences\" frontend/yarn.lock lexicons/package-lock.json"
 expect_line "the sweep's exit is recorded" "$driver" "record \"this change's licence list\" \"\$?\""
+
+# Regular files only: the read set, the base's entries and HEAD's.
+expect_line "the data a run reads from its base" "$driver" \
+    "DATA=\"frontend/yarn.lock frontend/web/yarn.lock lexicons/package-lock.json lock-age-waivers.json npm-licences.json osv-scanner.frontend.toml osv-scanner.lexicons.toml\""
+expect_line "the read set is the driver, the tools and the data" "$driver" \
+    "READ_SET=\"scripts/npm-lock-ci.sh \$TOOLS \$DATA\""
+expect_line "each entry is read one path per ls-tree call" "$driver" \
+    "listing=\"\$(git ls-tree --full-tree \"\$1\" -- \"\$2\")\" || return 1"
+expect_line "each parent is read one path per ls-tree call" "$driver" \
+    "listing=\"\$(git ls-tree --full-tree \"\$1\" -- \"\$parent\")\" || return 1"
+expect_line "a parent must be absent or a folder" "$driver" "\"\" | \"040000 tree \"*) ;;"
+expect_line "an entry must be a regular file" "$driver" "\"100644 blob \"*) present=1 ;;"
+expect_line "the base reads only paths in the read set" "$driver" "*) fail \"\$1 is not in the driver's read set\" ;;"
+expect_line "the base's entry is checked before each read" "$driver" \
+    "entry_at \"\$base\" \"\$1\" || fail \"can't read the base's tree at \$1\""
+expect_line "a base entry that isn't a regular file fails" "$driver" "fail \"the base's \$problem\""
+expect_line "every base read goes through the check" "$driver" "base_has \"\$1\" || fail \"the base has no \$1\""
+expect_line "every path of the read set is checked at HEAD" "$driver" "for path in \$READ_SET; do"
+expect_line "HEAD's entry is checked" "$driver" "entry_at HEAD \"\$path\" || fail \"can't read HEAD's tree at \$path\""
+expect_line "a HEAD entry that isn't a regular file is a finding" "$driver" "record \"this change's \$path\" 1"
+expect_line "HEAD's copy is read from its blob" "$driver" "git show \"HEAD:\$1\" >\"\$own\" || fail \"can't read \$1 from HEAD\""
+expect_line "the change's licence list comes from HEAD" "$driver" "head_copy npm-licences.json"
+expect_line "the change's waivers come from HEAD" "$driver" "head_copy lock-age-waivers.json"
+expect_line "a base without the driver takes the change's tools from HEAD" "$driver" "head_copy \"\$tool\""
 
 # --- the cargo config check ------------------------------------------------------------
 

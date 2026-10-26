@@ -26,11 +26,11 @@ jobs:
   # and head, `code`, `lock` and `npmlock` are true and everything runs
   # (scripts/ci-changes.sh). A merge-queue group always runs everything; only
   # its `lock` (whether Cargo advisories block) and `npmlock` (whether npm
-  # advisories block: a change to an npm lockfile or a root osv-scanner.*.toml)
-  # follow its paths. Dependents run unless `code` is exactly 'false', and each
-  # flag counts as true unless it is exactly 'false', so a failed or cancelled
-  # detection also runs everything. Nothing from the event reaches `run:`
-  # text: the SHAs arrive through env.
+  # advisories block: a change to an npm lockfile, a root osv-scanner.*.toml
+  # or the root npm-licences.json) follow its paths. Dependents run unless
+  # `code` is exactly 'false', and each flag counts as true unless it is
+  # exactly 'false', so a failed or cancelled detection also runs everything.
+  # Nothing from the event reaches `run:` text: the SHAs arrive through env.
   changes:
     name: changes
     runs-on: ubuntu-latest
@@ -127,15 +127,18 @@ jobs:
       # The dev profile's locks and sessions, built with its feature.
       - run: CARGO_TARGET_DIR=target/dev-profile cargo test -p api --locked --features dev-profile --lib --test dev_profile
 
-  # The npm lockfiles' advisory check and 7-day floor, judged by the BASE
-  # commit's scripts/npm-lock-ci.sh with the base's tools, waivers and old
-  # lockfiles, so a change can't loosen what judges it; the web, ui and
-  # contract jobs wait for it. It runs node and nothing a change's build
-  # config can steer: no Rust toolchain, no package install and no package
-  # cache (setup-node's automatic one is switched off). Advisories
-  # block when `npmlock` isn't exactly 'false', and only report otherwise; the
-  # floor always blocks. scripts/npm-lock-pins.test.sh pins the job's shape,
-  # and scripts/npm-lock-ci.test.sh runs this step against scratch repos.
+  # The npm lockfiles' advisory check, 7-day floor and licence rule, judged by
+  # the BASE commit's scripts/npm-lock-ci.sh with the base's tools, waivers,
+  # npm-licences.json and old lockfiles, each read only as a regular file, so
+  # a change can't loosen what judges it; the change's own waivers and licence
+  # list are checked from HEAD, and each path the next run reads from this
+  # change must be a regular file or absent. The web, ui and contract jobs wait
+  # for it. It runs node and nothing a change's build config can steer: no
+  # Rust toolchain, no package install and no package cache (setup-node's
+  # automatic one is switched off). Advisories block when `npmlock` isn't
+  # exactly 'false', and only report otherwise; the floor and the licence rule
+  # always block. scripts/npm-lock-pins.test.sh pins the job's shape, and
+  # scripts/npm-lock-ci.test.sh runs this step against scratch repos.
   npm-lock:
     name: npm-lock
     needs: changes
@@ -154,9 +157,10 @@ jobs:
           package-manager-cache: false
       # The base is verified first: on a pull request or a push, HEAD^1 must
       # be it; on a merge group, an ancestor of HEAD. Then the base's driver
-      # when it has one; only a verified base that lacks it runs this
-      # change's own, with a warning. Anything odd exits 1.
-      - name: The advisory check and the 7-day floor, with the base's tools
+      # when it has one, and only as a regular file (mode 100644); only a
+      # verified base that lacks it, with its scripts folder a plain folder
+      # or absent, runs this change's own, with a warning. Anything odd exits 1.
+      - name: The advisory check, the 7-day floor and the licence rule, with the base's tools
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           NPM_LOCK_MODE: ${{ needs.changes.outputs.npmlock == 'false' && 'report' || 'block' }}
@@ -197,12 +201,30 @@ jobs:
             exit 1
           fi
           if [ -n "$listing" ]; then
+            case "$listing" in
+              "100644 blob "*) ;;
+              *)
+                echo "::error::npm-lock: the base's scripts/npm-lock-ci.sh is mode ${listing%% *}, not a regular file (100644)"
+                exit 1
+                ;;
+            esac
             if ! git show "$base:scripts/npm-lock-ci.sh" > "$RUNNER_TEMP/npm-lock-ci.sh"; then
               echo "::error::npm-lock: can't read the base's scripts/npm-lock-ci.sh"
               exit 1
             fi
             driver="$RUNNER_TEMP/npm-lock-ci.sh"
           else
+            if ! folder=$(git ls-tree --full-tree "$base" -- scripts); then
+              echo "::error::npm-lock: can't read the base's tree"
+              exit 1
+            fi
+            case "$folder" in
+              "" | "040000 tree "*) ;;
+              *)
+                echo "::error::npm-lock: the base's scripts is mode ${folder%% *}, not a folder (040000)"
+                exit 1
+                ;;
+            esac
             echo "::warning::npm-lock: the base has no scripts/npm-lock-ci.sh; running this change's own"
             driver=scripts/npm-lock-ci.sh
           fi

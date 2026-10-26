@@ -118,6 +118,19 @@ STUB
     echo "licences-tool $1" >"$repo/frontend/licences.mjs"
 }
 
+# put_driver: this checkout's driver into the repo, as a regular file.
+put_driver() {
+    cp "$driver" "$repo/scripts/npm-lock-ci.sh"
+    chmod 644 "$repo/scripts/npm-lock-ci.sh"
+}
+
+# symlink_to_copy <path>: replaces the repo's <path>, a file or a folder, with
+# a symlink to an identical copy beside it.
+symlink_to_copy() {
+    mv "$repo/$1" "$repo/$1.copy"
+    ln -s "$(basename "$1").copy" "$repo/$1"
+}
+
 # write <path> <content>: one file in the repo.
 write() {
     mkdir -p "$(dirname "$repo/$1")"
@@ -133,7 +146,7 @@ new_base() {
     rm -rf "$repo"
     mkdir -p "$repo/scripts"
     if [ "${1:-}" != no-driver ]; then
-        cp "$driver" "$repo/scripts/npm-lock-ci.sh"
+        put_driver
     fi
     stub_tools base
     write frontend/yarn.lock "yarn old"
@@ -271,7 +284,7 @@ expect_status "with the base's tools passing, the change passes" 0
 
 # A base without the driver: the change's own driver and tools, with warnings.
 new_base no-driver
-cp "$driver" "$repo/scripts/npm-lock-ci.sh"
+put_driver
 stub_tools pr
 pr_commit
 exits 0 0
@@ -285,7 +298,7 @@ expect_not_in "no base tool ran" "$log" "copy=base"
 
 # A base whose tree can't be read is not a base without the driver.
 new_base no-driver
-cp "$driver" "$repo/scripts/npm-lock-ci.sh"
+put_driver
 pr_commit
 tree="$(git -C "$repo" rev-parse "$base_sha^{tree}")"
 rm -f "$repo/.git/objects/$(printf '%s' "$tree" | cut -c1-2)/$(printf '%s' "$tree" | cut -c3-)"
@@ -391,7 +404,8 @@ step pull_request "$base_sha" block
 expect_in "waivers come from the base" "$log" "waivers=waivers base"
 expect_not_in "the change's waivers are not used by the floor" "$log" "waivers=waivers pr"
 expect_in "changed waivers are parsed by the base's lock-review over an empty diff" "$log" \
-    "waivers-parse copy=base old=yarn old| flags=--min-age-days 7 --waivers file=lock-age-waivers.json parsed=waivers pr"
+    "waivers-parse copy=base old=yarn old| flags=--min-age-days 7 --waivers file="
+expect_in "the parse gets HEAD's copy of the change's waivers" "$log" "/head/lock-age-waivers.json parsed=waivers pr"
 expect_in "the driver says it parses the change's waivers" "$out" "this change's lock-age-waivers.json differs from the base's; parsing it"
 exits 0 0 0 2
 step pull_request "$base_sha" report
@@ -411,7 +425,7 @@ g rm -q lock-age-waivers.json
 pr_commit
 step pull_request "$base_sha" report
 expect_status "a change that deletes the waivers fails closed" 2
-expect_in "the deleted waivers are what the parse was given" "$log" "file=lock-age-waivers.json parsed=MISSING"
+expect_in "the deleted waivers are what the parse was given" "$log" "/head/lock-age-waivers.json parsed=MISSING"
 
 new_base
 g rm -q lock-age-waivers.json
@@ -463,14 +477,14 @@ expect_not_in "nothing ran without a base list" "$log" "copy="
 
 # The bootstrap case: a base without the driver runs the change's list.
 new_base no-driver
-cp "$driver" "$repo/scripts/npm-lock-ci.sh"
+put_driver
 stub_tools pr
 write npm-licences.json "licences pr"
 pr_commit
 exits 0 0
 step pull_request "$base_sha" block
 expect_status "a base without the driver passes on the change's list" 0
-expect_in "a base without the driver: the floor gets the change's list" "$log" "licences=npm-licences.json list=licences pr"
+expect_in "a base without the driver: the floor gets HEAD's copy of the change's list" "$log" "/head/npm-licences.json list=licences pr"
 expect_in "with a warning" "$out" "::warning::npm-lock: the base has no scripts/npm-lock-ci.sh; using this change's npm-licences.json"
 expect_not_in "a base without the driver: no sweep" "$log" "sweep copy="
 
@@ -483,8 +497,9 @@ pr_commit
 exits 0 0
 step pull_request "$base_sha" block
 expect_status "a list the sweep passes passes" 0
-expect_in "a changed list is swept by the base's lock-review over both lockfiles" "$log" \
-    "sweep copy=base licences=npm-licences.json list=licences pr lockfiles=frontend/yarn.lock lexicons/package-lock.json"
+expect_in "a changed list is swept by the base's lock-review" "$log" "sweep copy=base licences="
+expect_in "the sweep gets HEAD's copy of the list and both lockfiles" "$log" \
+    "/head/npm-licences.json list=licences pr lockfiles=frontend/yarn.lock lexicons/package-lock.json"
 # The node line the stub node wrote just before the sweep's own line.
 sweep_env="$(printf '%s\n' "$log" | awk '/^sweep / { print prev } { prev = $0 }')"
 expect_in "the sweep runs under env -i: node sees only HOME and PATH" "$sweep_env" "node env=HOME,PATH path=$work/bin:/usr/bin:/bin"
@@ -505,7 +520,7 @@ g rm -q npm-licences.json
 pr_commit
 step pull_request "$base_sha" report
 expect_status "a change that deletes the list fails closed, even in report mode" 2
-expect_in "the deleted list is what the sweep was given" "$log" "sweep copy=base licences=npm-licences.json list=MISSING"
+expect_in "the deleted list is what the sweep was given" "$log" "/head/npm-licences.json list=MISSING"
 
 # An unchanged list: no sweep.
 new_base
@@ -515,6 +530,162 @@ step pull_request "$base_sha" block
 expect_status "an unchanged list passes" 0
 expect_not_in "an unchanged list is not swept" "$log" "sweep copy="
 expect_not_in "nor named as changed" "$out" "npm-licences.json differs"
+
+# --- regular files only ----------------------------------------------------------------
+
+# The change's licence list, a symlink to an identical copy: a finding, and no
+# sweep of it, while the other checks still run.
+new_base
+symlink_to_copy npm-licences.json
+pr_commit
+exits 0 0
+step pull_request "$base_sha" block
+expect_status "a change whose licence list is a symlink to an identical copy exits 1" 1
+expect_in "it names the list and its mode" "$out" \
+    "::error::npm-lock: this change's npm-licences.json is mode 120000, not a regular file (100644)"
+expect_in "the finding is recorded" "$out" "npm-lock: this change's npm-licences.json: exit 1"
+expect_not_in "a symlinked list is not swept" "$log" "sweep copy="
+expect_in "the floors still run after the finding" "$log" "floor copy=base"
+
+new_base
+symlink_to_copy lock-age-waivers.json
+pr_commit
+step pull_request "$base_sha" block
+expect_status "a change whose waivers are a symlink to an identical copy exits 1" 1
+expect_in "it names the waivers and their mode" "$out" \
+    "::error::npm-lock: this change's lock-age-waivers.json is mode 120000, not a regular file (100644)"
+expect_not_in "symlinked waivers are not parsed" "$log" "waivers-parse"
+
+new_base
+chmod +x "$repo/npm-licences.json"
+pr_commit
+step pull_request "$base_sha" block
+expect_status "a change whose licence list is executable exits 1" 1
+expect_in "it names the list and mode 100755" "$out" \
+    "::error::npm-lock: this change's npm-licences.json is mode 100755, not a regular file (100644)"
+
+new_base
+symlink_to_copy scripts/npm-advisories.sh
+pr_commit
+step pull_request "$base_sha" block
+expect_status "a change whose advisory tool is a symlink exits 1" 1
+expect_in "it names the tool and its mode" "$out" \
+    "::error::npm-lock: this change's scripts/npm-advisories.sh is mode 120000, not a regular file (100644)"
+
+new_base
+symlink_to_copy frontend
+pr_commit
+step pull_request "$base_sha" block
+expect_status "a change whose frontend folder is a symlink to a copy exits 1" 1
+expect_in "it names the folder and its mode" "$out" \
+    "::error::npm-lock: this change's frontend is mode 120000, not a folder (040000)"
+reports="$(printf '%s\n' "$out" | grep -c "this change's frontend is mode" || true)"
+if [ "$reports" = 1 ]; then
+    ok "a symlinked folder is reported once"
+else
+    fail "a symlinked folder is reported once" "$reports reports; output: $out"
+fi
+
+# The change's lists are read from HEAD, never the working tree: HEAD narrows
+# them while the working tree holds the base's copies.
+new_base
+write npm-licences.json "licences pr"
+write lock-age-waivers.json "waivers pr"
+pr_commit
+write npm-licences.json "licences base"
+write lock-age-waivers.json "waivers base"
+step pull_request "$base_sha" block
+expect_status "lists read from HEAD pass when the sweep and parse pass" 0
+expect_in "the sweep gets HEAD's list, not the working tree's" "$log" "/head/npm-licences.json list=licences pr lockfiles="
+expect_in "the parse gets HEAD's waivers, not the working tree's" "$log" "/head/lock-age-waivers.json parsed=waivers pr"
+
+# A base whose list or waivers aren't regular files: exit 1 before any check.
+new_base
+symlink_to_copy npm-licences.json
+g add -A
+g commit -m "a symlinked list"
+base_sha="$(git -C "$repo" rev-parse HEAD)"
+echo "change" >"$repo/change.md"
+pr_commit
+step pull_request "$base_sha" block
+expect_status "a base whose licence list is a symlink exits 1" 1
+expect_in "it names the base's list and its mode" "$out" \
+    "::error::npm-lock: the base's npm-licences.json is mode 120000, not a regular file (100644)"
+expect_not_in "no floor ran on a symlinked base list" "$log" "floor copy="
+
+new_base
+symlink_to_copy lock-age-waivers.json
+g add -A
+g commit -m "symlinked waivers"
+base_sha="$(git -C "$repo" rev-parse HEAD)"
+echo "change" >"$repo/change.md"
+pr_commit
+step pull_request "$base_sha" block
+expect_status "a base whose waivers are a symlink exits 1" 1
+expect_in "it names the base's waivers and their mode" "$out" \
+    "::error::npm-lock: the base's lock-age-waivers.json is mode 120000, not a regular file (100644)"
+expect_not_in "no floor ran on symlinked base waivers" "$log" "floor copy="
+
+# A base whose advisory tool is a symlink: git show gives the link's text, a
+# path sh would run from this change's checkout.
+new_base
+printf '#!/bin/sh\necho "marker copy=link" >>"$HOME/log"\nexit 0\n' >"$repo/scripts/adv.sh"
+chmod +x "$repo/scripts/adv.sh"
+rm "$repo/scripts/npm-advisories.sh"
+ln -s scripts/adv.sh "$repo/scripts/npm-advisories.sh"
+g add -A
+g commit -m "a symlinked tool"
+base_sha="$(git -C "$repo" rev-parse HEAD)"
+echo "change" >"$repo/change.md"
+pr_commit
+exits 1 0
+step pull_request "$base_sha" block
+expect_status "a base whose advisory tool is a symlink exits 1" 1
+expect_in "it names the base's tool and its mode" "$out" \
+    "::error::npm-lock: the base's scripts/npm-advisories.sh is mode 120000, not a regular file (100644)"
+expect_not_in "the link's target never ran" "$log" "marker copy=link"
+exits 0 0
+
+# The inline step: a base whose driver is a symlink to an executable that
+# passes; git show would give its path, and sh would run it from this checkout.
+new_base
+printf '#!/bin/sh\necho "marker copy=link" >>"$HOME/log"\nexit 0\n' >"$repo/scripts/x.sh"
+chmod +x "$repo/scripts/x.sh"
+rm "$repo/scripts/npm-lock-ci.sh"
+ln -s scripts/x.sh "$repo/scripts/npm-lock-ci.sh"
+g add -A
+g commit -m "a symlinked driver"
+base_sha="$(git -C "$repo" rev-parse HEAD)"
+echo "change" >"$repo/change.md"
+pr_commit
+step pull_request "$base_sha" block
+expect_status "the step: a base whose driver is a symlink exits 1" 1
+expect_in "the step names the base's driver and its mode" "$out" \
+    "::error::npm-lock: the base's scripts/npm-lock-ci.sh is mode 120000, not a regular file (100644)"
+expect_not_in "the step never ran the link's target" "$log" "marker copy=link"
+
+# The inline step: a base whose scripts folder is a symlink lacks the driver
+# only on paper; the change's own driver must not run.
+new_base no-driver
+mv "$repo/scripts" "$repo/scripts.real"
+ln -s scripts.real "$repo/scripts"
+g add -A
+g commit -m "a symlinked scripts folder"
+base_sha="$(git -C "$repo" rev-parse HEAD)"
+rm "$repo/scripts"
+mv "$repo/scripts.real" "$repo/scripts"
+recording_driver
+pr_commit
+step pull_request "$base_sha" block
+expect_status "the step: a base whose scripts folder is a symlink exits 1" 1
+expect_in "the step names the base's folder and its mode" "$out" \
+    "::error::npm-lock: the base's scripts is mode 120000, not a folder (040000)"
+expect_not_in "the change's driver never ran on a symlinked scripts folder" "$log" "driver copy=pr"
+run_driver pull_request "$base_sha" block
+expect_status "the driver: a base whose scripts folder is a symlink exits 1" 1
+expect_in "the driver names the base's folder and its mode" "$out" \
+    "::error::npm-lock: the base's scripts is mode 120000, not a folder (040000)"
+expect_not_in "no tool ran on a symlinked scripts folder" "$log" "copy="
 
 # --- ignores --------------------------------------------------------------------------
 

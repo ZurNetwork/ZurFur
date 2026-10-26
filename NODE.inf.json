@@ -151,12 +151,12 @@
     },
     {
       "name": "lock-age-waivers.json",
-      "role": "the waivers of the npm lockfiles' 7-day floor, {\"waivers\": [...]}, each naming one exact name@version; CI's npm-lock job reads the PR base's copy",
+      "role": "the waivers of the npm lockfiles' 7-day floor, {\"waivers\": [...]}, each naming one exact name@version; CI's npm-lock job reads the PR base's copy, only as a regular file, and parses HEAD's copy when it differs",
       "node": false
     },
     {
       "name": "npm-licences.json",
-      "role": "the npm licence allow list: the licences allowed for every package, licences scoped to named packages, and version-keyed exceptions; CI's npm-lock job reads the PR base's copy, and the daily npm-licences job and just npm-licences sweep both npm lockfiles against it",
+      "role": "the npm licence allow list: the licences allowed for every package, licences scoped to named packages, and version-keyed exceptions; CI's npm-lock job reads the PR base's copy, only as a regular file, and sweeps both lockfiles against HEAD's copy when it differs, and the daily npm-licences job and just npm-licences sweep both npm lockfiles against it",
       "node": false
     },
     {
