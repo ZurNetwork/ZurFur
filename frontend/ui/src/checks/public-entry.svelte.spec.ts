@@ -9,11 +9,14 @@ describe('the public entry', () => {
 
 	it('exports exactly the paper lists, the environment and the token model', () => {
 		expect(Object.keys(published).sort()).toEqual([
+			'ICON_NAMES',
+			'Icon',
 			'MOTION_ATTRIBUTE',
 			'PAPER_CLASSES',
 			'PAPER_MOVES',
 			'SKIN_ATTRIBUTE',
 			'findToken',
+			'isIconName',
 			'isTokenName',
 			'parseSkin',
 			'parseTokenModel',

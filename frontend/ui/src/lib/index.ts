@@ -31,3 +31,5 @@ export {
 	type TypeModel,
 	type TypeStyle
 } from './styles/token-model.ts';
+export { default as Icon } from './icons/Icon.svelte';
+export { ICON_NAMES, isIconName, type IconName } from './icons/icons.ts';
