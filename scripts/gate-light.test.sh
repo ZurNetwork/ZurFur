@@ -84,7 +84,11 @@ new_repo
 change frontend/web/README.md "* star list"
 expect_plan "a Markdown edit under frontend runs the web checks" "yarn --cwd frontend/web run lint"
 
-# Every frontend plan: the guarded install, the guard's tests, web's and ui's four steps, then ui's built-output check.
+new_repo
+change frontend/ui/.storybook/main.ts "export default {}"
+expect_plan "a Storybook config change builds the gallery" "gate-light: just gallery-build"
+
+# Every frontend plan: the guarded install, the guard's tests, web's and ui's four steps, ui's built-output check, then the Storybook gallery build.
 frontend_plan="just frontend-install
 node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs frontend/licences.test.mjs
 yarn --cwd frontend/web run check
@@ -95,7 +99,8 @@ yarn --cwd frontend/ui run check
 yarn --cwd frontend/ui run lint
 yarn --cwd frontend/ui run test
 yarn --cwd frontend/ui run build
-node frontend/ui/src/checks/built-output.ts frontend/ui/build"
+node frontend/ui/src/checks/built-output.ts frontend/ui/build
+just gallery-build"
 
 # expect_frontend_plan <name> — the plan holds every frontend step, in order.
 expect_frontend_plan() {
@@ -104,7 +109,7 @@ expect_frontend_plan() {
         failures=$((failures + 1))
         return
     }
-    got="$(printf '%s\n' "$out" | awk '/^gate-light: (just frontend-install|node --test |node frontend\/ui\/|yarn --cwd frontend\/)/ { print substr($0, 13) }')"
+    got="$(printf '%s\n' "$out" | awk '/^gate-light: (just frontend-install|just gallery-build|node --test |node frontend\/ui\/|yarn --cwd frontend\/)/ { print substr($0, 13) }')"
     if [ "$got" = "$frontend_plan" ]; then
         echo "ok   $1"
     else
@@ -146,7 +151,7 @@ expect_frontend_plan "a contract change runs the frontend steps"
 new_repo
 change docs/notes.md "hello"
 out="$(cd "$repo" && bash scripts/gate-light.sh --plan 2>&1)"
-if printf '%s\n' "$out" | grep -qE 'frontend-install|node --test|yarn --cwd'; then
+if printf '%s\n' "$out" | grep -qE 'frontend-install|gallery-build|node --test|yarn --cwd'; then
     echo "FAIL docs only plans no frontend step"
     printf '%s\n' "$out" | awk '{ print "  " $0 }'
     failures=$((failures + 1))

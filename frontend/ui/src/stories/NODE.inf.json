@@ -1,0 +1,30 @@
+{
+  "path": "frontend/ui/src/stories",
+  "charted": "2026-10-26",
+  "short": "Storybook's stories, docs pages and frame",
+  "is": "The component gallery's content in Storybook: Svelte CSF stories files (`<group>/<Name>.stories.svelte`), MDX docs pages (`<group>/<Name>.mdx`), made-up fixtures (`fixtures/*.ts`), and `frame/`, the decorator every story renders in, which carries the toolbar's Skin and Motion choices onto the page.",
+  "type": "code",
+  "tags": [
+    "category:ui",
+    "category:source"
+  ],
+  "conventions": [
+    "A stories file imports only `@storybook/addon-svelte-csf`, `storybook/test` and `@zurfur/ui` by its public entry, plus relative files under `src/stories/` and `src/gallery/`; a path into `src/lib/`, `bits-ui` or any other package is refused (`src/checks/story-imports.spec.ts`). Stories carry no `<style>`, `style=` or `style:` and no `a11y` setting: looks come from the components and the frame.",
+    "The folder is ESLint's `stories` file set, in the gallery host tier: the host's bans hold (no `fetch`, no storage, no remote or `javascript:` string, no raw HTML, no script markup, no inline handler, no dynamic import).",
+    "A docs page (`.mdx`, allowed only under `src/stories/`) holds only `import { Meta, Story } from '@storybook/addon-docs/blocks';`, `import * as X from './<Name>.stories.svelte';` from its own folder, one `<Meta of={X} />`, Markdown headings, plain prose, blank lines and `<Story of={X.<Story>} />` lines; any other import or JSX, `{` outside `of={…}`, `export`, an image, a link, raw HTML or a URL is refused (`src/checks/docs-pages.spec.ts`).",
+    "Every component `src/lib/index.ts` exports has a stories file whose `defineMeta.component` is that component imported from `@zurfur/ui`, and a contract spec; a pending list names the controls still waiting for stories and may only shrink (`src/checks/story-coverage.spec.ts`). Fixtures carry only the reserved sample DID, and handles ending in `.test` or `.example` (`src/checks/story-fixtures.spec.ts`).",
+    "Titles and story names are in Title Case (\"Tokens and Paper/Colour\", \"Controls/Button\"); the sidebar order is `.storybook/preview.ts`'s.",
+    "Storybook and the Vitest story projects run only through the package's scripts, under `env -i` and the network guard (see `frontend/ui`)."
+  ],
+  "entry_points": [
+    "frame/StoryFrame.svelte (the decorator every story renders in)"
+  ],
+  "fs": [
+    {
+      "name": "frame/",
+      "role": "StoryFrame.svelte (sets data-skin and data-motion on <html> and on a wrapping div, the portal target, from the toolbar's globals), FrameSkin.svelte (resolves Follow the OS to the skin showing), globals.ts (parseSkinChoice and parseMotion: address text to closed unions, unknown text meaning Follow the OS and Lively) and their specs",
+      "node": false
+    }
+  ],
+  "notes": []
+}

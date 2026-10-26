@@ -118,13 +118,24 @@ frontend-install:
     yarn --cwd frontend install --frozen-lockfile --ignore-scripts
     node frontend/install-check.mjs --installed
 
-# The @zurfur/ui component gallery: install, build, then serve the build with
-# vite preview. frontend/ui/vite.config.ts alone sets the host and port
-# (127.0.0.1, ZURFUR_GALLERY_PORT or 5190). No Docker, no API, no .env.
+# The component gallery: Storybook's dev server at http://127.0.0.1:5190, or
+# at ZURFUR_GALLERY_PORT, after the guarded install. ui's `storybook` script
+# alone sets the host and port (frontend/ui/gallery-port.ts is the port rule).
+# No Docker, no API. dotenv-load reads .env into this recipe, but the script
+# runs Storybook under `env -i` with only PATH, HOME, ZURFUR_GALLERY_PORT and
+# the network guard, so nothing else from .env or the shell reaches it.
 gallery:
     just frontend-install
-    yarn --cwd frontend/ui run build
-    yarn --cwd frontend/ui run preview
+    @echo "Storybook (the component gallery): http://127.0.0.1:$(node frontend/ui/gallery-port.ts)"
+    yarn --cwd frontend/ui run storybook
+
+# The component gallery built as static files (frontend/ui/storybook-static),
+# under the same `env -i` and network guard, then the built-output check in
+# its Storybook mode: no remote URL a page loads by itself, no ZURFUR_ or
+# DATABASE_URL text. Needs `just frontend-install` first (the gates run it).
+gallery-build:
+    yarn --cwd frontend/ui run build-storybook
+    node frontend/ui/src/checks/built-output.ts --storybook frontend/ui/storybook-static
 
 # --- Docker ---
 
@@ -499,6 +510,7 @@ gate:
     yarn --cwd frontend/ui run test
     yarn --cwd frontend/ui run build
     node frontend/ui/src/checks/built-output.ts frontend/ui/build
+    just gallery-build
     just engineer-tools-test
     just npm-licences
     just npm-advisories
@@ -533,8 +545,8 @@ engineer-tools-test:
 
 # The light gate for base merges and fix rounds: fmt, clippy, typos and the
 # design-index check, plus the tests of the crates the change touches and the
-# frontend install, the install guard's tests and the web and ui checks when
-# frontend/ or contract/ changed. CI runs the full suite on
+# frontend install, the install guard's tests, the web and ui checks and
+# `just gallery-build` when frontend/ or contract/ changed. CI runs the full suite on
 # every push; see scripts/gate-light.sh for how the change is read.
 # `just gate-light --plan` prints the steps without running them.
 gate-light *ARGS:

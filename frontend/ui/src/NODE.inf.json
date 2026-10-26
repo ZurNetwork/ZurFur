@@ -1,8 +1,8 @@
 {
   "path": "frontend/ui/src",
   "charted": "2026-10-26",
-  "short": "The library, the gallery frame and routes, the checks",
-  "is": "The package's code in four parts: `lib/` is the public entry, `routes/` hosts the gallery, `gallery/` is the frame the pages register with, and `checks/` are specs that guard the package's own shape.",
+  "short": "The library, the Storybook stories, the old gallery, the checks",
+  "is": "The package's code in five parts: `lib/` is the public entry, `stories/` holds the component gallery's Storybook stories, docs pages and frame, `routes/` hosts the old Kit gallery and `gallery/` is its frame (both built until Storybook replaces them; the token pages' parts in `gallery/` stay), and `checks/` are specs that guard the package's own shape.",
   "type": "code",
   "tags": [
     "category:ui",
@@ -14,11 +14,13 @@
     "The gallery's user-visible words live in `gallery/groups.ts` and the frame; the frame is imported through the `$gallery` alias.",
     "Reserved inside `lib/`: `motion/` (the one place motion libraries may be imported), `lazy/` (the one place heavy libraries load, by dynamic import only) and `styles/tokens.css` (the style scan's one exempt file). `motion/` and `styles/` exist today; `lazy/` does not.",
     "`lib/index.ts` is the whole public surface of the code: the paper lists (`PAPER_MOVES`, `PAPER_CLASSES`), the environment names and `parseSkin`, and the token model. The styles are a separate side-effect entry, `@zurfur/ui/styles` (`lib/styles/index.ts`), and the host may also import `@zurfur/ui/tokens.json` and `@zurfur/ui/tokens.additions.json`.",
-    "Only `gallery/skin-store.ts` touches storage, and `localStorage` alone; every other file refuses all storage and `cookie`, and no file reaches the private file store (`navigator.storage`, `getDirectory`). `app.html` holds the gallery's one boot script, pinned by the hash in `gallery/boot-script.ts` and kept out of prettier."
+    "Only `gallery/skin-store.ts` touches storage, and `localStorage` alone; every other file refuses all storage and `cookie`, and no file reaches the private file store (`navigator.storage`, `getDirectory`). `app.html` holds the gallery's one boot script, pinned by the hash in `gallery/boot-script.ts` and kept out of prettier.",
+    "Stories import `@zurfur/ui` by its public entry only, never a path into `lib/` (see `stories/`); `.mdx` files are allowed only under `stories/`."
   ],
   "entry_points": [
     "lib/index.ts",
     "lib/styles/index.ts",
+    "stories/frame/StoryFrame.svelte",
     "routes/+layout.svelte",
     "gallery/registry.ts"
   ],
@@ -35,7 +37,7 @@
     },
     {
       "name": "checks/",
-      "role": "specs over the package itself: the lint boundary rules and the import tiers, declared imports, forbidden files (only plain files and real folders, read without following links; a backslash in any name refused; server-side, hooks, service-worker and node_modules names tested in every folder of the path, JSX, and any extension off the list .ts, .svelte, .css, except NODE.inf.json in any folder, app.html at the root and the two token JSON files by exact path), the style and network scans (scan/), serve config (loopback serving, and Kit's inline options read so no file renaming, service worker or svelte config file gets in), tsconfig parity with web, workspace shape and the public entry; the tokens (tokens/: the copy step, the generator, the writer behind `yarn tokens` and their specs), the contrast, fonts, paper and boot-script specs, and the media spec (its own Vitest project, client-media, run after every other, using the narrow emulateMedia command in media-command.ts); built-output.ts, run by the gate and CI after every ui build: it refuses remote URLs in the built CSS and HTML, and any http-equiv but Kit's content-security-policy (exit 0 clean, 1 findings, 2 unreadable)",
+      "role": "specs over the package itself: the lint boundary rules and the import tiers, declared imports, forbidden files (only plain files and real folders, read without following links; a backslash in any name refused; server-side, hooks, service-worker and node_modules names tested in every folder of the path, JSX, and any extension off the list .ts, .svelte, .css, except NODE.inf.json in any folder, app.html at the root and the two token JSON files by exact path), the style and network scans (scan/), serve config (loopback serving, and Kit's inline options read so no file renaming, service worker or svelte config file gets in), tsconfig parity with web, workspace shape and the public entry; the tokens (tokens/: the copy step, the generator, the writer behind `yarn tokens` and their specs), the contrast, fonts, paper and boot-script specs, and the media spec (its own Vitest project, client-media, run after every other, using the narrow emulateMedia command in media-command.ts); the Storybook checks (storybook-config: the config folder's four files and main.ts's keys; storybook-channel: the server-channel hook; story-imports, story-fixtures, story-coverage and docs-pages over src/stories/); built-output.ts, run by the gate and CI after every Kit build and, with --storybook, after every Storybook build: it refuses remote URLs a page loads by itself in the built CSS and HTML, any http-equiv but Kit's content-security-policy, and ZURFUR_ or DATABASE_URL in any text file (exit 0 clean, 1 findings, 2 unreadable)",
       "node": false
     },
     {
@@ -55,8 +57,13 @@
     },
     {
       "name": "routes/",
-      "role": "the gallery host: the layout (header, nav, main), the index and components/<slug>/ pages, among them the six Tokens and paper pages (colour, type, space-and-shape, shadows, motion-and-sound, paper)",
+      "role": "the old Kit gallery host, built until Storybook replaces it: the layout (header, nav, main), the index and components/<slug>/ pages, among them the six Tokens and paper pages (colour, type, space-and-shape, shadows, motion-and-sound, paper)",
       "node": false
+    },
+    {
+      "name": "stories/",
+      "role": "the component gallery in Storybook: stories, docs pages, fixtures and the frame",
+      "node": true
     }
   ],
   "notes": []

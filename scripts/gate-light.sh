@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # The light local gate for base merges and fix rounds: fmt, clippy, typos, the
 # design-index check and the node-tree check always; the tests of the crates
-# the change touches; the frontend install, the install guard's tests and the
-# web and ui checks when the change touches the frontend or the contract. CI
-# re-runs the full suite on every push. Run via `just gate-light`.
+# the change touches; the frontend install, the install guard's tests, the
+# web and ui checks and the Storybook gallery build when the change touches the
+# frontend or the contract. CI re-runs the full suite on every push. Run via
+# `just gate-light`.
 #
 # The change is the diff from trunk() to @ (jj), or from the merge base with
 # origin/main (git). Fails closed: if the diff can't be read, or a path is
@@ -163,6 +164,8 @@ if [ "$web" = 1 ]; then
         step yarn --cwd "frontend/$package" run build
         if [ "$package" = ui ]; then
             step node frontend/ui/src/checks/built-output.ts frontend/ui/build
+            # The component gallery: Storybook's static build and its built-output check.
+            step just gallery-build
         fi
     done
 else
