@@ -7,9 +7,9 @@
 
 import type { HandleFetch, RequestEvent } from '@sveltejs/kit';
 // @ts-expect-error -- kit internal, untyped
-import { create_fetch } from '../../../node_modules/@sveltejs/kit/src/runtime/server/fetch.js';
+import { create_fetch } from '../../../../node_modules/@sveltejs/kit/src/runtime/server/fetch.js';
 // @ts-expect-error -- kit internal, untyped
-import { get_cookies } from '../../../node_modules/@sveltejs/kit/src/runtime/server/cookie.js';
+import { get_cookies } from '../../../../node_modules/@sveltejs/kit/src/runtime/server/cookie.js';
 
 /** What `event.fetch` and the app's `handleFetch` need of the request event: its address, its request, its locals and its route. */
 export type FetchingEvent = Pick<RequestEvent, 'url' | 'request' | 'locals' | 'route'>;
