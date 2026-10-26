@@ -24,5 +24,6 @@ disallowed-methods = [
     { path = "domain::elements::commission::NewChangelogEntry::delayed_set", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
     { path = "domain::elements::commission::NewChangelogEntry::delayed_cleared", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
     { path = "domain::elements::commission::NewChangelogEntry::maturity_rated", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
+    { path = "domain::elements::commission::NewChangelogEntry::rated_at_create", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
     { path = "domain::elements::commission::NewChangelogEntry::late", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
 ]

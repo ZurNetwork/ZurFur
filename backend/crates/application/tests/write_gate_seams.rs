@@ -1180,12 +1180,27 @@ const ENTRY: &str = "ENTRY";
 /// The entry rule's variants, each carrying one gated entry.
 const ENTRY_RULE_VARIANTS: [&str; 2] = ["Always", "OnChange"];
 
+/// The entry rule's one variant that carries two gated entries: the first, then a second its
+/// constructor may find nothing to build.
+const TWO_ENTRY_VARIANT: &str = "AlwaysThen";
+
+/// The one act whose entry rule may be [`TWO_ENTRY_VARIANT`], relative to the use-case layer's
+/// sources: the create, whose rating is recorded right after its `created` entry. Every other
+/// act writes at most one entry.
+const TWO_ENTRY_ACT: &str = "commission/create.rs";
+
+/// The entry rule's variants as [`ACT_FILE`] declares them, each with how many gated entries
+/// it carries.
+const DECLARED_ENTRY_RULE_VARIANTS: [(&str, usize); 3] =
+    [("Always", 1), ("OnChange", 1), (TWO_ENTRY_VARIANT, 2)];
+
 /// The handler trait, which declares [`ENTRY`] once, in [`GATE_FILE`], with no default.
 const HANDLER_TRAIT: &str = "trait Handler";
 
-/// The gated entries today's acts name, each by its file.
-const NAMED_GATED_ENTRIES: [(&str, &str); 13] = [
+/// The gated entries today's acts name, each by its file: the create names two.
+const NAMED_GATED_ENTRIES: [(&str, &str); 14] = [
     ("commission/create.rs", "CREATED"),
+    ("commission/create.rs", "RATED_AT_CREATE"),
     ("commission/deadline/clear.rs", "DEADLINE_CLEARED"),
     ("commission/deadline/set.rs", "DEADLINE_SET"),
     ("commission/deadline/status/clear.rs", "DELAYED_CLEARED"),
@@ -1201,8 +1216,9 @@ const NAMED_GATED_ENTRIES: [(&str, &str); 13] = [
 ];
 
 /// The variants a gated entry's constructor is written out under: one takes no change, one
-/// the act's checked change, and the system's takes the checked change and no actor.
-const CONSTRUCTOR_VARIANTS: [&str; 3] = ["Bare", "Change", "System"];
+/// the act's checked change, one the checked change and may build nothing from it, and the
+/// system's takes the checked change and no actor.
+const CONSTRUCTOR_VARIANTS: [&str; 4] = ["Bare", "Change", "Optional", "System"];
 
 /// The use-case layer's production sources, each with its path relative to its `src`.
 fn application_sources() -> Vec<(String, String)> {
@@ -1272,14 +1288,22 @@ fn item_to_semicolon(level: &[TokenTree], at: usize) -> &[TokenTree] {
     &level[at..end]
 }
 
-/// The gated entry `value` names when it is exactly `EntryRule::Always(GatedEntry::NAME)` or
-/// `EntryRule::OnChange(GatedEntry::NAME)`, as written; `None` for anything else.
-fn named_gated_entry(value: &[TokenTree]) -> Option<String> {
+/// The gated entry `inner` names as `GatedEntry::NAME`, written out from `at`.
+fn gated_name_at(inner: &[TokenTree], at: usize) -> Option<String> {
+    let written_out =
+        ident_at(inner, at).as_deref() == Some(GATED_ENTRY) && path_separator_at(inner, at + 1);
+    written_out.then(|| ident_at(inner, at + 3)).flatten()
+}
+
+/// The variant and the gated entries `value` names when it is exactly
+/// `EntryRule::Always(GatedEntry::NAME)`, `EntryRule::OnChange(GatedEntry::NAME)` or
+/// `EntryRule::AlwaysThen(GatedEntry::FIRST, GatedEntry::THEN)`, as written; `None` for
+/// anything else.
+fn named_gated_entries(value: &[TokenTree]) -> Option<(String, Vec<String>)> {
     let variant = ident_at(value, 3)?;
     let rule_written_out = value.len() == 5
         && ident_at(value, 0).as_deref() == Some(ENTRY_RULE)
-        && path_separator_at(value, 1)
-        && ENTRY_RULE_VARIANTS.contains(&variant.as_str());
+        && path_separator_at(value, 1);
     let Some(TokenTree::Group(group)) = value.get(4) else {
         return None;
     };
@@ -1287,17 +1311,27 @@ fn named_gated_entry(value: &[TokenTree]) -> Option<String> {
         return None;
     }
     let inner: Vec<TokenTree> = group.stream().into_iter().collect();
-    let gated_written_out = inner.len() == 4
-        && ident_at(&inner, 0).as_deref() == Some(GATED_ENTRY)
-        && path_separator_at(&inner, 1);
-    gated_written_out.then(|| ident_at(&inner, 3)).flatten()
+    let names = if ENTRY_RULE_VARIANTS.contains(&variant.as_str()) {
+        let one = inner.len() == 4;
+        one.then(|| gated_name_at(&inner, 0))
+            .flatten()
+            .map(|name| vec![name])
+    } else if variant == TWO_ENTRY_VARIANT {
+        let two = inner.len() == 9 && punct_at(&inner, 4, ',');
+        let first = two.then(|| gated_name_at(&inner, 0)).flatten();
+        let then = two.then(|| gated_name_at(&inner, 5)).flatten();
+        first.zip(then).map(|(first, then)| vec![first, then])
+    } else {
+        None
+    };
+    names.map(|names| (variant, names))
 }
 
-/// What one `const ENTRY` item is: the bare declaration, or the gated entry its value names
-/// when written out; `Err` with the item as written otherwise.
+/// What one `const ENTRY` item is: the bare declaration, or the rule's variant and the gated
+/// entries its value names when written out; `Err` with the item as written otherwise.
 enum EntryItem {
     Declared,
-    Names(String),
+    Names { variant: String, names: Vec<String> },
 }
 
 fn entry_item(item: &[TokenTree]) -> Result<EntryItem, String> {
@@ -1320,16 +1354,17 @@ fn entry_item(item: &[TokenTree]) -> Result<EntryItem, String> {
     if !punct_at(item, past_type, '=') {
         return Err(shown());
     }
-    named_gated_entry(&item[past_type + 1..item.len() - 1])
-        .map(EntryItem::Names)
+    named_gated_entries(&item[past_type + 1..item.len() - 1])
+        .map(|(variant, names)| EntryItem::Names { variant, names })
         .ok_or_else(shown)
 }
 
 /// Every gated entry a production `const ENTRY` in `files` names, by file and piece, and what
 /// breaks the entry rule's pin: a `const ENTRY` at any depth (macro bodies included) not
 /// written out as `EntryRule::Always(GatedEntry::NAME)` or `EntryRule::OnChange(GatedEntry::NAME)`,
-/// a bare declaration anywhere but once in [`HANDLER_TRAIT`] in [`GATE_FILE`], and a gated
-/// entry two items name.
+/// or as `EntryRule::AlwaysThen(GatedEntry::FIRST, GatedEntry::THEN)` anywhere but in
+/// [`TWO_ENTRY_ACT`], a bare declaration anywhere but once in [`HANDLER_TRAIT`] in
+/// [`GATE_FILE`], and a gated entry two items, or one item twice, name.
 fn entry_rule_scan(files: &[(String, String)]) -> (Vec<(String, String)>, Vec<String>) {
     let mut named: Vec<(String, String)> = Vec::new();
     let mut by_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -1354,9 +1389,16 @@ fn entry_rule_scan(files: &[(String, String)]) -> (Vec<(String, String)>, Vec<St
                                 out.push(format!("{place}: a bare `{ENTRY}` declaration"));
                             }
                         }
-                        Ok(EntryItem::Names(name)) => {
-                            named.push((file.clone(), name.clone()));
-                            by_name.entry(name).or_default().push(place);
+                        Ok(EntryItem::Names { variant, names }) => {
+                            if variant == TWO_ENTRY_VARIANT && file != TWO_ENTRY_ACT {
+                                out.push(format!(
+                                    "{place}: only {TWO_ENTRY_ACT} names `{ENTRY_RULE}::{TWO_ENTRY_VARIANT}`"
+                                ));
+                            }
+                            for name in names {
+                                named.push((file.clone(), name.clone()));
+                                by_name.entry(name).or_default().push(place.clone());
+                            }
                         }
                         Err(written) => {
                             out.push(format!(
@@ -1383,8 +1425,8 @@ fn entry_rule_scan(files: &[(String, String)]) -> (Vec<(String, String)>, Vec<St
 
 /// What breaks the gated entries' definitions in [`ACT_FILE`]: an associated const of an
 /// inherent impl of [`GATED_ENTRY`] not written out as `Self { kinds: &[ChangelogEntryKind::K,
-/// …], constructor: EntryConstructor::Bare(NewChangelogEntry::c) }` (or `::Change(…)` or
-/// `::System(…)`), and
+/// …], constructor: EntryConstructor::Bare(NewChangelogEntry::c) }` (or `::Change(…)`,
+/// `::Optional(…)` or `::System(…)`), and
 /// two consts sharing a constructor. Two constructors may build one kind.
 fn gated_definition_findings(act: &syn::File) -> Vec<String> {
     let mut constructors: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -1461,7 +1503,8 @@ fn written_out_kinds(expr: &syn::Expr) -> Option<Vec<String>> {
 }
 
 /// The domain constructor a gated entry's const names: `EntryConstructor::Bare(NewChangelogEntry::c)`
-/// or `EntryConstructor::Change(…)` or `EntryConstructor::System(…)`; `None` for anything else.
+/// or `EntryConstructor::Change(…)`, `EntryConstructor::Optional(…)` or
+/// `EntryConstructor::System(…)`; `None` for anything else.
 fn written_out_constructor(expr: &syn::Expr) -> Option<String> {
     let syn::Expr::Call(call) = expr else {
         return None;
@@ -1478,7 +1521,7 @@ fn written_out_constructor(expr: &syn::Expr) -> Option<String> {
 
 /// The kinds and the constructor a gated entry's const is written out with:
 /// `Self { kinds: &[ChangelogEntryKind::K, …], constructor: EntryConstructor::Bare(NewChangelogEntry::c) }`
-/// (or `::Change(…)` or `::System(…)`), nothing else.
+/// (or `::Change(…)`, `::Optional(…)` or `::System(…)`), nothing else.
 fn gated_fields(expr: &syn::Expr) -> Option<(Vec<String>, String)> {
     let syn::Expr::Struct(literal) = expr else {
         return None;
@@ -1523,7 +1566,10 @@ fn each_act_names_one_gated_entry_and_constructors_are_unique() {
         .iter()
         .map(|(file, name)| ((*file).to_owned(), (*name).to_owned()))
         .collect();
-    assert_eq!(named, expected, "the scan reads today's thirteen acts");
+    assert_eq!(
+        named, expected,
+        "the scan reads today's thirteen acts, the create's two entries among them"
+    );
     let act_source =
         std::fs::read_to_string(application_src().join(ACT_FILE)).expect("the act file reads");
     let shares_a_constructor = act_source.replacen(
@@ -1595,6 +1641,27 @@ fn the_entry_rule_scans_refuse_each_planted_shape() {
     let stamped = "macro_rules! act {\n    ($entry:expr) => {\n        impl Handler for Act {\n            type Role = AsOwner;\n            const ENTRY: EntryRule = $entry;\n        }\n    };\n}\nact!(EntryRule::OnChange(GatedEntry::RENAMED));";
     let stamped_name = "macro_rules! act {\n    ($name:ident) => {\n        impl Handler for Act {\n            const ENTRY: EntryRule = EntryRule::OnChange(GatedEntry::$name);\n        }\n    };\n}\nact!(RENAMED);";
     let second_trait = "pub(crate) trait Other {\n    const ENTRY: EntryRule;\n}";
+    let two_on_a_rename = act_with_entry(
+        "Act",
+        "EntryRule::AlwaysThen(GatedEntry::RENAMED, GatedEntry::RATED_AT_CREATE)",
+    );
+    let two_in_one_slot = act_with_entry(
+        "Act",
+        "EntryRule::Always(GatedEntry::CREATED, GatedEntry::RATED_AT_CREATE)",
+    );
+    let then_alone = act_with_entry("Act", "EntryRule::AlwaysThen(GatedEntry::CREATED)");
+    let three = act_with_entry(
+        "Act",
+        "EntryRule::AlwaysThen(GatedEntry::CREATED, GatedEntry::RATED_AT_CREATE, GatedEntry::RENAMED)",
+    );
+    let twice_over = act_with_entry(
+        "Act",
+        "EntryRule::AlwaysThen(GatedEntry::CREATED, GatedEntry::CREATED)",
+    );
+    let then_a_closure = act_with_entry(
+        "Act",
+        "EntryRule::AlwaysThen(GatedEntry::CREATED, |c, a, t| NewChangelogEntry::renamed(c, a, t))",
+    );
     let defaulted = "pub(crate) trait Handler {\n    const ENTRY: EntryRule = EntryRule::Always(GatedEntry::CREATED);\n}";
     let entry_plants: Vec<Vec<(String, String)>> = vec![
         with_file(&files, rename, &closure),
@@ -1609,12 +1676,33 @@ fn the_entry_rule_scans_refuse_each_planted_shape() {
         with_file(&files, rename, stamped_name),
         with_file(&files, "den/write.rs", second_trait),
         with_file(&files, "den/write.rs", defaulted),
+        with_file(&files, rename, &two_on_a_rename),
+        with_file(&files, TWO_ENTRY_ACT, &two_in_one_slot),
+        with_file(&files, TWO_ENTRY_ACT, &then_alone),
+        with_file(&files, TWO_ENTRY_ACT, &three),
+        with_file(&files, TWO_ENTRY_ACT, &twice_over),
+        with_file(&files, TWO_ENTRY_ACT, &then_a_closure),
     ];
     for planted in &entry_plants {
         let (_, findings) = entry_rule_scan(planted);
 
         assert!(!findings.is_empty(), "{:?}", planted.last());
     }
+    let (_, two_findings) = entry_rule_scan(&with_file(&files, rename, &two_on_a_rename));
+    assert!(
+        two_findings
+            .iter()
+            .any(|finding| finding.contains("only commission/create.rs names")),
+        "{two_findings:?}"
+    );
+    let kept_create = act_with_entry(
+        "Act",
+        "EntryRule::AlwaysThen(GatedEntry::CREATED, GatedEntry::RATED_AT_CREATE)",
+    );
+    let (kept_named, kept_findings) =
+        entry_rule_scan(&with_file(&files, TWO_ENTRY_ACT, &kept_create));
+    assert_eq!(kept_findings, Vec::<String>::new());
+    assert_eq!(kept_named.len(), NAMED_GATED_ENTRIES.len());
     let (_, shared_findings) = entry_rule_scan(&with_file(&files, rename, &shared));
     assert!(
         shared_findings
@@ -1773,6 +1861,58 @@ fn gated_entries_are_defined_only_in_top_level_impls() {
     let top_level = format!("{act_source}\nimpl GatedEntry<LateMark> {{ {leak} }}\n");
     let kept = syn::parse_file(&top_level).expect("the planted act file parses");
     assert_eq!(nested_gated_impls(&kept), Vec::<String>::new());
+}
+
+/// The variants of the entry rule `act`, the act file, declares at its top level, each with how
+/// many fields it carries.
+fn entry_rule_variants(act: &syn::File) -> Vec<(String, usize)> {
+    act.items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Enum(declared) if declared.ident == ENTRY_RULE => Some(declared),
+            _ => None,
+        })
+        .flat_map(|declared| &declared.variants)
+        .map(|variant| (variant.ident.to_string(), variant.fields.len()))
+        .collect()
+}
+
+// The entry rule carries one gated entry in every variant but the create's, which carries two:
+// a new variant, or a second entry on another, fails here and in the entry rule's scan.
+#[test]
+fn the_entry_rule_s_variants_are_its_pinned_ones() {
+    let act_source =
+        std::fs::read_to_string(application_src().join(ACT_FILE)).expect("the act file reads");
+    let act = syn::parse_file(&act_source).expect("the act file parses");
+
+    let declared = entry_rule_variants(&act);
+
+    let pinned: Vec<(String, usize)> = DECLARED_ENTRY_RULE_VARIANTS
+        .iter()
+        .map(|(name, fields)| ((*name).to_owned(), *fields))
+        .collect();
+    assert_eq!(declared, pinned);
+    let one_entry: Vec<&str> = DECLARED_ENTRY_RULE_VARIANTS
+        .iter()
+        .filter(|(_, fields)| *fields == 1)
+        .map(|(name, _)| *name)
+        .collect();
+    assert_eq!(one_entry, ENTRY_RULE_VARIANTS);
+    let widened = act_source.replacen(
+        "    OnChange(GatedEntry<C>),",
+        "    OnChange(GatedEntry<C>, GatedEntry<C>),",
+        1,
+    );
+    assert_ne!(widened, act_source, "the plant takes");
+    let widened = syn::parse_file(&widened).expect("the planted act file parses");
+    assert_ne!(entry_rule_variants(&widened), pinned);
+    let added = act_source.replacen(
+        "    OnChange(GatedEntry<C>),",
+        "    OnChange(GatedEntry<C>),\n    Twice(GatedEntry<C>, GatedEntry<C>),",
+        1,
+    );
+    let added = syn::parse_file(&added).expect("the planted act file parses");
+    assert_ne!(entry_rule_variants(&added), pinned);
 }
 
 // No core crate defines a macro.
@@ -9202,7 +9342,7 @@ const ENTRY_BUILDERS: [&str; 5] = [
 ];
 
 /// The gated constructors, as the domain defines them today.
-const GATED_CONSTRUCTORS: [&str; 13] = [
+const GATED_CONSTRUCTORS: [&str; 14] = [
     "created",
     "deadline_cleared",
     "deadline_set",
@@ -9215,6 +9355,7 @@ const GATED_CONSTRUCTORS: [&str; 13] = [
     "late",
     "lifecycle_moved",
     "maturity_rated",
+    "rated_at_create",
     "renamed",
 ];
 

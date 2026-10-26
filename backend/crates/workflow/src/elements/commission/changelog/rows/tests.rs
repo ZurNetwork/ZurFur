@@ -132,6 +132,12 @@ fn gated_entries(commission: CommissionId) -> Vec<(NewChangelogEntry, &'static s
     };
     let first_rating = rate_maturity(&active(None, None, None), nudity).expect("a real rating");
     let maturity_rated = NewChangelogEntry::maturity_rated(commission, actor(), &first_rating, at);
+    let chosen = NewCommission {
+        maturity: Some(nudity),
+        deadline: None,
+    };
+    let rated_at_create = NewChangelogEntry::rated_at_create(commission, actor(), &chosen, at)
+        .expect("a create given a rating records it");
 
     vec![
         (created, "created", json!({})),
@@ -203,6 +209,11 @@ fn gated_entries(commission: CommissionId) -> Vec<(NewChangelogEntry, &'static s
         ),
         (
             maturity_rated,
+            "maturity_rated",
+            json!({ "rating": "nudity", "graphic": true }),
+        ),
+        (
+            rated_at_create,
             "maturity_rated",
             json!({ "rating": "nudity", "graphic": true }),
         ),
@@ -353,4 +364,43 @@ fn a_rename_entry_carries_no_title_and_no_note() {
         "the payload names no title"
     );
     assert_eq!(renamed.note_text(), None, "a rename carries no note");
+}
+
+// A create given a rating records it as a later rating would: kind `maturity_rated`, its rating
+// token and Graphic flag as literal JSON, by its creator, at its time, with no note; a create
+// given no rating records none.
+#[test]
+fn a_create_s_rating_is_recorded_in_the_rating_s_literal_shape() {
+    let commission = CommissionId::mint();
+    let adult = Maturity {
+        rating: MaturityRating::Adult,
+        graphic: true,
+    };
+    let rated = NewCommission {
+        maturity: Some(adult),
+        deadline: Some(april().into()),
+    };
+    let unrated = NewCommission {
+        maturity: None,
+        deadline: Some(april().into()),
+    };
+
+    let entry = NewChangelogEntry::rated_at_create(commission, actor(), &rated, may())
+        .expect("a rating was given");
+    let none = NewChangelogEntry::rated_at_create(commission, actor(), &unrated, may());
+
+    let later = rate_maturity(&active(None, None, None), adult).expect("a real rating");
+    let later_rating = NewChangelogEntry::maturity_rated(commission, actor(), &later, may());
+    // serde_json writes an object's keys in order, so the literal reads `graphic` first.
+    assert_eq!(entry.kind(), ChangelogEntryKind::MaturityRated);
+    assert_eq!(
+        entry.payload().to_string(),
+        r#"{"graphic":true,"rating":"adult"}"#
+    );
+    assert_eq!(entry.payload(), later_rating.payload());
+    assert_eq!(entry.commission_id(), commission);
+    assert_eq!(entry.actor_id(), Some(&actor()));
+    assert_eq!(entry.created_at(), may());
+    assert_eq!(entry.note_text(), None);
+    assert!(none.is_none(), "{none:?}");
 }

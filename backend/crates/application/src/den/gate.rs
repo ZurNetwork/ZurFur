@@ -37,7 +37,7 @@ use crate::{
         status::direction,
     },
     den::{
-        act::{ArmAnswer, DenAct, EntryRule, Handled, HandlerError, Needs},
+        act::{ArmAnswer, DenAct, EntryRule, GatedEntry, Handled, HandlerError, Needs, Planned},
         authority::{Grant, GrantKind},
         host::{host_error, type_kind},
         level::den_level,
@@ -330,8 +330,9 @@ pub(crate) trait Handler: Sized {
     /// The change its rule checks, which its view's one write writes.
     type Checked;
 
-    /// When the gate writes the act's one changelog entry, and the gated entry it builds: the
-    /// kinds it may build with its own domain constructor, over the checked change.
+    /// When the gate writes the act's changelog entry, and the gated entry it builds: the kinds
+    /// it may build with its own domain constructor, over the checked change. One entry for
+    /// every act but the create, which may write a second right after its first.
     const ENTRY: EntryRule<Self::Checked>;
 
     /// The act's domain rule on the facts its grant read at `now`: the change it checks,
@@ -1227,7 +1228,7 @@ fn settle<H: Handler>(
 
 /// Issues `H`'s capability and lends it, in a view of the act's own over the commission repo
 /// holding the change its rule checked, to its handler; then settles what the handler did and,
-/// while the capability lives, builds and appends the act's entry from the change the act
+/// while the capability lives, builds and appends the act's entries from the change the act
 /// recorded.
 async fn lend_as<H: Handler>(
     passed: Passed<H>,
@@ -1256,7 +1257,7 @@ async fn lend_as<H: Handler>(
     let handled = handler.handle(&mut lent).await;
     let settled = settle(lent, handled, written)?;
     let recorded = settled.recorded.as_ref();
-    append_entry(unit, H::ENTRY, written, recorded, grant.user(), now).await?;
+    append_entries(unit, H::ENTRY, written, recorded, grant.user(), now).await?;
     drop(settled.capability);
     Ok(Ok(settled.answer))
 }
@@ -1300,35 +1301,24 @@ fn grant_fits(grant: &Grant, shape: &Shape) -> bool {
     }
 }
 
-/// The act's one entry, if `rule` writes one for what changed: built by its gated entry's
-/// constructor on the grant's commission, by `actor` (none for the system), at `now`, from the
-/// recorded change. A kind it may not name, or another commission, actor or time than the
-/// grant's, or a note, is a broken rule.
-fn built_entry<C>(
-    rule: EntryRule<C>,
+/// `entry`, as `gated` built it, checked: a kind `gated` doesn't name, another commission,
+/// actor or time than the grant's, or a note, is a broken rule.
+fn as_granted<C>(
+    gated: &GatedEntry<C>,
+    entry: NewChangelogEntry,
     written: &Written,
-    recorded: Option<&C>,
     actor: Option<&UserId>,
     now: DateTimeUtc,
-) -> anyhow::Result<Option<NewChangelogEntry>> {
-    let changed = written.changed || recorded.is_some();
-    let Some(gated) = rule.entry(changed) else {
-        return Ok(None);
-    };
-    let entry = gated
-        .construct(written.commission, actor, recorded, now)
-        .ok_or_else(|| {
-            facts_lied("an entry's constructor takes a change or an actor the act doesn't have")
-        })?;
+) -> anyhow::Result<NewChangelogEntry> {
     if !gated.builds(entry.kind()) {
         return Err(facts_lied(
             "an entry's constructor built a kind its gated entry doesn't name",
         ));
     }
-    let as_granted = entry.commission_id() == written.commission
+    let on_the_grant = entry.commission_id() == written.commission
         && entry.actor_id() == actor
         && entry.created_at() == now;
-    if !as_granted {
+    if !on_the_grant {
         return Err(facts_lied(
             "an entry's constructor built it off the grant's commission, actor or time",
         ));
@@ -1336,12 +1326,39 @@ fn built_entry<C>(
     if entry.note_text().is_some() {
         return Err(facts_lied("an entry's constructor attached a note"));
     }
-    Ok(Some(entry))
+    Ok(entry)
 }
 
-/// Appends the act's one entry in the unit, if `rule` writes one for what changed; a broken
-/// rule appends nothing.
-async fn append_entry<C>(
+/// The act's entries, in order, if `rule` writes any for what changed: each built by its gated
+/// entry's constructor on the grant's commission, by `actor` (none for the system), at `now`,
+/// from the recorded change, and each checked by [`as_granted`]. The first must be built; the
+/// one that follows it, the create's alone, is written only when its constructor builds one.
+fn built_entries<C>(
+    rule: EntryRule<C>,
+    written: &Written,
+    recorded: Option<&C>,
+    actor: Option<&UserId>,
+    now: DateTimeUtc,
+) -> anyhow::Result<Vec<NewChangelogEntry>> {
+    let changed = written.changed || recorded.is_some();
+    let Some(Planned { first, then }) = rule.planned(changed) else {
+        return Ok(Vec::new());
+    };
+    let first_entry = first
+        .construct(written.commission, actor, recorded, now)?
+        .ok_or_else(|| facts_lied("an act's first entry built nothing"))?;
+    let mut entries = vec![as_granted(&first, first_entry, written, actor, now)?];
+    if let Some(then) = then
+        && let Some(then_entry) = then.construct(written.commission, actor, recorded, now)?
+    {
+        entries.push(as_granted(&then, then_entry, written, actor, now)?);
+    }
+    Ok(entries)
+}
+
+/// Appends the act's entries in the unit, in order, if `rule` writes any for what changed; a
+/// broken rule appends nothing.
+async fn append_entries<C>(
     unit: Unit<'_>,
     rule: EntryRule<C>,
     written: &Written,
@@ -1349,8 +1366,9 @@ async fn append_entry<C>(
     actor: Option<&UserId>,
     now: DateTimeUtc,
 ) -> anyhow::Result<()> {
-    if let Some(entry) = built_entry(rule, written, recorded, actor, now)? {
-        unit.changelog().append(&entry).await?;
+    let entries = built_entries(rule, written, recorded, actor, now)?;
+    for entry in &entries {
+        unit.changelog().append(entry).await?;
     }
     Ok(())
 }
