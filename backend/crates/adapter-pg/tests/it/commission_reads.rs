@@ -6,8 +6,9 @@
 //! commission with no node reads as absent. A node level no
 //! parser reads counts as Private on every read of it. Names load as stored text, never
 //! re-checked, so a row written under an older rule still reads. The summary's statement
-//! probes the node index for a made-up id as for a real commission. One named test per read.
-//! Requires a container runtime socket.
+//! answers a commission hidden from its viewer with a made-up id's row, byte for byte, never
+//! reads a hidden name out of line, and probes the node and the participant once for every
+//! id. One named test per read. Requires a container runtime socket.
 
 use crate::migration_steps::{bare_pool, run_migrations_through};
 use crate::node_backfill::{
@@ -34,6 +35,7 @@ use domain::{
     },
     ports::{CommissionRows, CommissionStore, Database, FileStore, WorkflowStore},
 };
+use sqlx::{Column, PgConnection, Row, ValueRef, postgres::PgRow};
 
 /// The shipped summary statement, as the generated reader sends it.
 const FIND_SUMMARY_SQL: &str = include_str!("../../queries/commission/find_summary.sql");
@@ -124,6 +126,89 @@ pub(crate) fn assert_the_node_probe_runs(label: &str, plan: &[String]) {
     );
     let skipped = plan.iter().any(|line| line.contains("never executed"));
     assert!(!skipped, "{label}: a step of the plan never ran:\n{shown}");
+}
+
+/// Asserts that `plan`, the lines of one statement's `EXPLAIN ANALYZE`, scans
+/// `commission_participant` and that every such scan ran exactly once. The plan is shown on
+/// failure.
+#[track_caller]
+fn assert_the_participant_probe_runs_once(label: &str, plan: &[String]) {
+    let shown = plan.join("\n");
+    let scans: Vec<&String> = plan
+        .iter()
+        .filter(|line| {
+            let words: Vec<&str> = line.split_whitespace().collect();
+            words
+                .windows(2)
+                .any(|pair| pair == ["on", "commission_participant"])
+        })
+        .collect();
+    assert!(
+        !scans.is_empty(),
+        "{label}: the plan scans no commission_participant table:\n{shown}"
+    );
+    let once = scans.iter().all(|line| line.contains("loops=1)"));
+    assert!(
+        once,
+        "{label}: a commission_participant scan didn't run exactly once:\n{shown}"
+    );
+}
+
+/// One column of a raw row: its name, and its bytes as PostgreSQL sent them, `None` when NULL.
+type RawColumn = (String, Option<Vec<u8>>);
+
+/// The one row the shipped summary statement answers for `commission` as `viewer`, each
+/// column raw.
+async fn raw_summary_row(
+    executor: impl sqlx::PgExecutor<'_>,
+    commission: uuid::Uuid,
+    viewer: &str,
+) -> Vec<RawColumn> {
+    let rows = sqlx::query(FIND_SUMMARY_SQL)
+        .bind(commission)
+        .bind(viewer)
+        .fetch_all(executor)
+        .await
+        .expect("run the summary statement");
+    let [row] = <[PgRow; 1]>::try_from(rows)
+        .map_err(|rows| rows.len())
+        .unwrap_or_else(|count| panic!("the summary answered {count} rows, not one"));
+    row.columns()
+        .iter()
+        .map(|column| {
+            let value = row
+                .try_get_raw(column.ordinal())
+                .expect("read a raw column");
+            let bytes = (!value.is_null()).then(|| {
+                value
+                    .as_bytes()
+                    .expect("a non-NULL column's bytes")
+                    .to_vec()
+            });
+            (column.name().to_owned(), bytes)
+        })
+        .collect()
+}
+
+/// The `node` table's TOAST blocks touched (hits and reads) as the statistics hold them once
+/// `connection`'s own pending counts are flushed.
+async fn flushed_node_toast_blocks(connection: &mut PgConnection) -> i64 {
+    sqlx::query("SELECT pg_stat_force_next_flush()")
+        .execute(&mut *connection)
+        .await
+        .expect("force the next statistics flush");
+    sqlx::query("SELECT pg_stat_clear_snapshot()")
+        .execute(&mut *connection)
+        .await
+        .expect("clear the statistics snapshot");
+    let blocks: Option<i64> = sqlx::query_scalar(
+        "SELECT toast_blks_hit + toast_blks_read FROM pg_statio_user_tables \
+         WHERE relname = 'node'",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .expect("read the node table's TOAST statistics");
+    blocks.expect("the node table has a TOAST table")
 }
 
 /// Add `member` as a Participant by a direct insert: no route admits a second
@@ -408,25 +493,174 @@ async fn the_summary_of_a_missing_commission_is_none() {
     assert_eq!(summary, None);
 }
 
-// The shipped summary statement probes the node index for a made-up id as for a real
-// commission: neither plan reads `node` conditionally, so the two answer in the same steps.
+// The shipped summary statement answers a stranger, who owns nothing and takes part in
+// nothing, with a made-up id's row, every column's bytes and NULLs alike, for each cause a
+// commission is hidden: Private, archived, an unreadable level, and no node (on a database
+// migrated through the node table's migration). A Listed live commission's row differs.
 #[tokio::test]
-async fn a_made_up_id_and_a_real_commission_both_probe_the_node_index_for_a_summary() {
+async fn every_hidden_commission_s_summary_row_is_an_absent_id_s_byte_for_byte() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:hiddenrowowner").await;
+    let stranger = provision(&pool, "did:plc:hiddenrowstranger").await;
+    let private_live = seed_commission(&pool, &owner, "Private live").await;
+    let private_archived = seed_commission(&pool, &owner, "Private archived").await;
+    archive(&pool, private_archived).await;
+    let listed_archived = seed_commission(&pool, &owner, "Listed archived").await;
+    store_node_level(&pool, listed_archived, "listed").await;
+    archive(&pool, listed_archived).await;
+    let public_archived = seed_commission(&pool, &owner, "Public archived").await;
+    store_node_level(&pool, public_archived, "public").await;
+    archive(&pool, public_archived).await;
+    allow_any_node_level(&pool).await;
+    let unreadable_live = seed_commission(&pool, &owner, "Unreadable live").await;
+    store_node_level(&pool, unreadable_live, "not-a-visibility").await;
+    let unreadable_archived = seed_commission(&pool, &owner, "Unreadable archived").await;
+    store_node_level(&pool, unreadable_archived, "not-a-visibility").await;
+    archive(&pool, unreadable_archived).await;
+    assert!("not-a-visibility".parse::<Level>().is_err());
+    let listed_live = seed_commission(&pool, &owner, "Listed live").await;
+    store_node_level(&pool, listed_live, "listed").await;
+    let viewer = stranger.id.as_ref();
+
+    let absent_row = raw_summary_row(&pool, uuid::Uuid::now_v7(), viewer).await;
+    let hidden = [
+        ("Private, live", private_live),
+        ("Private, archived", private_archived),
+        ("Listed, archived", listed_archived),
+        ("Public, archived", public_archived),
+        ("an unreadable level, live", unreadable_live),
+        ("an unreadable level, archived", unreadable_archived),
+    ];
+    for (label, commission) in hidden {
+        let hidden_row = raw_summary_row(&pool, uuid::Uuid::from(commission), viewer).await;
+        assert_eq!(
+            hidden_row, absent_row,
+            "{label}: the hidden row is an absent id's"
+        );
+    }
+    let shown_row = raw_summary_row(&pool, uuid::Uuid::from(listed_live), viewer).await;
+    assert_ne!(shown_row, absent_row, "a Listed live commission is shown");
+
+    let (den_pool, _den_container) = bare_pool().await;
+    run_migrations_through(&den_pool, DEN_1_VERSION).await;
+    seed_owner(&den_pool).await;
+    let node_less = seed_node_less(&den_pool, "No node", "public").await;
+    let den_absent_row = raw_summary_row(&den_pool, uuid::Uuid::now_v7(), viewer).await;
+    let node_less_row = raw_summary_row(&den_pool, node_less, viewer).await;
+    assert_eq!(
+        node_less_row, den_absent_row,
+        "a commission with no node: the hidden row is an absent id's"
+    );
+    assert_eq!(
+        den_absent_row, absent_row,
+        "an absent id answers the same row on either schema"
+    );
+}
+
+// A commission's name stored out of line (2048 bytes that don't compress) is never read from
+// the node table's TOAST table while the summary hides it: a stranger's read leaves the
+// table's TOAST block count where it was, and its owner's read, which shows the name, raises
+// it. Every read and statistics flush runs on one connection.
+#[tokio::test]
+async fn a_hidden_name_is_never_detoasted() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:detoastowner").await;
+    let stranger = provision(&pool, "did:plc:detoaststranger").await;
+    let id = seed_commission(&pool, &owner, "Untitled").await;
+    let mut connection = pool.acquire().await.expect("acquire a connection");
+    // No autovacuum pass may touch the TOAST table between two counts.
+    sqlx::query(
+        "ALTER TABLE node SET (autovacuum_enabled = false, toast.autovacuum_enabled = false)",
+    )
+    .execute(&mut *connection)
+    .await
+    .expect("turn autovacuum off for node in the test database");
+    let renamed = sqlx::query(
+        "UPDATE node \
+         SET name = (SELECT string_agg(md5(i::text), '' ORDER BY i) \
+                     FROM generate_series(1, 64) AS i) \
+         FROM commission c WHERE c.id = $1 AND node.id = c.node_id",
+    )
+    .bind(uuid::Uuid::from(id))
+    .execute(&mut *connection)
+    .await
+    .expect("store a long name on the commission's node");
+    assert_eq!(renamed.rows_affected(), 1, "one node is renamed");
+    let (length, compression): (i32, Option<String>) = sqlx::query_as(
+        "SELECT octet_length(node.name), pg_column_compression(node.name) \
+         FROM node JOIN commission c ON node.id = c.node_id WHERE c.id = $1",
+    )
+    .bind(uuid::Uuid::from(id))
+    .fetch_one(&mut *connection)
+    .await
+    .expect("read the stored name's size");
+    assert_eq!(length, 2048, "the name is 2048 bytes");
+    assert_eq!(compression, None, "the name is stored uncompressed");
+    let toast_table: String = sqlx::query_scalar(
+        "SELECT reltoastrelid::regclass::text FROM pg_class WHERE oid = 'node'::regclass",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .expect("name the node table's TOAST table");
+    let count_chunks = format!("SELECT count(*) FROM {toast_table}");
+    let chunks: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(count_chunks))
+        .fetch_one(&mut *connection)
+        .await
+        .expect("count the TOAST chunks");
+    assert!(chunks > 0, "the name is stored out of line");
+
+    let before_hidden = flushed_node_toast_blocks(&mut connection).await;
+    raw_summary_row(&mut *connection, uuid::Uuid::from(id), stranger.id.as_ref()).await;
+    let after_hidden = flushed_node_toast_blocks(&mut connection).await;
+    let shown_row =
+        raw_summary_row(&mut *connection, uuid::Uuid::from(id), owner.id.as_ref()).await;
+    let after_shown = flushed_node_toast_blocks(&mut connection).await;
+
+    assert_eq!(
+        after_hidden, before_hidden,
+        "the stranger's read touches no TOAST block"
+    );
+    assert!(
+        after_shown > after_hidden,
+        "the owner's read detoasts the name: {after_hidden} -> {after_shown}"
+    );
+    let shown_name = shown_row
+        .iter()
+        .find(|(column, _)| column == "name")
+        .and_then(|(_, bytes)| bytes.as_ref())
+        .expect("the owner's row holds the name");
+    assert_eq!(shown_name.len(), 2048, "the owner reads the whole name");
+}
+
+// The shipped summary statement probes the node index and the participant table once each, and
+// runs every step it plans, for a made-up id, a stranger on a Private commission, a Participant
+// on it and its owner alike.
+#[tokio::test]
+async fn the_summary_probes_the_node_and_the_participant_once_for_every_id() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:summaryplanowner").await;
-    let real = seed_commission(&pool, &owner, "Untitled").await;
+    let member = provision(&pool, "did:plc:summaryplanmember").await;
+    let stranger = provision(&pool, "did:plc:summaryplanstranger").await;
+    let private = seed_commission(&pool, &owner, "Untitled").await;
+    add_participant(&pool, private, &member).await;
     let made_up = CommissionId::from(uuid::Uuid::now_v7());
     let explain = format!("EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF) {FIND_SUMMARY_SQL}");
 
-    let cases = [("a made-up id", made_up), ("a real commission", real)];
-    for (label, target) in cases {
+    let cases = [
+        ("a made-up id", made_up, &stranger),
+        ("a stranger on a Private commission", private, &stranger),
+        ("a Participant on it", private, &member),
+        ("its owner", private, &owner),
+    ];
+    for (label, target, viewer) in cases {
         let plan: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(explain.clone()))
             .bind(uuid::Uuid::from(target))
-            .bind(owner.id.as_ref())
+            .bind(viewer.id.as_ref())
             .fetch_all(&pool)
             .await
             .expect("explain the summary statement");
         assert_the_node_probe_runs(label, &plan);
+        assert_the_participant_probe_runs_once(label, &plan);
     }
 }
 
