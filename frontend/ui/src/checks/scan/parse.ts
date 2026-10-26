@@ -9,11 +9,15 @@
  * an expression.
  * Input never makes it throw: a file, style attribute or style element that
  * doesn't parse comes back as an `Unparsed` record, which both scans refuse.
+ * It also reads the doc comments of a `.ts` or `.svelte` file: every JSDoc
+ * comment (one that opens with a slash and two stars) in its code and every HTML comment that holds
+ * `@component`, which Storybook's docs pages render.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parse, parseCss } from 'svelte/compiler';
 import type { AST } from 'svelte/compiler';
+import ts from 'typescript';
 
 /** A source file, by its path relative to the package root (`src/...`, `/`-separated). */
 export interface SourceFile {
@@ -671,4 +675,111 @@ export function cssValueParts(value: string): CssValueParts {
 		}
 	}
 	return { code, strings, urls };
+}
+
+/** A doc comment as written: a JSDoc comment in code, or a Svelte `@component` comment. */
+export interface DocComment {
+	readonly text: string;
+	readonly place: Place;
+}
+
+/** A file's doc comments, and the parts of it that could not be read. */
+export interface DocComments {
+	readonly comments: readonly DocComment[];
+	readonly unparsed: readonly Unparsed[];
+}
+
+/** The tag that makes an HTML comment a Svelte component's documentation. */
+const componentTag = '@component';
+
+/** Every `.ts` and `.svelte` file under the package's `src/lib/`, sorted by path. */
+export function libCodeSources(): readonly SourceFile[] {
+	return listFiles('src/lib')
+		.filter((path) => path.endsWith('.ts') || path.endsWith('.svelte'))
+		.sort()
+		.map((path) => ({ path, text: readFileSync(`${packageRoot}${path}`, 'utf8') }));
+}
+
+/**
+ * Every JSDoc comment in `code`, read off every token the TypeScript parser
+ * finds, so no comment hides in a string, a template or a regular expression.
+ * `offset` is where `code` starts in its file.
+ */
+function jsDocComments(code: string, offset: number, placeAt: PlaceAt): readonly DocComment[] {
+	const source = ts.createSourceFile('doc.ts', code, ts.ScriptTarget.Latest, true);
+	const starts = new Set<number>();
+	const comments: DocComment[] = [];
+	const visit = (node: ts.Node): void => {
+		const ranges = [
+			...(ts.getLeadingCommentRanges(code, node.pos) ?? []),
+			...(ts.getTrailingCommentRanges(code, node.pos) ?? []),
+			...(ts.getTrailingCommentRanges(code, node.end) ?? [])
+		];
+		for (const range of ranges) {
+			const text = code.slice(range.pos, range.end);
+			if (starts.has(range.pos) || !text.startsWith('/**')) continue;
+			starts.add(range.pos);
+			comments.push({ text, place: placeAt(offset + range.pos) });
+		}
+		for (const child of node.getChildren(source)) visit(child);
+	};
+	visit(source);
+	return comments.sort((a, b) => a.place.line - b.place.line || a.place.column - b.place.column);
+}
+
+/** Every HTML comment in a Svelte template that holds the `@component` tag. */
+function componentComments(root: AST.Root, placeAt: PlaceAt): readonly DocComment[] {
+	const comments: DocComment[] = [];
+	const seen = new Set<object>();
+	const visit = (value: unknown): void => {
+		if (!isFields(value) || seen.has(value)) return;
+		seen.add(value);
+		if (value.type === 'Comment' && typeof value.data === 'string') {
+			const start = typeof value.start === 'number' ? value.start : 0;
+			if (value.data.includes(componentTag))
+				comments.push({ text: value.data, place: placeAt(start) });
+		}
+		for (const child of Object.values(value)) {
+			if (Array.isArray(child)) child.forEach(visit);
+			else visit(child);
+		}
+	};
+	visit(root.fragment);
+	return comments;
+}
+
+/** A Svelte script's code and where it starts in the file. */
+function scriptCode(
+	text: string,
+	script: AST.Script | null | undefined
+): readonly [string, number][] {
+	if (!script) return [];
+	// Svelte gives the script's program its offsets in the file; ESTree's types don't name them.
+	const start: unknown = Reflect.get(script.content, 'start');
+	const end: unknown = Reflect.get(script.content, 'end');
+	return typeof start === 'number' && typeof end === 'number'
+		? [[text.slice(start, end), start]]
+		: [];
+}
+
+/** The doc comments of a `.ts` or `.svelte` file. */
+export function docComments(source: SourceFile): DocComments {
+	const placeAt = placer(source);
+	if (source.path.endsWith('.ts')) {
+		return { comments: jsDocComments(source.text, 0, placeAt), unparsed: [] };
+	}
+	if (!source.path.endsWith('.svelte')) {
+		return { comments: [], unparsed: [{ reason: 'not a .ts or .svelte file', place: placeAt(0) }] };
+	}
+	const root = parseMarkup(source.text);
+	if (!('fragment' in root)) {
+		return { comments: [], unparsed: [{ reason: root.reason, place: placeAt(root.offset) }] };
+	}
+	// The compiler answers undefined, not the null its types promise, for a missing block.
+	const scripts = [
+		...scriptCode(source.text, root.module),
+		...scriptCode(source.text, root.instance)
+	];
+	const inScripts = scripts.flatMap(([code, offset]) => jsDocComments(code, offset, placeAt));
+	return { comments: [...inScripts, ...componentComments(root, placeAt)], unparsed: [] };
 }

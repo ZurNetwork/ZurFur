@@ -13,10 +13,18 @@
  * `<script>` is remote. Remote means `http:`, `https:` or protocol-relative
  * (`//`, `\\`), read the way a browser reads a URL.
  *
+ * Doc comments under `src/lib/` (JSDoc in TypeScript and in Svelte scripts,
+ * and Svelte `@component` comments) hold no URL (`http:`, `https:`, `//`)
+ * and no HTML tag outside an inline code span: Storybook's docs pages render
+ * them as Markdown, raw HTML allowed.
+ *
  * Not caught: a URL built at run time from an expression, a spread
- * attribute, and a `<svelte:element this="style">`.
+ * attribute, a `<svelte:element this="style">`, and the doc comments of
+ * types a component takes from a package.
  */
 import type {
+	DocComment,
+	DocComments,
 	Head,
 	HttpEquivAttribute,
 	ParsedSource,
@@ -43,6 +51,8 @@ export type NetworkRule =
 	| 'http-equiv'
 	| 'head-outside-host'
 	| 'head-content'
+	| 'doc-url'
+	| 'doc-tag'
 	| 'unparsed';
 
 export interface NetworkFinding {
@@ -248,4 +258,47 @@ export function networkFindings(source: ParsedSource): readonly NetworkFinding[]
 		...inHttpEquivs,
 		...inHeads
 	];
+}
+
+/** The folder whose doc comments Storybook's docs pages render. */
+export const libFolder = 'src/lib/';
+
+/** A URL in a doc comment: `http:`, `https:` or `//`, in any letter case. */
+const docUrl = /https?:|\/\//i;
+
+/** The start of an HTML tag, a comment or a declaration, as Markdown passes raw HTML through. */
+const docTag = /<[A-Za-z/!?]/;
+
+/**
+ * The comment's text with each simple inline code span blanked: one backtick,
+ * text holding no backtick, backslash or line break, one backtick. A comment
+ * holding a backslash before a backtick or a run of two or more backticks is
+ * left whole, since a renderer may pair its spans otherwise.
+ */
+function outsideCodeSpans(text: string): string {
+	if (/\\`|``/.test(text)) return text;
+	return text.replace(/`[^`\\\n]*`/g, (span) => ' '.repeat(span.length));
+}
+
+function docFindings(comment: DocComment): readonly NetworkFinding[] {
+	const excerpt = comment.text.replace(/\s+/g, ' ').slice(0, 80);
+	return [
+		...(docUrl.test(comment.text)
+			? [{ rule: 'doc-url' as const, found: excerpt, place: comment.place }]
+			: []),
+		...(docTag.test(outsideCodeSpans(comment.text))
+			? [{ rule: 'doc-tag' as const, found: excerpt, place: comment.place }]
+			: [])
+	];
+}
+
+/** The findings in one file's doc comments; only files under `src/lib/` are held to the rule. */
+export function docCommentFindings(path: string, read: DocComments): readonly NetworkFinding[] {
+	if (!path.startsWith(libFolder)) return [];
+	const unparsed = read.unparsed.map((failure): NetworkFinding => ({
+		rule: 'unparsed',
+		found: failure.reason,
+		place: failure.place
+	}));
+	return [...unparsed, ...read.comments.flatMap(docFindings)];
 }
