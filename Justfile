@@ -329,20 +329,28 @@ hooks-test:
 # Fixture tests for the CI path classifier, the `changes` job, gate-light, the
 # dev-profile pins, pr-wait, tools-check, the nodes install check, the nodes fmt
 # hook, den-fill, the dev logs, the private-papers check, the node-tree guard,
-# the nodes 0.7 node-text edits, the `jj push` gate's argument guard and
-# workspace-init (the design-index check's own tests run under
-# `design-index-check-test`). CI runs it in the `hooks` job, which has no jj
-# and no nodes: the jj fixtures and the node-text edits' tests skip themselves
-# there.
+# the nodes 0.7 node-text edits, the `jj push` gate's argument guard,
+# workspace-init and the npm advisory scan (the design-index check's own
+# tests run under `design-index-check-test`). CI runs it in the `hooks` job,
+# which has no jj and no nodes: the jj fixtures and the node-text edits' tests
+# skip themselves there.
 scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/nodes-install.test.sh scripts/nodes-fmt-hook.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/nodes-tree-check.test.sh scripts/nodes-0-7-edits.test.sh scripts/jj-push.test.sh scripts/workspace-init.test.sh scripts/build-id.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/nodes-install.test.sh scripts/nodes-fmt-hook.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/nodes-tree-check.test.sh scripts/nodes-0-7-edits.test.sh scripts/jj-push.test.sh scripts/workspace-init.test.sh scripts/build-id.test.sh scripts/npm-advisories.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done
     exit "$status"
+
+# Scan frontend/yarn.lock and lexicons/package-lock.json for published
+# advisories with the pinned osv-scanner, each against its own root ignore file
+# (osv-scanner.frontend.toml, osv-scanner.lexicons.toml). Needs the network:
+# the package names and versions go to osv.dev, and the first run downloads the
+# scanner from GitHub releases. `just gate` runs it last.
+npm-advisories:
+    sh scripts/npm-advisories.sh
 
 # Compare this machine's typos, cargo-deny, buf, just, nodes and rustc with CI's versions
 # (warns), and check every workflow pins its actions by SHA at the Justfile's
@@ -436,6 +444,7 @@ gate:
     yarn --cwd frontend/ui run test
     yarn --cwd frontend/ui run build
     just engineer-tools-test
+    just npm-advisories
 
 # engineer-tools/review-pr.sh becomes ${XDG_BIN_HOME:-~/.local/bin}/review-pr,
 # outside any checkout a review rewrites; it prints the commit it came from.

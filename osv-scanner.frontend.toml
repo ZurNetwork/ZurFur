@@ -1,0 +1,18 @@
+# Advisories accepted in frontend/yarn.lock, read only by
+# scripts/npm-advisories.sh for that lockfile. Each entry is exactly id, reason
+# and ignoreUntil (a date at most 90 days out); the script refuses anything else.
+
+[[IgnoredVulns]]
+id = "GHSA-pxg6-pf52-xh8x"
+ignoreUntil = 2027-01-24
+reason = "cookie 0.6.0, through @sveltejs/kit's ^0.6.0: the names the web sets come from a closed set (zurfur.sid and the sign-in binding cookie), always with Path=/, and logout deletes only names parsed from our own backend's Set-Cookie."
+
+[[IgnoredVulns]]
+id = "GHSA-27mw-82g8-phjj"
+ignoreUntil = 2027-01-24
+reason = "@sveltejs/kit 2.70.3, fixed only in Kit 3: the web prerenders nothing and calls setHeaders nowhere; the gallery (frontend/ui) prerenders but has no server files."
+
+[[IgnoredVulns]]
+id = "GHSA-pfhg-q3qv-9q6r"
+ignoreUntil = 2027-01-24
+reason = "@sveltejs/kit 2.70.3, fixed only in Kit 3: the web's server hook answers every pathname starting with // with a 404 before any load or action runs."

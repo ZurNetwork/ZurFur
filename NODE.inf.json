@@ -51,7 +51,7 @@
     },
     {
       "name": ".github/",
-      "role": "CI workflow (changes/fmt/clippy/test/contract/deny/typos/nodes/hooks/web/ui), the daily advisories workflow, copilot-instructions.md",
+      "role": "CI workflow (changes/fmt/clippy/test/contract/deny/typos/nodes/hooks/web/ui), the daily advisories workflow (cargo-deny over Cargo.lock, and the npm advisory job running scripts/npm-advisories.sh over both npm lockfiles), copilot-instructions.md",
       "node": false
     },
     {
@@ -91,7 +91,7 @@
     },
     {
       "name": "Justfile",
-      "role": "task runner — the dev loop (just dev/up/gate/test/migrate-add/gen-*; frontend-install is the guarded workspace install and gallery serves the @zurfur/ui component gallery; dev-profile + dev-profile-web for the in-memory fixture world in a browser) and the node tree (just nodes/nodes-check/nodes-install; NODES_VERSION pins the tool); every dev recipe (dev, dev-back, dev-web, dev-mock, dev-profile, dev-profile-web, up) logs to logs/<name>/ through scripts/dev-log.sh, up follows each compose service into logs/compose/, and logs-tail/logs-clean read and sweep them",
+      "role": "task runner — the dev loop (just dev/up/gate/test/migrate-add/gen-*; frontend-install is the guarded workspace install and gallery serves the @zurfur/ui component gallery; dev-profile + dev-profile-web for the in-memory fixture world in a browser) and the node tree (just nodes/nodes-check/nodes-install; NODES_VERSION pins the tool); npm-advisories scans both npm lockfiles (needs the network; last in gate); every dev recipe (dev, dev-back, dev-web, dev-mock, dev-profile, dev-profile-web, up) logs to logs/<name>/ through scripts/dev-log.sh, up follows each compose service into logs/compose/, and logs-tail/logs-clean read and sweep them",
       "node": false
     },
     {
@@ -148,6 +148,16 @@
       "name": "lexicons/",
       "role": "atproto lexicon JSON (app.zurfur.*) + hermetic validation test",
       "node": true
+    },
+    {
+      "name": "osv-scanner.frontend.toml",
+      "role": "the advisories accepted in frontend/yarn.lock, each with its reason and an ignoreUntil at most 90 days out; read only by scripts/npm-advisories.sh for that lockfile",
+      "node": false
+    },
+    {
+      "name": "osv-scanner.lexicons.toml",
+      "role": "the advisories accepted in lexicons/package-lock.json, each with its reason and an ignoreUntil at most 90 days out; read only by scripts/npm-advisories.sh for that lockfile",
+      "node": false
     },
     {
       "name": "reports/",

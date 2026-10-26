@@ -91,6 +91,16 @@
       "node": false
     },
     {
+      "name": "npm-advisories.sh",
+      "role": "scans frontend/yarn.lock and lexicons/package-lock.json with the pinned osv-scanner (Linux x86_64, checked by SHA-256 on every run, cached under ${XDG_CACHE_HOME:-~/.cache}/zurfur-tools) under a clean environment, each with its own root ignore file held to an allow-list (only IgnoredVulns entries of id, reason and an ignoreUntil at most 90 days out) before any download or scan; a self-test on cookie 0.6.0 and a package-count check prove the scanner checked; exits 0 clean, 1 an advisory, 2 a broken ignore file, 3 couldn't check, 4 a hash mismatch; NPM_ADVISORIES_MODE=report demotes 1 and 3 to a warning (just npm-advisories, last in just gate; the daily advisories workflow)",
+      "node": false
+    },
+    {
+      "name": "npm-advisories.test.sh",
+      "role": "tests for npm-advisories.sh against a stub curl and a stub scanner, offline: the allow-list before any download, bad binaries, the self-test and count check, exit codes and modes, per-lockfile configs and the scanner's clean environment",
+      "node": false
+    },
+    {
       "name": "pds-provision.sh",
       "role": "create/sign into the fixture test account on the local dev PDS, print session JSON",
       "node": false

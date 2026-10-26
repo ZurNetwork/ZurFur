@@ -1,9 +1,12 @@
 name: Advisories
 
-# The daily security-advisory check on main. PR CI blocks on advisories only
-# when a PR changes Cargo.lock, so a newly published advisory against a
-# dependency main already ships surfaces here, as a failed run. GitHub notifies
-# the account that last edited this schedule.
+# The daily security-advisory check on main, as two jobs: `advisories` runs
+# cargo-deny's advisory check over Cargo.lock, and `npm-advisories` runs
+# scripts/npm-advisories.sh (the pinned osv-scanner) over frontend/yarn.lock
+# and lexicons/package-lock.json, each against its own root ignore file. PR
+# CI blocks on advisories only when a PR changes a lockfile, so a newly
+# published advisory against a dependency main already ships surfaces here, as
+# a failed run. GitHub notifies the account that last edited this schedule.
 on:
   schedule:
     - cron: '23 5 * * *'
@@ -26,3 +29,13 @@ jobs:
           arguments: --locked --all-features
           command: check
           command-arguments: advisories
+
+  npm-advisories:
+    name: npm-advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - run: sh scripts/npm-advisories.sh
