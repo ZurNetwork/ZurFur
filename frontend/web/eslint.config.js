@@ -144,14 +144,179 @@ const UNDECLARED_IMPORT = {
 	message: UNDECLARED_MESSAGE
 };
 
+/** The allow-list for a dynamic import, which no-restricted-imports never reads. */
+const ALLOWED_SPECIFIER = new RegExp(`^(?:${DECLARED}|${LOCAL})`, 'u');
+
+/** The app's source folder and the folder `$lib` names. */
+const SOURCE_ROOT = path.resolve(import.meta.dirname, 'src');
+const LIB_ROOT = path.join(SOURCE_ROOT, 'lib');
+
 /**
- * The same allow-list for a dynamic import of a literal name, which
- * no-restricted-imports never reads. A selector's regular expression can't
- * hold a slash, so each is written as \u002F.
+ * A field of an AST node, or undefined when there is none.
+ *
+ * @param {unknown} node
+ * @param {string} key
+ * @returns {unknown}
  */
-const UNDECLARED_DYNAMIC_IMPORT = {
-	selector: `ImportExpression[source.type='Literal']:not([source.value=/${`^(?:${DECLARED}|${LOCAL})`.replaceAll('/', '\\u002F')}/])`,
-	message: UNDECLARED_MESSAGE
+const fieldOf = (node, key) => (Object(node) === node ? Reflect.get(Object(node), key) : undefined);
+
+/**
+ * The text of a string literal, or of a template literal with no expressions.
+ *
+ * @param {unknown} node
+ * @returns {string | undefined}
+ */
+function staticTextOf(node) {
+	const type = fieldOf(node, 'type');
+	if (type === 'Literal') {
+		const value = fieldOf(node, 'value');
+		return typeof value === 'string' ? value : undefined;
+	}
+	if (type !== 'TemplateLiteral') return undefined;
+	const expressions = fieldOf(node, 'expressions');
+	const quasis = fieldOf(node, 'quasis');
+	if (!Array.isArray(expressions) || expressions.length > 0 || !Array.isArray(quasis)) {
+		return undefined;
+	}
+	const cooked = fieldOf(fieldOf(quasis[0], 'value'), 'cooked');
+	return typeof cooked === 'string' ? cooked : undefined;
+}
+
+/** `specifier`'s path segments, split on either slash. */
+const segmentsOf = (specifier) => specifier.split(/[/\\]/u);
+
+/** Whether `specifier` is relative: `.`, `..`, or either followed by a slash. */
+const isRelative = (specifier) => /^\.{1,2}(?:\/|$)/u.test(specifier);
+
+/** Whether `specifier` is `$lib` or under it. */
+const isLib = (specifier) => /^\$lib(?:\/|$)/u.test(specifier);
+
+/**
+ * Where a relative or `$lib` specifier lands, its query and hash dropped as
+ * Vite drops them; undefined for any other specifier.
+ *
+ * @param {string} specifier
+ * @param {string} folder the importing file's folder
+ * @returns {string | undefined}
+ */
+function landingOf(specifier, folder) {
+	const bare = specifier.replace(/[?#].*$/su, '');
+	if (isLib(bare)) return path.join(LIB_ROOT, bare.slice('$lib'.length));
+	if (isRelative(bare)) return path.resolve(folder, bare);
+	return undefined;
+}
+
+/** Whether `target` is the source folder or inside it. */
+function isInsideSource(target) {
+	const relative = path.relative(SOURCE_ROOT, target);
+	const leaves = relative === '..' || relative.startsWith(`..${path.sep}`);
+	return !leaves && !path.isAbsolute(relative);
+}
+
+/** The spec harness that builds Kit's real server-side fetch. */
+const KIT_FETCH_HARNESS = 'src/lib/testing/kit-fetch.ts';
+
+/** The Kit internals that harness imports, which no exports map offers. */
+const KIT_INTERNALS = [
+	'../../../../node_modules/@sveltejs/kit/src/runtime/server/fetch.js',
+	'../../../../node_modules/@sveltejs/kit/src/runtime/server/cookie.js'
+];
+
+/** @type {import('eslint').Rule.RuleModule} */
+const importSpecifiersRule = {
+	meta: {
+		type: 'problem',
+		docs: {
+			description:
+				'An import names a package by its name and a local file inside src/; a dynamic import answers to the allow-list.'
+		},
+		schema: [
+			{
+				type: 'object',
+				properties: { internals: { type: 'array', items: { type: 'string' } } },
+				additionalProperties: false
+			}
+		],
+		messages: {
+			nodeModules:
+				'Import a package by its name, never through a node_modules path ({{specifier}}).',
+			dotSegment: 'A package, $app, $env or node: import holds no . or .. segment ({{specifier}}).',
+			outside:
+				'A relative or $lib import never leaves src/ ({{specifier}}): import a package by its name.',
+			undeclared: UNDECLARED_MESSAGE
+		}
+	},
+	create(context) {
+		const folder = path.dirname(context.filename);
+		const importerInSource = isInsideSource(context.filename);
+		const listed = fieldOf(context.options[0], 'internals');
+		/** The exact static specifiers this file may import past the path checks. */
+		const internals = new Set(Array.isArray(listed) ? listed : []);
+
+		/**
+		 * @param {import('eslint').Rule.Node} node
+		 * @param {unknown} source
+		 * @param {boolean} dynamic
+		 */
+		function check(node, source, dynamic) {
+			const specifier = staticTextOf(source);
+			if (specifier === undefined) return;
+			if (!dynamic && internals.has(specifier)) return;
+			/** @param {'nodeModules' | 'dotSegment' | 'outside' | 'undeclared'} messageId */
+			const report = (messageId) => {
+				context.report({ node, messageId, data: { specifier } });
+			};
+			const segments = segmentsOf(specifier);
+			if (segments.some((segment) => /^node_modules(?:[?#]|$)/iu.test(segment))) {
+				report('nodeModules');
+				return;
+			}
+			const local = isRelative(specifier) || isLib(specifier);
+			if (!local) {
+				const named = segmentsOf(specifier.replace(/^node:/u, ''));
+				if (named.some((segment) => segment === '.' || segment === '..')) {
+					report('dotSegment');
+					return;
+				}
+			}
+			const landing = landingOf(specifier, folder);
+			const governed = isLib(specifier) || importerInSource;
+			if (landing !== undefined && governed && !isInsideSource(landing)) {
+				report('outside');
+				return;
+			}
+			if (dynamic && !ALLOWED_SPECIFIER.test(specifier)) report('undeclared');
+		}
+
+		/** @param {import('eslint').Rule.Node} node */
+		const checkStatic = (node) => {
+			check(node, fieldOf(node, 'source'), false);
+		};
+
+		return {
+			ImportDeclaration: checkStatic,
+			ExportAllDeclaration: checkStatic,
+			ExportNamedDeclaration: checkStatic,
+			/** @param {import('eslint').Rule.Node} node */
+			ImportExpression(node) {
+				check(node, fieldOf(node, 'source'), true);
+			},
+			/** @param {import('eslint').Rule.Node} node */
+			TSImportType(node) {
+				check(node, fieldOf(fieldOf(node, 'argument'), 'literal'), false);
+			},
+			/** @param {import('eslint').Rule.Node} node */
+			TSExternalModuleReference(node) {
+				check(node, fieldOf(node, 'expression'), false);
+			}
+		};
+	}
+};
+
+/** web's own rules, as an inline plugin. */
+const webPlugin = {
+	meta: { name: 'web' },
+	rules: { 'import-specifiers': importSpecifiersRule }
 };
 
 /**
@@ -296,8 +461,7 @@ export default defineConfig(
 						"ImportDeclaration[source.value='@sveltejs/kit'] ImportSpecifier[imported.name='error'][local.name!='error']",
 					message:
 						"Import SvelteKit's error() as `error`: the literal-message rule keys on that name."
-				},
-				UNDECLARED_DYNAMIC_IMPORT
+				}
 			]
 		}
 	},
@@ -323,6 +487,23 @@ export default defineConfig(
 		name: 'web/declared-imports',
 		files: LINTED_FILES,
 		rules: { 'no-restricted-imports': importRules({ effect: false, denHref: false }) }
+	},
+	{
+		// Every file's specifiers, static and dynamic: no node_modules path, no
+		// . or .. in a package name, no relative or $lib path out of src/, and a
+		// dynamic import answers to the same allow-list as a static one.
+		name: 'web/import-specifiers',
+		files: LINTED_FILES,
+		plugins: { web: webPlugin },
+		rules: { 'web/import-specifiers': 'error' }
+	},
+	{
+		// The spec harness for Kit's server fetch reaches Kit's internals by path
+		// on purpose; it may import exactly these two, statically, and nothing
+		// else past the checks.
+		name: 'web/kit-internals',
+		files: [KIT_FETCH_HARNESS],
+		rules: { 'web/import-specifiers': ['error', { internals: KIT_INTERNALS }] }
 	},
 	{
 		// DD 39944194 containment: Effect exists only below the runes seam —
