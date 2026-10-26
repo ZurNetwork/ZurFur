@@ -6,14 +6,17 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, test } from 'node:test';
+import { after, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
 	ALLOWED_INSTALL_SCRIPTS,
 	INSTALL_COMMAND,
-	checkBeforeInstall,
+	checkBeforeInstall as checkBeforeInstallWith,
 	checkInstalled,
-	parseLockfile
+	parseLockfile,
+	parsePlainRange,
+	parsePlainVersion,
+	satisfiesRange
 } from './install-check.mjs';
 
 const FRONTEND = path.dirname(fileURLToPath(import.meta.url));
@@ -32,14 +35,34 @@ const UI_MANIFEST = { name: '@zurfur/ui', private: true, version: '0.0.0' };
 const GOOD_RESOLVED = 'https://registry.yarnpkg.com/left-pad/-/left-pad-1.3.0.tgz#e8bf7a8e0b3a5f5d0f1b5d2bcd4b1d7c7f6f0a1e';
 const GOOD_INTEGRITY = 'sha512-XI5MPzVNApjAyhQzphX8BkmKsKUxD4LdyK24iZeQEkPnY0Nmg5sGIaeKmGBPqmJ4wn5LHGXLwVKRbw/+EcPQcA==';
 
+// An empty home and /etc, so the fixture checks never read the machine's own yarn config.
+const CLEAN_MACHINE = fs.mkdtempSync(path.join(os.tmpdir(), 'install-check-machine-'));
+after(() => fs.rmSync(CLEAN_MACHINE, { recursive: true, force: true }));
+const CLEAN_HOME = path.join(CLEAN_MACHINE, 'home');
+const CLEAN_ETC = path.join(CLEAN_MACHINE, 'etc');
+fs.mkdirSync(CLEAN_HOME);
+fs.mkdirSync(CLEAN_ETC);
+
+/** The before-install check on a fixture: a clean environment, home and /etc unless `options` says otherwise. */
+function checkBeforeInstall(root, options = {}) {
+	const machine = { env: { HOME: CLEAN_HOME }, homedir: CLEAN_HOME, etc: CLEAN_ETC };
+	return checkBeforeInstallWith(root, { ...machine, ...options });
+}
+
+/** The environment for a CLI run on a fixture: the caller's, without yarn's variables, over the clean home. */
+function cleanCliEnv() {
+	const kept = Object.entries(process.env).filter(([name]) => !/^(yarn_|npm_config_)/i.test(name) && name !== 'XDG_CONFIG_HOME');
+	return { ...Object.fromEntries(kept), HOME: CLEAN_HOME };
+}
+
 function write(file, content) {
 	fs.mkdirSync(path.dirname(file), { recursive: true });
 	fs.writeFileSync(file, typeof content === 'string' ? content : `${JSON.stringify(content, null, '\t')}\n`);
 }
 
 /** A clean repo tree in a temp folder: the real base lockfile and web manifest, a minimal ui. */
-function fixture(t) {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), 'install-check-'));
+function fixture(t, parent = os.tmpdir()) {
+	const root = fs.mkdtempSync(path.join(parent, 'install-check-'));
 	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 	const frontend = path.join(root, 'frontend');
 	write(path.join(frontend, 'package.json'), ROOT_MANIFEST);
@@ -90,8 +113,13 @@ function assertOnly(result, rule) {
 	assert.deepEqual([...rules], [rule], `expected only rule ${rule}, got ${JSON.stringify(result.findings)}`);
 }
 
-function runCli(args) {
-	return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
+function runCli(args, env = process.env) {
+	return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', env });
+}
+
+/** Runs the CLI on a fixture root with the clean environment. */
+function runFixtureCli(root, ...args) {
+	return runCli([...args, '--root', root], cleanCliEnv());
 }
 
 describe('before install: the clean case', () => {
@@ -107,7 +135,7 @@ describe('before install: the clean case', () => {
 
 	test('the CLI exits 0 on the clean fixture', (t) => {
 		const { root } = fixture(t);
-		const run = runCli(['--root', root]);
+		const run = runFixtureCli(root);
 		assert.equal(run.status, 0, run.stdout + run.stderr);
 	});
 });
@@ -208,9 +236,14 @@ describe('before install: the manifests', () => {
 		'./left-pad-1.3.0.tgz',
 		'left-pad-1.3.0.tgz',
 		'npm:left-pad@1.3.0',
-		'workspace:*'
+		'workspace:*',
+		'latest',
+		'>=1.3.0',
+		'^1.3',
+		'1.x',
+		''
 	]) {
-		test(`refuses the spec ${spec}`, (t) => {
+		test(`refuses the spec ${JSON.stringify(spec)}`, (t) => {
 			const { root, file } = fixture(t);
 			editJson(file('ui', 'package.json'), (m) => (m.dependencies = { 'left-pad': spec }));
 			assertRefused(checkBeforeInstall(root), 'spec-exotic');
@@ -338,6 +371,325 @@ describe('before install: what lockfile blocks depend on', () => {
 	});
 });
 
+const COOKIE_HEADER = 'cookie@^0.6.0:';
+
+describe("before install: a block's version satisfies its keys", () => {
+	test("refuses a renamed range: kit's cookie and cookie's key moved to ^0.7.0 over 0.6.0", (t) => {
+		const { root, file } = fixture(t);
+		editBlock(file('yarn.lock'), KIT_HEADER, (block) => block.replace('    cookie "^0.6.0"', '    cookie "^0.7.0"'));
+		editText(file('yarn.lock'), (text) => text.replace(`\n${COOKIE_HEADER}\n`, '\ncookie@^0.7.0:\n'));
+		const result = checkBeforeInstall(root);
+		assertOnly(result, 'lock-satisfies');
+		assert.equal(result.findings.length, 1, JSON.stringify(result.findings));
+		assert.match(result.findings[0].message, /version "0\.6\.0" does not satisfy the key "cookie@\^0\.7\.0"/);
+	});
+
+	test("refuses a file: range planted in kit's cookie and in cookie's keys", (t) => {
+		const { root, file } = fixture(t);
+		editBlock(file('yarn.lock'), KIT_HEADER, (block) => block.replace('    cookie "^0.6.0"', '    cookie "file:../x"'));
+		editText(file('yarn.lock'), (text) => text.replace(`\n${COOKIE_HEADER}\n`, '\ncookie@^0.6.0, "cookie@file:../x":\n'));
+		const result = checkBeforeInstall(root);
+		assertOnly(result, 'lock-range');
+		const messages = result.findings.map((finding) => finding.message);
+		assert.equal(messages.length, 2, JSON.stringify(messages));
+		assert.ok(messages.some((message) => message.includes('dependencies "cookie" has the range "file:../x"')), JSON.stringify(messages));
+		assert.ok(messages.some((message) => message.includes('key "cookie@file:../x" has the range "file:../x"')), JSON.stringify(messages));
+	});
+
+	test("refuses cookie's block moved to 0.5.0 under its ^0.6.0 key", (t) => {
+		const { root, file } = fixture(t);
+		const resolved = `https://registry.yarnpkg.com/cookie/-/cookie-0.5.0.tgz#${SHA1}`;
+		editBlock(file('yarn.lock'), COOKIE_HEADER, (block) =>
+			block
+				.replace('version "0.6.0"', 'version "0.5.0"')
+				.replace(/resolved "[^"]+"/, `resolved "${resolved}"`)
+				.replace(/integrity \S+/, `integrity ${GOOD_INTEGRITY}`)
+		);
+		const result = checkBeforeInstall(root);
+		assertOnly(result, 'lock-satisfies');
+		assert.equal(result.findings.length, 1, JSON.stringify(result.findings));
+		assert.match(result.findings[0].message, /version "0\.5\.0" does not satisfy the key "cookie@\^0\.6\.0"/);
+	});
+
+	test('refuses a version with a leading-zero prerelease number', (t) => {
+		const { root, file } = fixture(t);
+		editBlock(file('yarn.lock'), COOKIE_HEADER, (block) => block.replace('version "0.6.0"', 'version "0.6.0-01"'));
+		assertRefused(checkBeforeInstall(root), 'lock-version');
+	});
+});
+
+const EXOTIC_RANGES = Object.freeze([
+	'file:../x',
+	'link:../x',
+	'ui',
+	'latest',
+	'npm:left-pad@1.3.0',
+	'>=1.0.0',
+	'1.x',
+	'^1.2',
+	'v1.2.3',
+	'^01.2.3',
+	'^1.2.3+build',
+	'1.2.3 - 2.0.0',
+	'^1.0.0||^2.0.0',
+	''
+]);
+
+describe('before install: every range is a plain range', () => {
+	for (const range of EXOTIC_RANGES) {
+		test(`refuses the dependency range ${JSON.stringify(range)}`, (t) => {
+			const { root, file } = fixture(t);
+			editBlock(file('yarn.lock'), KIT_HEADER, (block) => block.replace('    cookie "^0.6.0"', `    cookie ${JSON.stringify(range)}`));
+			const result = checkBeforeInstall(root);
+			assertRefused(result, 'lock-range');
+			const message = result.findings.find((finding) => finding.rule === 'lock-range').message;
+			assert.ok(message.includes(`dependencies "cookie" has the range ${JSON.stringify(range)}`), message);
+			assert.ok(message.includes('the guard reads only *, X.Y.Z'), message);
+		});
+
+		test(`refuses the key range ${JSON.stringify(range)}`, (t) => {
+			const { root, file } = fixture(t);
+			const key = JSON.stringify(`cookie@${range}`);
+			editText(file('yarn.lock'), (text) => text.replace(`\n${COOKIE_HEADER}\n`, `\ncookie@^0.6.0, ${key}:\n`));
+			const result = checkBeforeInstall(root);
+			assertOnly(result, 'lock-range');
+			assert.ok(result.findings[0].message.includes(`key ${key} has the range ${JSON.stringify(range)}`), result.findings[0].message);
+		});
+	}
+
+	test('refuses a key with no range', (t) => {
+		const { root, file } = fixture(t);
+		editText(file('yarn.lock'), (text) => text.replace(`\n${COOKIE_HEADER}\n`, '\ncookie@^0.6.0, cookie:\n'));
+		assertOnly(checkBeforeInstall(root), 'lock-range');
+	});
+
+	test('refuses an optionalDependencies range that is not plain', (t) => {
+		const { root, file } = fixture(t);
+		editBlock(file('yarn.lock'), ROLLUP_HEADER, (block) =>
+			block.replace('    "@rollup/rollup-android-arm-eabi" "4.62.2"', '    "@rollup/rollup-android-arm-eabi" "latest"')
+		);
+		assertRefused(checkBeforeInstall(root), 'lock-range');
+	});
+
+	test('every range in the base lockfile parses', () => {
+		const { blocks } = parseLockfile(BASE_LOCK);
+		const ranges = blocks.flatMap((block) => [
+			...block.keys.map((key) => key.slice(key.indexOf('@', 1) + 1)),
+			...['dependencies', 'optionalDependencies'].flatMap((field) => [...(block.fields.get(field)?.values() ?? [])])
+		]);
+		assert.ok(ranges.length >= 799, `expected at least 799 ranges, found ${ranges.length}`);
+		assert.deepEqual(ranges.filter((range) => parsePlainRange(range) === null), []);
+	});
+});
+
+/** Known node-semver `satisfies` answers: [version, range, satisfied]. */
+const SATISFIES_TABLE = Object.freeze([
+	['1.2.3', '^1.2.3', true],
+	['1.9.9', '^1.2.3', true],
+	['1.2.2', '^1.2.3', false],
+	['2.0.0', '^1.2.3', false],
+	['0.6.5', '^0.6.0', true],
+	['0.7.0', '^0.6.0', false],
+	['0.5.9', '^0.6.0', false],
+	['0.0.3', '^0.0.3', true],
+	['0.0.4', '^0.0.3', false],
+	['0.0.0', '^0.0.0', true],
+	['0.0.1', '^0.0.0', false],
+	['1.2.9', '~1.2.3', true],
+	['1.3.0', '~1.2.3', false],
+	['1.2.2', '~1.2.3', false],
+	['0.1.5', '~0.1.2', true],
+	['0.2.0', '~0.1.2', false],
+	['1.2.3', '=1.2.3', true],
+	['1.2.4', '=1.2.3', false],
+	['1.2.3', '1.2.3', true],
+	['1.2.3+build.5', '1.2.3', true],
+	['1.2.4', '1.2.3', false],
+	['0.0.1', '*', true],
+	['99.0.0', '*', true],
+	['1.0.0-rc.1', '*', false],
+	['24.9.1', '^24', true],
+	['24.0.0', '^24', true],
+	['25.0.0', '^24', false],
+	['23.9.9', '^24', false],
+	['0.99.0', '^0', true],
+	['1.0.0', '^0', false],
+	['2.5.0', '^1.0.0 || ^2.0.0', true],
+	['3.0.0', '^1.0.0 || ^2.0.0', false],
+	['0.3.1', '^0.2.0 || ^0.3.0 || ^0.4.0', true],
+	['0.5.0', '^0.2.0 || ^0.3.0 || ^0.4.0', false],
+	['1.0.0-next.29', '^1.0.0-next.24', true],
+	['1.0.0-next.3', '^1.0.0-next.24', false],
+	['1.0.0', '^1.0.0-next.24', true],
+	['1.5.0', '^1.0.0-next.24', true],
+	['1.1.0-next.30', '^1.0.0-next.24', false],
+	['2.0.0-rc.1', '^1.0.0', false],
+	['1.2.4-rc.1', '^1.2.3', false],
+	['1.2.4-rc.1', '~1.2.3', false],
+	['4.0.0-rc.2', '^4.0.0-rc.1', true],
+	['4.0.0-rc.1', '^4.0.0-rc.1', true],
+	['4.0.0-beta.9', '^4.0.0-rc.1', false],
+	['1.0.0-rc.1', '1.0.0-rc.1', true],
+	['1.0.0-rc.1', '=1.0.0-rc.2', false],
+	['1.2.3-rc.2', '~1.2.3-rc.1', true],
+	['24.0.0-rc.1', '^24', false],
+	['1.0.0-alpha', '^1.0.0-1', true],
+	['1.0.0-1', '^1.0.0-alpha', false],
+	['1.0.0-2', '^1.0.0-10', false],
+	['1.0.0-10', '^1.0.0-2', true],
+	['1.0.0-alpha.1', '^1.0.0-alpha', true],
+	['1.0.0-alpha', '^1.0.0-alpha.1', false],
+	['1.0.0-beta', '^1.0.0-alpha.1', true],
+	['1.0.0-Beta', '^1.0.0-alpha', false],
+	['1.0.0-alpha.10', '^1.0.0-alpha.9', true],
+	['1.0.0-alpha.9a', '^1.0.0-alpha.10', true]
+]);
+
+describe('the range matcher', () => {
+	for (const [version, range, satisfied] of SATISFIES_TABLE) {
+		test(`${version} ${satisfied ? 'satisfies' : 'does not satisfy'} ${range}`, () => {
+			const parsedVersion = parsePlainVersion(version);
+			const parsedRange = parsePlainRange(range);
+			assert.notEqual(parsedVersion, null, version);
+			assert.notEqual(parsedRange, null, range);
+			assert.equal(satisfiesRange(parsedVersion, parsedRange), satisfied);
+		});
+	}
+
+	for (const range of EXOTIC_RANGES) {
+		test(`does not parse the range ${JSON.stringify(range)}`, () => {
+			assert.equal(parsePlainRange(range), null);
+		});
+	}
+
+	for (const version of ['1.2', 'v1.2.3', '01.2.3', '1.2.3-01', '1.2.3-', '1.2.3-a..b', '9007199254740992.0.0', '1.2.3-9007199254740992']) {
+		test(`does not parse the version ${JSON.stringify(version)}`, () => {
+			assert.equal(parsePlainVersion(version), null);
+		});
+	}
+});
+
+/** A temp home and /etc for the rc-file checks, with the options that point the guard at them. */
+function machine(t) {
+	const base = fs.mkdtempSync(path.join(os.tmpdir(), 'install-check-machine-'));
+	t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+	const home = path.join(base, 'home');
+	const etc = path.join(base, 'etc');
+	fs.mkdirSync(home);
+	fs.mkdirSync(etc);
+	return { base, home, etc, options: { env: { HOME: home }, homedir: home, etc } };
+}
+
+const SECRET = 'npm_secretTokenValue123';
+
+describe('before install: yarn config outside the repo', () => {
+	for (const [place, ...parts] of [
+		['etc', 'yarn', 'config'],
+		['etc', 'yarnrc'],
+		['home', '.config', 'yarn', 'config'],
+		['home', '.config', 'yarn'],
+		['home', '.yarn', 'config'],
+		['home', '.yarnrc'],
+		['home', '.yarnrc.yml']
+	]) {
+		test(`refuses ${place === 'etc' ? '/etc' : '$HOME'}/${parts.join('/')}`, (t) => {
+			const { root } = fixture(t);
+			const box = machine(t);
+			const rc = path.join(box[place], ...parts);
+			write(rc, 'yarn-path "./evil.js"\n');
+			const result = checkBeforeInstall(root, box.options);
+			assertOnly(result, 'yarnrc-outside');
+			assert.ok(result.findings.some((finding) => finding.file === rc), JSON.stringify(result.findings));
+		});
+	}
+
+	test("refuses yarn's config folder under XDG_CONFIG_HOME read as a file", (t) => {
+		const { root } = fixture(t);
+		const box = machine(t);
+		const rc = path.join(box.base, 'xdg', 'yarn');
+		write(rc, 'yarn-path "./evil.js"\n');
+		const result = checkBeforeInstall(root, { ...box.options, env: { HOME: box.home, XDG_CONFIG_HOME: path.join(box.base, 'xdg') } });
+		assertOnly(result, 'yarnrc-outside');
+		assert.deepEqual(result.findings.map((finding) => finding.file), [rc]);
+	});
+
+	test("refuses yarn's config folder under the home folder without HOME", (t) => {
+		const { root } = fixture(t);
+		const box = machine(t);
+		write(path.join(box.home, '.config', 'yarn'), 'yarn-path "./evil.js"\n');
+		assertOnly(checkBeforeInstall(root, { ...box.options, env: {} }), 'yarnrc-outside');
+	});
+
+	test('passes folders at the rc paths ($HOME/.config/yarn is yarn global folder)', (t) => {
+		const { root } = fixture(t);
+		const box = machine(t);
+		fs.mkdirSync(path.join(box.home, '.config', 'yarn', 'global'), { recursive: true });
+		fs.mkdirSync(path.join(box.home, '.yarn', 'config'), { recursive: true });
+		fs.mkdirSync(path.join(box.home, '.yarnrc'));
+		assert.deepEqual(checkBeforeInstall(root, box.options), { findings: [], errors: [] });
+	});
+
+	test('passes a dangling symlink and refuses a symlink to a file', (t) => {
+		const { root } = fixture(t);
+		const box = machine(t);
+		fs.symlinkSync(path.join(box.base, 'nowhere'), path.join(box.home, '.yarnrc'));
+		assert.deepEqual(checkBeforeInstall(root, box.options), { findings: [], errors: [] });
+		write(path.join(box.base, 'target'), 'yarn-path "./evil.js"\n');
+		fs.symlinkSync(path.join(box.base, 'target'), path.join(box.home, '.yarnrc.yml'));
+		assertOnly(checkBeforeInstall(root, box.options), 'yarnrc-outside');
+	});
+
+	test('refuses an rc path yarn would fail to read', (t) => {
+		const { root } = fixture(t);
+		const box = machine(t);
+		write(path.join(box.etc, 'yarn'), 'not a folder\n');
+		const result = checkBeforeInstall(root, box.options);
+		assertOnly(result, 'yarnrc-outside');
+		assert.match(result.findings[0].message, /cannot stat \(ENOTDIR\)/);
+	});
+
+	for (const name of ['.yarnrc', '.yarnrc.yml']) {
+		test(`refuses a ${name} in a folder above the repo root`, (t) => {
+			const box = machine(t);
+			const outer = path.join(box.base, 'outer');
+			fs.mkdirSync(path.join(outer, 'nested'), { recursive: true });
+			const { root } = fixture(t, path.join(outer, 'nested'));
+			const rc = path.join(outer, name);
+			write(rc, 'yarn-path "./evil.js"\n');
+			const result = checkBeforeInstall(root, box.options);
+			assertOnly(result, 'yarnrc-outside');
+			assert.deepEqual(result.findings.map((finding) => finding.file), [rc]);
+		});
+	}
+
+	for (const name of ['YARN_X', 'yarn_x', 'Npm_Config_Registry']) {
+		test(`refuses the variable ${name}, naming it without its value`, (t) => {
+			const { root } = fixture(t);
+			const box = machine(t);
+			const result = checkBeforeInstall(root, { ...box.options, env: { HOME: box.home, [name]: SECRET } });
+			assertOnly(result, 'yarn-env');
+			assert.equal(result.findings.length, 1, JSON.stringify(result.findings));
+			assert.ok(result.findings[0].message.startsWith(`${name} is set`), result.findings[0].message);
+			assert.ok(!JSON.stringify(result.findings).includes(SECRET), JSON.stringify(result.findings));
+		});
+	}
+
+	test('passes a clean environment, near misses included', (t) => {
+		const { root } = fixture(t);
+		const box = machine(t);
+		const env = { HOME: box.home, PATH: '/usr/bin', YARN: 'x', NPM_TOKEN: 'x', npm_config: 'x', MY_YARN_X: 'x' };
+		assert.deepEqual(checkBeforeInstall(root, { ...box.options, env }), { findings: [], errors: [] });
+	});
+
+	test('the CLI prints the variable name and never its value', (t) => {
+		const { root } = fixture(t);
+		const run = runCli(['--root', root], { ...cleanCliEnv(), YARN_REGISTRY: SECRET });
+		assert.equal(run.status, 1, run.stdout + run.stderr);
+		assert.ok(run.stdout.split('\n').some((line) => line.startsWith('environment: [yarn-env] YARN_REGISTRY is set')), run.stdout);
+		assert.ok(!(run.stdout + run.stderr).includes(SECRET), run.stdout + run.stderr);
+	});
+});
+
 describe('before install: resolved is the registry tarball of the block', () => {
 	for (const [label, resolved] of [
 		['another package (left-pad)', `https://registry.yarnpkg.com/left-pad/-/left-pad-1.3.0.tgz#${SHA1}`],
@@ -388,7 +740,7 @@ describe('before install: the shape of a lockfile block', () => {
 	test('refuses a block whose keys name two packages', (t) => {
 		const { root, file } = fixture(t);
 		editText(file('yarn.lock'), (text) =>
-			text.replace(`\n${ADAPTER_HEADER}\n`, '\n"@sveltejs/adapter-static@^3.0.10", "left-pad@^1.3.0":\n')
+			text.replace(`\n${ADAPTER_HEADER}\n`, '\n"@sveltejs/adapter-static@^3.0.10", "left-pad@^3.0.10":\n')
 		);
 		assertOnly(checkBeforeInstall(root), 'lock-name');
 	});
@@ -524,7 +876,7 @@ describe('after install', () => {
 
 	test('a missing frontend/node_modules fails with the install command', (t) => {
 		const { root } = fixture(t);
-		const run = runCli(['--installed', '--root', root]);
+		const run = runFixtureCli(root, '--installed');
 		assert.equal(run.status, 2, run.stdout + run.stderr);
 		assert.match(run.stderr, /frontend\/node_modules: missing/);
 		assert.ok(run.stderr.includes(INSTALL_COMMAND), run.stderr);
@@ -544,7 +896,7 @@ describe('the CLI', () => {
 		const { root, file } = fixture(t);
 		write(file('.yarnrc'), 'yarn-path "./evil.js"\n');
 		editJson(file('package.json'), (m) => (m.scripts = {}));
-		const run = runCli(['--root', root]);
+		const run = runFixtureCli(root);
 		assert.equal(run.status, 1, run.stdout + run.stderr);
 		const lines = run.stdout.trim().split('\n');
 		assert.ok(lines.includes('frontend/.yarnrc: [yarnrc] a yarn rc file is not allowed'), run.stdout);
@@ -554,7 +906,7 @@ describe('the CLI', () => {
 	test('exits 2 on an unreadable file', (t) => {
 		const { root, file } = fixture(t);
 		write(file('web', 'package.json'), '{ not json');
-		const run = runCli(['--root', root]);
+		const run = runFixtureCli(root);
 		assert.equal(run.status, 2, run.stdout + run.stderr);
 		assert.match(run.stderr, /frontend\/web\/package\.json: not valid JSON/);
 	});

@@ -34,7 +34,7 @@
     },
     {
       "name": "install-check.mjs",
-      "role": "the install guard, Node built-ins only: before install it pins the workspace's shape (root keys, the workspaces list, no .yarnrc, one .npmrc with its two lines), refuses non-registry specs and any workspace range missing from the lockfile (yarn 1's --frozen-lockfile doesn't check workspace dependencies), and holds every lockfile block to what yarn writes: one package per block, only version, resolved, integrity, dependencies and optionalDependencies, resolved exactly that package's registry tarball with its sha1, sha512 integrity, no duplicate keys, and every dependency a block lists itself a lockfile key (yarn resolves a missing one from the registry, unlocked); with --installed it refuses install scripts and binding.gyp off an empty allow list and requires @zurfur/ui to be a symlink to ui/",
+      "role": "the install guard, Node built-ins only: before install it pins the workspace's shape (root keys, the workspaces list, no .yarnrc, one .npmrc with its two lines), refuses yarn rc files in /etc, the home folder, yarn's config folder and every folder above the repo root, and any YARN_* or npm_config_* variable (named, never its value), refuses any spec that is not a plain range and any workspace range missing from the lockfile (yarn 1's --frozen-lockfile doesn't check workspace dependencies), and holds every lockfile block to what yarn writes: one package per block, only version, resolved, integrity, dependencies and optionalDependencies, every key and dependency range a plain range in the shapes the guard reads (*, X.Y.Z, =X.Y.Z, ^X.Y.Z, ~X.Y.Z, ^X, joined by ||), a version that satisfies each of its keys (yarn drops an entry that doesn't and resolves the range unlocked), resolved exactly that package's registry tarball with its sha1, sha512 integrity, no duplicate keys, and every dependency a block lists itself a lockfile key (yarn resolves a missing one from the registry, unlocked); with --installed it refuses install scripts and binding.gyp off an empty allow list and requires @zurfur/ui to be a symlink to ui/",
       "node": false
     },
     {
@@ -76,6 +76,6 @@
   "notes": [
     "See also: ZMVP-148 (the deleted React auth frontend).",
     "See also: memory `project_frontend_stack_history`.",
-    "The install guard does not check .yarnrc or .npmrc files above the repo root or in $HOME; CI runners have a clean home."
+    "The install guard does not check .npmrc files outside the repo (in $HOME, /etc or above the repo root); CI runners have a clean home."
   ]
 }

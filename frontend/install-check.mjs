@@ -7,6 +7,7 @@
 // Exit codes: 0 clean, 1 findings (one per line), 2 unreadable files or bad usage.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -28,15 +29,21 @@ const REGISTRY = 'https://registry.yarnpkg.com/';
 const LOCK_STRING_FIELDS = Object.freeze(['version', 'resolved', 'integrity']);
 const LOCK_MAP_FIELDS = Object.freeze(['dependencies', 'optionalDependencies']);
 const PACKAGE_NAME = /^(?:@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*$/i;
-const PLAIN_VERSION =
-	/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const NUMBER = '(0|[1-9]\\d*)';
+const PRERELEASE_ID = '(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)';
+const CORE = `${NUMBER}\\.${NUMBER}\\.${NUMBER}(?:-(${PRERELEASE_ID}(?:\\.${PRERELEASE_ID})*))?`;
+const BUILD = '(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?';
+const RANGE_VERSION = new RegExp(`^${CORE}$`);
+const LOCK_VERSION = new RegExp(`^${CORE}${BUILD}$`);
+const MAJOR_ONLY = new RegExp(`^${NUMBER}$`);
+const RANGE_SHAPES = '*, X.Y.Z, =X.Y.Z, ^X.Y.Z, ~X.Y.Z or ^X (X.Y.Z with an optional -prerelease), joined by " || "';
 const SHA1_HEX = /^[0-9a-f]{40}$/;
 const UI_NAME = '@zurfur/ui';
 const WORKSPACE_LOCK_NAMES = Object.freeze([UI_NAME, 'web']);
 const DEPENDENCY_FIELDS = Object.freeze(['dependencies', 'devDependencies', 'optionalDependencies']);
 const INSTALL_SCRIPTS = Object.freeze(['preinstall', 'install', 'postinstall']);
-const PLAIN_SPEC = /^[0-9A-Za-z.^~<>=|*+\- ]+$/;
-const TARBALL_SUFFIX = /\.(tgz|tar|tar\.gz)$/i;
+const YARN_ENV_PREFIXES = Object.freeze(['yarn_', 'npm_config_']);
+const YARNRC_NAMES = Object.freeze(['.yarnrc', '.yarnrc.yml']);
 
 const USAGE = [
 	'usage: node frontend/install-check.mjs [--installed] [--root <repo-root>]',
@@ -58,6 +65,11 @@ class Report {
 
 	finding(rule, file, message) {
 		this.findings.push({ rule, file: this.relative(file), message });
+	}
+
+	/** A finding about something outside the repo, named by `label` as given (an absolute path, the environment). */
+	findingOutside(rule, label, message) {
+		this.findings.push({ rule, file: label, message });
 	}
 
 	error(file, message) {
@@ -83,6 +95,109 @@ export function splitPattern(pattern) {
 	const at = pattern.indexOf('@', 1);
 	if (at <= 0) return { name: pattern, range: '' };
 	return { name: pattern.slice(0, at), range: pattern.slice(at + 1) };
+}
+
+/** A version number part as a number, or null when it is past the safe integer range. */
+function safeNumber(text) {
+	const value = Number(text);
+	return Number.isSafeInteger(value) ? value : null;
+}
+
+/** Turns a version regex match into a frozen version, or null when a number is out of range. */
+function versionFromMatch(match) {
+	if (match === null) return null;
+	const [major, minor, patch] = match.slice(1, 4).map(safeNumber);
+	const prerelease = match[4] === undefined ? [] : match[4].split('.');
+	const numericOutOfRange = prerelease.some((id) => /^\d+$/.test(id) && safeNumber(id) === null);
+	if (major === null || minor === null || patch === null || numericOutOfRange) return null;
+	return Object.freeze({ major, minor, patch, prerelease: Object.freeze(prerelease) });
+}
+
+/** Parses a lockfile block's version: X.Y.Z, an optional -prerelease and +build (ignored); null otherwise. */
+export function parsePlainVersion(text) {
+	if (typeof text !== 'string') return null;
+	return versionFromMatch(LOCK_VERSION.exec(text));
+}
+
+/** Parses one comparator set: `*`, `V`, `=V`, `^V`, `~V` or `^MAJOR`; null otherwise. */
+function parseComparatorSet(text) {
+	if (text === '*') return Object.freeze({ operator: '*', version: null });
+	const operator = ['=', '^', '~'].includes(text[0]) ? text[0] : '';
+	const rest = operator === '' ? text : text.slice(1);
+	const version = versionFromMatch(RANGE_VERSION.exec(rest));
+	if (version !== null) return Object.freeze({ operator: operator === '' ? '=' : operator, version });
+	const major = operator === '^' ? MAJOR_ONLY.exec(rest) : null;
+	if (major === null || safeNumber(major[1]) === null) return null;
+	const majorVersion = Object.freeze({ major: safeNumber(major[1]), minor: 0, patch: 0, prerelease: Object.freeze([]) });
+	return Object.freeze({ operator: '^major', version: majorVersion });
+}
+
+/**
+ * Parses a range in the plain shapes yarn's lockfile uses: comparator sets joined by exactly " || ".
+ * Returns the frozen list of sets, or null for anything else (file:, tags, >=, 1.x, an empty range, …).
+ */
+export function parsePlainRange(text) {
+	if (typeof text !== 'string' || text === '') return null;
+	const sets = text.split(' || ').map(parseComparatorSet);
+	return sets.includes(null) ? null : Object.freeze(sets);
+}
+
+/** Orders two prerelease identifiers by SemVer: numeric below alphanumeric, numbers as numbers. */
+function compareIdentifiers(left, right) {
+	const leftNumeric = /^\d+$/.test(left);
+	const rightNumeric = /^\d+$/.test(right);
+	if (leftNumeric && rightNumeric) return Math.sign(Number(left) - Number(right));
+	if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+	if (left === right) return 0;
+	return left < right ? -1 : 1;
+}
+
+/** Orders major, minor and patch only. */
+function compareCore(left, right) {
+	return Math.sign(left.major - right.major) || Math.sign(left.minor - right.minor) || Math.sign(left.patch - right.patch);
+}
+
+/** Orders two versions by SemVer precedence; a release ranks above its prereleases, build is ignored. */
+function compareVersions(left, right) {
+	const core = compareCore(left, right);
+	if (core !== 0) return core;
+	if (left.prerelease.length === 0 || right.prerelease.length === 0) {
+		return Math.sign(right.prerelease.length - left.prerelease.length);
+	}
+	const shared = Math.min(left.prerelease.length, right.prerelease.length);
+	for (let index = 0; index < shared; index += 1) {
+		const order = compareIdentifiers(left.prerelease[index], right.prerelease[index]);
+		if (order !== 0) return order;
+	}
+	return Math.sign(left.prerelease.length - right.prerelease.length);
+}
+
+/** The exclusive upper bound of a `^`, `^MAJOR` or `~` set, compared on major, minor and patch only. */
+function upperBound(set) {
+	const { major, minor, patch } = set.version;
+	if (set.operator === '^major') return { major: major + 1, minor: 0, patch: 0 };
+	if (set.operator === '~') return { major, minor: minor + 1, patch: 0 };
+	if (major > 0) return { major: major + 1, minor: 0, patch: 0 };
+	if (minor > 0) return { major: 0, minor: minor + 1, patch: 0 };
+	return { major: 0, minor: 0, patch: patch + 1 };
+}
+
+function satisfiesSet(version, set) {
+	if (version.prerelease.length > 0) {
+		const ownPrerelease = set.version !== null && set.version.prerelease.length > 0 && compareCore(version, set.version) === 0;
+		if (!ownPrerelease) return false;
+	}
+	if (set.operator === '*') return true;
+	if (set.operator === '=') return compareVersions(version, set.version) === 0;
+	return compareVersions(version, set.version) >= 0 && compareCore(version, upperBound(set)) < 0;
+}
+
+/**
+ * Whether a parsed version satisfies a parsed plain range, as node-semver's `satisfies` decides it
+ * (not loose, prereleases only through a set naming a prerelease of the same major.minor.patch).
+ */
+export function satisfiesRange(version, range) {
+	return range.some((set) => satisfiesSet(version, set));
 }
 
 /**
@@ -320,10 +435,12 @@ function checkLockfile(report, file, workspaceNames) {
 		checkBlockFields(report, file, block, where);
 		const name = blockName(report, file, block, where);
 		const version = block.fields.get('version');
-		const plainVersion = typeof version === 'string' && PLAIN_VERSION.test(version);
+		const parsedVersion = parsePlainVersion(version);
+		const plainVersion = parsedVersion !== null;
 		if (!plainVersion) {
 			report.finding('lock-version', file, `${where}: version must be a plain semver version, found ${shown(version)}`);
 		}
+		checkKeyRanges(report, file, block, where, parsedVersion);
 		const resolved = block.fields.get('resolved');
 		if (name !== null && plainVersion && !isRegistryTarball(resolved, name, version)) {
 			const expected = `${registryTarball(name, version)}#<sha1>`;
@@ -338,6 +455,21 @@ function checkLockfile(report, file, workspaceNames) {
 	const lockKeys = new Set(firstSeen.keys());
 	for (const block of lock.blocks) checkBlockDependencies(report, file, block, lockKeys);
 	return lockKeys;
+}
+
+/** Holds each key's range to the plain shapes, and the block's version to every plain key range. */
+function checkKeyRanges(report, file, block, where, version) {
+	for (const key of block.keys) {
+		const { range } = splitPattern(key);
+		const parsed = parsePlainRange(range);
+		if (parsed === null) {
+			report.finding('lock-range', file, `${where}: key ${JSON.stringify(key)} has the range ${JSON.stringify(range)}: the guard reads only ${RANGE_SHAPES}`);
+			continue;
+		}
+		if (version !== null && !satisfiesRange(version, parsed)) {
+			report.finding('lock-satisfies', file, `${where}: version ${shown(block.fields.get('version'))} does not satisfy the key ${JSON.stringify(key)} (yarn would drop the entry and resolve the range from the registry, unlocked)`);
+		}
+	}
 }
 
 function blockWhere(block) {
@@ -395,6 +527,8 @@ function checkBlockFields(report, file, block, where) {
 			}
 			if (typeof range !== 'string') {
 				report.finding('lock-field', file, `${where}: ${field} "${dependency}" must be a range, found ${shown(range)}`);
+			} else if (parsePlainRange(range) === null) {
+				report.finding('lock-range', file, `${where}: ${field} "${dependency}" has the range ${JSON.stringify(range)}: the guard reads only ${RANGE_SHAPES}`);
 			}
 		}
 	}
@@ -415,10 +549,6 @@ function checkBlockDependencies(report, file, block, lockKeys) {
 	}
 }
 
-function isPlainSpec(spec) {
-	return typeof spec === 'string' && PLAIN_SPEC.test(spec) && !TARBALL_SUFFIX.test(spec);
-}
-
 function checkWorkspaceManifest(report, file, manifest, lockKeys, workspaceLink) {
 	for (const field of DEPENDENCY_FIELDS) {
 		const deps = manifest[field];
@@ -429,8 +559,8 @@ function checkWorkspaceManifest(report, file, manifest, lockKeys, workspaceLink)
 		}
 		for (const [name, spec] of Object.entries(deps)) {
 			const pattern = `${name}@${spec}`;
-			if (!isPlainSpec(spec)) {
-				report.finding('spec-exotic', file, `${field} "${name}": ${JSON.stringify(spec)} is not a plain semver range or tag`);
+			if (parsePlainRange(spec) === null) {
+				report.finding('spec-exotic', file, `${field} "${name}": ${JSON.stringify(spec)} is not a plain range: the guard reads only ${RANGE_SHAPES}`);
 				continue;
 			}
 			if (pattern === workspaceLink) continue;
@@ -441,12 +571,81 @@ function checkWorkspaceManifest(report, file, manifest, lockKeys, workspaceLink)
 	}
 }
 
-/** Runs the before-install checks on the repo at `root`; returns its findings and errors. */
-export function checkBeforeInstall(root) {
+/** The home folder yarn reads its config folder under: /usr/local/share for root, else the user's home. */
+function yarnUserHome() {
+	return process.getuid?.() === 0 ? '/usr/local/share' : os.homedir();
+}
+
+/** Every folder above `root` up to the file-system root, for `root` as given and as its real path. */
+function foldersAbove(root) {
+	const starts = [path.resolve(root), realpathOrNull(root)].filter((start) => start !== null);
+	const folders = new Set();
+	for (const start of starts) {
+		for (let folder = path.dirname(start); !folders.has(folder); folder = path.dirname(folder)) {
+			folders.add(folder);
+		}
+	}
+	return [...folders];
+}
+
+/** The yarn rc files yarn 1 reads outside the repo: /etc, the home folder, its config folder, and every folder above the repo. */
+function outsideRcPaths(root, { env, homedir, etc }) {
+	const paths = [path.join(etc, 'yarn', 'config'), path.join(etc, 'yarnrc')];
+	const configHome = env.XDG_CONFIG_HOME ? env.XDG_CONFIG_HOME : path.join(homedir, '.config');
+	paths.push(path.join(configHome, 'yarn'));
+	if (env.HOME) {
+		const home = path.resolve(env.HOME);
+		paths.push(
+			path.join(home, '.config', 'yarn', 'config'),
+			path.join(home, '.config', 'yarn'),
+			path.join(home, '.yarn', 'config'),
+			...YARNRC_NAMES.map((name) => path.join(home, name))
+		);
+	}
+	for (const folder of foldersAbove(root)) {
+		paths.push(...YARNRC_NAMES.map((name) => path.join(folder, name)));
+	}
+	return [...new Set(paths.map((file) => path.resolve(file)))];
+}
+
+/** Refuses a yarn rc file outside the repo: yarn skips a missing path or a folder, and reads anything else. */
+function checkOutsideRcFiles(report, root, options) {
+	for (const file of outsideRcPaths(root, options)) {
+		let stat;
+		try {
+			stat = fs.statSync(file);
+		} catch (cause) {
+			if (cause.code === 'ENOENT') continue;
+			report.findingOutside('yarnrc-outside', file, `cannot stat (${cause.code ?? cause.message}): yarn would fail reading it as a yarn rc file`);
+			continue;
+		}
+		if (!stat.isDirectory()) {
+			report.findingOutside('yarnrc-outside', file, 'a yarn rc file outside the repo is not allowed: yarn reads it as config');
+		}
+	}
+}
+
+/** Refuses every variable yarn reads as config; names it and never prints its value. */
+function checkYarnEnv(report, env) {
+	for (const name of Object.keys(env).sort()) {
+		const lower = name.toLowerCase();
+		if (YARN_ENV_PREFIXES.some((prefix) => lower.startsWith(prefix))) {
+			report.findingOutside('yarn-env', 'environment', `${name} is set: yarn reads every YARN_* and npm_config_* variable as config; unset it`);
+		}
+	}
+}
+
+/**
+ * Runs the before-install checks on the repo at `root`; returns its findings and errors.
+ * `options` holds the environment, the home folder and the /etc folder the guard reads (the process's by default).
+ */
+export function checkBeforeInstall(root, { env = process.env, homedir = yarnUserHome(), etc = '/etc' } = {}) {
 	const report = new Report(root);
 	const frontend = path.join(root, 'frontend');
 	checkRootManifest(report, frontend);
 	checkRcFiles(report, root, frontend);
+	checkOutsideRcFiles(report, root, { env, homedir, etc });
+	checkYarnEnv(report, env);
 	const webFile = path.join(frontend, 'web', 'package.json');
 	const uiFile = path.join(frontend, 'ui', 'package.json');
 	const web = readJson(report, webFile);
