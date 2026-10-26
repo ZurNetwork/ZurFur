@@ -29,7 +29,9 @@ job() {
 
 # expect_line <name> <haystack> <line>: one whole line, indentation aside, is <line>.
 expect_line() {
-    if printf '%s\n' "$2" | awk -v want="$3" '
+    # ENVIRON, not -v: older awks (the runner's gawk 5.2) drop a trailing backslash from -v.
+    if printf '%s\n' "$2" | want="$3" awk '
+        BEGIN { want = ENVIRON["want"] }
         { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "") }
         $0 == want { found = 1 }
         END { exit !found }
