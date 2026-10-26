@@ -8,8 +8,9 @@
 #   tools-check.sh --pins-only  the workflow check alone (what CI runs)
 #
 # Exits 1 only when the workflows disagree with the Justfile's pins, an action
-# is not pinned to a full commit SHA, or a workflow breaks a CI safety rule
-# (see ci_safety below). A local version that differs from CI's prints a
+# is not pinned to a full commit SHA, a workflow breaks a CI safety rule
+# (see ci_safety below), or frontend/install-check.mjs holds no readable
+# INSTALL_COMMAND. A local version that differs from CI's prints a
 # warning and leaves the exit code alone.
 set -eu
 
@@ -128,6 +129,23 @@ check_step_input extractions/setup-just just-version "$JUST_VERSION"
 # No checkout leaves its token in .git/config for later steps to read.
 check_step_input actions/checkout persist-credentials false "CI safety rule"
 
+# The guarded install's exact text: the INSTALL_COMMAND the install guard
+# exports, from its one `export const INSTALL_COMMAND = '<command>';` line.
+install_guard="frontend/install-check.mjs"
+install_command="$(awk -v q="'" '
+    BEGIN { head = "export const INSTALL_COMMAND = " q }
+    { sub(/\r$/, "") }
+    index($0, head) == 1 && substr($0, length($0) - 1) == q ";" {
+        n++
+        v = substr($0, length(head) + 1)
+        v = substr(v, 1, length(v) - 2)
+    }
+    END { if (n == 1 && v ~ /[^ ]/ && index(v, q) == 0 && index(v, "\\") == 0) print v }
+' "$install_guard" 2>/dev/null || true)"
+if [ -z "$install_command" ]; then
+    pin_error "$install_guard: no INSTALL_COMMAND line tools-check can read (one line: export const INSTALL_COMMAND = '<command>';)"
+fi
+
 # ci_safety — prints one "<file>:<line>: <problem>" per break of the CI safety
 # rules, in every workflow file:
 #   - a top-level `permissions:` block holding `contents: read`, every entry
@@ -135,54 +153,110 @@ check_step_input actions/checkout persist-credentials false "CI safety rule"
 #   - no `pull_request_target`, no `secrets.`/`secrets[` expression and no
 #     `secrets:` key, outside YAML comments (a run script's comments count);
 #   - every yarn install (bare `yarn`, or a yarn command whose subcommand is
-#     install, add, remove, upgrade, upgrade-interactive, global, import or
-#     link, whatever flags come first) carries --frozen-lockfile and
-#     --ignore-scripts, stands alone in its step's `run:`, and sits between a
-#     step running exactly `node frontend/install-check.mjs` and one running
-#     exactly `node frontend/install-check.mjs --installed`; those three steps
-#     set nothing but run, name and working-directory;
+#     install, add, remove, upgrade, upgrade-interactive, global, import,
+#     link or unplug, whatever flags come first) is a step whose `run:` is,
+#     whitespace squeezed, exactly the install guard's INSTALL_COMMAND; it
+#     carries --frozen-lockfile and --ignore-scripts, stands alone in its
+#     step's `run:`, and sits between a step running exactly
+#     `node frontend/install-check.mjs` and one running exactly
+#     `node frontend/install-check.mjs --installed`; those three steps set
+#     nothing but run, name and working-directory;
+#   - no command anywhere in a `run:` or a `shell:` is npm, npx, pnpm, pnpx,
+#     bun, bunx or corepack (bare, by path or quoted, wherever it sits in the
+#     command); no yarn command there takes --use-yarnrc or has the
+#     subcommand create, policies, set, init, config, workspace, self-update
+#     or dlx (each fetches and runs a package, changes which yarn runs, or
+#     runs any yarn command);
 #   - every `run:` is a step's (a `defaults: run:` block aside), so a shape
 #     this reader can't follow fails rather than hiding an install.
 # Top level means column 0: GitHub's workflow keys sit there, so any
 # `permissions:` indented under them is a job's (or deeper).
 ci_safety() {
     # shellcheck disable=SC2086 # $workflow_files is a newline list without spaces
-    awk -v q="'" '
+    TOOLS_CHECK_INSTALL="$install_command" awk -v q="'" '
         function indent(s) { match(s, /^ */); return RLENGTH }
         function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
         function squeeze(s) { gsub(/[ \t\n]+/, " ", s); return trim(s) }
         function bare_value(s) { sub(/[ \t]+#.*$/, "", s); return trim(s) }
         function problem(file, at, msg) { print file ":" at ": " msg }
-        function unquote(w) { gsub("[\"" q "]", "", w); return w }
-        function is_yarn(w) { w = unquote(w); return w == "yarn" || w == "yarnpkg" || w ~ /\/(yarn|yarnpkg)$/ }
+        function unquote(w) { gsub("\\$[\"" q "]", "", w); gsub("[\"" q "\\\\]", "", w); return w }
+        function base(w) { w = unquote(w); sub(/^.*\//, "", w); return w }
+        function is_yarn(w) { w = base(w); return w == "yarn" || w == "yarnpkg" }
+        function add_bad(msg) { if (!(msg in bad_seen)) { bad_seen[msg] = 1; bad[++n_bad] = msg } }
+
+        # strip_comments <text> — <text> without its shell comments: a `#`
+        # that starts a word outside quotes, to the end of its line.
+        function strip_comments(s,    out, i, c, sq, dq, prev, skip) {
+            out = ""; sq = 0; dq = 0; prev = " "; skip = 0
+            for (i = 1; i <= length(s); i++) {
+                c = substr(s, i, 1)
+                if (skip) {
+                    if (c != "\n") continue
+                    skip = 0
+                } else if (sq) {
+                    if (c == q) sq = 0
+                } else if (c == "\\") {
+                    out = out c
+                    i++
+                    c = substr(s, i, 1)
+                } else if (dq) {
+                    if (c == "\"") dq = 0
+                } else if (c == q) {
+                    sq = 1
+                } else if (c == "\"") {
+                    dq = 1
+                } else if (c == "#" && prev ~ /[ \t\n;&|()]/) {
+                    skip = 1
+                    continue
+                }
+                out = out c
+                prev = c
+            }
+            return out
+        }
 
         # yarn_scan <text> — sets n_cmds (shell commands in <text>), n_inst
-        # (yarn installs among them) and inst_frozen/inst_ignore (whether
-        # every install carries the flag).
-        function yarn_scan(text,    lines, nl, i, ln, cmds, nc, j, c, w, nw, k, sub_cmd, f, g) {
+        # (those holding a yarn install), inst_frozen/inst_ignore (whether
+        # every install carries the flag), and bad[1..n_bad] (every other
+        # installer, refused yarn subcommand or --use-yarnrc, once each).
+        function yarn_scan(text,    lines, nl, i, ln, cmds, nc, j, c, w, nw, k, m, a, n_sub, bound, is_inst, f, g) {
             n_cmds = 0; n_inst = 0; inst_frozen = 1; inst_ignore = 1
+            n_bad = 0; split("", bad_seen)
             gsub(/\\\n/, " ", text)
+            text = strip_comments(text)
             nl = split(text, lines, "\n")
             for (i = 1; i <= nl; i++) {
                 ln = lines[i]
-                if (match(ln, /(^|[ \t])#/)) ln = substr(ln, 1, RSTART - 1)
                 gsub(/&&|\|\||[;|&()`]/, "\n", ln)
                 nc = split(ln, cmds, "\n")
                 for (j = 1; j <= nc; j++) {
                     c = trim(cmds[j])
                     if (c == "") continue
                     n_cmds++
-                    nw = split(c, w, /[ \t]+/)
-                    for (k = 1; k <= nw; k++) if (is_yarn(w[k])) break
-                    if (k > nw) continue
-                    sub_cmd = ""
-                    for (k++; k <= nw; k++) {
-                        if (unquote(w[k]) in VALUE_FLAGS) { k++; continue }
-                        if (unquote(w[k]) ~ /^-/) continue
-                        sub_cmd = unquote(w[k])
-                        break
+                    nw = split(c, w, /[ \t<>]+/)
+                    is_inst = 0
+                    for (k = 1; k <= nw; k++) {
+                        if (base(w[k]) in INSTALLERS) add_bad("a package manager other than yarn: " base(w[k]))
+                        if (!is_yarn(w[k])) continue
+                        # yarn takes its first word no flag binds as the
+                        # subcommand; a word after a flag may be that flag value
+                        # or the subcommand, so each one counts.
+                        n_sub = 0
+                        bound = 0
+                        for (m = k + 1; m <= nw; m++) {
+                            a = unquote(w[m])
+                            if (a ~ /^--use-yarnrc(=|$)/) add_bad("a yarn --use-yarnrc, which can swap the yarn that runs")
+                            if (a ~ /^-/) { bound = 1; continue }
+                            if (n_sub < 0) continue
+                            n_sub++
+                            if (a in YARN_REFUSED) add_bad("a refused yarn subcommand: " a)
+                            if (a in INSTALLS) is_inst = 1
+                            if (!bound) n_sub = -1
+                            bound = 0
+                        }
+                        if (n_sub == 0) is_inst = 1
                     }
-                    if (sub_cmd != "" && !(sub_cmd in INSTALLS)) continue
+                    if (!is_inst) continue
                     n_inst++
                     f = 0; g = 0
                     for (k = 1; k <= nw; k++) {
@@ -208,15 +282,26 @@ ci_safety() {
             return 1
         }
 
-        function end_steps(    i, at) {
+        function close_shell(    b) {
+            if (!in_shell) return
+            in_shell = 0
+            yarn_scan(shell_buf)
+            for (b = 1; b <= n_bad; b++) problem(shell_file, shell_line, bad[b])
+            if (n_inst) problem(shell_file, shell_line, "a yarn install in a shell:")
+        }
+
+        function end_steps(    i, at, b) {
             close_run()
             if (!in_steps) return
             in_steps = 0
             for (i = 1; i <= n; i++) {
                 if (!has_run[i]) continue
                 yarn_scan(run_text[i])
-                if (n_inst == 0) continue
                 at = step_line[i]
+                for (b = 1; b <= n_bad; b++) problem(blk_file, at, bad[b])
+                if (n_inst == 0) continue
+                if (INSTALL == "") problem(blk_file, at, "a yarn install, and no INSTALL_COMMAND to match it against")
+                else if (squeeze(run_text[i]) != INSTALL) problem(blk_file, at, "a yarn install that is not exactly `" INSTALL "`")
                 if (!inst_frozen) problem(blk_file, at, "a yarn install without --frozen-lockfile")
                 if (!inst_ignore) problem(blk_file, at, "a yarn install without --ignore-scripts")
                 if (n_cmds != 1 || has_run[i] != 1) problem(blk_file, at, "a yarn install that shares its step with other commands")
@@ -272,13 +357,17 @@ ci_safety() {
 
         BEGIN {
             GUARD = "node frontend/install-check.mjs"
-            ni = split("install add remove upgrade upgrade-interactive global import link", a, " ")
+            INSTALL = ENVIRON["TOOLS_CHECK_INSTALL"]
+            ni = split("install add remove upgrade upgrade-interactive upgradeInteractive global import link unplug", a, " ")
             for (i = 1; i <= ni; i++) INSTALLS[a[i]] = 1
-            nv = split("--cwd --modules-folder --cache-folder --global-folder --link-folder --preferred-cache-folder --use-yarnrc --mutex --network-concurrency --network-timeout --registry --otp --proxy --https-proxy", a, " ")
-            for (i = 1; i <= nv; i++) VALUE_FLAGS[a[i]] = 1
+            ni = split("npm npx pnpm pnpx bun bunx corepack", a, " ")
+            for (i = 1; i <= ni; i++) INSTALLERS[a[i]] = 1
+            ni = split("create policies set init config workspace self-update dlx", a, " ")
+            for (i = 1; i <= ni; i++) YARN_REFUSED[a[i]] = 1
         }
 
         FNR == 1 {
+            close_shell()
             finish_file()
             cur_file = FILENAME
             seen[FILENAME] = 1
@@ -302,8 +391,30 @@ ci_safety() {
                 }
                 close_run()
             }
+            if (in_shell) {
+                if (blank || ind > shell_ind) {
+                    text_checks(line)
+                    shell_buf = shell_buf (shell_lit ? "\n" : " ") trim(line)
+                    next
+                }
+                close_shell()
+            }
             if (blank || comment) next
             text_checks(line)
+            # A shell: (in a step or under defaults) runs its command too; its
+            # value, continuation lines included, is scanned like a run:.
+            if (match(line, /^[ \t]*(-[ \t]+)?shell[ \t]*:/)) {
+                in_shell = 1
+                shell_file = FILENAME
+                shell_line = FNR
+                shell_ind = indent(line)
+                if (match(line, /^ *- +/)) shell_ind = RLENGTH
+                v = line
+                sub(/^[ \t]*(-[ \t]+)?shell[ \t]*:/, "", v)
+                v = trim(v)
+                shell_lit = (substr(v, 1, 1) == "|")
+                shell_buf = (v ~ /^[|>][-+0-9]*([ \t]+#.*)?$/) ? "" : v
+            }
 
             if (ind == 0) {
                 end_steps()
@@ -350,6 +461,7 @@ ci_safety() {
         }
 
         END {
+            close_shell()
             finish_file()
             for (i = 1; i < ARGC; i++)
                 if (!(ARGV[i] in seen)) problem(ARGV[i], 0, "an empty workflow file")

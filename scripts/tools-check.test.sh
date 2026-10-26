@@ -11,13 +11,19 @@ trap cleanup EXIT
 failures=0
 sha=0123456789abcdef0123456789abcdef01234567
 
+# install_line <command> — frontend/install-check.mjs's INSTALL_COMMAND line.
+install_line() {
+    printf "export const INSTALL_COMMAND = '%s';\n" "$1"
+}
+
 # new_tree — a repo whose ci.yml pins everything correctly and keeps every CI
 # safety rule: read-only top-level permissions, checkouts without stored
-# credentials, and the guarded install.
+# credentials, and the guarded install, exactly the install guard's command.
 new_tree() {
     rm -rf "$work/repo"
-    mkdir -p "$work/repo/scripts" "$work/repo/.github/workflows"
+    mkdir -p "$work/repo/scripts" "$work/repo/.github/workflows" "$work/repo/frontend"
     cp "$script_dir/tools-check.sh" "$work/repo/scripts/"
+    install_line 'yarn --cwd frontend install --frozen-lockfile --ignore-scripts' >"$work/repo/frontend/install-check.mjs"
     cat >"$work/repo/.github/workflows/ci.yml" <<EOF
 on:
   pull_request:
@@ -230,6 +236,89 @@ expect_exit "an install split over a continued line fails" 1 "without --ignore-s
 new_tree
 printf '      - run: >-\n          yarn --cwd frontend\n          install\n' >>"$work/repo/.github/workflows/ci.yml"
 expect_exit "an install split over a folded scalar fails" 1 "without --ignore-scripts"
+
+# The guarded install is exactly frontend/install-check.mjs's INSTALL_COMMAND.
+exact="a yarn install that is not exactly \`yarn --cwd frontend install --frozen-lockfile --ignore-scripts\`"
+
+new_tree
+replace_in_ci '/run: yarn --cwd frontend install/ { print "      - run: yarn --use-yarnrc frontend/ui/x.yarnrc --cwd frontend install --frozen-lockfile --ignore-scripts --registry https://x.invalid/"; next } { print }'
+expect_exit "a guarded install with --use-yarnrc and --registry fails" 1 "$exact"
+expect_exit "a guarded install with --use-yarnrc names the flag" 1 "a yarn --use-yarnrc"
+
+new_tree
+replace_in_ci '{ sub(/--ignore-scripts$/, "--ignore-scripts --registry https://x.invalid/"); print }'
+expect_exit "a guarded install with an extra flag fails" 1 "$exact"
+
+new_tree
+replace_in_ci '{ sub(/--frozen-lockfile --ignore-scripts$/, "--ignore-scripts --frozen-lockfile"); print }'
+expect_exit "a guarded install with its flags reordered fails" 1 "$exact"
+
+new_tree
+replace_in_ci '/run: yarn --cwd frontend install/ { print "      - run: yarn install --frozen-lockfile --ignore-scripts"; print "        working-directory: frontend"; getline; next } { print }'
+expect_exit "a guarded install run from frontend/ fails" 1 "$exact"
+
+new_tree
+install_line 'yarn --cwd frontend install --frozen-lockfile --ignore-scripts --offline' >"$work/repo/frontend/install-check.mjs"
+expect_exit "an install that differs from install-check.mjs's INSTALL_COMMAND fails" 1 "is not exactly \`yarn --cwd frontend install --frozen-lockfile --ignore-scripts --offline\`"
+
+new_tree
+printf 'export const INSTALL = 1;\n' >"$work/repo/frontend/install-check.mjs"
+expect_exit "an install-check.mjs without INSTALL_COMMAND fails" 1 "no INSTALL_COMMAND"
+
+new_tree
+install_line 'yarn --cwd frontend install --frozen-lockfile --ignore-scripts' >>"$work/repo/frontend/install-check.mjs"
+expect_exit "an install-check.mjs with two INSTALL_COMMAND lines fails" 1 "no INSTALL_COMMAND"
+
+# Every other installer, and every yarn command that fetches and runs a
+# package or changes which yarn runs, fails in any run:.
+
+# expect_step_fails <name> <run value> <fragment> — a step running <run value> fails with <fragment>.
+expect_step_fails() {
+    new_tree
+    printf '      - run: %s\n' "$2" >>"$work/repo/.github/workflows/ci.yml"
+    expect_exit "$1" 1 "$3"
+}
+
+expect_step_fails "npx fails" 'npx --yes cowsay hi' "a package manager other than yarn: npx"
+expect_step_fails "yarn create fails" 'yarn create vite x' "a refused yarn subcommand: create"
+expect_step_fails "npm install fails" 'npm install left-pad' "a package manager other than yarn: npm"
+expect_step_fails "pnpm fails" 'pnpm i' "a package manager other than yarn: pnpm"
+expect_step_fails "pnpx fails" 'pnpx y' "a package manager other than yarn: pnpx"
+expect_step_fails "bun fails" 'bun x y' "a package manager other than yarn: bun"
+expect_step_fails "bunx fails" 'bunx y' "a package manager other than yarn: bunx"
+expect_step_fails "corepack fails" 'corepack enable' "a package manager other than yarn: corepack"
+expect_step_fails "yarn policies fails" 'yarn policies set-version 1.22.22' "a refused yarn subcommand: policies"
+expect_step_fails "an npm by path fails" '/usr/bin/npm ci' "a package manager other than yarn: npm"
+expect_step_fails "a quoted npm fails" '"npm" ci' "a package manager other than yarn: npm"
+expect_step_fails "an npx after an env assignment fails" 'FOO=1 npx x' "a package manager other than yarn: npx"
+expect_step_fails "an npm behind a wrapper fails" 'env -i nice -n 19 npm ci' "a package manager other than yarn: npm"
+expect_step_fails "an npm in sh -c fails" "sh -c 'npm ci'" "a package manager other than yarn: npm"
+expect_step_fails "an npm after a quoted # fails" 'echo "#"; npm ci' "a package manager other than yarn: npm"
+expect_step_fails "an npm with a redirect fails" 'npm>/dev/null ci' "a package manager other than yarn: npm"
+expect_step_fails "yarn set version fails" 'yarn set version berry' "a refused yarn subcommand: set"
+expect_step_fails "yarn init fails" 'yarn init -2' "a refused yarn subcommand: init"
+expect_step_fails "yarn config fails" 'yarn config set yarn-path x.js' "a refused yarn subcommand: config"
+expect_step_fails "yarn workspace fails" 'yarn workspace web add left-pad' "a refused yarn subcommand: workspace"
+expect_step_fails "yarn create after a flag bound to a value fails" 'yarn --emoji true create x' "a refused yarn subcommand: create"
+expect_step_fails "yarn create after flags fails" 'yarn --cwd frontend --silent create x' "a refused yarn subcommand: create"
+expect_step_fails "yarn unplug counts as an install" 'yarn --cwd frontend unplug x' "$exact"
+expect_step_fails "a --use-yarnrc on any yarn command fails" 'yarn run check --use-yarnrc x.yarnrc' "a yarn --use-yarnrc"
+
+new_tree
+printf '      - run: |\n          echo hi\n          npm ci\n' >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "an npm on a later line of a run block fails" 1 "a package manager other than yarn: npm"
+
+new_tree
+printf '      - run: >-\n          echo hi \\\n          && corepack enable\n' >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a corepack in a folded, continued run fails" 1 "a package manager other than yarn: corepack"
+
+new_tree
+printf '      - run: echo hi\n        shell: npx x {0}\n' >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "an npx as a step's shell fails" 1 "a package manager other than yarn: npx"
+
+new_tree
+replace_in_ci '{ print } /^        working-directory: frontend\/web$/ { print "        shell: bunx sh {0}" }'
+expect_exit "a bunx as the defaults shell fails" 1 "a package manager other than yarn: bunx"
 
 new_tree
 printf '      - {name: x, run: yarn install}\n' >>"$work/repo/.github/workflows/ci.yml"
