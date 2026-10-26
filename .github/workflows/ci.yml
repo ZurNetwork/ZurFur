@@ -439,7 +439,7 @@ jobs:
         working-directory: .
       - run: node frontend/install-check.mjs --installed
         working-directory: .
-      - run: node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs
+      - run: node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs frontend/licences.test.mjs
         working-directory: .
       # Chromium for the vitest browser-mode (component) test project.
       - run: yarn playwright install --with-deps chromium

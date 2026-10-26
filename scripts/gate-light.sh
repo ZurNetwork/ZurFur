@@ -155,7 +155,7 @@ fi
 
 if [ "$web" = 1 ]; then
     step just frontend-install
-    step node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs
+    step node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs frontend/licences.test.mjs
     for package in web ui; do
         step yarn --cwd "frontend/$package" run check
         step yarn --cwd "frontend/$package" run lint

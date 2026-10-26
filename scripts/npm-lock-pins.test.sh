@@ -1,10 +1,13 @@
 #!/bin/sh
 # Pins the npm lockfile checks' wiring: the npm-lock job's shape and its inline
-# step in CI, the jobs that wait for it, the driver's clean environments,
-# floor and checks of the change's own waivers and ignore files, the daily npm
-# advisory job, the cargo config check in `just gate` and the hooks job, and
-# `just gate` ending on the advisory scan. Each line here is one a quiet edit
-# could drop or loosen. Run directly, or via `just scripts-test`.
+# step in CI, the jobs that wait for it, the driver's tools, clean
+# environments, floor and checks of the change's own waivers, ignore files and
+# licence list, the base's licence list for every floor, the daily npm
+# advisory and licence jobs, the guard's tests in the gate, gate-light and CI,
+# `just npm-lock-review`'s licence list, the cargo config check in `just gate`
+# and the hooks job, and `just gate` ending on the licence sweep and then the
+# advisory scan. Each line here is one a quiet edit could drop or loosen. Run
+# directly, or via `just scripts-test`.
 set -eu
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -39,6 +42,22 @@ expect_line() {
         ok "$1"
     else
         fail "$1" "no line '$3'"
+    fi
+}
+
+# expect_count <name> <haystack> <line> <count>: exactly <count> whole lines,
+# indentation aside, are <line>.
+expect_count() {
+    got="$(printf '%s\n' "$2" | want="$3" awk '
+        BEGIN { want = ENVIRON["want"] }
+        { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "") }
+        $0 == want { n++ }
+        END { print n + 0 }
+    ')"
+    if [ "$got" = "$4" ]; then
+        ok "$1"
+    else
+        fail "$1" "$got lines '$3', wanted $4"
     fi
 }
 
@@ -152,6 +171,18 @@ expect_line "the change's waivers are parsed when they differ from the base's" "
 expect_line "the base's lock-review parses them over an empty diff" "$driver" \
     "\"\$node_bin\" \"\$tools/frontend/lock-review.mjs\" \"\$old_frontend\" \"\$old_frontend\" \\"
 expect_line "the parse gets the change's own waivers file" "$driver" "--min-age-days 7 --waivers lock-age-waivers.json"
+expect_line "the driver's tools include licences.mjs" "$driver" \
+    "TOOLS=\"scripts/npm-advisories.sh frontend/lock-review.mjs frontend/install-check.mjs frontend/licences.mjs\""
+expect_line "a base with the driver must hold the licence list" "$driver" "if ! base_has npm-licences.json; then"
+expect_line "a base without the list fails" "$driver" \
+    "fail \"the base has scripts/npm-lock-ci.sh but no npm-licences.json, so no licence list to judge this change by\""
+expect_line "the list is extracted from the base" "$driver" "from_base npm-licences.json \"\$licences\""
+expect_count "both floors and the waivers parse get the list" "$driver" "--licences \"\$licences\" \\" 2
+expect_line "the change's list is swept when it differs from the base's" "$driver" \
+    "if [ \"\$licences\" != npm-licences.json ] && ! cmp -s \"\$licences\" npm-licences.json; then"
+expect_line "the base's lock-review sweeps both lockfiles against the change's list" "$driver" \
+    "\"\$node_bin\" \"\$tools/frontend/lock-review.mjs\" --licence-sweep --licences npm-licences.json frontend/yarn.lock lexicons/package-lock.json"
+expect_line "the sweep's exit is recorded" "$driver" "record \"this change's licence list\" \"\$?\""
 
 # --- the cargo config check ------------------------------------------------------------
 
@@ -170,17 +201,41 @@ expect_line "the daily workflow has an npm-advisories job" "$daily" "name: npm-a
 expect_line "the daily npm-advisories job runs the scan" "$daily" "- run: sh scripts/npm-advisories.sh"
 expect_line "the advisories workflow runs daily" "$(cat "$root/.github/workflows/advisories.yml")" "- cron: '23 5 * * *'"
 
+licences_job="$(job "$root/.github/workflows/advisories.yml" npm-licences)"
+expect_line "the daily workflow has an npm-licences job" "$licences_job" "name: npm-licences"
+expect_line "the daily npm-licences job stores no credentials" "$licences_job" "persist-credentials: false"
+expect_line "the daily npm-licences job's node" "$licences_job" \
+    "- uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0"
+expect_line "the daily npm-licences job switches off setup-node's package cache" "$licences_job" "package-manager-cache: false"
+expect_line "the daily npm-licences job sweeps both lockfiles" "$licences_job" \
+    "- run: env -i PATH=\"\$PATH\" HOME=\"\$HOME\" node frontend/lock-review.mjs --licence-sweep --licences npm-licences.json frontend/yarn.lock lexicons/package-lock.json"
+
+# The last two lines of `just gate`, comments aside: the sweep, then the scan.
 gate_last="$(awk '
     /^gate:/ { inside = 1; next }
     inside && /^[^[:space:]]/ { inside = 0 }
-    inside && /^[[:space:]]+[^[:space:]#]/ { last = $0 }
-    END { sub(/^[[:space:]]+/, "", last); print last }
+    inside && /^[[:space:]]+[^[:space:]#]/ { prev = last; last = $0 }
+    END { sub(/^[[:space:]]+/, "", prev); sub(/^[[:space:]]+/, "", last); print prev "|" last }
 ' "$root/Justfile")"
-if [ "$gate_last" = "just npm-advisories" ]; then
-    ok "just gate ends with just npm-advisories"
+if [ "$gate_last" = "just npm-licences|just npm-advisories" ]; then
+    ok "just gate ends with just npm-licences, then just npm-advisories"
 else
-    fail "just gate ends with just npm-advisories" "its last line is '$gate_last'"
+    fail "just gate ends with just npm-licences, then just npm-advisories" "its last two lines are '$gate_last'"
 fi
+
+# --- the guard's tests and the manual review -----------------------------------------
+
+guard_tests="node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs frontend/licences.test.mjs"
+expect_line "just gate runs the guard's tests, licences included" "$gate_body" "$guard_tests"
+expect_line "gate-light runs the guard's tests, licences included" "$(cat "$root/scripts/gate-light.sh")" "step $guard_tests"
+expect_line "CI's ui job runs the guard's tests, licences included" "$(job "$ci" ui)" "- run: $guard_tests"
+review_body="$(awk '
+    /^npm-lock-review / { inside = 1; next }
+    inside && /^[^[:space:]]/ { inside = 0 }
+    inside { print }
+' "$root/Justfile")"
+expect_line "just npm-lock-review passes the licence list" "$review_body" \
+    "node frontend/lock-review.mjs \"\$tmp/\$1\" \"\$2\" --licences npm-licences.json --min-age-days 7 --waivers lock-age-waivers.json"
 
 if [ "$failures" -ne 0 ]; then
     echo "$failures failure(s)"

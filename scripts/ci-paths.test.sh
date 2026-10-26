@@ -63,6 +63,8 @@ expect "the lexicons ignore file" "code=true lock=false npmlock=true " "osv-scan
 expect "an npm lockfile among docs" "code=true lock=false npmlock=true " "README.md
 frontend/yarn.lock
 "
+expect "the root licence list" "code=true lock=false npmlock=true " "npm-licences.json"
+expect "a licence list below the root is not one" "code=true lock=false npmlock=false " "frontend/npm-licences.json"
 expect "an ignore file below the root is not one" "code=true lock=false npmlock=false " "lexicons/osv-scanner.lexicons.toml"
 expect "README.md is not an npm lockfile" "code=false lock=false npmlock=false " "README.md"
 expect "the Justfile is not an npm lockfile" "code=false lock=false npmlock=false " "Justfile"

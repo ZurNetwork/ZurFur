@@ -10,8 +10,8 @@
 # an unknown path or a quoted name git could not print plainly counts as code.
 # lock=true when a path is a Cargo.lock, or when there are no paths at all.
 # npmlock=true when a path is an npm lockfile (a yarn.lock or a
-# package-lock.json, at any depth) or a root osv-scanner.*.toml ignore file, or
-# when there are no paths at all. All three fail closed: CI treats any output
+# package-lock.json, at any depth), a root osv-scanner.*.toml ignore file or
+# the root npm-licences.json licence list, or when there are no paths at all. All three fail closed: CI treats any output
 # but an explicit `false` as true.
 #
 # CI runs the BASE branch's copy of this file, so a PR that edits the list
@@ -53,10 +53,10 @@ is_lockfile() {
 }
 
 # is_npm_lock <path> succeeds for what decides whether CI's npm-lock job blocks
-# on advisories: an npm lockfile or an advisory ignore file.
+# on advisories: an npm lockfile, an advisory ignore file or the licence list.
 is_npm_lock() {
     case "$1" in
-        yarn.lock | */yarn.lock | package-lock.json | */package-lock.json | osv-scanner.*.toml) return 0 ;;
+        yarn.lock | */yarn.lock | package-lock.json | */package-lock.json | osv-scanner.*.toml | npm-licences.json) return 0 ;;
     esac
     return 1
 }
