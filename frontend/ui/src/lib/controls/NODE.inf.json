@@ -1,0 +1,185 @@
+{
+  "path": "frontend/ui/src/lib/controls",
+  "charted": "2026-10-26",
+  "short": "The ten controls, their item shapes and the day, locale and link mints",
+  "is": "The shipped controls (Button, IconButton, TextInput, Select, Checkbox, Toggle, Tabs, PillSwitch, Menu and DateField), one Svelte file each with its spec beside it; the plain TypeScript item shapes they take (`types.ts`) and the mints for a link, a calendar day and a language tag; two internal helpers (FieldFrame, Tooltip); and `floating.ts`, which picks where a floating part is put.",
+  "type": "code",
+  "tags": [
+    "category:ui",
+    "category:source"
+  ],
+  "conventions": [
+    "One `.svelte` file per control, its `X.svelte.spec.ts` beside it. FieldFrame (lays out the label, hint and error) and Tooltip are internal: neither is exported. Item shapes and mints are plain TypeScript next to the components.",
+    "Props are readonly and typed: no `$bindable`, no rest props, no `$props()` that is not destructured. TextInput takes only its listed native attributes and no `id`. Callbacks carry plain values (`onPress()`, `onChange(id)`, `onCheckedChange(boolean)`, `onOpenChange(boolean)`, `onSelect(id)`), never a DOM or bits-ui event.",
+    "A control is controlled and keeps no copy of the value. A bits-ui root takes function bindings; TextInput binds `value` with a getter and a setter; Checkbox and Select call back, wait a tick and write the prop back; DateField takes its value through a derived date and keeps only its segments as interaction state. A parent that refuses a change leaves the control showing its prop, and every stateful control has a spec for that.",
+    "Typed ids are generic. A string coming back from the page is looked up in the options, never cast; an unknown or empty one is ignored. A hidden input renders only when `name` is given. Every control takes a `testid` for its interactive element. A busy Button sets `aria-busy` and `aria-disabled`, keeps focus and ignores presses.",
+    "Every word a control shows is a prop, the words bits-ui supplies for the date field's segments included; the one exception is the date announcer's \"Empty\". A label is text, never markup. `words.spec` reads the real components for a literal word.",
+    "Motion only through the seam. A control calls `useEnvironment()` once at init, puts `squish` on every pressable element and `note` on the floating element that takes bits-ui's content props, and plays cues (`toggle` for Checkbox, Toggle, Tabs and PillSwitch; `open` and `close` for the menu; none for buttons). It imports nothing from `lib/motion` and uses no `transition:`, `in:`, `out:` or `animate:`. With no provider it is still.",
+    "A floating part (the menu, the tooltip) keeps bits-ui's two levels: the wrapper that carries the position stays unstyled and the inner element takes the note. It portals into the nearest `data-skin` element, else the body, so it wears the skin it opened from, and it opens only through an entry interaction, never at load.",
+    "bits-ui and `@internationalized/date` are imported only by `.svelte` files under `src/lib`, and no type from either crosses the public API. A spread attribute is allowed only on an HTML element, and only when it spreads the `props` or `wrapperProps` bits-ui hands the nearest `{#snippet child(…)}`.",
+    "Arrows on Tabs and PillSwitch move and choose. Tabs render a panel only for the active tab. The date field picks a day and no time.",
+    "A control's looks are the family stylesheets in `../styles/controls`; a control writes no colour, time or size of its own."
+  ],
+  "entry_points": [
+    "Toggle.svelte",
+    "types.ts"
+  ],
+  "fs": [
+    {
+      "name": "Button.svelte",
+      "role": "a button, or a link when given a `LinkHref`; variant, size, icons, busy",
+      "node": false
+    },
+    {
+      "name": "Button.svelte.spec.ts",
+      "role": "spec for Button",
+      "node": false
+    },
+    {
+      "name": "Checkbox.svelte",
+      "role": "a native checkbox with a label and description; checked, unchecked or mixed",
+      "node": false
+    },
+    {
+      "name": "Checkbox.svelte.spec.ts",
+      "role": "spec for Checkbox",
+      "node": false
+    },
+    {
+      "name": "DateField.svelte",
+      "role": "a day picker field on bits-ui, with the date library inside; locale, bounds and the segment words are props",
+      "node": false
+    },
+    {
+      "name": "DateField.svelte.spec.ts",
+      "role": "spec for DateField",
+      "node": false
+    },
+    {
+      "name": "FieldFrame.svelte",
+      "role": "internal: the label, hint and error laid out around a field",
+      "node": false
+    },
+    {
+      "name": "IconButton.svelte",
+      "role": "a button holding only an icon, with its label shown in a tooltip",
+      "node": false
+    },
+    {
+      "name": "IconButton.svelte.spec.ts",
+      "role": "spec for IconButton",
+      "node": false
+    },
+    {
+      "name": "Menu.svelte",
+      "role": "a dropdown menu on bits-ui: a button or icon trigger, items, a choice reported by id",
+      "node": false
+    },
+    {
+      "name": "Menu.svelte.spec.ts",
+      "role": "spec for Menu",
+      "node": false
+    },
+    {
+      "name": "PillSwitch.svelte",
+      "role": "one choice from a few on a radio group, shown as pills",
+      "node": false
+    },
+    {
+      "name": "PillSwitch.svelte.spec.ts",
+      "role": "spec for PillSwitch",
+      "node": false
+    },
+    {
+      "name": "Select.svelte",
+      "role": "a native select with a label, placeholder, hint and error",
+      "node": false
+    },
+    {
+      "name": "Select.svelte.spec.ts",
+      "role": "spec for Select",
+      "node": false
+    },
+    {
+      "name": "Tabs.svelte",
+      "role": "tabs on bits-ui with automatic activation; the parent writes each panel",
+      "node": false
+    },
+    {
+      "name": "Tabs.svelte.spec.ts",
+      "role": "spec for Tabs",
+      "node": false
+    },
+    {
+      "name": "TextInput.svelte",
+      "role": "a text input, or a textarea when multiline, with a label, hint, error, icon and prefix",
+      "node": false
+    },
+    {
+      "name": "TextInput.svelte.spec.ts",
+      "role": "spec for TextInput",
+      "node": false
+    },
+    {
+      "name": "Toggle.svelte",
+      "role": "a switch on bits-ui with a label and description; the pattern the other bits-ui controls repeat",
+      "node": false
+    },
+    {
+      "name": "Toggle.svelte.spec.ts",
+      "role": "spec for Toggle",
+      "node": false
+    },
+    {
+      "name": "Tooltip.svelte",
+      "role": "internal: the visual-only tooltip IconButton uses",
+      "node": false
+    },
+    {
+      "name": "calendar-day.spec.ts",
+      "role": "spec for the calendar-day mint",
+      "node": false
+    },
+    {
+      "name": "calendar-day.ts",
+      "role": "`CalendarDay`, a real Gregorian day written `YYYY-MM-DD`, and `isCalendarDay`, its one mint",
+      "node": false
+    },
+    {
+      "name": "floating.spec.ts",
+      "role": "spec for the portal target",
+      "node": false
+    },
+    {
+      "name": "floating.ts",
+      "role": "`portalTarget`: the nearest skin scope around an anchor, else the body",
+      "node": false
+    },
+    {
+      "name": "link-href.spec.ts",
+      "role": "spec for the link mints",
+      "node": false
+    },
+    {
+      "name": "link-href.ts",
+      "role": "`LinkHref` and `SameOriginPath` with `isLinkHref` and `isSameOriginPath`, the one path grammar for links",
+      "node": false
+    },
+    {
+      "name": "locale-tag.spec.ts",
+      "role": "spec for the locale mint",
+      "node": false
+    },
+    {
+      "name": "locale-tag.ts",
+      "role": "`LocaleTag`, a language tag the platform accepts, and `isLocaleTag`, its one mint",
+      "node": false
+    },
+    {
+      "name": "types.ts",
+      "role": "the plain item shapes the controls take: tabs, pill options, select options, menu items and triggers, the date field words, and the button and icon button variants and sizes",
+      "node": false
+    }
+  ],
+  "notes": []
+}
