@@ -25,7 +25,7 @@ vi.mock('$app/state', () => ({
 
 /** SvelteKit's client runtime, recording what the form asks of it (see the harness). */
 vi.mock(
-	'../../../../node_modules/@sveltejs/kit/src/runtime/client/client.js',
+	'../../../../../node_modules/@sveltejs/kit/src/runtime/client/client.js',
 	() => import('$lib/testing/kit-client')
 );
 

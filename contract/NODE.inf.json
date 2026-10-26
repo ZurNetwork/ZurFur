@@ -1,6 +1,6 @@
 {
   "path": "contract",
-  "charted": "2026-10-17",
+  "charted": "2026-10-26",
   "short": "The protobuf API contract, authoritative over both tiers",
   "is": "The API contract — protobuf as the independent IDL, authoritative over BOTH tiers (axum via prost+pbjson, SvelteKit via protobuf-es), owned by neither and generated into both.",
   "type": "code",
@@ -40,7 +40,7 @@
     },
     {
       "name": "buf.gen.yaml",
-      "role": "frontend codegen (protoc-gen-es, target=ts) into frontend/web/src/lib/server/api/generated",
+      "role": "frontend codegen (protoc-gen-es from the frontend workspace's bins, target=ts) into frontend/web/src/lib/server/api/generated",
       "node": false
     },
     {

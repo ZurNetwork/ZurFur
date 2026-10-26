@@ -110,6 +110,22 @@ _dev-profile-web proxy_port api_upstream web_port:
     docker compose --profile dev-profile up -d caddy-dev-profile
     (cd frontend/web && ZURFUR_WEB_PORT="$3" ZURFUR_API_UPSTREAM="$2" ZURFUR_PUBLIC_URL="http://127.0.0.1:$1" ZURFUR_WEB_STACK=dev-profile yarn dev)
 
+# The frontend workspace's one install: the guard over the manifests and
+# frontend/yarn.lock, the frozen install with every package script skipped, then
+# the guard over what was installed. CI's install steps are these three lines.
+frontend-install:
+    node frontend/install-check.mjs
+    yarn --cwd frontend install --frozen-lockfile --ignore-scripts
+    node frontend/install-check.mjs --installed
+
+# The @zurfur/ui component gallery: install, build, then serve the build with
+# vite preview. frontend/ui/vite.config.ts alone sets the host and port
+# (127.0.0.1, ZURFUR_GALLERY_PORT or 5190). No Docker, no API, no .env.
+gallery:
+    just frontend-install
+    yarn --cwd frontend/ui run build
+    yarn --cwd frontend/ui run preview
+
 # --- Docker ---
 
 # Compose up, then one log follower per service from just before it
@@ -376,7 +392,7 @@ workspace-init:
 check:
     cd backend && bacon
 
-# The local mirror of CI's gate (fmt, clippy, test, deny, typos, contract, web).
+# The local mirror of CI's gate (fmt, clippy, test, deny, typos, contract, web, ui).
 # CI's contract job ADDITIONALLY runs (a) `buf breaking` against the PR base —
 # a comparison that only makes sense per-PR — and (b) the frontend codegen
 # drift check (clean-slate `buf generate` + index diff); both deliberately
@@ -385,9 +401,10 @@ check:
 # `just gen-contract` before pushing a corpus change.
 # -- sequential and fail-fast, so a red step stops the run before the next one
 # starts. Needs `just setup` once (typos and cargo-deny at CI's versions), a
-# one-time `yarn --cwd frontend/web playwright install chromium` for the
-# browser-mode component tests, and the `buf` CLI at BUF_VERSION for the
-# contract lint (https://buf.build/docs/installation — a single Go binary).
+# one-time `yarn --cwd frontend/ui playwright install chromium` for web's and
+# ui's browser-mode component tests (one hoisted Playwright serves both), and
+# the `buf` CLI at BUF_VERSION for the contract lint
+# (https://buf.build/docs/installation — a single Go binary).
 # Run it before a slice's first push for review and before handing it to QA;
 # base merges and fix rounds may use `just gate-light`.
 gate:
@@ -408,10 +425,16 @@ gate:
     just toml-check
     just private-papers-check
     buf lint contract
+    just frontend-install
+    node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs
     yarn --cwd frontend/web run check
     yarn --cwd frontend/web run lint
     yarn --cwd frontend/web run test
     yarn --cwd frontend/web run build
+    yarn --cwd frontend/ui run check
+    yarn --cwd frontend/ui run lint
+    yarn --cwd frontend/ui run test
+    yarn --cwd frontend/ui run build
     just engineer-tools-test
 
 # engineer-tools/review-pr.sh becomes ${XDG_BIN_HOME:-~/.local/bin}/review-pr,
@@ -444,7 +467,8 @@ engineer-tools-test:
 
 # The light gate for base merges and fix rounds: fmt, clippy, typos and the
 # design-index check, plus the tests of the crates the change touches and the
-# web checks when frontend/ or contract/ changed. CI runs the full suite on
+# frontend install, the install guard's tests and the web and ui checks when
+# frontend/ or contract/ changed. CI runs the full suite on
 # every push; see scripts/gate-light.sh for how the change is read.
 # `just gate-light --plan` prints the steps without running them.
 gate-light *ARGS:
@@ -464,13 +488,14 @@ setup:
     cargo install --locked cargo-deny --version {{CARGO_DENY_VERSION}}
     @echo "Install buf {{BUF_VERSION}}: https://buf.build/docs/installation"
     just nodes-install
-    cd frontend/web && yarn install
+    just frontend-install
     @echo ""
     @echo "Done! Edit .env with your secrets, then run: just dev"
 
 clean:
     cargo clean
     rm -rf frontend/web/node_modules frontend/web/.svelte-kit frontend/web/build
+    rm -rf frontend/node_modules frontend/ui/node_modules frontend/ui/.svelte-kit frontend/ui/build
 
 # --- Internal ---
 

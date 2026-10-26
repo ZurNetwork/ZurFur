@@ -1,8 +1,8 @@
 {
   "path": "frontend",
-  "charted": "2026-09-12",
-  "short": "The client tier: one SvelteKit app",
-  "is": "The client tier — exactly one SvelteKit app fronting the axum backend; this directory is a thin container.",
+  "charted": "2026-10-26",
+  "short": "The client tier: one workspace, two packages",
+  "is": "The client tier — one yarn workspace of two packages: `web`, the SvelteKit app fronting the axum backend, and `ui`, the `@zurfur/ui` component library with its gallery. This directory holds the workspace root, its one lockfile and the install guard.",
   "type": "code",
   "tags": [
     "category:ui",
@@ -10,20 +10,72 @@
   ],
   "conventions": [
     "Plain SvelteKit + TypeScript — the Leptos and ZesTTY/Dialect alternatives were both retired 2026-08-09; don't re-litigate the stack without new evidence.",
-    "The React auth frontend is deleted."
+    "The React auth frontend is deleted.",
+    "Every install is the trio `node frontend/install-check.mjs`, `yarn --cwd frontend install --frozen-lockfile --ignore-scripts`, `node frontend/install-check.mjs --installed`: `just frontend-install` locally, the same three steps in CI's `ui`, `web` and `contract` jobs; `scripts/tools-check.sh` fails a workflow that installs any other way.",
+    "`web` takes `@zurfur/ui` as a dev dependency at exactly `0.0.0`, resolved by the workspace symlink; `.npmrc` points the `@zurfur` scope at `registry.invalid`, so the package can never be fetched from npm.",
+    "A change to `yarn.lock` is reviewed with `node frontend/lock-review.mjs <old> <new>` (needs the network); re-run it at base merges that touch the lockfile."
   ],
   "entry_points": [
-    "web/ (there is nothing else here)"
+    "web/src/hooks.server.ts (the app)",
+    "ui/src/lib/index.ts (the library's public entry)",
+    "ui/src/routes/ (the component gallery; `just gallery`)",
+    "install-check.mjs (the install guard)"
   ],
   "fs": [
     {
-      "name": "web/",
-      "role": "the SvelteKit + Svelte 5 + TypeScript app (the only frontend)",
+      "name": ".gitignore",
+      "role": "ignores node_modules/ (the workspace's hoisted install)",
+      "node": false
+    },
+    {
+      "name": ".npmrc",
+      "role": "engine-strict=true, so the declared node/yarn range is enforced on install, and the @zurfur scope pointed at registry.invalid so @zurfur/ui can never be fetched from npm; the guard pins these two lines",
+      "node": false
+    },
+    {
+      "name": "install-check.mjs",
+      "role": "the install guard, Node built-ins only: before install it pins the workspace's shape (root keys, the workspaces list, no .yarnrc, one .npmrc with its two lines), refuses yarn rc files in /etc, the home folder, yarn's config folder and every folder above the repo root, and any YARN_* or npm_config_* variable (named, never its value), refuses any spec that is not a plain range and any workspace range missing from the lockfile (yarn 1's --frozen-lockfile doesn't check workspace dependencies), and holds every lockfile block to what yarn writes: one package per block, only version, resolved, integrity, dependencies and optionalDependencies, every key and dependency range a plain range in the shapes the guard reads (*, X.Y.Z, =X.Y.Z, ^X.Y.Z, ~X.Y.Z, ^X, joined by ||), a version that satisfies each of its keys (yarn drops an entry that doesn't and resolves the range unlocked), resolved exactly that package's registry tarball with its sha1, sha512 integrity, no duplicate keys, and every dependency a block lists itself a lockfile key (yarn resolves a missing one from the registry, unlocked); with --installed it refuses install scripts and binding.gyp off an empty allow list and requires @zurfur/ui to be a symlink to ui/",
+      "node": false
+    },
+    {
+      "name": "install-check.test.mjs",
+      "role": "the guard's node:test fixtures (run with node --test, in just gate, gate-light and CI's ui job)",
+      "node": false
+    },
+    {
+      "name": "lock-review.mjs",
+      "role": "a review tool, not a gate (it needs the network): lists the lockfile blocks a change removed and added and checks each added block's integrity against the registry",
+      "node": false
+    },
+    {
+      "name": "lock-review.test.mjs",
+      "role": "lock-review's node:test fixtures",
+      "node": false
+    },
+    {
+      "name": "package.json",
+      "role": "the workspace root, exactly {\"private\": true, \"workspaces\": [\"web\", \"ui\"]}; the guard pins it",
+      "node": false
+    },
+    {
+      "name": "ui/",
+      "role": "@zurfur/ui: the component library and its gallery",
       "node": true
+    },
+    {
+      "name": "web/",
+      "role": "the SvelteKit + Svelte 5 + TypeScript app",
+      "node": true
+    },
+    {
+      "name": "yarn.lock",
+      "role": "the one lockfile for both packages; yarn is the package manager",
+      "node": false
     }
   ],
   "notes": [
     "See also: ZMVP-148 (the deleted React auth frontend).",
-    "See also: memory `project_frontend_stack_history`."
+    "See also: memory `project_frontend_stack_history`.",
+    "The install guard does not check .npmrc files outside the repo (in $HOME, /etc or above the repo root); CI runners have a clean home."
   ]
 }

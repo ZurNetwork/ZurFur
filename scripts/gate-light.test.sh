@@ -84,6 +84,62 @@ new_repo
 change frontend/web/README.md "* star list"
 expect_plan "a Markdown edit under frontend runs the web checks" "yarn --cwd frontend/web run lint"
 
+# Every frontend plan: the guarded install, the guard's tests, web's and ui's four steps.
+frontend_plan="just frontend-install
+node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs
+yarn --cwd frontend/web run check
+yarn --cwd frontend/web run lint
+yarn --cwd frontend/web run test
+yarn --cwd frontend/web run build
+yarn --cwd frontend/ui run check
+yarn --cwd frontend/ui run lint
+yarn --cwd frontend/ui run test
+yarn --cwd frontend/ui run build"
+
+# expect_frontend_plan <name> — the plan holds every frontend step, in order.
+expect_frontend_plan() {
+    out="$(cd "$repo" && bash scripts/gate-light.sh --plan 2>&1)" || {
+        echo "FAIL $1: gate-light --plan exited non-zero"
+        failures=$((failures + 1))
+        return
+    }
+    got="$(printf '%s\n' "$out" | awk '/^gate-light: (just frontend-install|node --test |yarn --cwd frontend\/)/ { print substr($0, 13) }')"
+    if [ "$got" = "$frontend_plan" ]; then
+        echo "ok   $1"
+    else
+        echo "FAIL $1: the frontend steps differ"
+        printf '%s\n' "$out" | awk '{ print "  " $0 }'
+        failures=$((failures + 1))
+    fi
+}
+
+new_repo
+change frontend/ui/src/lib/index.ts "export {}"
+expect_frontend_plan "a ui change runs the install, the guard's tests and the web and ui checks"
+
+new_repo
+change frontend/yarn.lock "# yarn lockfile v1"
+expect_frontend_plan "a yarn.lock change runs the install, the guard's tests and the web and ui checks"
+
+new_repo
+change frontend/web/app.ts "export {}"
+expect_frontend_plan "a web change runs the ui checks too"
+
+new_repo
+change contract/zurfur/v1/thing.proto "syntax = \"proto3\";"
+expect_frontend_plan "a contract change runs the frontend steps"
+
+new_repo
+change docs/notes.md "hello"
+out="$(cd "$repo" && bash scripts/gate-light.sh --plan 2>&1)"
+if printf '%s\n' "$out" | grep -qE 'frontend-install|node --test|yarn --cwd'; then
+    echo "FAIL docs only plans no frontend step"
+    printf '%s\n' "$out" | awk '{ print "  " $0 }'
+    failures=$((failures + 1))
+else
+    echo "ok   docs only plans no frontend step"
+fi
+
 new_repo
 change Cargo.lock "# lock"
 expect_plan "a path outside every crate tests the workspace" "cargo test --workspace --locked"
