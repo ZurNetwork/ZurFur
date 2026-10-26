@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # The light local gate for base merges and fix rounds: fmt, clippy, typos, the
 # design-index check and the node-tree check always; the tests of the crates
-# the change touches; the web checks when the change touches the frontend or
-# the contract. CI re-runs the full suite on every push. Run via `just
-# gate-light`.
+# the change touches; the frontend install, the install guard's tests and the
+# web and ui checks when the change touches the frontend or the contract. CI
+# re-runs the full suite on every push. Run via `just gate-light`.
 #
 # The change is the diff from trunk() to @ (jj), or from the merge base with
 # origin/main (git). Fails closed: if the diff can't be read, or a path is
 # neither docs-only (scripts/ci-paths.sh) nor inside one crate, the whole
-# workspace is tested and the web checks run. `--plan` prints the steps
+# workspace is tested and the frontend checks run. `--plan` prints the steps
 # without running them.
 set -euo pipefail
 
@@ -154,10 +154,14 @@ if [ "$whole_workspace" = 1 ] || [ "${#crates[@]}" -gt 0 ]; then
 fi
 
 if [ "$web" = 1 ]; then
-    step yarn --cwd frontend/web run check
-    step yarn --cwd frontend/web run lint
-    step yarn --cwd frontend/web run test
-    step yarn --cwd frontend/web run build
+    step just frontend-install
+    step node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs
+    for package in web ui; do
+        step yarn --cwd "frontend/$package" run check
+        step yarn --cwd "frontend/$package" run lint
+        step yarn --cwd "frontend/$package" run test
+        step yarn --cwd "frontend/$package" run build
+    done
 else
     echo "gate-light: frontend/ unchanged; skipping the web checks"
 fi

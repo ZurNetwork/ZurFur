@@ -23,13 +23,13 @@ docs_only() {
         # sqlx-rust-codegen reads queries/, contract_current and the contract
         # job's regeneration diff own generated/.
         */queries/* | */generated/*) return 1 ;;
-        # Read only by the `nodes` job (frontend/web's prettier ignores them). A
+        # Read only by the `nodes` job (web's and ui's prettier ignore them). A
         # stray NODE.json is not listed, so the cases below decide it: code at
         # the root and in the code trees. The tree guard fails it wherever it is,
         # hidden and build folders aside.
         NODE.inf.json | */NODE.inf.json | NODE.refs.json | NODE.toml) return 0 ;;
-        # Everything else in the code trees, Markdown included: the web job's
-        # `prettier --check .` reads frontend/web's Markdown.
+        # Everything else in the code trees, Markdown included: the web and ui
+        # jobs' `prettier --check .` read web's and ui's Markdown.
         backend/* | frontend/* | contract/*) return 1 ;;
         # Markdown outside the code trees: no Rust, web or contract job reads it.
         *.md) return 0 ;;

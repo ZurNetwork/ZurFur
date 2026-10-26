@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Decides whether the Rust, contract and web jobs can skip: only a pull
+  # Decides whether the Rust, contract, web and ui jobs can skip: only a pull
   # request whose every changed path is docs-only (scripts/ci-paths.sh) skips
   # them. Fails closed: on a push, on any error, or when the checked-out merge
   # commit's parents are not exactly the PR's base and head, `code` is true and
@@ -150,8 +150,11 @@ jobs:
         with:
           node-version: '24'
           cache: yarn
-          cache-dependency-path: frontend/web/yarn.lock
-      - run: yarn --cwd frontend/web install --frozen-lockfile
+          cache-dependency-path: frontend/yarn.lock
+      # The guarded install (`just frontend-install`); tools-check pins it.
+      - run: node frontend/install-check.mjs
+      - run: yarn --cwd frontend install --frozen-lockfile --ignore-scripts
+      - run: node frontend/install-check.mjs --installed
       # Clean-slate regeneration, then diff the INDEX: a bare
       # `git diff --exit-code` on a warm tree sees only tracked-file edits —
       # blind to a file `buf generate` ADDS (new .proto ⇒ untracked _pb.ts,
@@ -275,7 +278,10 @@ jobs:
       # Fixture tests for the CI path classifier, gate-light and pr-wait.
       - run: just scripts-test
       # Every action pinned to a commit SHA, and the workflows' typos,
-      # cargo-deny and buf versions equal to the Justfile's pins.
+      # cargo-deny and buf versions equal to the Justfile's pins; every
+      # checkout without stored credentials, read-only top-level permissions,
+      # no job-level permissions, no pull_request_target, no secrets, and
+      # every yarn install frozen, script-free and guarded before and after.
       - run: just tools-check --pins-only
       # The TOML files the `changes` job lets skip the Rust jobs still parse.
       - run: just toml-check
@@ -299,8 +305,51 @@ jobs:
           # Node 24 (current LTS): vite 8 requires >= 20.19; spec-lint's pin stays untouched.
           node-version: '24'
           cache: yarn
-          cache-dependency-path: frontend/web/yarn.lock
-      - run: yarn install --frozen-lockfile
+          cache-dependency-path: frontend/yarn.lock
+      # The guarded install (`just frontend-install`), from the repo root;
+      # tools-check pins it.
+      - run: node frontend/install-check.mjs
+        working-directory: .
+      - run: yarn --cwd frontend install --frozen-lockfile --ignore-scripts
+        working-directory: .
+      - run: node frontend/install-check.mjs --installed
+        working-directory: .
+      # Chromium for the vitest browser-mode (component) test project.
+      - run: yarn playwright install --with-deps chromium
+      - run: yarn run check
+      - run: yarn run lint
+      - run: yarn run test
+      - run: yarn run build
+
+  # The @zurfur/ui component library: the install guard's own tests, then its
+  # type check, lint, browser-mode component tests and gallery build.
+  ui:
+    name: ui
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/ui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+      # The guarded install (`just frontend-install`), from the repo root;
+      # tools-check pins it.
+      - run: node frontend/install-check.mjs
+        working-directory: .
+      - run: yarn --cwd frontend install --frozen-lockfile --ignore-scripts
+        working-directory: .
+      - run: node frontend/install-check.mjs --installed
+        working-directory: .
+      - run: node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs
+        working-directory: .
       # Chromium for the vitest browser-mode (component) test project.
       - run: yarn playwright install --with-deps chromium
       - run: yarn run check
