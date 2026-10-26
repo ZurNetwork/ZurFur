@@ -8,7 +8,8 @@
 #   tools-check.sh --pins-only  the workflow check alone (what CI runs)
 #
 # Exits 1 only when the workflows disagree with the Justfile's pins, an action
-# is not pinned to a full commit SHA, a workflow breaks a CI safety rule
+# is not pinned to a full commit SHA or is not at the one commit allowed_actions
+# names for it, a workflow breaks a CI safety rule
 # (see ci_safety below), or frontend/install-check.mjs holds no readable
 # INSTALL_COMMAND. A local version that differs from CI's prints a
 # warning and leaves the exit code alone.
@@ -37,8 +38,19 @@ workflows=".github/workflows"
 workflow_files="$(find "$workflows" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) | sort)"
 errors=0
 
-# The only actions a step may use; a new one is added here deliberately, after review.
-allowed_actions="actions/checkout actions/setup-node Swatinem/rust-cache bufbuild/buf-action EmbarkStudios/cargo-deny-action crate-ci/typos extractions/setup-just"
+# The only actions a step may use, one `<action>@<SHA>` per line, each at the
+# one commit reviewed for it: GitHub fetches any SHA under an action's name,
+# even one that lives only in a fork. A new action or a bump is a deliberate
+# two-line change, after review: the workflow's `uses:` line and its line here.
+allowed_actions="
+actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7
+EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
+crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b
+extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3
+"
 
 pin_error() {
     echo "tools-check: $1" >&2
@@ -174,7 +186,14 @@ fi
 #     this reader can't follow fails rather than hiding an install;
 #   - every `uses:` is a step's, so a job-level `uses:` (a reusable workflow
 #     call) fails, and names, before its `@`, exactly one of allowed_actions
-#     (no other action, sub-path, local `./` action or `docker://` image).
+#     (no other action, sub-path, local `./` action or `docker://` image),
+#     and, after it, exactly the SHA allowed_actions holds for that action;
+#   - no mapping key is quoted (`'uses':`, `"uses":`, block or flow style)
+#     and no line holds an explicit key (`? uses`, its value on a `:` line):
+#     YAML reads each as the bare key, so a `uses:` or `run:` spelled that
+#     way would slip past the rules above; nor is a quoted scalar left open
+#     at its line's end. Script text in a `run:` or a `shell:` is exempt; a
+#     quoted value (`key: 'x'`, `- 'x'`) is fine.
 # Top level means column 0: GitHub's workflow keys sit there, so any
 # `permissions:` indented under them is a job's (or deeper).
 ci_safety() {
@@ -191,12 +210,73 @@ ci_safety() {
         function add_bad(msg) { if (!(msg in bad_seen)) { bad_seen[msg] = 1; bad[++n_bad] = msg } }
 
         # check_action <file> <line> <value> — the action a `uses:` value
-        # names, its text before `@`, is exactly one on the allow list.
-        function check_action(file, at, v,    name) {
+        # names, its text before `@`, is exactly one on the allow list, and
+        # its ref, the text after that `@`, is exactly the SHA listed for it.
+        function check_action(file, at, v,    name, ref) {
             name = trim(v)
             sub("^[\"" q "]", "", name)
+            ref = name
             sub("[]@ \t,}\"" q "#].*$", "", name)
-            if (!(name in ACTIONS)) problem(file, at, "an action not on the allow list: " (name == "" ? "(none)" : name))
+            if (!(name in ACTIONS)) {
+                problem(file, at, "an action not on the allow list: " (name == "" ? "(none)" : name))
+                return
+            }
+            ref = substr(ref, length(name) + 1)
+            if (substr(ref, 1, 1) == "@") ref = substr(ref, 2)
+            else ref = ""
+            sub("[] \t,}\"" q "#].*$", "", ref)
+            if (ref != ACTIONS[name])
+                problem(file, at, "an action not at its reviewed commit: " name "@" (ref == "" ? "(no ref)" : ref) " (allowed_actions lists the one reviewed SHA)")
+        }
+
+        # quoted_end <text> <i> — where the quoted scalar opening at <i> closes
+        # on this line (a doubled single quote, or a backslash in double
+        # quotes, escapes), or 0 when it runs past the line.
+        function quoted_end(s, i,    c, open, j, len) {
+            open = substr(s, i, 1)
+            len = length(s)
+            for (j = i + 1; j <= len; j++) {
+                c = substr(s, j, 1)
+                if (open == "\"" && c == "\\") { j++; continue }
+                if (c != open) continue
+                if (open == q && substr(s, j + 1, 1) == q) { j++; continue }
+                return j
+            }
+            return 0
+        }
+
+        # key_shape <line> — "" when every mapping key on <line> is plain;
+        # otherwise the shape it found: a quoted key (a quoted scalar then
+        # `:`) or an explicit key (`?`), each at a key position (the line
+        # start, after a `- `, or after a flow `{`, `[` or `,`), outside
+        # quotes and comments; or a quoted scalar left open at the line end,
+        # since the next line could then hide a quoted key from this reader.
+        function key_shape(s,    i, c, len, at_key, prev, j) {
+            len = length(s)
+            at_key = 1
+            prev = " "
+            for (i = 1; i <= len; i++) {
+                c = substr(s, i, 1)
+                if (c == " " || c == "\t") { prev = c; continue }
+                if (at_key && (c == "-" || c == "?") && (i == len || substr(s, i + 1, 1) ~ /[ \t]/)) {
+                    if (c == "?") return "an explicit key (?)"
+                    prev = c
+                    continue
+                }
+                if ((c == q || c == "\"") && prev ~ /[ \t{[,:]/) {
+                    j = quoted_end(s, i)
+                    if (j == 0) return "a quoted scalar that runs past its line"
+                    if (at_key && substr(s, j + 1) ~ /^[ \t]*:/) return "a quoted mapping key"
+                    i = j
+                    at_key = 0
+                    prev = c
+                    continue
+                }
+                if (c == "#" && prev ~ /[ \t]/) return ""
+                at_key = (c == "{" || c == "[" || c == ",")
+                prev = c
+            }
+            return ""
         }
 
         # not_a_step_use <line> — a `uses:` that is not a step key fails, and
@@ -388,7 +468,10 @@ ci_safety() {
             ni = split("create policies set init config workspace self-update dlx", a, " ")
             for (i = 1; i <= ni; i++) YARN_REFUSED[a[i]] = 1
             ni = split(ENVIRON["TOOLS_CHECK_ACTIONS"], a, " ")
-            for (i = 1; i <= ni; i++) ACTIONS[a[i]] = 1
+            for (i = 1; i <= ni; i++) {
+                at = index(a[i], "@")
+                if (at > 1) ACTIONS[substr(a[i], 1, at - 1)] = substr(a[i], at + 1)
+            }
         }
 
         FNR == 1 {
@@ -426,6 +509,12 @@ ci_safety() {
             }
             if (blank || comment) next
             text_checks(line)
+            # A run: or shell: value is script text (the installer rules read
+            # it), so only the keys of every other line are checked for their shape.
+            if (line !~ /^[ \t]*(-[ \t]+)?(run|shell)[ \t]*:/) {
+                shape = key_shape(line)
+                if (shape != "") problem(FILENAME, FNR, shape ", a shape tools-check cannot read")
+            }
             # A shell: (in a step or under defaults) runs its command too; its
             # value, continuation lines included, is scanned like a run:.
             if (match(line, /^[ \t]*(-[ \t]+)?shell[ \t]*:/)) {

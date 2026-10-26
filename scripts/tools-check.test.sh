@@ -9,7 +9,30 @@ cleanup() { rm -rf "$work"; }
 trap cleanup EXIT
 
 failures=0
+# A well-formed SHA that is no action's reviewed commit.
 sha=0123456789abcdef0123456789abcdef01234567
+
+# reviewed <action> — "<action>@<SHA>" from tools-check.sh's allowed_actions,
+# so the fixture uses the one table there rather than a second copy.
+reviewed() {
+    ref="$(awk -v name="$1" '
+        /^allowed_actions="/ { on = 1; next }
+        on && /^"/ { exit }
+        on && index($0, name "@") == 1 { print; exit }
+    ' "$script_dir/tools-check.sh")"
+    if [ -z "$ref" ]; then
+        echo "FAIL setup: no $1 line in tools-check.sh's allowed_actions" >&2
+        exit 1
+    fi
+    printf '%s\n' "$ref"
+}
+checkout="$(reviewed actions/checkout)"
+setup_node="$(reviewed actions/setup-node)"
+rust_cache="$(reviewed Swatinem/rust-cache)"
+buf_action="$(reviewed bufbuild/buf-action)"
+cargo_deny="$(reviewed EmbarkStudios/cargo-deny-action)"
+typos="$(reviewed crate-ci/typos)"
+setup_just="$(reviewed extractions/setup-just)"
 
 # install_line <command> — frontend/install-check.mjs's INSTALL_COMMAND line.
 install_line() {
@@ -34,15 +57,15 @@ permissions:
 jobs:
   a:
     steps:
-      - uses: actions/checkout@$sha # v7.0.1
+      - uses: $checkout # v7.0.1
         with:
           persist-credentials: false
-      - uses: crate-ci/typos@$sha # v1.51.1
-      - uses: EmbarkStudios/cargo-deny-action@$sha # v2.1.1 (cargo-deny 0.20.2)
-      - uses: extractions/setup-just@$sha # v4.0.0
+      - uses: $typos # v1.51.1
+      - uses: $cargo_deny # v2.1.1 (cargo-deny 0.20.2)
+      - uses: $setup_just # v4.0.0
         with:
           just-version: '1.49.0'
-      - uses: bufbuild/buf-action@$sha # v1.6.0
+      - uses: $buf_action # v1.6.0
         with:
           version: '1.72.0'
   web:
@@ -50,11 +73,11 @@ jobs:
       run:
         working-directory: frontend/web
     steps:
-      - uses: actions/checkout@$sha # v7.0.1
+      - uses: $checkout # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@$sha # v7.1.0
+      - uses: $setup_node # v7.1.0
         with:
           cache: yarn
           cache-dependency-path: frontend/yarn.lock
@@ -105,8 +128,8 @@ printf 'jobs:\n  b:\n    steps:\n      - uses: owner/action@v1\n' >"$work/repo/.
 expect_exit "an unpinned action in a .yaml workflow fails" 1
 
 new_tree
-printf '      - uses: extractions/setup-just@%s # v4.0.0\n' "$sha" >>"$work/repo/.github/workflows/ci.yml"
-expect_exit "a setup-just step without the just pin fails" 1
+printf '      - uses: %s # v4.0.0\n' "$setup_just" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a setup-just step without the just pin fails" 1 "set just-version"
 
 new_tree
 awk '{ sub(/# v1\.51\.1/, "# v1.50.0"); print }' "$work/repo/.github/workflows/ci.yml" >"$work/ci.yml"
@@ -338,7 +361,7 @@ expect_use() {
     expect_exit "$1" "$2" "${4:-}"
 }
 
-expect_use "a step using rust-cache passes" 0 "Swatinem/rust-cache@$sha # v2.9.2"
+expect_use "a step using rust-cache passes" 0 "$rust_cache # v2.9.2"
 expect_use "a SHA-pinned action off the allow list fails" 1 "bahmutov/npm-install@$sha # v1.10.0" "$not_allowed bahmutov/npm-install"
 expect_use "a local action fails" 1 "./.github/actions/x" "$not_allowed ./.github/actions/x"
 expect_use "a docker image fails" 1 "docker://alpine@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" "$not_allowed docker://alpine"
@@ -352,8 +375,85 @@ expect_exit "a job-level uses: fails" 1 "ci.yml:$at: a uses: that is not a step 
 expect_exit "a job-level uses: names its workflow" 1 "ci.yml:$at: $not_allowed other/repo/.github/workflows/x.yml"
 
 new_tree
-printf '      - { uses: actions/checkout@%s }\n' "$sha" >>"$work/repo/.github/workflows/ci.yml"
+printf '      - { uses: %s }\n' "$checkout" >>"$work/repo/.github/workflows/ci.yml"
 expect_exit "a flow-style uses: step fails" 1 "a step tools-check cannot read"
+
+# An allowed action is used only at the one SHA allowed_actions lists for it:
+# GitHub fetches any SHA under its name, a fork's included.
+expect_use "setup-node at its reviewed SHA passes" 0 "$setup_node # v7.1.0"
+expect_use "setup-node at another SHA fails" 1 "actions/setup-node@$sha # v7.1.0" \
+    "an action not at its reviewed commit: actions/setup-node@$sha"
+expect_use "checkout at another SHA fails" 1 "actions/checkout@$sha # v7.0.1" \
+    "an action not at its reviewed commit: actions/checkout@$sha"
+expect_use "a reviewed SHA with more after its @ fails" 1 "$checkout@$sha # v7.0.1" \
+    "an action not at its reviewed commit: $checkout@$sha"
+
+# No mapping key is quoted and no key is explicit (`?`): YAML reads each as the
+# bare key, so a job-level `uses:` spelled that way would call another repo's
+# reusable workflow unseen.
+quoted_key="a quoted mapping key, a shape tools-check cannot read"
+workflow="other/repo/.github/workflows/x.yml@$sha"
+
+# expect_job <name> <job lines> <fragment> — appends job b, written as <job
+# lines> (printf's format, %s is the workflow it calls), and expects exit 1.
+expect_job() {
+    new_tree
+    at="$(($(wc -l <"$work/repo/.github/workflows/ci.yml") + 2))"
+    # shellcheck disable=SC2059 # the job lines are the format on purpose
+    printf "  b:\n$2" "$workflow" >>"$work/repo/.github/workflows/ci.yml"
+    expect_exit "$1" 1 "ci.yml:$at: $3"
+}
+
+expect_job "a single-quoted job-level 'uses': fails" "    'uses': %s\n" "$quoted_key"
+expect_job "a double-quoted job-level \"uses\": fails" '    "uses": %s\n' "$quoted_key"
+expect_job "a double-quoted, escaped job-level \"u\\x73es\": fails" '    "u\\x73es": %s\n' "$quoted_key"
+expect_job "a quoted job-level key with a space before its colon fails" "    'uses' : %s\n" "$quoted_key"
+expect_job "an explicit job-level ? uses fails" '    ? uses\n    : %s\n' "an explicit key (?), a shape tools-check cannot read"
+
+new_tree
+printf '  b: {"uses": %s}\n' "$workflow" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a flow-style job {\"uses\": ...} fails" 1 "$quoted_key"
+
+new_tree
+printf '  b: {name: don'"'"'t, "uses": %s}\n' "$workflow" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a flow-style quoted key after a plain value with an apostrophe fails" 1 "$quoted_key"
+
+new_tree
+printf '  b: {name: x, ? uses : %s}\n' "$workflow" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a flow-style explicit key fails" 1 "an explicit key (?)"
+
+new_tree
+printf '  b: {name: "x\n    ", "uses": %s}\n' "$workflow" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a quoted scalar over two lines that hides a quoted key fails" 1 "a quoted scalar that runs past its line"
+
+new_tree
+replace_in_ci '{ print } /^  web:$/ { print "    env:"; print "      '"'"'FOO'"'"': bar" }'
+expect_exit "a quoted key under env: fails" 1 "$quoted_key"
+
+new_tree
+printf '      - name: x\n        "run": yarn install\n' >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a quoted run key in a step fails" 1 "$quoted_key"
+
+# A quoted value is not a key, and a run: script is not YAML keys.
+new_tree
+replace_in_ci '{ print } /^  web:$/ { print "    if: ${{ github.event_name == '"'"'push'"'"' && contains(github.ref, '"'"'main'"'"') }}" }'
+expect_exit "a quoted string inside an if: expression passes" 0
+
+new_tree
+replace_in_ci '{ print } /^  pull_request:$/ { print "    branches:"; print "      - '"'"'main'"'"'"; print "      - \"release/*\""; print "    paths: ['"'"'a:b'"'"', \"c\"]" }'
+expect_exit "quoted list items and flow-list values pass" 0
+
+new_tree
+replace_in_ci '/cache-dependency-path:/ { print "          cache-dependency-path: \"frontend/yarn.lock\" # a: \"b\": c"; next } { print }'
+expect_exit "a double-quoted value with a quoted key in its comment passes" 0
+
+new_tree
+replace_in_ci '/^          just-version: / { print "          just-version: '"'"'1.49.0'"'"'"; next } { print }'
+expect_exit "a single-quoted just pin passes" 0
+
+new_tree
+printf '      - name: it'"'"'s a "x" step\n        run: |\n          echo '"'"'{"uses": 1}'"'"'\n          "uses": x\n        shell: bash\n' >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "quoted text in a plain value and quoted keys in a run script pass" 0
 
 # expect_nodes_line <name> <nodes --version output> <pattern> — runs the local half
 # with a `nodes` stub printing that output first on PATH; the exit code stays 0
