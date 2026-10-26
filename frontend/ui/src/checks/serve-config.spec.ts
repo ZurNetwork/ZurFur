@@ -149,6 +149,30 @@ function projectRefusals(project: unknown): readonly string[] {
 	return refusals;
 }
 
+/** Keys that let a Vitest API server, the browser's or the UI's, write files or run tests on the host. */
+const apiPowerKeys = ['allowWrite', 'allowExec'] as const;
+
+/**
+ * Why a `test` block lets an API server write or execute: `test.api` or
+ * `test.browser.api` setting either key, whatever its value, in any project
+ * or the root config.
+ */
+function apiPowerRefusals(block: unknown): readonly string[] {
+	const test = isFields(block) && isFields(block.test) ? block.test : {};
+	const browser = isFields(test.browser) ? test.browser : {};
+	const apis = [
+		['api', test.api],
+		['browser.api', browser.api]
+	] as const;
+	return apis.flatMap(([where, api]) =>
+		isFields(api)
+			? apiPowerKeys
+					.filter((key) => Object.hasOwn(api, key))
+					.map((key) => `it sets ${where}.${key}`)
+			: []
+	);
+}
+
 function vitestProjects(viteConfig: unknown): readonly unknown[] {
 	const test = isFields(viteConfig) ? viteConfig.test : undefined;
 	const projects = isFields(test) ? test.projects : undefined;
@@ -167,6 +191,23 @@ describe("the browser tests' servers", () => {
 
 	it('serves every browser project on loopback, with no host of its own', () => {
 		expect(projects.flatMap(projectRefusals)).toEqual([]);
+	});
+
+	it('lets no API server write files or run tests', () => {
+		expect([config, ...projects].flatMap(apiPowerRefusals)).toEqual([]);
+	});
+
+	it.each([
+		['allowWrite: true in a browser project', { test: { browser: { api: { allowWrite: true } } } }],
+		['allowExec in a browser project', { test: { browser: { api: { allowExec: false } } } }],
+		['allowWrite on the UI API', { test: { api: { allowWrite: true } } }],
+		['allowExec on the UI API', { test: { api: { port: 1, allowExec: true } } }]
+	])('refuses %s', (_label, project) => {
+		expect(apiPowerRefusals(project)).not.toEqual([]);
+	});
+
+	it('passes an API on a port', () => {
+		expect(apiPowerRefusals({ test: { api: 51204, browser: { api: { port: 1 } } } })).toEqual([]);
 	});
 
 	const browserProject = {
@@ -549,5 +590,276 @@ describe("ui's serving scripts", () => {
 
 	it('passes the plain scripts', () => {
 		expect(scriptRefusals(manifest)).toEqual([]);
+	});
+});
+
+/**
+ * The variables the guarded scripts pass through `env -i`, each with its exact
+ * value; nothing else from the caller's environment reaches Storybook or
+ * Vitest. The proxies point at a closed loopback port, in both letter cases
+ * (undici reads the lower-case ones first), so a Node request to another host
+ * fails; loopback stays direct; telemetry is off and its address closed too.
+ */
+const guardVariables: ReadonlyMap<string, string> = new Map([
+	['PATH', '"$PATH"'],
+	['HOME', '"$HOME"'],
+	['ZURFUR_GALLERY_PORT', '"${ZURFUR_GALLERY_PORT-}"'],
+	['NODE_USE_ENV_PROXY', '1'],
+	['HTTP_PROXY', 'http://127.0.0.1:9'],
+	['HTTPS_PROXY', 'http://127.0.0.1:9'],
+	['http_proxy', 'http://127.0.0.1:9'],
+	['https_proxy', 'http://127.0.0.1:9'],
+	['NO_PROXY', '127.0.0.1,localhost,::1'],
+	['no_proxy', '127.0.0.1,localhost,::1'],
+	['STORYBOOK_DISABLE_TELEMETRY', '1'],
+	['STORYBOOK_TELEMETRY_URL', 'http://127.0.0.1:9']
+]);
+
+/** The port rule's one spelling: the gallery's port, printed by `gallery-port.ts`. */
+const portArgument = '"$(node gallery-port.ts)"';
+
+/**
+ * Each guarded script's program, its required arguments (a flag, or a flag
+ * and its value) and the arguments it may also carry. Any other argument is
+ * refused, so no flag that opens or reports can slip in beside the pinned ones.
+ */
+interface GuardedCommand {
+	readonly program: readonly string[];
+	readonly required: readonly (readonly string[])[];
+	readonly optional: readonly (readonly string[])[];
+}
+
+const guardedScripts: Readonly<Record<string, GuardedCommand>> = {
+	storybook: {
+		program: ['storybook', 'dev'],
+		required: [
+			['-c', '.storybook'],
+			['--host', '127.0.0.1'],
+			['--port', portArgument],
+			['--exact-port'],
+			['--no-open'],
+			['--no-version-updates'],
+			['--disable-telemetry']
+		],
+		optional: [['--ci']]
+	},
+	'build-storybook': {
+		program: ['storybook', 'build'],
+		required: [['-c', '.storybook'], ['-o', 'storybook-static'], ['--disable-telemetry']],
+		optional: [['--quiet']]
+	},
+	test: { program: ['vitest'], required: [['--run']], optional: [] },
+	'test:unit': { program: ['vitest'], required: [], optional: [] }
+};
+
+/**
+ * Splits a script into words at spaces, keeping double-quoted text (quotes
+ * included) inside its word; undefined when a quote is left open.
+ */
+function scriptWords(script: string): readonly string[] | undefined {
+	const words: string[] = [];
+	let word = '';
+	let quoted = false;
+	for (const character of script) {
+		if (character === '"') quoted = !quoted;
+		if (character === ' ' && !quoted) {
+			if (word !== '') words.push(word);
+			word = '';
+		} else {
+			word += character;
+		}
+	}
+	if (quoted) return undefined;
+	if (word !== '') words.push(word);
+	return words;
+}
+
+/**
+ * Characters that would end the guarded command or start another, outside
+ * the port rule: a second command after it runs with the caller's whole
+ * environment.
+ */
+const commandBreaks = /[;&|`\n<>]|\$\(/;
+
+const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
+
+/** Why one script is not `env -i`, exactly the guard's variables, then its pinned command. */
+function guardedScriptRefusals(script: string, command: GuardedCommand): readonly string[] {
+	if (commandBreaks.test(script.replace(portArgument, ''))) {
+		return ['it holds a character that ends or starts a command'];
+	}
+	const words = scriptWords(script);
+	if (words === undefined) return ['it leaves a quote open'];
+	const [env, clear, ...rest] = words;
+	if (env !== 'env' || clear !== '-i') return ['it does not start with env -i'];
+	const firstCommandWord = rest.findIndex((word) => !assignment.test(word));
+	const assignments = firstCommandWord === -1 ? rest : rest.slice(0, firstCommandWord);
+	const commandWords = firstCommandWord === -1 ? [] : rest.slice(firstCommandWord);
+	const passed = assignments.map((word) => assignment.exec(word)?.slice(1) ?? []);
+	const names = passed.map(([name]) => name ?? '');
+	const variableRefusals = [
+		...passed.flatMap(([name = '', value]) => {
+			const expected = guardVariables.get(name);
+			if (expected === undefined) return [`it passes ${name}`];
+			return value === expected ? [] : [`it passes ${name}=${String(value)}`];
+		}),
+		...[...guardVariables.keys()]
+			.filter((name) => !names.includes(name))
+			.map((name) => `it does not pass ${name}`),
+		...names
+			.filter((name, index) => names.indexOf(name) !== index)
+			.map((name) => `it passes ${name} twice`)
+	];
+	return [...variableRefusals, ...commandRefusals(commandWords, command)];
+}
+
+/** Why a command line is not the pinned program with its required arguments and nothing unknown. */
+function commandRefusals(words: readonly string[], command: GuardedCommand): readonly string[] {
+	const program = words.slice(0, command.program.length);
+	if (program.join(' ') !== command.program.join(' ')) {
+		return [`it runs ${program.join(' ') || 'nothing'}, not ${command.program.join(' ')}`];
+	}
+	const known = [...command.required, ...command.optional];
+	const refusals: string[] = [];
+	const seen: string[] = [];
+	let at = command.program.length;
+	while (at < words.length) {
+		const flag = words[at] ?? '';
+		const shape = known.find((candidate) => candidate[0] === flag);
+		if (shape === undefined) {
+			refusals.push(`it passes ${flag}`);
+			at += 1;
+			continue;
+		}
+		const given = words.slice(at, at + shape.length);
+		if (given.join(' ') !== shape.join(' ')) refusals.push(`it passes ${given.join(' ')}`);
+		if (seen.includes(flag)) refusals.push(`it passes ${flag} twice`);
+		seen.push(flag);
+		at += shape.length;
+	}
+	const missing = command.required
+		.filter(([flag]) => flag !== undefined && !seen.includes(flag))
+		.map((shape) => `it does not pass ${shape.join(' ')}`);
+	return [...refusals, ...missing];
+}
+
+/** Words that start Storybook or Vitest: only a guarded script may name them. */
+const guardedPrograms = /\b(?:storybook|vitest)\b/;
+
+/** Why the ui scripts start Storybook or Vitest other than through the four guarded scripts. */
+function guardedManifestRefusals(manifest: unknown): readonly string[] {
+	const scripts = isFields(manifest) ? manifest.scripts : undefined;
+	if (!isFields(scripts)) return ['scripts are missing'];
+	const pinned = Object.entries(guardedScripts).flatMap(([name, command]) => {
+		const script = scripts[name];
+		if (typeof script !== 'string') return [`${name} is missing`];
+		return guardedScriptRefusals(script, command).map((refusal) => `${name}: ${refusal}`);
+	});
+	const unguarded = Object.entries(scripts)
+		.filter(([name]) => !Object.hasOwn(guardedScripts, name))
+		.filter(([, script]) => typeof script !== 'string' || guardedPrograms.test(script))
+		.map(([name]) => `${name} starts Storybook or Vitest outside the guard`);
+	return [...pinned, ...unguarded];
+}
+
+describe("ui's guarded scripts", () => {
+	it('run Storybook and Vitest only under env -i and the guard, with the pinned flags', () => {
+		expect(guardedManifestRefusals(uiManifest)).toEqual([]);
+	});
+
+	const guard = [...guardVariables].map(([name, value]) => `${name}=${value}`).join(' ');
+	const storybook = `env -i ${guard} storybook dev -c .storybook --host 127.0.0.1 --port ${portArgument} --exact-port --no-open --ci --no-version-updates --disable-telemetry`;
+	const scripts = {
+		dev: 'vite dev',
+		storybook,
+		'build-storybook': `env -i ${guard} storybook build -c .storybook -o storybook-static --disable-telemetry --quiet`,
+		test: `env -i ${guard} vitest --run`,
+		'test:unit': `env -i ${guard} vitest`
+	};
+
+	/** The manifest with one script changed. */
+	const changed = (name: keyof typeof scripts, script: string): Fields => ({
+		scripts: { ...scripts, [name]: script }
+	});
+
+	it('passes scripts like the real ones', () => {
+		expect(guardedManifestRefusals({ scripts })).toEqual([]);
+	});
+
+	it.each([
+		[
+			'--host 0.0.0.0',
+			changed('storybook', storybook.replace('--host 127.0.0.1', '--host 0.0.0.0'))
+		],
+		['--exact-port dropped', changed('storybook', storybook.replace(' --exact-port', ''))],
+		[
+			'--no-version-updates dropped',
+			changed('storybook', storybook.replace(' --no-version-updates', ''))
+		],
+		[
+			'--disable-telemetry dropped',
+			changed('storybook', storybook.replace(' --disable-telemetry', ''))
+		],
+		['--no-open dropped', changed('storybook', storybook.replace(' --no-open', ''))],
+		['a second host', changed('storybook', `${storybook} --host 0.0.0.0`)],
+		['an unknown flag', changed('storybook', `${storybook} --https`)],
+		['another port rule', changed('storybook', storybook.replace(portArgument, '6006'))],
+		['another config folder', changed('storybook', storybook.replace('-c .storybook', '-c ../sb'))],
+		['the guard dropped from test', changed('test', 'vitest --run')],
+		['env -i dropped', changed('test', `${guard} vitest --run`)],
+		['env without -i', changed('test', `env ${guard} vitest --run`)],
+		[
+			'a lower-case proxy dropped',
+			changed('test', scripts.test.replace(' https_proxy=http://127.0.0.1:9', ''))
+		],
+		[
+			'no_proxy dropped',
+			changed('test:unit', scripts['test:unit'].replace(' no_proxy=127.0.0.1,localhost,::1', ''))
+		],
+		[
+			'a proxy pointed elsewhere',
+			changed(
+				'test',
+				scripts.test.replace(
+					'HTTPS_PROXY=http://127.0.0.1:9',
+					'HTTPS_PROXY=http://proxy.example:8080'
+				)
+			)
+		],
+		[
+			'telemetry back on',
+			changed(
+				'build-storybook',
+				scripts['build-storybook'].replace(
+					'STORYBOOK_DISABLE_TELEMETRY=1',
+					'STORYBOOK_DISABLE_TELEMETRY=0'
+				)
+			)
+		],
+		[
+			'an extra variable',
+			changed('test', scripts.test.replace('env -i ', 'env -i DATABASE_URL="$DATABASE_URL" '))
+		],
+		[
+			'a variable passed twice',
+			changed('test', scripts.test.replace('vitest', 'HTTPS_PROXY= vitest'))
+		],
+		['a second command after the guarded one', changed('test', `${scripts.test} && vitest --run`)],
+		['a command chained with a semicolon', changed('test', `${scripts.test}; vitest`)],
+		['another substitution', changed('test', scripts.test.replace('"$PATH"', '"$(cat ~/.env)"'))],
+		[
+			'--disable-telemetry dropped from the build',
+			changed('build-storybook', scripts['build-storybook'].replace(' --disable-telemetry', ''))
+		],
+		['another program', changed('test', scripts.test.replace('vitest --run', 'node x.js'))],
+		['an open quote', changed('test', `${scripts.test} "`)],
+		['a missing script', { scripts: { ...scripts, 'test:unit': undefined } }],
+		[
+			'an unguarded Storybook script',
+			{ scripts: { ...scripts, sb: 'storybook dev --host 0.0.0.0' } }
+		],
+		['an unguarded Vitest script', { scripts: { ...scripts, coverage: 'vitest --coverage' } }]
+	])('refuses %s', (_label, manifest) => {
+		expect(guardedManifestRefusals(manifest)).not.toEqual([]);
 	});
 });

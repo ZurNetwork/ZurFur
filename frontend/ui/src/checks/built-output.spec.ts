@@ -290,7 +290,14 @@ describe('the built-output check', () => {
 		expect(err).toContain(file);
 	});
 
-	it.each([[[]], [['a', 'b']]])('exits 2 for the arguments %j', (argv) => {
+	it.each([
+		[[]],
+		[['a', 'b']],
+		[['--storybook']],
+		[['--storybook', 'a', 'b']],
+		[['--storybook', '--storybook']],
+		[['--kit', 'a']]
+	])('exits 2 for the arguments %j', (argv) => {
 		const { code, err } = run(argv);
 		expect(code).toBe(2);
 		expect(err).toContain('usage');
@@ -305,6 +312,172 @@ describe('the built-output check', () => {
 			cwd: uiRoot,
 			encoding: 'utf8'
 		});
+		expect(result.status, result.stderr).toBe(expected);
+	});
+});
+
+/** A build shaped like Storybook's static output: the manager, the preview and their scripts. */
+const storybookBuild = {
+	'index.html': page('<link rel="stylesheet" href="./sb-manager/runtime.css">'),
+	'iframe.html': page(
+		'',
+		'<p>Read <a href="https://storybook.js.org/docs/writing-stories/decorators" target="_blank">the docs</a>.</p>'
+	),
+	'index.json': '{"v":5,"entries":{}}',
+	'project.json': '{}',
+	'sb-manager/runtime.js': 'export const run = () => "Zurfur Component Gallery";',
+	'assets/iframe-D7dbd-aA.js': 'import "./x.js";',
+	'sb-common-assets/nunito-sans-regular.woff2': 'wOF2 ZURFUR_NOT_TEXT',
+	'sb-addons/a11y/manager-bundle.js': 'export {};'
+};
+
+describe("the built-output check's Storybook mode", () => {
+	it('passes a clean Storybook build, its docs link included', () => {
+		const folder = buildFolder(storybookBuild);
+		expect(checkBuild(folder, 'storybook')).toEqual({ findings: [], errors: [] });
+		expect(run(['--storybook', folder])).toEqual({ code: 0, out: '', err: '' });
+	});
+
+	it("refuses Storybook's docs link in the Kit gallery's build", () => {
+		const folder = buildFolder(storybookBuild);
+		expect(rulesOf(folder)).toEqual(['scheme-attribute']);
+		expect(run([folder]).code).toBe(1);
+	});
+
+	const refused: readonly (readonly [string, Readonly<Record<string, string>>, BuiltRule])[] = [
+		[
+			'a remote src',
+			{ 'iframe.html': page('', '<img src="https://x.example/a.png" alt="">') },
+			'scheme-attribute'
+		],
+		[
+			'a remote script',
+			{ 'iframe.html': page('<script src="https://x.example/a.js"></script>') },
+			'scheme-attribute'
+		],
+		[
+			'a remote <link href>',
+			{ 'iframe.html': page('<link rel="stylesheet" href="https://example.org/x.css">') },
+			'scheme-attribute'
+		],
+		[
+			'a <link href> into the docs',
+			{ 'index.html': page('<link rel="stylesheet" href="https://storybook.js.org/docs/x.css">') },
+			'scheme-attribute'
+		],
+		[
+			'a remote CSS url()',
+			{ 'sb-manager/a.css': 'a{background:url(https://x.example/a.png)}' },
+			'remote-url'
+		],
+		[
+			'a remote CSS @import',
+			{ 'sb-manager/a.css': '@import "https://x.example/a.css";' },
+			'remote-import'
+		],
+		[
+			'a link to another site',
+			{ 'iframe.html': page('', '<a href="https://example.org/">x</a>') },
+			'scheme-attribute'
+		],
+		[
+			'a link to the docs over http',
+			{ 'iframe.html': page('', '<a href="http://storybook.js.org/docs/x">x</a>') },
+			'scheme-attribute'
+		],
+		[
+			'a link beside the docs folder',
+			{ 'iframe.html': page('', '<a href="https://storybook.js.org/docsx">x</a>') },
+			'scheme-attribute'
+		],
+		[
+			'a link to a host named like Storybook',
+			{ 'iframe.html': page('', '<a href="https://storybook.js.org.x.example/docs/">x</a>') },
+			'scheme-attribute'
+		],
+		[
+			'a link with credentials',
+			{ 'iframe.html': page('', '<a href="https://storybook.js.org@x.example/docs/">x</a>') },
+			'scheme-attribute'
+		],
+		[
+			'a docs address on an area',
+			{
+				'iframe.html': page('', '<map><area href="https://storybook.js.org/docs/x" alt="x"></map>')
+			},
+			'scheme-attribute'
+		],
+		[
+			'a refresh meta',
+			{ 'iframe.html': page('<meta http-equiv="refresh" content="0;url=/x">') },
+			'http-equiv'
+		],
+		['ZURFUR_X in a script', { 'assets/a.js': 'const port = "ZURFUR_X";' }, 'environment-name'],
+		[
+			'DATABASE_URL in JSON',
+			{ 'index.json': '{"DATABASE_URL":"postgres://x"}' },
+			'environment-name'
+		],
+		[
+			'an environment name in a source map',
+			{ 'assets/a.js.map': '{"sourcesContent":["process.env.ZURFUR_DID_ROOT_KEY"]}' },
+			'environment-name'
+		],
+		['an environment name in Markdown', { 'docs/a.md': 'DATABASE_URL' }, 'environment-name'],
+		[
+			'an environment name in an SVG',
+			{ 'a.svg': '<svg><title>ZURFUR_X</title></svg>' },
+			'environment-name'
+		],
+		[
+			'an environment name in a page',
+			{ 'iframe.html': page('', '<p>ZURFUR_X</p>') },
+			'environment-name'
+		],
+		['an environment name in a file with no extension', { LICENSE: 'ZURFUR_X' }, 'environment-name']
+	];
+
+	it.each(refused)('refuses %s', (_label, files, rule) => {
+		const folder = buildFolder({ ...storybookBuild, ...files });
+		expect(checkBuild(folder, 'storybook').findings.map((finding) => finding.rule)).toContain(rule);
+		const { code, out } = run(['--storybook', folder]);
+		expect(code).toBe(1);
+		expect(out).toContain(`[${rule}]`);
+	});
+
+	it('refuses an environment name in the Kit build too', () => {
+		const folder = buildFolder({
+			...cleanBuild,
+			'_app/env.js': 'export const env = { ZURFUR_X: 1 };'
+		});
+		expect(rulesOf(folder)).toEqual(['environment-name']);
+	});
+
+	it('names where an environment name is', () => {
+		const folder = buildFolder({ ...storybookBuild, 'assets/a.js': 'a\nbb DATABASE_URL' });
+		expect(run(['--storybook', folder]).out).toBe(
+			`${path.join(folder, 'assets/a.js')}:2:4: [environment-name] a bb DATABASE_URL\n`
+		);
+	});
+
+	it.each(['a.woff2', 'a.WOFF', 'a.png', 'a.ico'])('does not read %s as text', (name) => {
+		const folder = buildFolder({ ...storybookBuild, [name]: 'ZURFUR_X DATABASE_URL' });
+		expect(checkBuild(folder, 'storybook')).toEqual({ findings: [], errors: [] });
+	});
+
+	it.each([
+		['a clean Storybook build', () => buildFolder(storybookBuild), 0],
+		[
+			'a planted environment name',
+			() => buildFolder({ ...storybookBuild, 'assets/a.js': 'ZURFUR_SECRET' }),
+			1
+		]
+	])('runs under Node itself on %s', (_label, folderOf, expected) => {
+		const result = spawnSync(
+			process.execPath,
+			['src/checks/built-output.ts', '--storybook', folderOf()],
+			{ cwd: uiRoot, encoding: 'utf8' }
+		);
 		expect(result.status, result.stderr).toBe(expected);
 	});
 });

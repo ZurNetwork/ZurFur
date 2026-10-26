@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { packageSources, parseSource } from './parse';
-import { isRemote, networkFindings, schemeOf, type NetworkRule } from './network';
+import { docComments, libCodeSources, packageSources, parseSource } from './parse';
+import {
+	docCommentFindings,
+	isRemote,
+	networkFindings,
+	schemeOf,
+	type NetworkRule
+} from './network';
 
 function rulesOf(path: string, text: string): readonly NetworkRule[] {
 	const parsed = parseSource({ path, text });
@@ -666,8 +672,151 @@ describe('the network scan', () => {
 		const paths = sources.map((source) => source.path);
 		expect(paths).toContain('src/routes/+layout.svelte');
 		expect(paths).toContain('src/app.html');
+		expect(paths).toContain('src/stories/frame/StoryFrame.svelte');
 		expect(paths.filter((path) => path.startsWith('src/checks/'))).toEqual([]);
 		const findings = sources.flatMap((source) => networkFindings(parseSource(source)));
+		expect(findings).toEqual([]);
+	});
+});
+
+function docRulesOf(path: string, text: string): readonly NetworkRule[] {
+	return docCommentFindings(path, docComments({ path, text })).map((finding) => finding.rule);
+}
+
+const libModule = 'src/lib/fixture.ts';
+const libComponent = 'src/lib/Fixture.svelte';
+
+describe('the doc comments under src/lib/', () => {
+	it.each([
+		[
+			'an image tag in a JSDoc comment',
+			libModule,
+			'/** Shows <img src=x onerror=alert(1)> here. */\nexport const x = 1;',
+			'doc-tag'
+		],
+		[
+			'a link in a JSDoc comment',
+			libModule,
+			'/** See https://example.org for more. */\nexport const x = 1;',
+			'doc-url'
+		],
+		[
+			'a protocol-relative link',
+			libModule,
+			'/** See //example.org/x. */\nexport const x = 1;',
+			'doc-url'
+		],
+		[
+			'an http link in upper case',
+			libModule,
+			'/** See HTTP://example.org. */\nexport const x = 1;',
+			'doc-url'
+		],
+		['a closing tag', libModule, '/** Ends here </div> */\nexport const x = 1;', 'doc-tag'],
+		['an HTML comment', libModule, '/** Hidden <!-- x --> */\nexport const x = 1;', 'doc-tag'],
+		[
+			'a tag on a property',
+			libModule,
+			'export interface P {\n\t/** The <b>label</b>. */\n\treadonly label: string;\n}',
+			'doc-tag'
+		],
+		['a tag in a trailing comment', libModule, 'export const x = 1; /** <script> */', 'doc-tag'],
+		[
+			'a tag after an escaped backtick',
+			libModule,
+			'/** A \\`<img src=x>` here. */\nexport const x = 1;',
+			'doc-tag'
+		],
+		[
+			'a tag inside a double-backtick span',
+			libModule,
+			'/** A ``<img src=x>`` here. */\nexport const x = 1;',
+			'doc-tag'
+		],
+		[
+			'a tag in a span across lines',
+			libModule,
+			'/**\n * A `<img\n * src=x>` here.\n */\nexport const x = 1;',
+			'doc-tag'
+		],
+		[
+			'a URL inside a code span',
+			libModule,
+			'/** Fetches `https://example.org`. */\nexport const x = 1;',
+			'doc-url'
+		],
+		[
+			'a tag in a component prop comment',
+			libComponent,
+			'<script lang="ts">\n\tinterface Props {\n\t\t/** The <img src=x> label. */\n\t\tlabel: string;\n\t}\n\tlet { label }: Props = $props();\n</script>\n\n<p>{label}</p>',
+			'doc-tag'
+		],
+		[
+			'a link in a module script',
+			libComponent,
+			'<script module lang="ts">\n\t/** See https://example.org. */\n\texport const x = 1;\n</script>',
+			'doc-url'
+		],
+		[
+			'a tag in a @component comment',
+			libComponent,
+			'<!--\n@component\nA <img src=x onerror=alert(1)> button.\n-->\n<button>x</button>',
+			'doc-tag'
+		],
+		[
+			'a link in a nested @component comment',
+			libComponent,
+			'<div><!-- @component See https://example.org --></div>',
+			'doc-url'
+		],
+		['a component that does not parse', libComponent, '<script>\n/** x */\n</scr', 'unparsed']
+	] as const)('refuses %s', (_label, path, text, rule) => {
+		expect(docRulesOf(path, text)).toContain(rule);
+	});
+
+	it.each([
+		[
+			'plain words',
+			libModule,
+			'/** The paper moves, in the order the gallery lists them. */\nexport const x = 1;'
+		],
+		[
+			'a tag-like word in a code span',
+			libModule,
+			'/** The attribute on `<html>` or any element below it. */\nexport const x = 1;'
+		],
+		['a comparison', libModule, '/** True when a < b and b > 2. */\nexport const x = 1;'],
+		['a line comment holding a URL', libModule, '// See https://example.org\nexport const x = 1;'],
+		[
+			'a block comment that is not JSDoc',
+			libModule,
+			'/* See https://example.org */\nexport const x = 1;'
+		],
+		['a URL in a string', libModule, "export const x = '/** https://example.org */';"],
+		['an HTML comment without the tag', libComponent, '<!-- See https://example.org -->\n<p>x</p>'],
+		[
+			'plain words in a @component comment',
+			libComponent,
+			'<!--\n@component\nA button that sends a request.\n-->\n<button>x</button>'
+		],
+		[
+			'a doc comment outside lib',
+			'src/gallery/fixture.ts',
+			'/** <img src=x> https://example.org */\nexport const x = 1;'
+		]
+	])('passes %s', (_label, path, text) => {
+		expect(docRulesOf(path, text)).toEqual([]);
+	});
+
+	it('finds the real doc comments clean', () => {
+		const sources = libCodeSources();
+		const paths = sources.map((source) => source.path);
+		expect(paths).toContain('src/lib/index.ts');
+		const read = sources.map((source) => docComments(source));
+		expect(read.flatMap((comments) => comments.comments).length).toBeGreaterThan(0);
+		const findings = sources.flatMap((source, index) =>
+			docCommentFindings(source.path, read[index] ?? { comments: [], unparsed: [] })
+		);
 		expect(findings).toEqual([]);
 	});
 });
