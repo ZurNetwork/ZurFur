@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::process::Command;
 
-use test_support::log_capture::CapturedLog;
+use test_support::log_capture::{self, CapturedLog};
 
 use super::*;
 
@@ -12,7 +12,7 @@ fn a_dns_client_error_naming_a_handle_never_reaches_the_server_log() {
         EnvFilter::new("trace,hickory_resolver=trace,hickory_resolver::name_server_pool=trace");
     let subscriber = subscriber(&Environment::DEV, wide_open, log.clone());
 
-    tracing::subscriber::with_default(subscriber, || {
+    log_capture::with_default(subscriber, || {
         tracing::error!(target: "hickory_resolver::name_server_pool", "malformed answer for alice.example.com");
         tracing::error!(target: "hickory_proto::op", "bad record for bob.example.com");
         tracing::info!(target: "api", "server started");
@@ -33,7 +33,7 @@ fn outside_dev_a_debug_event_is_dropped_whatever_the_filter_says() {
         let log = CapturedLog::default();
         let subscriber = subscriber(&env, EnvFilter::new("trace"), log.clone());
 
-        tracing::subscriber::with_default(subscriber, || {
+        log_capture::with_default(subscriber, || {
             tracing::debug!(target: "api", did = "did:plc:debugonly", "a debug detail");
             tracing::trace!(target: "api", "a trace detail");
             tracing::info!(target: "api", "an info line");
@@ -52,7 +52,7 @@ fn in_dev_a_debug_event_is_kept() {
     let log = CapturedLog::default();
     let subscriber = subscriber(&Environment::DEV, EnvFilter::new("trace"), log.clone());
 
-    tracing::subscriber::with_default(subscriber, || {
+    log_capture::with_default(subscriber, || {
         tracing::debug!(target: "api", "a dev debug detail");
     });
 
@@ -65,7 +65,7 @@ fn in_dev_a_span_prints_its_close_with_its_timing() {
     let log = CapturedLog::default();
     let subscriber = subscriber(&Environment::DEV, EnvFilter::new("debug"), log.clone());
 
-    tracing::subscriber::with_default(subscriber, || {
+    log_capture::with_default(subscriber, || {
         let span = tracing::debug_span!(target: "api", "dev_probe");
         span.in_scope(|| tracing::debug!(target: "api", "inside the probe"));
     });
@@ -84,7 +84,7 @@ fn outside_dev_no_span_event_is_printed() {
         let log = CapturedLog::default();
         let subscriber = subscriber(&env, EnvFilter::new("trace"), log.clone());
 
-        tracing::subscriber::with_default(subscriber, || {
+        log_capture::with_default(subscriber, || {
             let span = tracing::info_span!(target: "api", "staging_probe");
             span.in_scope(|| tracing::info!(target: "api", "inside the staging probe"));
         });

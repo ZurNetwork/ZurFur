@@ -5966,6 +5966,7 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tower-sessions",
+ "tracing",
  "tracing-subscriber",
  "url",
  "uuid",

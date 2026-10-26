@@ -21,7 +21,7 @@ use domain::elements::{
     maturity::{Maturity, MaturityRating},
 };
 use test_support::{
-    log_capture::CapturedLog,
+    log_capture::{self, CapturedLog},
     pg_app::pg_runtime,
     store_doubles::{ScriptedStanding, StandingScript},
 };
@@ -65,7 +65,7 @@ fn capture_at_trace() -> (CapturedLog, tracing::subscriber::DefaultGuard) {
         .with_ansi(false)
         .with_writer(log.clone())
         .finish();
-    let guard = tracing::subscriber::set_default(subscriber);
+    let guard = log_capture::set_default(subscriber);
     (log, guard)
 }
 
