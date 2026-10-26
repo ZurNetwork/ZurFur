@@ -2,6 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import '@zurfur/ui/styles';
 	import GalleryNav from '$gallery/GalleryNav.svelte';
+	import SkinSwitch from '$gallery/SkinSwitch.svelte';
 	import { registry } from '$gallery/registry';
 
 	interface Props {
@@ -17,6 +18,7 @@
 
 <header>
 	<h1 id="gallery-heading">Component gallery</h1>
+	<SkinSwitch />
 </header>
 <nav aria-labelledby="gallery-heading">
 	<GalleryNav entries={registry.entries} />

@@ -1,7 +1,8 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { emulateMedia } from './src/checks/media-command.ts';
 
 const fallbackGalleryPort = 5190;
 
@@ -18,6 +19,9 @@ export function galleryPort(raw: string | undefined): number {
 }
 
 const port = galleryPort(process.env.ZURFUR_GALLERY_PORT);
+
+/** The one spec that emulates media features; it runs alone, after every other project. */
+const mediaSpec = 'src/checks/media.svelte.spec.ts';
 
 export default defineConfig({
 	// Both servers bind IPv4 loopback only, on a port that must be free: a busy
@@ -51,7 +55,25 @@ export default defineConfig({
 						provider: playwright(),
 						instances: [{ browser: 'chromium', headless: true }]
 					},
-					include: ['src/**/*.svelte.{test,spec}.{js,ts}']
+					include: ['src/**/*.svelte.{test,spec}.{js,ts}'],
+					exclude: [...configDefaults.exclude, mediaSpec]
+				}
+			},
+			{
+				extends: './vite.config.ts',
+				server: { strictPort: false },
+				test: {
+					name: 'client-media',
+					// Groups run from lowest to highest, so no other project runs beside
+					// this one while it changes the page's emulated media.
+					sequence: { groupOrder: 1 },
+					browser: {
+						enabled: true,
+						provider: playwright(),
+						instances: [{ browser: 'chromium', headless: true }],
+						commands: { emulateMedia }
+					},
+					include: [mediaSpec]
 				}
 			},
 
