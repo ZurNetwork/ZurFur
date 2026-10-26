@@ -494,7 +494,12 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 			['the frame importing a check', planted.gallery, "import '../checks/x';"],
 			['a page importing a spec', planted.routes, "import '../gallery/x.spec';"],
 			['a page importing outside src', planted.routes, "import '../../package.json';"],
-			["a component's script re-exporting a check", planted.componentSvelte, svelteReexport]
+			["a component's script re-exporting a check", planted.componentSvelte, svelteReexport],
+			['a re-export of an unread extension', planted.component, "export * from './evil.es';"],
+			['an upper-case code extension', planted.component, "import './evil.JS';"],
+			['an asset with no query', planted.component, "import './a.svg';"],
+			['a dotted TypeScript name without its extension', planted.component, "import './a.b';"],
+			['the frame importing an unread extension', planted.gallery, "import './x.es';"]
 		];
 
 		it.each(refused)('refuses %s', async (_label, filePath, code) => {
@@ -543,6 +548,22 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 				'a spec importing its sibling',
 				planted.spec,
 				"import { y } from './planted';\nexport { y };"
+			],
+			[
+				'a component importing a raw text file',
+				planted.component,
+				"import t from './a.txt?raw';\nexport { t };"
+			],
+			[
+				'a component importing an asset URL',
+				planted.component,
+				"import u from './a.svg?url';\nexport { u };"
+			],
+			['a component importing a stylesheet', planted.component, "import './styles/tokens.css';"],
+			[
+				'a component importing an extensionless file',
+				planted.component,
+				"import x from './y';\nexport { x };"
 			]
 		];
 

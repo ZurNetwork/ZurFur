@@ -117,7 +117,9 @@ export function fileSetOf(relative) {
 // The tiers. The sets form three tiers, strictest first: what ships (the
 // components and their two carve-outs), the gallery host, and the checks. A
 // relative import never reaches from one tier into a looser one, so no file
-// can launder a looser set's freedoms through a re-export.
+// can launder a looser set's freedoms through a re-export. A file no set reads
+// (neither code nor .css) counts as the loosest tier unless imported as text or
+// a URL, so code hidden under an unread extension never reaches what ships.
 // ---------------------------------------------------------------------------
 
 /** @typedef {'shipped' | 'host' | 'checks'} Tier */
@@ -163,6 +165,27 @@ function loosestTierOf(relative) {
 		return name === undefined ? [] : [TIERS_STRICTEST_FIRST.indexOf(TIER_OF_SET[name])];
 	});
 	return TIERS_STRICTEST_FIRST[Math.max(...ranks)] ?? 'checks';
+}
+
+/** Queries that make Vite hand back a file's text or URL, never run it. */
+const INERT_QUERIES = ['?raw', '?url'];
+
+/**
+ * True when an import of `target` with `suffix` (its query and hash, as
+ * written) names a file no lint set reads: the last segment has an extension,
+ * after its last dot and matched case-sensitively, that is neither code nor
+ * `.css`, and the suffix is not exactly `?raw` or `?url`.
+ *
+ * @param {string} target
+ * @param {string} suffix
+ */
+function isUnlintedTarget(target, suffix) {
+	if (INERT_QUERIES.includes(suffix)) return false;
+	const name = path.basename(target);
+	const dot = name.lastIndexOf('.');
+	if (dot === -1) return false;
+	const extension = name.slice(dot);
+	return extension !== '.css' && !CODE_EXTENSIONS.includes(extension);
 }
 
 // ---------------------------------------------------------------------------
@@ -492,6 +515,8 @@ const importTiersRule = {
 		messages: {
 			looser:
 				'{{importer}} never imports {{target}} ({{specifier}}): those files answer to looser rules.',
+			unlinted:
+				'{{importer}} never imports a file lint does not read ({{specifier}}): name a code or .css file, or import it with ?raw or ?url.',
 			outside: 'A relative import never leaves src/ ({{specifier}}): import a package by its name.'
 		}
 	},
@@ -507,6 +532,7 @@ const importTiersRule = {
 			if (specifier === undefined || !specifier.startsWith('.')) return;
 			// Vite drops the query and the hash before it resolves a path.
 			const bare = specifier.replace(/[?#].*$/s, '');
+			const suffix = specifier.slice(bare.length);
 			const target = path
 				.relative(PACKAGE_ROOT, path.resolve(folder, bare))
 				.split(path.sep)
@@ -516,11 +542,13 @@ const importTiersRule = {
 				return;
 			}
 			const tier = loosestTierOf(target);
-			if (TIERS_STRICTEST_FIRST.indexOf(tier) <= importerRank) return;
+			const isLooser = TIERS_STRICTEST_FIRST.indexOf(tier) > importerRank;
+			const isUnlinted = isUnlintedTarget(target, suffix);
+			if (!isLooser && !isUnlinted) return;
 			const label = TIER_LABEL[importer];
 			context.report({
 				node,
-				messageId: 'looser',
+				messageId: isLooser ? 'looser' : 'unlinted',
 				data: {
 					importer: `${label.charAt(0).toUpperCase()}${label.slice(1)}`,
 					target: TIER_LABEL[tier],

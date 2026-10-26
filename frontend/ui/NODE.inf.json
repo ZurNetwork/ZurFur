@@ -11,7 +11,7 @@
   "conventions": [
     "Consumed as source, no package step: `exports` gives `types` and `svelte` the same entry, `src/lib/index.ts`; the version stays `0.0.0` and `web` depends on exactly that. Routes import the library only as `@zurfur/ui`; `$lib` is banned in this package, since it would resolve to the importer's `src/lib`.",
     "Plain client-side SvelteKit, nothing server-side: the gallery is prerendered (adapter-static, `strict`), files that run server code (`+server`, `.server.`, hooks) are refused by a check, and `vite.config.ts` may not rename them (no Kit `files`, no service worker, no svelte config file).",
-    "`eslint.config.js` partitions `src/` into file sets (checks, routes, gallery, motion, lazy, and the components' rules for every other file) and runs with `noInlineConfig`, so no inline comment switches a rule off. The sets form three tiers, what ships (components, motion, lazy) < the gallery host (routes, gallery) < the checks and specs, and a relative import never reaches a looser tier or leaves `src/`. No source file outside the checks names `fetch` or holds a remote URL in a string. Lint guards against accidental coupling, it is not a sandbox.",
+    "`eslint.config.js` partitions `src/` into file sets (checks, routes, gallery, motion, lazy, and the components' rules for every other file) and runs with `noInlineConfig`, so no inline comment switches a rule off. The sets form three tiers, what ships (components, motion, lazy) < the gallery host (routes, gallery) < the checks and specs, and a relative import never reaches a looser tier or leaves `src/`. A relative import of a file that is neither code nor CSS counts as the loosest tier unless it ends in exactly `?raw` or `?url`, and a check refuses any file under `src/` whose extension is off the list (`.ts`, `.svelte`, `.css`, `.json`, `.html`). No source file outside the checks names `fetch` or holds a remote URL in a string. Lint guards against accidental coupling, it is not a sandbox.",
     "`just gallery` serves on 127.0.0.1 at `ZURFUR_GALLERY_PORT` or 5190 (`vite.config.ts` alone decides host and port; a busy port is an error).",
     "Installs only through the workspace's guarded trio (`just frontend-install`), never a bare `yarn install` here."
   ],
@@ -33,7 +33,7 @@
     },
     {
       "name": "eslint.config.js",
-      "role": "type-aware lint with the file-set partition of src/, the boundary rules and two package rules (ui/import-tiers: no relative import into a looser tier or out of src/; ui/no-remote-string: no http:, https: or protocol-relative string); exports boundaryRules and fileSetOf for the checks",
+      "role": "type-aware lint with the file-set partition of src/, the boundary rules and two package rules (ui/import-tiers: no relative import into a looser tier or out of src/, and a relative import of a file that is neither code nor CSS counts as the loosest tier unless it ends in exactly ?raw or ?url; ui/no-remote-string: no http:, https: or protocol-relative string); exports boundaryRules and fileSetOf for the checks",
       "node": false
     },
     {

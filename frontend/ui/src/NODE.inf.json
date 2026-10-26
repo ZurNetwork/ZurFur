@@ -33,7 +33,7 @@
     },
     {
       "name": "checks/",
-      "role": "specs over the package itself: the lint boundary rules and the import tiers, declared imports, forbidden server-side and JSX files, the style and network scans (scan/), serve config (loopback serving, and Kit's inline options read so no file renaming, service worker or svelte config file gets in), tsconfig parity with web, workspace shape and the public entry",
+      "role": "specs over the package itself: the lint boundary rules and the import tiers, declared imports, forbidden files (server-side, hooks and service-worker names tested in every folder of the path, JSX, and any extension off the list .ts, .svelte, .css, .json, .html), the style and network scans (scan/), serve config (loopback serving, and Kit's inline options read so no file renaming, service worker or svelte config file gets in), tsconfig parity with web, workspace shape and the public entry",
       "node": false
     },
     {

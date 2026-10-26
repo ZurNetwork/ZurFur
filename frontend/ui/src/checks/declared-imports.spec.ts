@@ -74,6 +74,25 @@ function loosestKindOf(relative: string): FileKind {
 	return kindsStrictestFirst[Math.max(...ranks)] ?? 'check';
 }
 
+/** Queries that make Vite hand back a file's text or URL, never run it. */
+const inertQueries: readonly string[] = ['?raw', '?url'];
+
+/**
+ * True when an import of `relative` with `suffix` (its query and hash, as
+ * written) names a file no lint set reads: the last segment has an extension,
+ * after its last dot and matched case-sensitively, that is neither code nor
+ * `.css`, and the suffix is not exactly `?raw` or `?url`.
+ */
+function isUnlintedTarget(relative: string, suffix: string): boolean {
+	if (inertQueries.includes(suffix)) return false;
+	const name = path.basename(relative);
+	const dot = name.lastIndexOf('.');
+	if (dot === -1) return false;
+	const extension = name.slice(dot);
+	const isCode = codeExtensions.some((code) => code === extension);
+	return extension !== '.css' && !isCode;
+}
+
 function isLooser(target: FileKind, importer: FileKind): boolean {
 	return kindsStrictestFirst.indexOf(target) > kindsStrictestFirst.indexOf(importer);
 }
@@ -121,11 +140,18 @@ function refusalOf(file: SourceFile, specifier: string, manifest: Manifest): str
 	if (specifier.startsWith('.')) {
 		// Vite drops the query and the hash before it resolves a path.
 		const bare = specifier.replace(/[?#].*$/s, '');
+		const suffix = specifier.slice(bare.length);
 		const resolved = path.resolve(srcRoot, path.dirname(file.relative), bare);
 		const insideSrc = resolved.startsWith(srcRoot + path.sep);
 		if (insideSrc) {
-			const target = loosestKindOf(path.relative(srcRoot, resolved));
-			return isLooser(target, kind) ? 'a relative import into a looser file set' : undefined;
+			const relative = path.relative(srcRoot, resolved);
+			if (isLooser(loosestKindOf(relative), kind)) {
+				return 'a relative import into a looser file set';
+			}
+			const isUnlinted = isUnlintedTarget(relative, suffix);
+			return isUnlinted && isLooser('check', kind)
+				? 'a relative import of a file lint does not read'
+				: undefined;
 		}
 		if (kind === 'check' && isCheckImportable(resolved)) return undefined;
 		return 'a relative path outside src';
@@ -261,6 +287,19 @@ describe('declared imports', () => {
 	});
 
 	it.each([
+		['a re-export of an unread extension', 'lib/index.ts', "export * from './evil.es';"],
+		['an upper-case code extension', 'lib/x.ts', "import './evil.JS';"],
+		['an asset with no query', 'lib/x.ts', "import './a.svg';"],
+		['an asset with another query', 'lib/x.ts', "import u from './a.svg?inline';"],
+		['a dotted TypeScript name without its extension', 'lib/x.ts', "import './a.b';"],
+		['the frame importing an unread extension', 'gallery/x.ts', "import './x.es';"]
+	])('refuses %s, a relative import of a file lint does not read', (_label, relative, text) => {
+		expect(refusalsFor(relative, text).map((refusal) => refusal.reason)).toEqual([
+			'a relative import of a file lint does not read'
+		]);
+	});
+
+	it.each([
 		['a component importing the motion adapter', 'lib/x.ts', "import { x } from './motion/x';"],
 		['a component importing the lazy loader', 'lib/x.ts', "import { x } from './lazy/x';"],
 		['the motion adapter importing a component', 'lib/motion/x.ts', "import { x } from '../x';"],
@@ -269,7 +308,12 @@ describe('declared imports', () => {
 		['the frame importing a page', 'gallery/x.ts', "import { x } from '../routes/x';"],
 		['a check importing a component', 'checks/x.ts', "import { x } from '../lib/x';"],
 		['a spec importing its sibling', 'lib/x.spec.ts', "import { x } from './x';"],
-		['a component importing a raw text file', 'lib/x.ts', "import text from './a.txt?raw';"]
+		['a component importing a raw text file', 'lib/x.ts', "import text from './a.txt?raw';"],
+		['a component importing an asset URL', 'lib/x.ts', "import u from './a.svg?url';"],
+		['a component importing a stylesheet', 'lib/x.ts', "import './styles/tokens.css';"],
+		['a component importing an extensionless file', 'lib/x.ts', "import x from './y';"],
+		['a dotted TypeScript name with its extension', 'lib/x.ts', "import './a.b.js';"],
+		['a check importing an asset', 'checks/x.spec.ts', "import './a.svg';"]
 	])('allows %s', (_label, relative, text) => {
 		expect(refusalsFor(relative, text)).toEqual([]);
 	});
