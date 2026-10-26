@@ -51,7 +51,7 @@
     },
     {
       "name": ".github/",
-      "role": "CI workflow (changes/fmt/clippy/test/npm-lock/contract/deny/typos/nodes/hooks/web/ui; npm-lock runs the base's scripts/npm-lock-ci.sh, and contract, web and ui wait for it), the daily advisories workflow (cargo-deny over Cargo.lock, and the npm advisory job running scripts/npm-advisories.sh over both npm lockfiles), copilot-instructions.md",
+      "role": "CI workflow (changes/fmt/clippy/test/npm-lock/contract/deny/typos/nodes/hooks/web/ui; npm-lock runs the base's scripts/npm-lock-ci.sh, and contract, web and ui wait for it), the daily advisories workflow (cargo-deny over Cargo.lock, and the npm advisory job running scripts/npm-advisories.sh over both npm lockfiles), dependabot.yml (monthly grouped action bumps; security-only cargo and npm updates), copilot-instructions.md",
       "node": false
     },
     {
