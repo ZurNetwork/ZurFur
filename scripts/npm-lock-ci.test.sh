@@ -303,6 +303,40 @@ expect_in "a push verifies HEAD^1" "$out" "base verified: HEAD^1 is $base_sha"
 step push "$loose" block
 expect_status "a push ignores the event's base SHA" 0
 
+# A driverless base the step can't verify: the change's driver, which records
+# that it ran and passes, must never run. The step checks before it falls back.
+recording_driver() {
+    printf '#!/bin/sh\necho "driver copy=pr" >>"$HOME/log"\nexit 0\n' >"$repo/scripts/npm-lock-ci.sh"
+}
+new_base no-driver
+recording_driver
+pr_commit
+side_sha="$(git -C "$repo" -c user.email=t@example.com -c user.name=t commit-tree -p "$base_sha" -m side "$base_sha^{tree}")"
+step pull_request "$side_sha" block
+expect_status "a driverless base that isn't HEAD^1 exits 1" 1
+expect_in "the step says HEAD^1 isn't the base" "$out" "::error::npm-lock: HEAD^1 ($base_sha) is not the base $side_sha"
+expect_not_in "the change's driver never ran on a base that isn't HEAD^1" "$log" "driver copy=pr"
+step workflow_dispatch "$base_sha" block
+expect_status "the step: another event exits 1 on a driverless base" 1
+expect_in "the step names the event" "$out" "::error::npm-lock: not a pull request, a merge group or a push (GITHUB_EVENT_NAME 'workflow_dispatch')"
+expect_not_in "the change's driver never ran on another event" "$log" "driver copy=pr"
+step pull_request "$base_sha" block
+expect_status "a verified driverless base runs the change's driver" 0
+expect_in "the change's driver ran on a verified base" "$log" "driver copy=pr"
+
+new_base no-driver
+recording_driver
+g add -A
+g commit -m change
+loose="$(git -C "$repo" -c user.email=t@example.com -c user.name=t commit-tree -m loose "$base_sha^{tree}")"
+step merge_group "$loose" block
+expect_status "a merge group whose driverless base isn't an ancestor exits 1" 1
+expect_in "the step says the base isn't an ancestor" "$out" "::error::npm-lock: the merge group's base $loose is not an ancestor of HEAD"
+expect_not_in "the change's driver never ran on a base that isn't an ancestor" "$log" "driver copy=pr"
+step merge_group "$base_sha" block
+expect_status "a merge group whose driverless base is an ancestor runs the change's driver" 0
+expect_in "the change's driver ran on an ancestor base" "$log" "driver copy=pr"
+
 # --- waivers ------------------------------------------------------------------------
 
 new_base

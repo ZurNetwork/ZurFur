@@ -152,8 +152,10 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
-      # The base's driver when it has one; only a present base commit that
-      # lacks it runs this change's own, with a warning. Anything odd exits 1.
+      # The base is verified first: on a pull request or a push, HEAD^1 must
+      # be it; on a merge group, an ancestor of HEAD. Then the base's driver
+      # when it has one; only a verified base that lacks it runs this
+      # change's own, with a warning. Anything odd exits 1.
       - name: The advisory check and the 7-day floor, with the base's tools
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
@@ -171,6 +173,25 @@ jobs:
             echo "::error::npm-lock: the base commit $base is not in this checkout"
             exit 1
           fi
+          case "$GITHUB_EVENT_NAME" in
+            pull_request | push)
+              parent1=$(git rev-parse --verify --quiet 'HEAD^1') || parent1=""
+              if [ "$parent1" != "$base" ]; then
+                echo "::error::npm-lock: HEAD^1 ($parent1) is not the base $base"
+                exit 1
+              fi
+              ;;
+            merge_group)
+              if ! git merge-base --is-ancestor "$base" HEAD; then
+                echo "::error::npm-lock: the merge group's base $base is not an ancestor of HEAD"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::npm-lock: not a pull request, a merge group or a push (GITHUB_EVENT_NAME '$GITHUB_EVENT_NAME')"
+              exit 1
+              ;;
+          esac
           if ! listing=$(git ls-tree --full-tree "$base" -- scripts/npm-lock-ci.sh); then
             echo "::error::npm-lock: can't read the base's tree"
             exit 1

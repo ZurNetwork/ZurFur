@@ -117,7 +117,7 @@
     },
     {
       "name": "npm-lock-ci.test.sh",
-      "role": "tests for npm-lock-ci.sh and the npm-lock job's inline step (extracted from ci.yml and run as GitHub runs it) against scratch git repos with real test merges, stub tools and a stub node: which copy runs, base verification, the waivers', ignores' and old lockfiles' sources, the checks of the change's own waivers and ignore files, the clean environments and the worst exit code",
+      "role": "tests for npm-lock-ci.sh and the npm-lock job's inline step (extracted from ci.yml and run as GitHub runs it) against scratch git repos with real test merges, stub tools and a stub node: which copy runs, base verification (the step's, before it falls back to the change's driver, and the driver's), the waivers', ignores' and old lockfiles' sources, the checks of the change's own waivers and ignore files, the clean environments and the worst exit code",
       "node": false
     },
     {

@@ -84,7 +84,8 @@ else
 fi
 expect_none "npm-lock runs no cargo, cargo-deny or yarn" "$npm_lock" 'cargo|yarn'
 
-# The inline step: the base, its commit, the base's copy, the fallback.
+# The inline step: the base, its commit, its place (HEAD^1 or an ancestor),
+# then the base's copy or the fallback.
 expect_line "the base SHA comes from the event through env" "$npm_lock" \
     "BASE_SHA: \${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}"
 expect_line "a push's base is HEAD^1" "$npm_lock" \
@@ -93,6 +94,19 @@ expect_line "the base SHA must be 40 lowercase hex" "$npm_lock" \
     "if ! printf '%s' \"\$base\" | grep -qE '^[0-9a-f]{40}\$'; then"
 expect_line "the base commit must be present" "$npm_lock" \
     "if ! git cat-file -e \"\$base^{commit}\"; then"
+expect_line "a pull request or a push checks HEAD^1 in the step" "$npm_lock" "pull_request | push)"
+expect_line "the step reads HEAD^1" "$npm_lock" \
+    "parent1=\$(git rev-parse --verify --quiet 'HEAD^1') || parent1=\"\""
+expect_line "the step's HEAD^1 must be the base" "$npm_lock" "if [ \"\$parent1\" != \"\$base\" ]; then"
+expect_line "the step refuses a HEAD^1 that isn't the base" "$npm_lock" \
+    "echo \"::error::npm-lock: HEAD^1 (\$parent1) is not the base \$base\""
+expect_line "a merge group checks ancestry in the step" "$npm_lock" "merge_group)"
+expect_line "the step's merge group base must be an ancestor of HEAD" "$npm_lock" \
+    "if ! git merge-base --is-ancestor \"\$base\" HEAD; then"
+expect_line "the step refuses a base that isn't an ancestor" "$npm_lock" \
+    "echo \"::error::npm-lock: the merge group's base \$base is not an ancestor of HEAD\""
+expect_line "the step refuses any other event" "$npm_lock" \
+    "echo \"::error::npm-lock: not a pull request, a merge group or a push (GITHUB_EVENT_NAME '\$GITHUB_EVENT_NAME')\""
 expect_line "a failed tree read fails, apart from an absent driver" "$npm_lock" \
     "if ! listing=\$(git ls-tree --full-tree \"\$base\" -- scripts/npm-lock-ci.sh); then"
 expect_line "the base's driver is extracted" "$npm_lock" \
