@@ -450,11 +450,49 @@ const FETCH_NAMES = [
 	{ selector: "SvelteDirective[key.name.name='fetch']", message: FETCH_MESSAGE }
 ];
 
+/** Why markup never runs script nor loads another document. */
+export const scriptMarkupMessage =
+	"Markup never runs script or loads another document: no <script>, <iframe>, <frame>, <object> or <embed> element, no srcdoc attribute, and no <svelte:element> naming one. The gallery's one boot script lives only in src/app.html.";
+
+/** The element names that run script or load another document, in any letter case. */
+const SCRIPT_MARKUP_TAGS = '/^(?:script|iframe|frame|object|embed)$/i';
+
+/**
+ * Markup that runs script or loads another document: the five elements wherever
+ * they sit, a srcdoc attribute, and <svelte:element> naming one by a static
+ * string. A component's own top-level script blocks parse as
+ * SvelteScriptElement, not as markup. ESLint never reads .html, and src/app.html
+ * is the only .html file src/ may hold, so its boot script is out of this ban's reach.
+ */
+const SCRIPT_MARKUP = [
+	{
+		selector: `SvelteElement[kind='html'][name.name=${SCRIPT_MARKUP_TAGS}]`,
+		message: scriptMarkupMessage
+	},
+	{
+		selector: ':matches(SvelteAttribute, SvelteShorthandAttribute)[key.name=/^srcdoc$/i]',
+		message: scriptMarkupMessage
+	},
+	{
+		selector: `SvelteElement[name.name='svelte:element'] > SvelteStartTag > SvelteAttribute[key.name='this'] > SvelteLiteral[value=${SCRIPT_MARKUP_TAGS}]`,
+		message: scriptMarkupMessage
+	},
+	{
+		selector: `SvelteSpecialDirective[kind='this'] > Literal.expression[value=${SCRIPT_MARKUP_TAGS}]`,
+		message: scriptMarkupMessage
+	},
+	{
+		selector: `SvelteSpecialDirective[kind='this'] > TemplateLiteral.expression[expressions.length=0][quasis.0.value.cooked=${SCRIPT_MARKUP_TAGS}]`,
+		message: scriptMarkupMessage
+	}
+];
+
 const COMMON_SYNTAX = [
 	...RULEBOOK_SYNTAX,
 	IMPORT_META_ENV,
 	IMPORT_META_ENV_COMPUTED,
-	...FETCH_NAMES
+	...FETCH_NAMES,
+	...SCRIPT_MARKUP
 ];
 
 const COMPONENT_SYNTAX = [...COMMON_SYNTAX, ...ANY_GLOB, ANY_DYNAMIC_IMPORT];

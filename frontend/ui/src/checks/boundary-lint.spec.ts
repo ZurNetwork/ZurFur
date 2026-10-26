@@ -3,7 +3,7 @@ import { ESLint, type Linter } from 'eslint';
 import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { boundaryRules, fileSetOf } from '../../eslint.config.js';
+import { boundaryRules, fileSetOf, scriptMarkupMessage } from '../../eslint.config.js';
 import { isRemote } from './scan/network';
 
 const uiRoot = fileURLToPath(new URL('../../', import.meta.url));
@@ -14,9 +14,13 @@ const planted = {
 	componentSvelte: 'src/lib/X.svelte',
 	stray: 'src/elsewhere.ts',
 	motion: 'src/lib/motion/x.ts',
+	motionSvelte: 'src/lib/motion/X.svelte',
 	lazy: 'src/lib/lazy/x.ts',
+	lazySvelte: 'src/lib/lazy/X.svelte',
 	gallery: 'src/gallery/x.ts',
+	gallerySvelte: 'src/gallery/X.svelte',
 	routes: 'src/routes/x.ts',
+	routesSvelte: 'src/routes/X.svelte',
 	check: 'src/checks/planted.ts',
 	spec: 'src/lib/planted.spec.ts'
 } as const;
@@ -78,6 +82,16 @@ async function lintPlanted(filePath: string, code: string): Promise<readonly Lin
 async function expectRefused(filePath: string, code: string, ruleId: string): Promise<void> {
 	const messages = await lintPlanted(filePath, code);
 	expect(messages.map((message) => message.ruleId)).toContain(ruleId);
+}
+
+/** Refused by the markup ban itself, not by any other syntax entry. */
+async function expectScriptMarkupRefused(filePath: string, code: string): Promise<void> {
+	const messages = await lintPlanted(filePath, code);
+	const markup = messages.filter(
+		(message) =>
+			message.ruleId === 'no-restricted-syntax' && message.message === scriptMarkupMessage
+	);
+	expect(markup).not.toEqual([]);
 }
 
 async function expectAllowed(filePath: string, code: string): Promise<void> {
@@ -626,6 +640,108 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 			['a spec', planted.spec]
 		])('allows load({ fetch }) in %s', async (_label, filePath) => {
 			await expectAllowed(filePath, loadWithFetch);
+		});
+	});
+
+	describe('no markup runs script or loads another document', () => {
+		/** A component whose script declares `s`, then `markup`. */
+		const component = (markup: string): string =>
+			`<script lang="ts">\n\tconst s = 'x';\n</script>\n\n${markup}\n`;
+
+		const refused: readonly Allowed[] = [
+			['an iframe', component('<iframe title={s}></iframe>')],
+			['a frame', component('<frame title={s} />')],
+			['an object', component('<object title={s}></object>')],
+			['an embed', component('<embed title={s} />')],
+			['an iframe in mixed case', component('<iFrame title={s}></iFrame>')],
+			['an object in mixed case', component('<oBJECT title={s}></oBJECT>')],
+			['a script in a div', component('<div><script>console.log(s);</script></div>')],
+			['a script in svelte:head', component('<svelte:head><script>1</script></svelte:head>')],
+			['a script in an svg', component('<svg viewBox="0 0 1 1"><script>1</script></svg>')],
+			['a script in mixed case', component('<div><sCRIPT>1</sCRIPT></div>')],
+			[
+				'an iframe in an svg foreignObject',
+				component('<svg><foreignObject><iframe title={s}></iframe></foreignObject></svg>')
+			],
+			['srcdoc on an iframe', component('<iframe title="x" srcdoc={s}></iframe>')],
+			['srcdoc on another element', component('<div srcdoc={s}></div>')],
+			['srcDoc', component('<div srcDoc="x"></div>')],
+			[
+				'a shorthand srcdoc',
+				'<script lang="ts">\n\tconst srcdoc = \'x\';\n</script>\n\n<div {srcdoc}></div>\n'
+			],
+			[
+				'an iframe src from a ?url import',
+				'<script lang="ts">\n\timport p from \'./evil.html?url\';\n</script>\n\n<iframe title="x" src={p}></iframe>\n'
+			],
+			[
+				'svelte:element this="script"',
+				component('<svelte:element this="script">{s}</svelte:element>')
+			],
+			[
+				'svelte:element this="IFRAME"',
+				component('<svelte:element this="IFRAME">{s}</svelte:element>')
+			],
+			[
+				"svelte:element this={'iframe'}",
+				component("<svelte:element this={'iframe'}>{s}</svelte:element>")
+			],
+			[
+				'svelte:element this={`embed`}',
+				component('<svelte:element this={`embed`}>{s}</svelte:element>')
+			]
+		];
+
+		it.each(refused)('refuses %s in a component', async (_label, code) => {
+			await expectScriptMarkupRefused(planted.componentSvelte, code);
+		});
+
+		const elsewhere: readonly PathCase[] = [
+			planted.motionSvelte,
+			planted.lazySvelte,
+			planted.routesSvelte,
+			planted.gallerySvelte
+		].flatMap(
+			(filePath) =>
+				[
+					[`an iframe in ${filePath}`, filePath, component('<iframe title={s}></iframe>')],
+					[`a nested script in ${filePath}`, filePath, component('<div><script>1</script></div>')],
+					[`srcdoc in ${filePath}`, filePath, component('<div srcdoc={s}></div>')],
+					[
+						`svelte:element this="script" in ${filePath}`,
+						filePath,
+						component('<svelte:element this="script">{s}</svelte:element>')
+					]
+				] as const
+		);
+
+		it.each(elsewhere)('refuses %s', async (_label, filePath, code) => {
+			await expectScriptMarkupRefused(filePath, code);
+		});
+
+		const allowed: readonly Allowed[] = [
+			[
+				'the top-level script and module blocks',
+				'<script lang="ts" module>\n\texport const m = \'x\';\n</script>\n\n<script lang="ts">\n\tconst s = \'x\';\n</script>\n\n<p>{s}</p>\n'
+			],
+			[
+				'svelte:element with a dynamic tag',
+				"<script lang=\"ts\">\n\tinterface Props {\n\t\treadonly tag: 'p' | 'span';\n\t}\n\tlet { tag }: Props = $props();\n</script>\n\n<svelte:element this={tag}>x</svelte:element>\n"
+			],
+			[
+				'ordinary markup',
+				component(
+					'<div class="a"><img src="./a.png" alt={s} /><svg viewBox="0 0 1 1"><path d="M0 0" /></svg><p>script, iframe and srcdoc as words</p></div>'
+				)
+			],
+			[
+				'a component named like a banned element',
+				'<script lang="ts">\n\timport Embed from \'./Embed.svelte\';\n</script>\n\n<Embed />\n'
+			]
+		];
+
+		it.each(allowed)('allows %s', async (_label, code) => {
+			await expectAllowed(planted.componentSvelte, code);
 		});
 	});
 
