@@ -32,7 +32,7 @@ async function visit(path: string, method = 'GET'): Promise<Outcome> {
 }
 
 describe('refuseDoubleSlashPaths: refused', () => {
-	it.each(['//x', '//den/x', '//evil.example/x'])(
+	it.each(['//x', '//den/x', '//evil.example/x', '/\\evil.example/x'])(
 		'answers GET %s with a plain-text 404 and never resolves',
 		async (path) => {
 			const outcome = await visit(path);

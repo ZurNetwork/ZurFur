@@ -2,7 +2,8 @@
 // Reviews a lockfile change (yarn v1 or npm lockfileVersion 3): lists the removed and added
 // entries, checks each added entry's integrity against the npm registry and, with
 // --min-age-days, refuses an added version published fewer than that many days ago unless a
-// waiver names it. A review tool, not a CI gate: it needs the network unless a lookup is injected.
+// waiver names it. CI's npm-lock job runs the base commit's copy as its 7-day floor; it needs the
+// network unless a lookup is injected.
 //
 //   node frontend/lock-review.mjs <old> <new> [--no-removals] [--min-age-days <n> [--waivers <file>]]
 //
