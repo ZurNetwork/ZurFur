@@ -19,8 +19,14 @@
 //!   and answers `commission_has_facts` with `true`, proving the handler's gate
 //!   consults the predicate **inside the unit of work that would delete** and
 //!   refuses.
+//! - A commission past Draft (Active, or Disputed) is refused with the same `409`
+//!   and nothing goes; one disputed from Draft and cleared back is in Draft again
+//!   and deletes. The step is read under lock in the deleting unit: the same
+//!   double stages a commission the pool reads in Draft and the locked read finds
+//!   Active, and the delete is refused.
 //!
-//! Same in-process fakes as the other api e2e suites — no network, no database.
+//! Same in-process fakes as the other api e2e suites, except the last test, which
+//! runs the API on PostgreSQL and requires a container runtime socket.
 
 use std::sync::Arc;
 
@@ -33,8 +39,8 @@ use domain::elements::{
         AsOwner, AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile,
         CommissionId, CommissionMarkup, CommissionTitle, DeadlineChange, DelayedChange,
         DirectionChange, Dispute, DisputeClear, ElementId, GrantLevel, LateKinds, LifecycleMove,
-        LockedNode, LockedStanding, MaturitySet, NewCommission, NewElement, NewSeat, NewSlot,
-        SeatInvitation, SeatInvitationId, TabId, element::TabRow,
+        LifecycleStep, LockedNode, LockedStanding, MaturitySet, NewCommission, NewElement, NewSeat,
+        NewSlot, SeatInvitation, SeatInvitationId, TabId, element::TabRow,
     },
     did::Did,
     profile::Profile,
@@ -45,8 +51,12 @@ use domain::ports::{
     CommissionRepo, CommissionWrites, Creator, Database, New, UnitOfWork, UserWrites,
     WorkflowWrites, WriteCapability,
 };
-use serde_json::json;
-use test_support::http::{client, serve, sign_in};
+use serde_json::{Value, json};
+use test_support::{
+    den::get,
+    http::{client, serve, sign_in},
+    pg_app,
+};
 
 mod common;
 
@@ -56,8 +66,8 @@ mod common;
 async fn spawn_app_on(did: &str, backend: &MemBackend, database: Arc<dyn Database>) -> String {
     // A throwaway runtime supplies config/pool/auth/profile_source/did_minter;
     // the store fields below are overridden onto the CALLER's backend (and a
-    // possibly-interposed `database`) so the fact-bearing double in this file
-    // (`FactBearingDatabase`) can wrap the same backend it reads through.
+    // possibly-interposed `database`) so the seam double in this file
+    // (`StagedDatabase`) can wrap the same backend it reads through.
     let backend = backend.clone();
     let served = serve(
         test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
@@ -217,26 +227,45 @@ async fn anonymous_cannot_delete_a_commission() {
     );
 }
 
-/// The fact-bearing seam double (AC3): wraps the mem [`Database`] so the vended
-/// unit of work answers `commission_has_facts` with `true` — every other call
-/// passes through untouched. This stages the state no production code can mint
-/// yet, at exactly the port the handler's gate consults.
-struct FactBearingDatabase(Arc<dyn Database>);
+/// What [`StagedDatabase`]'s units claim about every commission, beyond what the store holds.
+#[derive(Debug, Clone, Copy)]
+enum Staged {
+    /// `commission_has_facts` answers `true` (AC3): the state no production code can mint yet.
+    Facts,
+    /// The locked read finds the commission Active, as if a Participant's move committed
+    /// between the pool read and the unit; the pool read still sees it in Draft.
+    MovedPastDraft,
+}
+
+/// The seam double: wraps the mem [`Database`] so the vended unit of work claims its
+/// [`Staged`] state, at exactly the port the handler's gate consults; every other call
+/// passes through untouched.
+struct StagedDatabase {
+    inner: Arc<dyn Database>,
+    staged: Staged,
+}
 
 #[async_trait]
-impl Database for FactBearingDatabase {
+impl Database for StagedDatabase {
     async fn begin(&self) -> anyhow::Result<Box<dyn UnitOfWork>> {
-        Ok(Box::new(FactBearingUow(self.0.begin().await?)))
+        let unit = StagedUow {
+            inner: self.inner.begin().await?,
+            staged: self.staged,
+        };
+        Ok(Box::new(unit))
     }
 }
 
-/// A pass-through [`UnitOfWork`] whose commissions view claims facts exist.
-struct FactBearingUow(Box<dyn UnitOfWork>);
+/// A pass-through [`UnitOfWork`] whose commissions view claims the [`Staged`] state.
+struct StagedUow {
+    inner: Box<dyn UnitOfWork>,
+    staged: Staged,
+}
 
 #[async_trait]
-impl UnitOfWork for FactBearingUow {
+impl UnitOfWork for StagedUow {
     fn accounts(&mut self) -> Box<dyn AccountRepo + '_> {
-        self.0.accounts()
+        self.inner.accounts()
     }
 
     #[expect(
@@ -244,7 +273,11 @@ impl UnitOfWork for FactBearingUow {
         reason = "a unit-of-work double wraps the commission repo of the unit it wraps"
     )]
     fn commissions(&mut self) -> Box<dyn CommissionRepo + '_> {
-        Box::new(FactBearingCommissions(self.0.commissions()))
+        let staged = self.staged;
+        Box::new(StagedCommissions {
+            inner: self.inner.commissions(),
+            staged,
+        })
     }
 
     #[expect(
@@ -252,19 +285,19 @@ impl UnitOfWork for FactBearingUow {
         reason = "a unit-of-work double hands out the changelog of the unit it wraps"
     )]
     fn changelog(&mut self) -> Box<dyn ChangelogWrites + '_> {
-        self.0.changelog()
+        self.inner.changelog()
     }
 
     fn users(&mut self) -> Box<dyn UserWrites + '_> {
-        self.0.users()
+        self.inner.users()
     }
 
     fn characters(&mut self) -> Box<dyn domain::ports::character::CharacterWrites + '_> {
-        self.0.characters()
+        self.inner.characters()
     }
 
     fn bug_reports(&mut self) -> Box<dyn domain::ports::BugReportWrites + '_> {
-        self.0.bug_reports()
+        self.inner.bug_reports()
     }
 
     #[expect(
@@ -272,45 +305,52 @@ impl UnitOfWork for FactBearingUow {
         reason = "a unit-of-work double hands out the node repo of the unit it wraps"
     )]
     fn nodes(&mut self) -> Box<dyn domain::ports::NodeRepo + '_> {
-        self.0.nodes()
+        self.inner.nodes()
     }
 
     fn actor_identities(&mut self) -> Box<dyn ActorIdentityWrites + '_> {
-        self.0.actor_identities()
+        self.inner.actor_identities()
     }
 
     fn workflows(&mut self) -> Box<dyn WorkflowWrites + '_> {
-        self.0.workflows()
+        self.inner.workflows()
     }
 
     fn columns(&mut self) -> Box<dyn ColumnWrites + '_> {
-        self.0.columns()
+        self.inner.columns()
     }
 
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
-        self.0.commit().await
+        self.inner.commit().await
     }
 
     async fn rollback(self: Box<Self>) -> anyhow::Result<()> {
-        self.0.rollback().await
+        self.inner.rollback().await
     }
 }
 
-/// The commissions view of [`FactBearingUow`]: `commission_has_facts` is `true`,
+/// The commissions view of [`StagedUow`]: its [`Staged`] call answers the staged state,
 /// everything else delegates — so a gate that wrongly proceeded to `delete`
 /// would really delete, and the test would catch it by the row's disappearance.
 /// [`CommissionRepo`] is a blanket marker over reads + writes, so both halves
 /// are implemented here.
-struct FactBearingCommissions<'a>(Box<dyn CommissionRepo + 'a>);
+struct StagedCommissions<'a> {
+    inner: Box<dyn CommissionRepo + 'a>,
+    staged: Staged,
+}
 
 #[async_trait]
-impl CommissionReads for FactBearingCommissions<'_> {
+impl CommissionReads for StagedCommissions<'_> {
     async fn find(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
-        self.0.find(id).await
+        self.inner.find(id).await
     }
 
     async fn find_for_update(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
-        self.0.find_for_update(id).await
+        let mut locked = self.inner.find_for_update(id).await?;
+        if let (Staged::MovedPastDraft, Some(commission)) = (self.staged, locked.as_mut()) {
+            commission.lifecycle_step = LifecycleStep::Active;
+        }
+        Ok(locked)
     }
 
     async fn standing_for_update(
@@ -318,14 +358,14 @@ impl CommissionReads for FactBearingCommissions<'_> {
         commission: &CommissionId,
         user: &UserId,
     ) -> anyhow::Result<Option<LockedStanding>> {
-        self.0.standing_for_update(commission, user).await
+        self.inner.standing_for_update(commission, user).await
     }
 
     async fn lock_for_system(
         &mut self,
         commission: &CommissionId,
     ) -> anyhow::Result<Option<LockedNode>> {
-        self.0.lock_for_system(commission).await
+        self.inner.lock_for_system(commission).await
     }
 
     async fn late_owed(
@@ -333,7 +373,7 @@ impl CommissionReads for FactBearingCommissions<'_> {
         commission: &CommissionId,
         late_kinds: &LateKinds,
     ) -> anyhow::Result<bool> {
-        self.0.late_owed(commission, late_kinds).await
+        self.inner.late_owed(commission, late_kinds).await
     }
 
     async fn is_participant(
@@ -341,7 +381,7 @@ impl CommissionReads for FactBearingCommissions<'_> {
         commission: &CommissionId,
         user: &UserId,
     ) -> anyhow::Result<bool> {
-        self.0.is_participant(commission, user).await
+        self.inner.is_participant(commission, user).await
     }
 
     async fn tab_for_update(
@@ -349,15 +389,17 @@ impl CommissionReads for FactBearingCommissions<'_> {
         commission: &CommissionId,
         tab: &TabId,
     ) -> anyhow::Result<Option<TabRow>> {
-        self.0.tab_for_update(commission, tab).await
+        self.inner.tab_for_update(commission, tab).await
     }
 }
 
 #[async_trait]
-impl CommissionWrites for FactBearingCommissions<'_> {
-    // The one interposition: the whole point of the double.
-    async fn commission_has_facts(&mut self, _id: &CommissionId) -> anyhow::Result<bool> {
-        Ok(true)
+impl CommissionWrites for StagedCommissions<'_> {
+    async fn commission_has_facts(&mut self, id: &CommissionId) -> anyhow::Result<bool> {
+        match self.staged {
+            Staged::Facts => Ok(true),
+            Staged::MovedPastDraft => self.inner.commission_has_facts(id).await,
+        }
     }
 
     async fn create(
@@ -366,7 +408,7 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         birth: &CommissionBirth,
         commission: &NewCommission,
     ) -> anyhow::Result<()> {
-        self.0.create(capability, birth, commission).await
+        self.inner.create(capability, birth, commission).await
     }
 
     async fn set_lifecycle(
@@ -374,7 +416,7 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         capability: &WriteCapability<CommissionId, AsParticipant>,
         change: &LifecycleMove,
     ) -> anyhow::Result<bool> {
-        self.0.set_lifecycle(capability, change).await
+        self.inner.set_lifecycle(capability, change).await
     }
 
     async fn set_dispute(
@@ -382,7 +424,7 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         capability: &WriteCapability<CommissionId, AsParticipant>,
         dispute: &Dispute,
     ) -> anyhow::Result<bool> {
-        self.0.set_dispute(capability, dispute).await
+        self.inner.set_dispute(capability, dispute).await
     }
 
     async fn clear_dispute(
@@ -390,26 +432,26 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         capability: &WriteCapability<CommissionId, AsParticipant>,
         clear: &DisputeClear,
     ) -> anyhow::Result<bool> {
-        self.0.clear_dispute(capability, clear).await
+        self.inner.clear_dispute(capability, clear).await
     }
 
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
-        self.0.declare_seat(seat).await
+        self.inner.declare_seat(seat).await
     }
 
     async fn create_seat_invitation(
         &mut self,
         invitation: &SeatInvitation,
     ) -> anyhow::Result<SeatInvitation> {
-        self.0.create_seat_invitation(invitation).await
+        self.inner.create_seat_invitation(invitation).await
     }
 
     async fn revoke_seat_invitation(&mut self, id: &SeatInvitationId) -> anyhow::Result<()> {
-        self.0.revoke_seat_invitation(id).await
+        self.inner.revoke_seat_invitation(id).await
     }
 
     async fn add_element(&mut self, element: &NewElement) -> anyhow::Result<()> {
-        self.0.add_element(element).await
+        self.inner.add_element(element).await
     }
 
     async fn remove_element(
@@ -417,23 +459,23 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         commission: &CommissionId,
         element: &ElementId,
     ) -> anyhow::Result<()> {
-        self.0.remove_element(commission, element).await
+        self.inner.remove_element(commission, element).await
     }
 
     async fn add_file(&mut self, file: &CommissionFile) -> anyhow::Result<()> {
-        self.0.add_file(file).await
+        self.inner.add_file(file).await
     }
 
     async fn add_markup(&mut self, markup: &CommissionMarkup) -> anyhow::Result<()> {
-        self.0.add_markup(markup).await
+        self.inner.add_markup(markup).await
     }
 
     async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()> {
-        self.0.declare_slots(slots).await
+        self.inner.declare_slots(slots).await
     }
 
     async fn delete(&mut self, id: &CommissionId) -> anyhow::Result<()> {
-        self.0.delete(id).await
+        self.inner.delete(id).await
     }
 
     async fn set_archived(
@@ -441,7 +483,7 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         id: &CommissionId,
         archived_at: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool> {
-        self.0.set_archived(id, archived_at).await
+        self.inner.set_archived(id, archived_at).await
     }
 
     async fn set_maturity(
@@ -449,7 +491,7 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         capability: &WriteCapability<CommissionId, AsOwner>,
         change: &MaturitySet,
     ) -> anyhow::Result<bool> {
-        self.0.set_maturity(capability, change).await
+        self.inner.set_maturity(capability, change).await
     }
 
     async fn set_linked_channel(
@@ -457,7 +499,7 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         id: &CommissionId,
         channel: Option<&ChannelPointer>,
     ) -> anyhow::Result<bool> {
-        self.0.set_linked_channel(id, channel).await
+        self.inner.set_linked_channel(id, channel).await
     }
 
     async fn grant_view(
@@ -466,7 +508,7 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         to_user: &UserId,
         level: GrantLevel,
     ) -> anyhow::Result<()> {
-        self.0.grant_view(commission, to_user, level).await
+        self.inner.grant_view(commission, to_user, level).await
     }
 
     async fn revoke_view(
@@ -474,7 +516,7 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         commission: &CommissionId,
         to_user: &UserId,
     ) -> anyhow::Result<bool> {
-        self.0.revoke_view(commission, to_user).await
+        self.inner.revoke_view(commission, to_user).await
     }
 
     async fn set_direction_status(
@@ -482,7 +524,7 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         capability: &WriteCapability<CommissionId, AsParticipant>,
         change: &DirectionChange,
     ) -> anyhow::Result<bool> {
-        self.0.set_direction_status(capability, change).await
+        self.inner.set_direction_status(capability, change).await
     }
 
     async fn set_deadline(
@@ -490,7 +532,7 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         capability: &WriteCapability<CommissionId, AsParticipant>,
         change: &DeadlineChange,
     ) -> anyhow::Result<bool> {
-        self.0.set_deadline(capability, change).await
+        self.inner.set_deadline(capability, change).await
     }
 
     async fn set_deadline_status(
@@ -498,7 +540,7 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         capability: &WriteCapability<CommissionId, AsParticipant>,
         change: &DelayedChange,
     ) -> anyhow::Result<bool> {
-        self.0.set_deadline_status(capability, change).await
+        self.inner.set_deadline_status(capability, change).await
     }
 }
 
@@ -508,7 +550,11 @@ impl CommissionWrites for FactBearingCommissions<'_> {
 #[tokio::test]
 async fn a_fact_bearing_commission_is_refused_and_pointed_at_archive() {
     let backend = MemBackend::new();
-    let database: Arc<dyn Database> = Arc::new(FactBearingDatabase(backend.database()));
+    let staged = StagedDatabase {
+        inner: backend.database(),
+        staged: Staged::Facts,
+    };
+    let database: Arc<dyn Database> = Arc::new(staged);
     let base = spawn_app_on("did:plc:artist", &backend, database).await;
     let client = client();
     let id = sign_in_and_create(&client, &base, &backend).await;
@@ -549,4 +595,166 @@ async fn a_fact_bearing_commission_is_refused_and_pointed_at_archive() {
             .is_empty(),
         "the changelog survives with its commission",
     );
+}
+
+// The step is decided on the row read under lock in the deleting unit, never on the pool read:
+// a commission the pool still reads in Draft, which the locked read finds Active (a move
+// committed in between), is refused with the 409 and nothing goes.
+#[tokio::test]
+async fn the_step_is_checked_on_the_locked_read_not_the_pool_read() {
+    let backend = MemBackend::new();
+    let staged = StagedDatabase {
+        inner: backend.database(),
+        staged: Staged::MovedPastDraft,
+    };
+    let database: Arc<dyn Database> = Arc::new(staged);
+    let base = spawn_app_on("did:plc:artist", &backend, database).await;
+    let client = client();
+    let id = sign_in_and_create(&client, &base, &backend).await;
+
+    let res = delete_commission(&client, &base, &id.to_string()).await;
+
+    common::assert_problem(res, 409, "commission_has_facts").await;
+    assert!(
+        backend.find_commission(id).await.expect("find").is_some(),
+        "a refused delete removes nothing",
+    );
+}
+
+/// `DELETE {base}/commissions/{id}` as `client`.
+async fn delete_commission(client: &reqwest::Client, base: &str, id: &str) -> reqwest::Response {
+    client
+        .delete(format!("{base}/commissions/{id}"))
+        .send()
+        .await
+        .expect("DELETE /commissions/{id}")
+}
+
+/// `PUT {base}/commissions/{id}/lifecycle` as `client`, moving it to `step`; asserts the `204`.
+async fn move_to(client: &reqwest::Client, base: &str, id: &str, step: &str) {
+    let body = json!({ "to": step });
+    let res = client
+        .put(format!("{base}/commissions/{id}/lifecycle"))
+        .json(&body)
+        .send()
+        .await
+        .expect("PUT …/lifecycle");
+    assert_eq!(res.status(), 204, "the move to {step} answers 204");
+}
+
+/// `method {base}/commissions/{id}/dispute` as `client`; asserts the `204`.
+async fn dispute(client: &reqwest::Client, base: &str, id: &str, method: reqwest::Method) {
+    let res = client
+        .request(method.clone(), format!("{base}/commissions/{id}/dispute"))
+        .send()
+        .await
+        .expect("…/dispute");
+    assert_eq!(res.status(), 204, "{method} …/dispute answers 204");
+}
+
+// The owner's delete of an Active commission is refused with the 409 `commission_has_facts`,
+// and nothing goes: the row and every changelog entry stay.
+#[tokio::test]
+async fn an_active_commission_is_refused_and_nothing_goes() {
+    let (base, backend) = spawn_app("did:plc:artist").await;
+    let client = client();
+    let id = sign_in_and_create(&client, &base, &backend).await;
+    let id_text = id.to_string();
+    move_to(&client, &base, &id_text, "active").await;
+    let entries_before = backend.changelog_entries(id).await.expect("entries").len();
+
+    let res = delete_commission(&client, &base, &id_text).await;
+
+    common::assert_problem(res, 409, "commission_has_facts").await;
+    assert!(
+        backend.find_commission(id).await.expect("find").is_some(),
+        "a refused delete removes nothing",
+    );
+    let entries_after = backend.changelog_entries(id).await.expect("entries").len();
+    assert_eq!(entries_after, entries_before, "every entry stays");
+}
+
+// A commission disputed from Draft is Disputed, so its delete is refused; cleared back, it is
+// in Draft again and deletes: 204, the row gone and its changelog with it.
+#[tokio::test]
+async fn a_dispute_from_draft_refuses_until_cleared_then_deletes() {
+    let (base, backend) = spawn_app("did:plc:artist").await;
+    let client = client();
+    let id = sign_in_and_create(&client, &base, &backend).await;
+    let id_text = id.to_string();
+    dispute(&client, &base, &id_text, reqwest::Method::PUT).await;
+
+    let while_disputed = delete_commission(&client, &base, &id_text).await;
+
+    common::assert_problem(while_disputed, 409, "commission_has_facts").await;
+    assert!(
+        backend.find_commission(id).await.expect("find").is_some(),
+        "a Disputed commission survives its delete",
+    );
+    dispute(&client, &base, &id_text, reqwest::Method::DELETE).await;
+
+    let cleared = delete_commission(&client, &base, &id_text).await;
+
+    assert_eq!(
+        cleared.status(),
+        204,
+        "back in Draft, the delete answers 204"
+    );
+    assert!(
+        backend.find_commission(id).await.expect("find").is_none(),
+        "the commission row is gone",
+    );
+    assert!(
+        backend
+            .changelog_entries(id)
+            .await
+            .expect("entries")
+            .is_empty(),
+        "the changelog cascaded away with the commission",
+    );
+}
+
+/// The kind of each of `commission`'s changelog entries, in order, as `client` reads them.
+async fn changelog_kinds(
+    client: &reqwest::Client,
+    world: &pg_app::DenWorld,
+    id: &str,
+) -> Vec<String> {
+    let path = format!("/commissions/{id}/changelog");
+    let res = get(client, world.base_url(), &path).await;
+    assert_eq!(res.status(), 200, "the changelog reads");
+    let body: Value = res.json().await.expect("a JSON body");
+    body.as_array()
+        .expect("an array of entries")
+        .iter()
+        .map(|entry| entry["kind"].as_str().expect("a kind").to_owned())
+        .collect()
+}
+
+// On PostgreSQL: bob, a Participant, moves alice's "Untitled" to Active and raises a dispute;
+// alice's delete answers the 409 `commission_has_facts`, the commission still reads, and its
+// changelog keeps all four entries.
+#[tokio::test]
+async fn on_postgres_a_disputed_active_commission_is_refused_and_keeps_its_entries() {
+    let world = pg_app::den_world(api::app).await;
+    let base = world.base_url().to_owned();
+    let untitled = world.untitled.id.to_string();
+    move_to(&world.bob, &base, &untitled, "active").await;
+    dispute(&world.bob, &base, &untitled, reqwest::Method::PUT).await;
+    let kinds_before = changelog_kinds(&world.alice, &world, &untitled).await;
+    let four_kinds = [
+        "created",
+        "file_added",
+        "lifecycle_moved",
+        "lifecycle_moved",
+    ];
+    assert_eq!(kinds_before, four_kinds);
+
+    let res = delete_commission(&world.alice, &base, &untitled).await;
+
+    common::assert_problem(res, 409, "commission_has_facts").await;
+    let read = get(&world.alice, &base, &format!("/commissions/{untitled}")).await;
+    assert_eq!(read.status(), 200, "the commission still reads");
+    let kinds_after = changelog_kinds(&world.alice, &world, &untitled).await;
+    assert_eq!(kinds_after, four_kinds, "every entry stays");
 }

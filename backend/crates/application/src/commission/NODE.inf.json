@@ -39,7 +39,7 @@
     },
     {
       "name": "delete.rs",
-      "role": "fact-free hard delete",
+      "role": "the owner's hard delete: decided on the row read under lock (find_for_update) in the deleting unit; in Draft and fact-free it deletes, past Draft or fact-bearing → HasFacts (409 commission_has_facts), deleting nothing",
       "node": false
     },
     {

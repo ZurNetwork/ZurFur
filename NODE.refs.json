@@ -1055,7 +1055,7 @@
     {
       "page": 3014657,
       "title": "Deletion of Commissions",
-      "governs": "commission/fact.rs, commission/file.rs, commission.rs archived_at"
+      "governs": "commission/fact.rs, commission/file.rs, commission.rs archived_at; commission/lifecycle.rs: LifecycleStep::allows_hard_delete, a hard delete only in Draft (else archive)"
     },
     {
       "page": 3276807,

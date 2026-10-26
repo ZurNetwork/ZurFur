@@ -124,3 +124,16 @@ fn a_deadline_lapses_on_working_steps_only() {
         assert_eq!(step.lapses(), !listed, "{step}");
     }
 }
+
+// Only a Draft commission may be hard-deleted: every other step, Disputed included, is
+// refused.
+#[test]
+fn only_draft_allows_hard_delete() {
+    let deletable: Vec<&'static str> = LifecycleStep::VARIANTS
+        .iter()
+        .filter(|step| step.allows_hard_delete())
+        .map(<&'static str>::from)
+        .collect();
+
+    assert_eq!(deletable, ["draft"]);
+}

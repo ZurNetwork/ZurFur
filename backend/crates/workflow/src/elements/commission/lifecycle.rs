@@ -14,7 +14,7 @@ use super::{CommissionRefusal, CommissionState, UnknownLifecycleStep};
 )]
 #[strum(serialize_all = "snake_case", parse_err_ty = UnknownLifecycleStep, parse_err_fn = unknown_token)]
 pub enum LifecycleStep {
-    /// Just created; no facts yet, so hard delete is possible.
+    /// Just created, before any work: the one step a hard delete is allowed on.
     Draft,
     /// Part of the workload but not active
     Batched,
@@ -44,6 +44,12 @@ impl LifecycleStep {
     /// while [`Disputed`](Self::Disputed).
     pub fn lapses(&self) -> bool {
         !self.is_terminal() && *self != Self::Disputed
+    }
+
+    /// Whether a commission on this step may be hard-deleted: only in
+    /// [`Draft`](Self::Draft). On every other step, Disputed included, it is refused.
+    pub fn allows_hard_delete(&self) -> bool {
+        *self == Self::Draft
     }
 
     /// Every step a missed deadline doesn't lapse on, in declaration order.

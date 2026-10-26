@@ -46,7 +46,7 @@
     },
     {
       "name": "delete.rs",
-      "role": "DELETE — fact-free hard delete → commission::delete",
+      "role": "DELETE → commission::delete: in Draft and fact-free 204; past Draft or fact-bearing → 409 commission_has_facts",
       "node": false
     },
     {
