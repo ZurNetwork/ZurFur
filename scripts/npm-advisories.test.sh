@@ -1,0 +1,481 @@
+#!/bin/sh
+# Tests for scripts/npm-advisories.sh against a stub curl and a stub scanner,
+# offline: the allow-list runs before any download or scan, a bad binary never
+# runs, the self-test and the count check catch a scanner that can't check,
+# report mode demotes only 1 and 3, each lockfile gets its own config, and the
+# scanner sees a clean environment. A copy of the script runs with its pin
+# rewritten to the stub's SHA-256. Run directly, or via `just scripts-test`.
+# Needs python3 >= 3.11, sha256sum and GNU date.
+set -eu
+
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+under_test="$script_dir/npm-advisories.sh"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+failures=0
+
+ok() { echo "ok   $1"; }
+fail() {
+    echo "FAIL $1: $2"
+    failures=$((failures + 1))
+}
+# expect <name> <haystack> <needle>
+expect() {
+    if printf '%s\n' "$2" | grep -qF -- "$3"; then
+        ok "$1"
+    else
+        fail "$1" "lacks '$3'"
+    fi
+}
+
+# --- the pin itself ---------------------------------------------------------------
+# pinned <name> <line>: the script holds <line> as one whole line.
+pinned() {
+    if grep -qxF -- "$2" "$under_test"; then ok "$1"; else fail "$1" "no line '$2'"; fi
+}
+pinned "the scanner is pinned at 2.7.0" "OSV_SCANNER_VERSION=2.7.0"
+pinned "the scanner is pinned by its SHA-256" \
+    "OSV_SCANNER_SHA256=160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b"
+pin_lines="$(grep -c '^OSV_SCANNER_SHA256=' "$under_test")"
+[ "$pin_lines" = 1 ] || {
+    echo "FAIL the script holds one pin line: found $pin_lines"
+    exit 1
+}
+
+# --- the stub scanner -------------------------------------------------------------
+# Its behaviour comes from files in $work/ctl, since the script hands it no
+# environment of ours. Per target (self-test, frontend, lexicons):
+#   count.<target>  the package count it reports ("none": no count line)
+#   act.<target>    "exit <n>", "quiet" (exit 0, no findings),
+#                   "always <id>" (reports <id> whatever the config says), or
+#                   "advisory <id>" (reports <id> unless the config ignores it
+#                   until after today); the self-test defaults to
+#                   "advisory GHSA-pxg6-pf52-xh8x", the lockfiles to exit 0.
+# Each run appends "<target> <config>" to $work/log/ran and saves its own
+# starting environment, from /proc, to $work/log/env.<target>.
+mkdir -p "$work/bin" "$work/ctl" "$work/log" "$work/repo/frontend" "$work/repo/lexicons"
+{
+    printf '#!/bin/sh\nctl=%s\nlog=%s\n' "$work/ctl" "$work/log"
+    cat <<'STUB'
+config=
+lockfile=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --config) config="$2"; shift ;;
+        --lockfile) lockfile="$2"; shift ;;
+    esac
+    shift
+done
+case "$lockfile" in
+    */frontend/yarn.lock) target=frontend; count=2; act="exit 0" ;;
+    */lexicons/package-lock.json) target=lexicons; count=3; act="exit 0" ;;
+    *) target=self-test; count=1; act="advisory GHSA-pxg6-pf52-xh8x" ;;
+esac
+printf '%s %s\n' "$target" "$config" >>"$log/ran"
+tr '\0' '\n' </proc/$$/environ >"$log/env.$target"
+[ -f "$ctl/count.$target" ] && count="$(cat "$ctl/count.$target")"
+[ -f "$ctl/act.$target" ] && act="$(cat "$ctl/act.$target")"
+if [ "$count" != none ]; then
+    if [ "$count" = 1 ]; then noun=package; else noun=packages; fi
+    echo "Scanned $lockfile file and found $count $noun"
+fi
+set -- $act
+case "$1" in
+    exit) exit "$2" ;;
+    quiet) echo "No issues found"; exit 0 ;;
+    always) echo "| https://osv.dev/$2 |"; exit 1 ;;
+    advisory)
+        ignored="$(awk -v id="$2" -v today="$(date +%F)" '
+            /^id *=/ { line = $0; gsub(/^id *= *"|" *$/, "", line); current = line }
+            /^ignoreUntil *=/ { line = $0; sub(/^ignoreUntil *= */, "", line); if (current == id && line > today) found = 1 }
+            END { print found + 0 }
+        ' "$config")"
+        if [ "$ignored" = 1 ]; then echo "No issues found"; exit 0; fi
+        echo "| https://osv.dev/$2 |"
+        exit 1
+        ;;
+esac
+STUB
+} >"$work/payload"
+stub_sum="$(sha256sum "$work/payload" | awk '{ print $1 }')"
+
+# The copy under test, pinned to the stub.
+awk -v sum="$stub_sum" '/^OSV_SCANNER_SHA256=/ { print "OSV_SCANNER_SHA256=" sum; next } { print }' \
+    "$under_test" >"$work/npm-advisories.sh"
+
+# The stub curl: records each call; $work/ctl/curl is "ok" (serves the
+# payload), "bad" (serves other bytes) or "fail" (exits 22, writing nothing).
+cat >"$work/bin/curl" <<'SHIM'
+#!/bin/sh
+out=
+url=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o) out="$2"; shift ;;
+        -*) ;;
+        *) url="$1" ;;
+    esac
+    shift
+done
+echo "$url" >>"$STUB_WORK/log/curl"
+case "$(cat "$STUB_WORK/ctl/curl" 2>/dev/null || echo ok)" in
+    ok) cp "$STUB_WORK/payload" "$out" ;;
+    bad) { cat "$STUB_WORK/payload"; echo "# swapped"; } >"$out" ;;
+    fail) exit 22 ;;
+esac
+SHIM
+chmod +x "$work/bin/curl"
+
+# The fixture repository: two yarn v1 blocks and three npm v3 packages.
+cat >"$work/repo/frontend/yarn.lock" <<'LOCK'
+# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+a@^1.0.0:
+  version "1.0.0"
+
+"b@^2.0.0", "b@^2.1.0":
+  version "2.1.0"
+  dependencies:
+    a "^1.0.0"
+LOCK
+cat >"$work/repo/lexicons/package-lock.json" <<'LOCK'
+{
+  "lockfileVersion": 3,
+  "packages": {
+    "": { "name": "fixture" },
+    "node_modules/a": { "version": "1.0.0" },
+    "node_modules/b": { "version": "2.0.0" },
+    "node_modules/c": { "version": "3.0.0" }
+  }
+}
+LOCK
+: >"$work/repo/osv-scanner.frontend.toml"
+: >"$work/repo/osv-scanner.lexicons.toml"
+
+cache="$work/cache"
+binary="$cache/zurfur-tools/osv-scanner-2.7.0"
+
+# reset: no stub settings, no logs, an empty cache.
+reset() {
+    rm -rf "$work/ctl" "$work/log" "$cache"
+    mkdir -p "$work/ctl" "$work/log"
+}
+# cached: the right binary already in the cache.
+cached() {
+    mkdir -p "$cache/zurfur-tools"
+    cp "$work/payload" "$binary"
+    chmod 755 "$binary"
+}
+# advisories [args…]: runs the copy from the fixture repository; sets status and output.
+advisories() {
+    status=0
+    output="$(cd "$work/repo" && PATH="$work/bin:$PATH" STUB_WORK="$work" XDG_CACHE_HOME="$cache" \
+        sh "$work/npm-advisories.sh" "$@" 2>&1)" || status=$?
+}
+ran() { [ -s "$work/log/ran" ]; }
+curl_calls() { if [ -f "$work/log/curl" ]; then wc -l <"$work/log/curl" | tr -d ' '; else echo 0; fi; }
+# check <name> <wanted status> <condition…>
+check() {
+    name="$1"
+    wanted="$2"
+    shift 2
+    if [ "$status" = "$wanted" ] && "$@"; then
+        ok "$name"
+    else
+        fail "$name" "exit $status (wanted $wanted); output: $output"
+    fi
+}
+always() { :; }
+not() { ! "$@"; }
+
+# --- the happy path ---------------------------------------------------------------
+reset
+advisories
+check "a first run downloads the pinned binary once and scans clean" 0 \
+    [ "$(curl_calls)" = 1 -a -x "$binary" ]
+expect "the download is the pinned release asset" "$(cat "$work/log/curl" 2>/dev/null)" \
+    "https://github.com/google/osv-scanner/releases/download/v2.7.0/osv-scanner_linux_amd64"
+leftover="$(cd "$cache/zurfur-tools" && find . -mindepth 1 ! -name osv-scanner-2.7.0)"
+if [ -z "$leftover" ]; then
+    ok "a run leaves only the binary in the cache (its temp folder is gone)"
+else
+    fail "a run leaves only the binary in the cache (its temp folder is gone)" "$leftover"
+fi
+self_tests="$(grep -c '^self-test ' "$work/log/ran" || true)"
+scans="$(grep -cv '^self-test ' "$work/log/ran" || true)"
+if [ "$self_tests" = 3 ] && [ "$scans" = 2 ] && head -n 3 "$work/log/ran" | grep -q '^self-test '; then
+    ok "the self-test's three scans run before the two lockfile scans"
+else
+    fail "the self-test's three scans run before the two lockfile scans" "$(cat "$work/log/ran")"
+fi
+advisories
+check "a second run uses the cached binary" 0 [ "$(curl_calls)" = 1 ]
+
+# --- the allow-list: each violation exits 2 before any download or scan -----------
+today="$(date +%F)"
+day90="$(date -d '+90 days' +%F)"
+day91="$(date -d '+91 days' +%F)"
+entry() { printf '[[IgnoredVulns]]\nid = "%s"\nreason = "%s"\nignoreUntil = %s\n' "$1" "$2" "$3"; }
+# refused <name> <toml>: the frontend config holding <toml> exits 2, nothing downloaded or run.
+refused() {
+    reset
+    printf '%s\n' "$2" >"$work/bad.toml"
+    advisories --frontend-config "$work/bad.toml"
+    check "refused before any download or scan: $1" 2 [ "$(curl_calls)" = 0 -a ! -s "$work/log/ran" ]
+}
+refused "a PackageOverrides entry with ignore = true" "$(printf '[[PackageOverrides]]\nignore = true\nreason = "x"\n')"
+refused "GoVersionOverride" 'GoVersionOverride = "1.22.0"'
+refused "an unknown top-level key" "$(entry GHSA-aaaa-bbbb-cccc why "$day90"; printf '\nExtra = 1\n')"
+# The misspelling, one l too many, is built here so the spell-checker passes it by.
+misspelt="ignoreUntil""l"
+refused "a misspelt ignoreUntil (one l too many)" "$(printf '[[IgnoredVulns]]\nid = "GHSA-aaaa-bbbb-cccc"\nreason = "why"\n%s = %s\n' "$misspelt" "$day90")"
+refused "an extra key in an entry" "$(entry GHSA-aaaa-bbbb-cccc why "$day90"; echo 'effectiveUntil = 2026-01-01')"
+refused "a string date" "$(entry GHSA-aaaa-bbbb-cccc why "\"$day90\"")"
+refused "a datetime" "$(entry GHSA-aaaa-bbbb-cccc why "${today}T00:00:00Z")"
+refused "a local datetime" "$(entry GHSA-aaaa-bbbb-cccc why "${today}T00:00:00")"
+refused "a missing reason" "$(printf '[[IgnoredVulns]]\nid = "GHSA-aaaa-bbbb-cccc"\nignoreUntil = %s\n' "$day90")"
+refused "an empty reason" "$(entry GHSA-aaaa-bbbb-cccc ' ' "$day90")"
+refused "a missing id" "$(printf '[[IgnoredVulns]]\nreason = "why"\nignoreUntil = %s\n' "$day90")"
+refused "an empty id" "$(entry '' why "$day90")"
+refused "a date 91 days out" "$(entry GHSA-aaaa-bbbb-cccc why "$day91")"
+refused "a duplicate id" "$(entry GHSA-aaaa-bbbb-cccc why "$day90"; entry GHSA-aaaa-bbbb-cccc again "$day90")"
+refused "IgnoredVulns as a single table" "$(printf '[IgnoredVulns]\nid = "GHSA-aaaa-bbbb-cccc"\n')"
+refused "a file that isn't TOML" "IgnoredVulns = ["
+reset
+advisories --frontend-config "$work/no-such.toml"
+check "refused before any download or scan: a missing ignore file" 2 [ "$(curl_calls)" = 0 -a ! -s "$work/log/ran" ]
+reset
+printf '%s\n' 'GoVersionOverride = "1.22.0"' >"$work/bad.toml"
+advisories --lexicons-config "$work/bad.toml"
+check "the lexicons ignore file is held to the same allow-list" 2 [ "$(curl_calls)" = 0 -a ! -s "$work/log/ran" ]
+reset
+cached
+printf 'IgnoredVulns = []\n' >"$work/empty-array.toml"
+entry GHSA-aaaa-bbbb-cccc why "$day90" >"$work/ninety.toml"
+advisories --frontend-config "$work/empty-array.toml" --lexicons-config "$work/ninety.toml"
+check "an empty array and a date 90 days out are accepted" 0 ran
+reset
+advisories --frontend-config
+check "a flag without its file is bad usage" 2 not ran
+advisories --skip
+check "an unknown argument is bad usage" 2 not ran
+
+# --- --allow-list-only: the allow-list, then nothing else ---------------------------
+untouched() { [ "$(curl_calls)" = 0 ] && not ran; }
+reset
+advisories --allow-list-only
+check "--allow-list-only passes good configs with no download or scan" 0 untouched
+expect "--allow-list-only says both files pass" "$output" "both ignore files pass the allow-list"
+reset
+printf '%s\n' 'GoVersionOverride = "1.22.0"' >"$work/bad.toml"
+advisories --allow-list-only --frontend-config "$work/bad.toml"
+check "--allow-list-only refuses a breaching frontend file" 2 untouched
+expect "--allow-list-only names the frontend breach" "$output" "the only key allowed is IgnoredVulns; found GoVersionOverride"
+reset
+entry GHSA-aaaa-bbbb-cccc why "$day91" >"$work/bad.toml"
+advisories --allow-list-only --lexicons-config "$work/bad.toml"
+check "--allow-list-only refuses a breaching lexicons file" 2 untouched
+expect "--allow-list-only names the lexicons breach" "$output" "is more than 90 days out"
+reset
+advisories --allow-list-only --frontend-config "$work/no-such.toml"
+check "--allow-list-only refuses a missing ignore file" 2 untouched
+expect "--allow-list-only names the unreadable file" "$output" "no-such.toml: can't be read"
+reset
+mv "$work/repo/frontend/yarn.lock" "$work/yarn.lock"
+mv "$work/repo/lexicons/package-lock.json" "$work/package-lock.json"
+advisories --allow-list-only
+check "--allow-list-only needs no lockfile" 0 untouched
+mv "$work/yarn.lock" "$work/repo/frontend/yarn.lock"
+mv "$work/package-lock.json" "$work/repo/lexicons/package-lock.json"
+reset
+printf '#!/bin/sh\nexit 1\n' >"$work/bin/python3"
+chmod +x "$work/bin/python3"
+advisories --allow-list-only
+check "--allow-list-only without python3 >= 3.11 exits 3" 3 untouched
+rm "$work/bin/python3"
+
+# --- bad binaries ---------------------------------------------------------------------
+reset
+cached
+python3 -I -c 'import sys; p = sys.argv[1]; b = bytearray(open(p, "rb").read()); b[-2] ^= 1; open(p, "wb").write(b)' "$binary"
+advisories
+check "a cached binary with one byte changed is re-downloaded once, then runs" 0 \
+    [ "$(curl_calls)" = 1 -a -s "$work/log/ran" ]
+reset
+echo bad >"$work/ctl/curl"
+advisories
+leftover="$(find "$cache" -type f)"
+check "a download with the wrong bytes exits 4, runs nothing and leaves nothing" 4 \
+    [ ! -s "$work/log/ran" -a -z "$leftover" ]
+reset
+cached
+printf 'tampered\n' >>"$binary"
+echo bad >"$work/ctl/curl"
+advisories
+check "a re-download that still mismatches exits 4 after one try" 4 \
+    [ "$(curl_calls)" = 1 -a ! -s "$work/log/ran" ]
+reset
+echo fail >"$work/ctl/curl"
+advisories
+check "a failed download exits 3 and runs nothing" 3 not ran
+reset
+cached
+chmod 644 "$binary"
+advisories
+check "a binary that isn't executable is never run" 3 not ran
+expect "a binary that isn't executable is named" "$output" "osv-scanner-2.7.0 isn't executable; ran nothing"
+
+# --- a scanner that can't check ---------------------------------------------------
+reset
+cached
+echo quiet >"$work/ctl/act.self-test"
+advisories
+check "a quiet scanner fails the self-test (exit 3)" 3 [ ! -s "$work/log/env.frontend" ]
+reset
+cached
+echo "always GHSA-pxg6-pf52-xh8x" >"$work/ctl/act.self-test"
+advisories
+check "a scanner that ignores the ignore file fails the self-test (exit 3)" 3 [ ! -s "$work/log/env.frontend" ]
+reset
+cached
+echo none >"$work/ctl/count.self-test"
+advisories
+check "a self-test scan without its count line exits 3" 3 always
+reset
+cached
+echo none >"$work/ctl/count.frontend"
+advisories
+check "a lockfile scan without its count line exits 3" 3 always
+reset
+cached
+echo 5 >"$work/ctl/count.lexicons"
+advisories
+check "a count that differs from the lockfile's exits 3" 3 always
+reset
+cached
+echo "exit 128" >"$work/ctl/act.frontend"
+advisories
+check "osv exiting 128 exits 3" 3 always
+expect "osv exiting 128 is named: no packages found" "$output" "exited 128 on $work/repo/frontend/yarn.lock (osv-scanner: no packages found)"
+reset
+cached
+echo "exit 127" >"$work/ctl/act.lexicons"
+advisories
+check "osv exiting 127 exits 3" 3 always
+expect "127 names both readings and ends (network?)" "$output" "(osv-scanner: a general error; the shell: command not found (network?))"
+reset
+cached
+echo "exit 130" >"$work/ctl/act.lexicons"
+advisories
+expect "an exit over 128 ends (network?)" "$output" "exited 130 on $work/repo/lexicons/package-lock.json (osv-scanner: another error, or a signal (network?))"
+reset
+cached
+echo "exit 2" >"$work/ctl/act.frontend"
+advisories
+check "osv exiting 2 (a result error) exits 3" 3 always
+reset
+cached
+mv "$work/repo/lexicons/package-lock.json" "$work/package-lock.json"
+advisories
+check "a missing lockfile exits 3 before any scan" 3 not ran
+mv "$work/package-lock.json" "$work/repo/lexicons/package-lock.json"
+reset
+printf '#!/bin/sh\n[ "$1" = -s ] && echo Darwin || echo arm64\n' >"$work/bin/uname"
+chmod +x "$work/bin/uname"
+advisories
+check "another platform exits 3, naming the missing pin" 3 [ "$(curl_calls)" = 0 ]
+expect "the missing pin is named" "$output" "no osv-scanner 2.7.0 pin for Darwin-arm64"
+rm "$work/bin/uname"
+
+# --- advisories and the worst code --------------------------------------------------
+reset
+cached
+echo "advisory GHSA-aaaa-bbbb-cccc" >"$work/ctl/act.frontend"
+advisories
+check "an unignored advisory exits 1" 1 always
+reset
+cached
+echo "advisory GHSA-aaaa-bbbb-cccc" >"$work/ctl/act.frontend"
+echo "exit 128" >"$work/ctl/act.lexicons"
+advisories
+check "with both lockfiles scanned, the worst code wins" 3 always
+
+# --- per-lockfile configs ---------------------------------------------------------
+reset
+cached
+echo "advisory GHSA-aaaa-bbbb-cccc" >"$work/ctl/act.frontend"
+entry GHSA-aaaa-bbbb-cccc "accepted for the lexicons only" "$day90" >"$work/lexicons-accepts.toml"
+advisories --lexicons-config "$work/lexicons-accepts.toml"
+check "an acceptance in the lexicons file doesn't silence the frontend scan" 1 \
+    grep -qxF "frontend $work/repo/osv-scanner.frontend.toml" "$work/log/ran"
+expect "the lexicons scan gets the lexicons file" "$(cat "$work/log/ran")" "lexicons $work/lexicons-accepts.toml"
+reset
+cached
+echo "advisory GHSA-aaaa-bbbb-cccc" >"$work/ctl/act.frontend"
+advisories --frontend-config "$work/lexicons-accepts.toml"
+check "the same acceptance in the frontend file does silence it" 0 always
+
+# --- modes --------------------------------------------------------------------------
+# in_mode <value> [args…]: runs the copy with NPM_ADVISORIES_MODE=<value>.
+in_mode() {
+    value="$1"
+    shift
+    status=0
+    output="$(cd "$work/repo" && NPM_ADVISORIES_MODE="$value" PATH="$work/bin:$PATH" STUB_WORK="$work" \
+        XDG_CACHE_HOME="$cache" sh "$work/npm-advisories.sh" "$@" 2>&1)" || status=$?
+}
+warned() { printf '%s\n' "$output" | grep -q '^::warning::npm-advisories: .*a PR changing frontend/yarn.lock or lexicons/package-lock.json, and just gate, block on it$'; }
+reset
+cached
+echo "advisory GHSA-aaaa-bbbb-cccc" >"$work/ctl/act.frontend"
+in_mode report
+check "report mode demotes an advisory (1) to a warning" 0 warned
+expect "the warning names the kind" "$output" "::warning::npm-advisories: an advisory no ignore file accepts (exit 1)"
+reset
+cached
+echo "exit 128" >"$work/ctl/act.frontend"
+in_mode report
+check "report mode demotes a scanner that couldn't check (3) to a warning" 0 warned
+reset
+printf '%s\n' 'GoVersionOverride = "1.22.0"' >"$work/bad.toml"
+in_mode report --frontend-config "$work/bad.toml"
+check "report mode still blocks on a broken ignore file (2)" 2 not warned
+reset
+echo bad >"$work/ctl/curl"
+in_mode report
+check "report mode still blocks on a mismatched download (4)" 4 not warned
+for value in Report warn ""; do
+    reset
+    cached
+    echo "advisory GHSA-aaaa-bbbb-cccc" >"$work/ctl/act.frontend"
+    in_mode "$value"
+    check "the mode value '$value' blocks" 1 not warned
+done
+
+# --- the clean environment ------------------------------------------------------------
+reset
+cached
+status=0
+output="$(cd "$work/repo" && HTTPS_PROXY=http://proxy.invalid:3128 HTTP_PROXY=http://proxy.invalid:3128 \
+    SSL_CERT_FILE=/nonexistent PATH="$work/bin:$PATH" STUB_WORK="$work" XDG_CACHE_HOME="$cache" \
+    sh "$work/npm-advisories.sh" 2>&1)" || status=$?
+for target in self-test frontend lexicons; do
+    names="$(cut -d= -f1 "$work/log/env.$target" | sort | tr '\n' ' ')"
+    if [ "$status" = 0 ] && [ "$names" = "HOME PATH TMPDIR " ] &&
+        grep -qx 'PATH=/usr/bin:/bin' "$work/log/env.$target" &&
+        grep -q "^HOME=$cache/zurfur-tools/run\.[^/]*/home\$" "$work/log/env.$target" &&
+        grep -q "^TMPDIR=$cache/zurfur-tools/run\.[^/]*/tmp\$" "$work/log/env.$target"; then
+        ok "the $target scan sees only PATH, HOME and TMPDIR, its own, and no proxy"
+    else
+        fail "the $target scan sees only PATH, HOME and TMPDIR, its own, and no proxy" \
+            "exit $status; $(cat "$work/log/env.$target")"
+    fi
+done
+
+if [ "$failures" -gt 0 ]; then
+    echo "$failures npm-advisories test(s) failed"
+    exit 1
+fi
+echo "all npm-advisories tests pass"

@@ -19,13 +19,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Decides whether the Rust, contract, web and ui jobs can skip: only a pull
-  # request whose every changed path is docs-only (scripts/ci-paths.sh) skips
-  # them. Fails closed: on a push, on any error, or when the checked-out merge
-  # commit's parents are not exactly the PR's base and head, `code` is true and
-  # everything runs (scripts/ci-changes.sh). A merge-queue group always runs
-  # everything; only its `lock` (whether advisories block) follows its paths.
-  # Dependents run unless `code` is exactly 'false', so a failed or cancelled
+  # Decides whether the Rust, contract, web, ui and npm-lock jobs can skip:
+  # only a pull request whose every changed path is docs-only
+  # (scripts/ci-paths.sh) skips them. Fails closed: on a push, on any error, or
+  # when the checked-out merge commit's parents are not exactly the PR's base
+  # and head, `code`, `lock` and `npmlock` are true and everything runs
+  # (scripts/ci-changes.sh). A merge-queue group always runs everything; only
+  # its `lock` (whether Cargo advisories block) and `npmlock` (whether npm
+  # advisories block: a change to an npm lockfile or a root osv-scanner.*.toml)
+  # follow its paths. Dependents run unless `code` is exactly 'false', and each
+  # flag counts as true unless it is exactly 'false', so a failed or cancelled
   # detection also runs everything. Nothing from the event reaches `run:`
   # text: the SHAs arrive through env.
   changes:
@@ -34,6 +37,7 @@ jobs:
     outputs:
       code: ${{ steps.detect.outputs.code }}
       lock: ${{ steps.detect.outputs.lock }}
+      npmlock: ${{ steps.detect.outputs.npmlock }}
     steps:
       # A PR: its test merge commit plus its two parents (base tip, PR head).
       # A merge group: its head with full history, which holds the group's
@@ -62,10 +66,12 @@ jobs:
           fi
           code=true
           lock=true
+          npmlock=true
           if printf '%s\n' "$result" | grep -qx 'code=false'; then code=false; fi
           if printf '%s\n' "$result" | grep -qx 'lock=false'; then lock=false; fi
-          echo "code=$code lock=$lock"
-          printf 'code=%s\nlock=%s\n' "$code" "$lock" >> "$GITHUB_OUTPUT"
+          if printf '%s\n' "$result" | grep -qx 'npmlock=false'; then npmlock=false; fi
+          echo "code=$code lock=$lock npmlock=$npmlock"
+          printf 'code=%s\nlock=%s\nnpmlock=%s\n' "$code" "$lock" "$npmlock" >> "$GITHUB_OUTPUT"
 
   fmt:
     name: fmt
@@ -121,10 +127,91 @@ jobs:
       # The dev profile's locks and sessions, built with its feature.
       - run: CARGO_TARGET_DIR=target/dev-profile cargo test -p api --locked --features dev-profile --lib --test dev_profile
 
+  # The npm lockfiles' advisory check and 7-day floor, judged by the BASE
+  # commit's scripts/npm-lock-ci.sh with the base's tools, waivers and old
+  # lockfiles, so a change can't loosen what judges it; the web, ui and
+  # contract jobs wait for it. It runs node and nothing a change's build
+  # config can steer: no Rust toolchain, no package install and no package
+  # cache (setup-node's automatic one is switched off). Advisories
+  # block when `npmlock` isn't exactly 'false', and only report otherwise; the
+  # floor always blocks. scripts/npm-lock-pins.test.sh pins the job's shape,
+  # and scripts/npm-lock-ci.test.sh runs this step against scratch repos.
+  npm-lock:
+    name: npm-lock
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.code != 'false' || needs.changes.outputs.npmlock != 'false') }}
+    runs-on: ubuntu-latest
+    steps:
+      # A PR or a push: HEAD and its parents, the base among them. A merge
+      # group: its head with full history, which holds the group's base.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: ${{ github.event_name == 'merge_group' && '0' || '2' }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      # The base is verified first: on a pull request or a push, HEAD^1 must
+      # be it; on a merge group, an ancestor of HEAD. Then the base's driver
+      # when it has one; only a verified base that lacks it runs this
+      # change's own, with a warning. Anything odd exits 1.
+      - name: The advisory check and the 7-day floor, with the base's tools
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          NPM_LOCK_MODE: ${{ needs.changes.outputs.npmlock == 'false' && 'report' || 'block' }}
+        run: |
+          base="$BASE_SHA"
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            base=$(git rev-parse --verify --quiet 'HEAD^1') || base=""
+          fi
+          if ! printf '%s' "$base" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "::error::npm-lock: the base SHA '$base' is not 40 lowercase hex digits"
+            exit 1
+          fi
+          if ! git cat-file -e "$base^{commit}"; then
+            echo "::error::npm-lock: the base commit $base is not in this checkout"
+            exit 1
+          fi
+          case "$GITHUB_EVENT_NAME" in
+            pull_request | push)
+              parent1=$(git rev-parse --verify --quiet 'HEAD^1') || parent1=""
+              if [ "$parent1" != "$base" ]; then
+                echo "::error::npm-lock: HEAD^1 ($parent1) is not the base $base"
+                exit 1
+              fi
+              ;;
+            merge_group)
+              if ! git merge-base --is-ancestor "$base" HEAD; then
+                echo "::error::npm-lock: the merge group's base $base is not an ancestor of HEAD"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::npm-lock: not a pull request, a merge group or a push (GITHUB_EVENT_NAME '$GITHUB_EVENT_NAME')"
+              exit 1
+              ;;
+          esac
+          if ! listing=$(git ls-tree --full-tree "$base" -- scripts/npm-lock-ci.sh); then
+            echo "::error::npm-lock: can't read the base's tree"
+            exit 1
+          fi
+          if [ -n "$listing" ]; then
+            if ! git show "$base:scripts/npm-lock-ci.sh" > "$RUNNER_TEMP/npm-lock-ci.sh"; then
+              echo "::error::npm-lock: can't read the base's scripts/npm-lock-ci.sh"
+              exit 1
+            fi
+            driver="$RUNNER_TEMP/npm-lock-ci.sh"
+          else
+            echo "::warning::npm-lock: the base has no scripts/npm-lock-ci.sh; running this change's own"
+            driver=scripts/npm-lock-ci.sh
+          fi
+          sh "$driver" "$base" "$NPM_LOCK_MODE"
+
   contract:
     name: contract
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    needs: [changes, npm-lock]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' && needs.npm-lock.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       # Full history: `buf breaking --against` compares the PR's contract to
@@ -287,11 +374,14 @@ jobs:
       - run: just toml-check
       # No private working paper (rulings, queue, retros, releases) is tracked.
       - run: just private-papers-check
+      # No tracked path has a .cargo segment (file, folder or symlink): a cargo
+      # config could run its own code in any cargo call.
+      - run: just cargo-config-check
 
   web:
     name: web
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    needs: [changes, npm-lock]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' && needs.npm-lock.result == 'success' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -326,8 +416,8 @@ jobs:
   # built-output check over that build.
   ui:
     name: ui
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    needs: [changes, npm-lock]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' && needs.npm-lock.result == 'success' }}
     runs-on: ubuntu-latest
     defaults:
       run:

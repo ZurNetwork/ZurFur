@@ -19,45 +19,57 @@ expect() {
     fi
 }
 
-expect "no paths fails closed" "code=true lock=true " ""
-expect "markdown outside the code trees" "code=false lock=false " "README.md
+expect "no paths fails closed" "code=true lock=true npmlock=true " ""
+expect "markdown outside the code trees" "code=false lock=false npmlock=false " "README.md
 .github/copilot-instructions.md
 docs/notes.md
 "
-expect "markdown under frontend is read by prettier" "code=true lock=false " "frontend/web/README.md"
-expect "markdown under backend counts as code" "code=true lock=false " "backend/crates/domain/README.md"
-expect "markdown under contract counts as code" "code=true lock=false " "contract/VERSIONING.md"
-expect "a NODE.inf.json under frontend stays docs-only" "code=false lock=false " "frontend/web/NODE.inf.json"
-expect "a NODE.inf.json in a crate's queries/ is code (sqlx-rust-codegen)" "code=true lock=false " "backend/crates/adapter-pg/queries/account/NODE.inf.json"
-expect "a NODE.inf.json in the api's generated/ is code (contract_current)" "code=true lock=false " "backend/crates/api/src/generated/NODE.inf.json"
-expect "a NODE.inf.json in the web's generated/ is code (contract regeneration)" "code=true lock=false " "frontend/web/src/lib/server/api/generated/NODE.inf.json"
-expect "node files" "code=false lock=false " "NODE.inf.json
+expect "markdown under frontend is read by prettier" "code=true lock=false npmlock=false " "frontend/web/README.md"
+expect "markdown under backend counts as code" "code=true lock=false npmlock=false " "backend/crates/domain/README.md"
+expect "markdown under contract counts as code" "code=true lock=false npmlock=false " "contract/VERSIONING.md"
+expect "a NODE.inf.json under frontend stays docs-only" "code=false lock=false npmlock=false " "frontend/web/NODE.inf.json"
+expect "a NODE.inf.json in a crate's queries/ is code (sqlx-rust-codegen)" "code=true lock=false npmlock=false " "backend/crates/adapter-pg/queries/account/NODE.inf.json"
+expect "a NODE.inf.json in the api's generated/ is code (contract_current)" "code=true lock=false npmlock=false " "backend/crates/api/src/generated/NODE.inf.json"
+expect "a NODE.inf.json in the web's generated/ is code (contract regeneration)" "code=true lock=false npmlock=false " "frontend/web/src/lib/server/api/generated/NODE.inf.json"
+expect "node files" "code=false lock=false npmlock=false " "NODE.inf.json
 backend/crates/api/NODE.inf.json
 NODE.refs.json
 NODE.toml
 "
-expect "NODE.refs.json alone is docs-only" "code=false lock=false " "NODE.refs.json"
-expect "a stray NODE.json at the root is code" "code=true lock=false " "NODE.json"
-expect "a stray NODE.json in a code tree is code" "code=true lock=false " "backend/x/NODE.json"
-expect "document trees" "code=false lock=false " "docs/design-index.md
+expect "NODE.refs.json alone is docs-only" "code=false lock=false npmlock=false " "NODE.refs.json"
+expect "a stray NODE.json at the root is code" "code=true lock=false npmlock=false " "NODE.json"
+expect "a stray NODE.json in a code tree is code" "code=true lock=false npmlock=false " "backend/x/NODE.json"
+expect "document trees" "code=false lock=false npmlock=false " "docs/design-index.md
 reports/x.html
 forks/003/run.py
 .claude/settings.json
 "
-expect "scripts, Justfile" "code=false lock=false " "scripts/jj-push.sh
+expect "scripts, Justfile" "code=false lock=false npmlock=false " "scripts/jj-push.sh
 scripts/hooks/pins.sh
 Justfile
 "
-expect "a Rust file among docs" "code=true lock=false " "README.md
+expect "a Rust file among docs" "code=true lock=false npmlock=false " "README.md
 backend/crates/domain/src/lib.rs
 "
-expect "the workflow itself" "code=true lock=false " ".github/workflows/ci.yml"
-expect "env example is read by a test" "code=true lock=false " ".env.example"
-expect "the lockfile" "code=true lock=true " "Cargo.lock"
-expect "a NODE.toml below the root is not listed" "code=true lock=false " "backend/NODE.toml"
-expect "a lookalike prefix" "code=true lock=false " "docsx/file.rs"
-expect "a quoted name git could not print plainly" "code=true lock=false " "\"docs/\\303\\251.md\""
-expect "no trailing newline" "code=false lock=false " "README.md"
+expect "the workflow itself" "code=true lock=false npmlock=false " ".github/workflows/ci.yml"
+expect "env example is read by a test" "code=true lock=false npmlock=false " ".env.example"
+expect "Cargo.lock blocks cargo advisories, not npm ones" "code=true lock=true npmlock=false " "Cargo.lock"
+expect "the frontend lockfile" "code=true lock=false npmlock=true " "frontend/yarn.lock"
+expect "the lexicons lockfile" "code=true lock=false npmlock=true " "lexicons/package-lock.json"
+expect "a root yarn.lock" "code=true lock=false npmlock=true " "yarn.lock"
+expect "a root package-lock.json" "code=true lock=false npmlock=true " "package-lock.json"
+expect "the frontend ignore file" "code=true lock=false npmlock=true " "osv-scanner.frontend.toml"
+expect "the lexicons ignore file" "code=true lock=false npmlock=true " "osv-scanner.lexicons.toml"
+expect "an npm lockfile among docs" "code=true lock=false npmlock=true " "README.md
+frontend/yarn.lock
+"
+expect "an ignore file below the root is not one" "code=true lock=false npmlock=false " "lexicons/osv-scanner.lexicons.toml"
+expect "README.md is not an npm lockfile" "code=false lock=false npmlock=false " "README.md"
+expect "the Justfile is not an npm lockfile" "code=false lock=false npmlock=false " "Justfile"
+expect "a NODE.toml below the root is not listed" "code=true lock=false npmlock=false " "backend/NODE.toml"
+expect "a lookalike prefix" "code=true lock=false npmlock=false " "docsx/file.rs"
+expect "a quoted name git could not print plainly" "code=true lock=false npmlock=false " "\"docs/\\303\\251.md\""
+expect "no trailing newline" "code=false lock=false npmlock=false " "README.md"
 
 got="$(printf 'README.md\nCargo.lock\n' | sh "$under_test" --paths | tr '\n' '|')"
 if [ "$got" = "docs README.md|code Cargo.lock|" ]; then

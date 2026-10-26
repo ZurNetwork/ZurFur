@@ -1,0 +1,189 @@
+#!/bin/sh
+# Pins the npm lockfile checks' wiring: the npm-lock job's shape and its inline
+# step in CI, the jobs that wait for it, the driver's clean environments,
+# floor and checks of the change's own waivers and ignore files, the daily npm
+# advisory job, the cargo config check in `just gate` and the hooks job, and
+# `just gate` ending on the advisory scan. Each line here is one a quiet edit
+# could drop or loosen. Run directly, or via `just scripts-test`.
+set -eu
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+ci="$root/.github/workflows/ci.yml"
+failures=0
+
+ok() { echo "ok   $1"; }
+fail() {
+    echo "FAIL $1: $2"
+    failures=$((failures + 1))
+}
+
+# job <workflow> <job id>: the job's body, its lines up to the next job.
+job() {
+    awk -v id="$2" '
+        $0 == "  " id ":" { inside = 1; next }
+        inside && /^  [^[:space:]#]/ { inside = 0 }
+        inside && /^[^[:space:]#]/ { inside = 0 }
+        inside { print }
+    ' "$1"
+}
+
+# expect_line <name> <haystack> <line>: one whole line, indentation aside, is <line>.
+expect_line() {
+    # ENVIRON, not -v: older awks (the runner's gawk 5.2) drop a trailing backslash from -v.
+    if printf '%s\n' "$2" | want="$3" awk '
+        BEGIN { want = ENVIRON["want"] }
+        { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "") }
+        $0 == want { found = 1 }
+        END { exit !found }
+    '; then
+        ok "$1"
+    else
+        fail "$1" "no line '$3'"
+    fi
+}
+
+# expect_none <name> <haystack> <extended regex>: no line matches.
+expect_none() {
+    found="$(printf '%s\n' "$2" | grep -inE -- "$3" || true)"
+    if [ -z "$found" ]; then
+        ok "$1"
+    else
+        fail "$1" "found: $found"
+    fi
+}
+
+# --- the npm-lock job ----------------------------------------------------------
+
+npm_lock="$(job "$ci" npm-lock)"
+if [ -z "$npm_lock" ]; then
+    fail "ci.yml has an npm-lock job" "none found"
+fi
+
+expect_line "npm-lock needs the changes job" "$npm_lock" "needs: changes"
+expect_line "npm-lock runs unless both code and npmlock are exactly false" "$npm_lock" \
+    "if: \${{ !cancelled() && (needs.changes.outputs.code != 'false' || needs.changes.outputs.npmlock != 'false') }}"
+
+# Its steps: exactly checkout, setup-node, then the driver step, in that order.
+steps="$(printf '%s\n' "$npm_lock" | awk '/^      - / { sub(/^      - /, ""); print }' | tr '\n' '|')"
+want_steps="uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1|uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0|name: The advisory check and the 7-day floor, with the base's tools|"
+if [ "$steps" = "$want_steps" ]; then
+    ok "npm-lock's three steps: checkout, setup-node, the driver step"
+else
+    fail "npm-lock's three steps: checkout, setup-node, the driver step" "got '$steps'"
+fi
+expect_line "npm-lock's checkout stores no credentials" "$npm_lock" "persist-credentials: false"
+expect_line "npm-lock's checkout fetches the base (full history for a merge group)" "$npm_lock" \
+    "fetch-depth: \${{ github.event_name == 'merge_group' && '0' || '2' }}"
+expect_line "npm-lock's node is 24" "$npm_lock" "node-version: '24'"
+expect_line "npm-lock switches off setup-node's automatic package cache" "$npm_lock" "package-manager-cache: false"
+# Every other cache key line, any spelling or quoting, flow mappings too.
+other_caches="$(printf '%s\n' "$npm_lock" | grep -vE '^[[:space:]]*#' |
+    grep -iE "cache[a-z_-]*[\"']?[[:space:]]*:" | grep -vxE '[[:space:]]*package-manager-cache: false[[:space:]]*' || true)"
+if [ -z "$other_caches" ]; then
+    ok "npm-lock sets no other cache key"
+else
+    fail "npm-lock sets no other cache key" "found: $other_caches"
+fi
+expect_none "npm-lock runs no cargo, cargo-deny or yarn" "$npm_lock" 'cargo|yarn'
+
+# The inline step: the base, its commit, its place (HEAD^1 or an ancestor),
+# then the base's copy or the fallback.
+expect_line "the base SHA comes from the event through env" "$npm_lock" \
+    "BASE_SHA: \${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}"
+expect_line "a push's base is HEAD^1" "$npm_lock" \
+    "base=\$(git rev-parse --verify --quiet 'HEAD^1') || base=\"\""
+expect_line "the base SHA must be 40 lowercase hex" "$npm_lock" \
+    "if ! printf '%s' \"\$base\" | grep -qE '^[0-9a-f]{40}\$'; then"
+expect_line "the base commit must be present" "$npm_lock" \
+    "if ! git cat-file -e \"\$base^{commit}\"; then"
+expect_line "a pull request or a push checks HEAD^1 in the step" "$npm_lock" "pull_request | push)"
+expect_line "the step reads HEAD^1" "$npm_lock" \
+    "parent1=\$(git rev-parse --verify --quiet 'HEAD^1') || parent1=\"\""
+expect_line "the step's HEAD^1 must be the base" "$npm_lock" "if [ \"\$parent1\" != \"\$base\" ]; then"
+expect_line "the step refuses a HEAD^1 that isn't the base" "$npm_lock" \
+    "echo \"::error::npm-lock: HEAD^1 (\$parent1) is not the base \$base\""
+expect_line "a merge group checks ancestry in the step" "$npm_lock" "merge_group)"
+expect_line "the step's merge group base must be an ancestor of HEAD" "$npm_lock" \
+    "if ! git merge-base --is-ancestor \"\$base\" HEAD; then"
+expect_line "the step refuses a base that isn't an ancestor" "$npm_lock" \
+    "echo \"::error::npm-lock: the merge group's base \$base is not an ancestor of HEAD\""
+expect_line "the step refuses any other event" "$npm_lock" \
+    "echo \"::error::npm-lock: not a pull request, a merge group or a push (GITHUB_EVENT_NAME '\$GITHUB_EVENT_NAME')\""
+expect_line "a failed tree read fails, apart from an absent driver" "$npm_lock" \
+    "if ! listing=\$(git ls-tree --full-tree \"\$base\" -- scripts/npm-lock-ci.sh); then"
+expect_line "the base's driver is extracted" "$npm_lock" \
+    "if ! git show \"\$base:scripts/npm-lock-ci.sh\" > \"\$RUNNER_TEMP/npm-lock-ci.sh\"; then"
+expect_line "the base's copy runs when it has one" "$npm_lock" "driver=\"\$RUNNER_TEMP/npm-lock-ci.sh\""
+expect_line "only a base without the driver runs the change's" "$npm_lock" "driver=scripts/npm-lock-ci.sh"
+expect_line "the fallback warns" "$npm_lock" \
+    "echo \"::warning::npm-lock: the base has no scripts/npm-lock-ci.sh; running this change's own\""
+expect_line "the driver gets the base and the mode" "$npm_lock" "sh \"\$driver\" \"\$base\" \"\$NPM_LOCK_MODE\""
+expect_line "advisories report only when npmlock is exactly false" "$npm_lock" \
+    "NPM_LOCK_MODE: \${{ needs.changes.outputs.npmlock == 'false' && 'report' || 'block' }}"
+
+changes="$(job "$ci" changes)"
+expect_line "the changes job exports npmlock" "$changes" "npmlock: \${{ steps.detect.outputs.npmlock }}"
+
+# --- the jobs that wait for it -------------------------------------------------------
+
+for waiter in web ui contract; do
+    body="$(job "$ci" "$waiter")"
+    expect_line "$waiter needs npm-lock" "$body" "needs: [changes, npm-lock]"
+    expect_line "$waiter runs only after npm-lock succeeds" "$body" \
+        "if: \${{ !cancelled() && needs.changes.outputs.code != 'false' && needs.npm-lock.result == 'success' }}"
+done
+
+# --- the driver -------------------------------------------------------------------------
+
+driver="$(cat "$root/scripts/npm-lock-ci.sh")"
+expect_line "the advisory check runs under env -i" "$driver" \
+    "env -i PATH=/usr/bin:/bin HOME=\"\${HOME:-/nonexistent}\" NPM_ADVISORIES_MODE=\"\$mode\" \\"
+expect_line "the floor runs under env -i" "$driver" \
+    "env -i PATH=\"\$node_dir:/usr/bin:/bin\" HOME=\"\${HOME:-/nonexistent}\" \\"
+expect_line "the floor is 7 days, with the chosen waivers" "$driver" "--min-age-days 7 --waivers \"\$waivers\""
+expect_line "the change's own ignore files are checked when the scan used a base's" "$driver" \
+    "if [ \"\$base_ignores\" = 1 ]; then"
+expect_line "the base's advisory tool runs its allow-list alone" "$driver" \
+    "sh \"\$tools/scripts/npm-advisories.sh\" --allow-list-only \\"
+expect_line "the allow-list gets the change's own ignore files" "$driver" \
+    "--frontend-config osv-scanner.frontend.toml --lexicons-config osv-scanner.lexicons.toml"
+expect_line "the change's waivers are parsed when they differ from the base's" "$driver" \
+    "if [ \"\$waivers\" != lock-age-waivers.json ] && ! cmp -s \"\$waivers\" lock-age-waivers.json; then"
+expect_line "the base's lock-review parses them over an empty diff" "$driver" \
+    "\"\$node_bin\" \"\$tools/frontend/lock-review.mjs\" \"\$old_frontend\" \"\$old_frontend\" \\"
+expect_line "the parse gets the change's own waivers file" "$driver" "--min-age-days 7 --waivers lock-age-waivers.json"
+
+# --- the cargo config check ------------------------------------------------------------
+
+gate_body="$(awk '
+    /^gate:/ { inside = 1; next }
+    inside && /^[^[:space:]]/ { inside = 0 }
+    inside { print }
+' "$root/Justfile")"
+expect_line "just gate runs the cargo config check" "$gate_body" "just cargo-config-check"
+expect_line "the hooks job runs the cargo config check" "$(job "$ci" hooks)" "- run: just cargo-config-check"
+
+# --- the daily advisories and the gate ----------------------------------------------------
+
+daily="$(job "$root/.github/workflows/advisories.yml" npm-advisories)"
+expect_line "the daily workflow has an npm-advisories job" "$daily" "name: npm-advisories"
+expect_line "the daily npm-advisories job runs the scan" "$daily" "- run: sh scripts/npm-advisories.sh"
+expect_line "the advisories workflow runs daily" "$(cat "$root/.github/workflows/advisories.yml")" "- cron: '23 5 * * *'"
+
+gate_last="$(awk '
+    /^gate:/ { inside = 1; next }
+    inside && /^[^[:space:]]/ { inside = 0 }
+    inside && /^[[:space:]]+[^[:space:]#]/ { last = $0 }
+    END { sub(/^[[:space:]]+/, "", last); print last }
+' "$root/Justfile")"
+if [ "$gate_last" = "just npm-advisories" ]; then
+    ok "just gate ends with just npm-advisories"
+else
+    fail "just gate ends with just npm-advisories" "its last line is '$gate_last'"
+fi
+
+if [ "$failures" -ne 0 ]; then
+    echo "$failures failure(s)"
+    exit 1
+fi
+echo "all npm-lock pins hold"
