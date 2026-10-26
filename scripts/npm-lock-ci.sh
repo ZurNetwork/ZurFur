@@ -23,9 +23,14 @@
 #   - each lockfile's advisory ignores: the base's file when the change alters
 #     that lockfile and the base has one, otherwise the change's, so a new or
 #     renewed acceptance lands in a change that adds no package.
-# The advisory check runs in <mode> (report demotes an advisory to a
-# warning); the floor always blocks. Every check runs even after one fails,
-# and the worst (highest) exit code wins.
+# The change's own files the checks didn't use are still checked: when either
+# ignore file came from the base, both of the change's go through the advisory
+# tool's allow-list (--allow-list-only); when the change's waivers differ from
+# the base's, lock-review parses them over an empty diff. A file the change
+# deletes fails there.
+# The advisory check and the allow-list run in <mode> (report demotes an
+# advisory to a warning); the floor and the waivers parse always block. Every
+# check runs even after one fails, and the worst (highest) exit code wins.
 set -u
 
 # The tools, as repo-relative paths, all taken from one source.
@@ -163,6 +168,7 @@ ignores() {
     if ! cmp -s "$3" "$2" && base_has "$4"; then
         picked="$work/data/$4"
         from_base "$4" "$picked"
+        base_ignores=1
         say "$1 ignores: the base's $4 ($2 changed)"
     else
         picked="$4"
@@ -174,6 +180,7 @@ old_lockfile frontend "$EMPTY_YARN_LOCK" frontend/yarn.lock frontend/web/yarn.lo
 old_frontend="$picked"
 old_lockfile lexicons "$EMPTY_NPM_LOCK" lexicons/package-lock.json
 old_lexicons="$picked"
+base_ignores=0
 from_source lock-age-waivers.json
 waivers="$picked"
 ignores frontend frontend/yarn.lock "$old_frontend" osv-scanner.frontend.toml
@@ -195,6 +202,15 @@ env -i PATH=/usr/bin:/bin HOME="${HOME:-/nonexistent}" NPM_ADVISORIES_MODE="$mod
     sh "$tools/scripts/npm-advisories.sh" \
     --frontend-config "$frontend_ignores" --lexicons-config "$lexicons_ignores"
 record advisories "$?"
+
+# The change's own ignore files, when the scan used a base's instead.
+if [ "$base_ignores" = 1 ]; then
+    say "the allow-list over this change's own ignore files ($mode)"
+    env -i PATH=/usr/bin:/bin HOME="${HOME:-/nonexistent}" NPM_ADVISORIES_MODE="$mode" \
+        sh "$tools/scripts/npm-advisories.sh" --allow-list-only \
+        --frontend-config osv-scanner.frontend.toml --lexicons-config osv-scanner.lexicons.toml
+    record "allow-list of this change's ignore files" "$?"
+fi
 
 node_bin="$(command -v node)" || node_bin=""
 case "$node_bin" in
@@ -218,6 +234,21 @@ floor() {
 }
 floor frontend "$old_frontend" frontend/yarn.lock
 floor lexicons "$old_lexicons" lexicons/package-lock.json
+
+# The change's own waivers, when they differ from the base's the floor used:
+# lock-review parses them over an empty diff, under the floor's environment.
+if [ "$waivers" != lock-age-waivers.json ] && ! cmp -s "$waivers" lock-age-waivers.json; then
+    say "this change's lock-age-waivers.json differs from the base's; parsing it"
+    if [ -z "$node_bin" ]; then
+        say "no node on PATH"
+        record "this change's waivers" 2
+    else
+        env -i PATH="$node_dir:/usr/bin:/bin" HOME="${HOME:-/nonexistent}" \
+            "$node_bin" "$tools/frontend/lock-review.mjs" "$old_frontend" "$old_frontend" \
+            --min-age-days 7 --waivers lock-age-waivers.json
+        record "this change's waivers" "$?"
+    fi
+fi
 
 say "worst exit: $worst"
 exit "$worst"

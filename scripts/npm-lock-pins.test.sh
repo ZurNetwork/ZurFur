@@ -1,10 +1,10 @@
 #!/bin/sh
 # Pins the npm lockfile checks' wiring: the npm-lock job's shape and its inline
-# step in CI, the jobs that wait for it, the driver's clean environments and
-# floor, the daily npm advisory job, the cargo config check in `just gate` and
-# the hooks job, and `just gate` ending on the advisory scan. Each line here is
-# one a quiet edit could drop or loosen. Run directly, or via
-# `just scripts-test`.
+# step in CI, the jobs that wait for it, the driver's clean environments,
+# floor and checks of the change's own waivers and ignore files, the daily npm
+# advisory job, the cargo config check in `just gate` and the hooks job, and
+# `just gate` ending on the advisory scan. Each line here is one a quiet edit
+# could drop or loosen. Run directly, or via `just scripts-test`.
 set -eu
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -117,6 +117,17 @@ expect_line "the advisory check runs under env -i" "$driver" \
 expect_line "the floor runs under env -i" "$driver" \
     "env -i PATH=\"\$node_dir:/usr/bin:/bin\" HOME=\"\${HOME:-/nonexistent}\" \\"
 expect_line "the floor is 7 days, with the chosen waivers" "$driver" "--min-age-days 7 --waivers \"\$waivers\""
+expect_line "the change's own ignore files are checked when the scan used a base's" "$driver" \
+    "if [ \"\$base_ignores\" = 1 ]; then"
+expect_line "the base's advisory tool runs its allow-list alone" "$driver" \
+    "sh \"\$tools/scripts/npm-advisories.sh\" --allow-list-only \\"
+expect_line "the allow-list gets the change's own ignore files" "$driver" \
+    "--frontend-config osv-scanner.frontend.toml --lexicons-config osv-scanner.lexicons.toml"
+expect_line "the change's waivers are parsed when they differ from the base's" "$driver" \
+    "if [ \"\$waivers\" != lock-age-waivers.json ] && ! cmp -s \"\$waivers\" lock-age-waivers.json; then"
+expect_line "the base's lock-review parses them over an empty diff" "$driver" \
+    "\"\$node_bin\" \"\$tools/frontend/lock-review.mjs\" \"\$old_frontend\" \"\$old_frontend\" \\"
+expect_line "the parse gets the change's own waivers file" "$driver" "--min-age-days 7 --waivers lock-age-waivers.json"
 
 # --- the cargo config check ------------------------------------------------------------
 

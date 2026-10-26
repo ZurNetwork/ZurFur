@@ -262,6 +262,40 @@ check "a flag without its file is bad usage" 2 not ran
 advisories --skip
 check "an unknown argument is bad usage" 2 not ran
 
+# --- --allow-list-only: the allow-list, then nothing else ---------------------------
+untouched() { [ "$(curl_calls)" = 0 ] && not ran; }
+reset
+advisories --allow-list-only
+check "--allow-list-only passes good configs with no download or scan" 0 untouched
+expect "--allow-list-only says both files pass" "$output" "both ignore files pass the allow-list"
+reset
+printf '%s\n' 'GoVersionOverride = "1.22.0"' >"$work/bad.toml"
+advisories --allow-list-only --frontend-config "$work/bad.toml"
+check "--allow-list-only refuses a breaching frontend file" 2 untouched
+expect "--allow-list-only names the frontend breach" "$output" "the only key allowed is IgnoredVulns; found GoVersionOverride"
+reset
+entry GHSA-aaaa-bbbb-cccc why "$day91" >"$work/bad.toml"
+advisories --allow-list-only --lexicons-config "$work/bad.toml"
+check "--allow-list-only refuses a breaching lexicons file" 2 untouched
+expect "--allow-list-only names the lexicons breach" "$output" "is more than 90 days out"
+reset
+advisories --allow-list-only --frontend-config "$work/no-such.toml"
+check "--allow-list-only refuses a missing ignore file" 2 untouched
+expect "--allow-list-only names the unreadable file" "$output" "no-such.toml: can't be read"
+reset
+mv "$work/repo/frontend/yarn.lock" "$work/yarn.lock"
+mv "$work/repo/lexicons/package-lock.json" "$work/package-lock.json"
+advisories --allow-list-only
+check "--allow-list-only needs no lockfile" 0 untouched
+mv "$work/yarn.lock" "$work/repo/frontend/yarn.lock"
+mv "$work/package-lock.json" "$work/repo/lexicons/package-lock.json"
+reset
+printf '#!/bin/sh\nexit 1\n' >"$work/bin/python3"
+chmod +x "$work/bin/python3"
+advisories --allow-list-only
+check "--allow-list-only without python3 >= 3.11 exits 3" 3 untouched
+rm "$work/bin/python3"
+
 # --- bad binaries ---------------------------------------------------------------------
 reset
 cached

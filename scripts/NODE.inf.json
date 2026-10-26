@@ -102,27 +102,27 @@
     },
     {
       "name": "npm-advisories.sh",
-      "role": "scans frontend/yarn.lock and lexicons/package-lock.json with the pinned osv-scanner (Linux x86_64, checked by SHA-256 on every run, cached under ${XDG_CACHE_HOME:-~/.cache}/zurfur-tools) under a clean environment, each with its own root ignore file held to an allow-list (only IgnoredVulns entries of id, reason and an ignoreUntil at most 90 days out) before any download or scan; a self-test on cookie 0.6.0 and a package-count check prove the scanner checked; exits 0 clean, 1 an advisory, 2 a broken ignore file, 3 couldn't check, 4 a hash mismatch; NPM_ADVISORIES_MODE=report demotes 1 and 3 to a warning (just npm-advisories, last in just gate; the daily advisories workflow)",
+      "role": "scans frontend/yarn.lock and lexicons/package-lock.json with the pinned osv-scanner (Linux x86_64, checked by SHA-256 on every run, cached under ${XDG_CACHE_HOME:-~/.cache}/zurfur-tools) under a clean environment, each with its own root ignore file held to an allow-list (only IgnoredVulns entries of id, reason and an ignoreUntil at most 90 days out) before any download or scan (--allow-list-only stops there); a self-test on cookie 0.6.0 and a package-count check prove the scanner checked; exits 0 clean, 1 an advisory, 2 a broken ignore file, 3 couldn't check, 4 a hash mismatch; NPM_ADVISORIES_MODE=report demotes 1 and 3 to a warning (just npm-advisories, last in just gate; the daily advisories workflow)",
       "node": false
     },
     {
       "name": "npm-advisories.test.sh",
-      "role": "tests for npm-advisories.sh against a stub curl and a stub scanner, offline: the allow-list before any download, bad binaries, the self-test and count check, exit codes and modes, per-lockfile configs and the scanner's clean environment",
+      "role": "tests for npm-advisories.sh against a stub curl and a stub scanner, offline: the allow-list before any download, --allow-list-only, bad binaries, the self-test and count check, exit codes and modes, per-lockfile configs and the scanner's clean environment",
       "node": false
     },
     {
       "name": "npm-lock-ci.sh",
-      "role": "the body of CI's npm-lock job, normally the PR base's copy: verifies the base, takes the advisory script, lock-review.mjs and install-check.mjs as one set from the base (the change's only when the base lacks this driver, with a warning), the old lockfiles and lock-age-waivers.json from the base, and each lockfile's osv-scanner ignores from the base when that lockfile changed; runs the advisory scan (block or report) and the 7-day floor over both lockfiles under env -i, every check even after one fails, and exits with the worst code",
+      "role": "the body of CI's npm-lock job, normally the PR base's copy: verifies the base, takes the advisory script, lock-review.mjs and install-check.mjs as one set from the base (the change's only when the base lacks this driver, with a warning), the old lockfiles and lock-age-waivers.json from the base, and each lockfile's osv-scanner ignores from the base when that lockfile changed; runs the advisory scan (block or report) and the 7-day floor over both lockfiles under env -i, then checks the change's own files it didn't use (its ignore files through the allow-list when a base's was scanned, its waivers parsed by lock-review when they differ from the base's), every check even after one fails, and exits with the worst code",
       "node": false
     },
     {
       "name": "npm-lock-ci.test.sh",
-      "role": "tests for npm-lock-ci.sh and the npm-lock job's inline step (extracted from ci.yml and run as GitHub runs it) against scratch git repos with real test merges, stub tools and a stub node: which copy runs, base verification, the waivers', ignores' and old lockfiles' sources, the clean environments and the worst exit code",
+      "role": "tests for npm-lock-ci.sh and the npm-lock job's inline step (extracted from ci.yml and run as GitHub runs it) against scratch git repos with real test merges, stub tools and a stub node: which copy runs, base verification, the waivers', ignores' and old lockfiles' sources, the checks of the change's own waivers and ignore files, the clean environments and the worst exit code",
       "node": false
     },
     {
       "name": "npm-lock-pins.test.sh",
-      "role": "pins the npm-lock job's three steps and its inline step's lines, its mode expression, the web, ui and contract jobs waiting on it, the driver's env -i and 7-day floor, the daily npm-advisories job, just cargo-config-check in just gate and CI's hooks job, and just gate ending on just npm-advisories",
+      "role": "pins the npm-lock job's three steps and its inline step's lines, its mode expression, the web, ui and contract jobs waiting on it, the driver's env -i, 7-day floor and checks of the change's own waivers and ignore files, the daily npm-advisories job, just cargo-config-check in just gate and CI's hooks job, and just gate ending on just npm-advisories",
       "node": false
     },
     {

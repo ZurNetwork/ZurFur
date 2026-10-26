@@ -4,12 +4,13 @@
 # lexicons/package-lock.json against osv-scanner.lexicons.toml, run from the
 # repository root (its current directory).
 #
-#   sh scripts/npm-advisories.sh [--frontend-config <file>] [--lexicons-config <file>]
+#   sh scripts/npm-advisories.sh [--allow-list-only] [--frontend-config <file>] [--lexicons-config <file>]
 #
 # Order: both ignore files pass the allow-list, both lockfiles exist, the
 # binary is verified (downloaded on first use), the self-test proves the
 # scanner finds and ignores an advisory, then each lockfile is scanned once
-# with its own config and its package count checked.
+# with its own config and its package count checked. --allow-list-only stops
+# after the allow-list: no lockfile check, download or scan.
 #
 # Exit codes: 0 clean; 1 an advisory no ignore file accepts; 2 an ignore file
 # breaks the allow-list, or bad usage; 3 the scanner couldn't check (download
@@ -68,14 +69,19 @@ finish() {
 }
 
 usage() {
-    say "usage: npm-advisories.sh [--frontend-config <file>] [--lexicons-config <file>]"
+    say "usage: npm-advisories.sh [--allow-list-only] [--frontend-config <file>] [--lexicons-config <file>]"
     exit 2
 }
 
 frontend_config=osv-scanner.frontend.toml
 lexicons_config=osv-scanner.lexicons.toml
+allow_list_only=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --allow-list-only)
+            allow_list_only=1
+            shift
+            ;;
         --frontend-config)
             [ "$#" -ge 2 ] || usage
             frontend_config="$2"
@@ -174,6 +180,10 @@ PY
 
 allow_list "$frontend_config" || finish 2
 allow_list "$lexicons_config" || finish 2
+if [ "$allow_list_only" = 1 ]; then
+    say "both ignore files pass the allow-list"
+    finish 0
+fi
 
 for lock in "$frontend_lock" "$lexicons_lock"; do
     if [ ! -f "$lock" ]; then

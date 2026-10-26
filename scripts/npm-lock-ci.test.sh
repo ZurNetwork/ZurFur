@@ -4,7 +4,10 @@
 # commits. The tools are stubs committed in each repo, base and change copies
 # told apart, and a stub `node`; each records its arguments, its environment
 # (read from /proc, as the process received it) and which copy ran into
-# $HOME/log, and exits with the code in $HOME/adv-exit or $HOME/floor-exit.
+# $HOME/log, and exits with the code in $HOME/adv-exit or $HOME/floor-exit,
+# or, for an allow-list-only run or a waivers parse (old and new the same
+# file), $HOME/allow-exit or $HOME/parse-exit (0 when absent; 2 when a file
+# they are given is missing, as the real tools fail closed).
 # HOME is the one control channel, since the driver passes it through its
 # clean environments. Run directly, or via `just scripts-test`. Needs git,
 # bash and a Linux /proc.
@@ -51,12 +54,22 @@ stub_tools() {
     cat >"$repo/scripts/npm-advisories.sh" <<STUB
 #!/bin/sh
 names="\$(tr '\\0' '\\n' </proc/\$\$/environ | cut -d= -f1 | sort | paste -sd, -)"
+if [ "\$1" = --allow-list-only ]; then
+    printf 'allow-list copy=$1 env=%s mode=%s args=%s %s %s %s frontend=%s lexicons=%s\n' "\$names" "\$NPM_ADVISORIES_MODE" "\$2" "\$3" "\$4" "\$5" "\$(cat "\$3" 2>/dev/null || echo MISSING)" "\$(cat "\$5" 2>/dev/null || echo MISSING)" >>"\$HOME/log"
+    [ -f "\$3" ] && [ -f "\$5" ] || exit 2
+    exit "\$(cat "\$HOME/allow-exit" 2>/dev/null || echo 0)"
+fi
 printf 'advisories copy=$1 env=%s mode=%s\n' "\$names" "\$NPM_ADVISORIES_MODE" >>"\$HOME/log"
 printf 'advisories args=%s %s %s %s frontend=%s lexicons=%s\n' "\$1" "\$2" "\$3" "\$4" "\$(cat "\$2")" "\$(cat "\$4")" >>"\$HOME/log"
 exit "\$(cat "\$HOME/adv-exit")"
 STUB
     cat >"$repo/frontend/lock-review.mjs" <<STUB
 dir="\$(dirname "\$0")"
+if [ "\$1" = "\$2" ]; then
+    printf 'waivers-parse copy=$1 old=%s flags=%s %s %s file=%s parsed=%s\n' "\$(tr '\\n' '|' <"\$1")" "\$3" "\$4" "\$5" "\$6" "\$(cat "\$6" 2>/dev/null || echo MISSING)" >>"\$HOME/log"
+    [ -f "\$6" ] || exit 2
+    exit "\$(cat "\$HOME/parse-exit" 2>/dev/null || echo 0)"
+fi
 printf 'floor copy=$1 old=%s new=%s flags=%s %s %s sibling=%s waivers=%s\n' "\$(tr '\\n' '|' <"\$1")" "\$2" "\$3" "\$4" "\$5" "\$(cat "\$dir/install-check.mjs")" "\$(cat "\$6")" >>"\$HOME/log"
 exit "\$(cat "\$HOME/floor-exit")"
 STUB
@@ -108,10 +121,12 @@ pr_commit() {
     g merge --no-ff -m merge pr
 }
 
-# exits <adv> <floor>: the stub tools' exit codes.
+# exits <adv> <floor> [<allow-list> <parse>]: the stub tools' exit codes.
 exits() {
     echo "$1" >"$home/adv-exit"
     echo "$2" >"$home/floor-exit"
+    echo "${3:-0}" >"$home/allow-exit"
+    echo "${4:-0}" >"$home/parse-exit"
 }
 
 # The npm-lock job's `run: |` block, from the workflow, de-indented.
@@ -296,7 +311,29 @@ pr_commit
 exits 0 0
 step pull_request "$base_sha" block
 expect_in "waivers come from the base" "$log" "waivers=waivers base"
-expect_not_in "the change's waivers are not read" "$log" "waivers=waivers pr"
+expect_not_in "the change's waivers are not used by the floor" "$log" "waivers=waivers pr"
+expect_in "changed waivers are parsed by the base's lock-review over an empty diff" "$log" \
+    "waivers-parse copy=base old=yarn old| flags=--min-age-days 7 --waivers file=lock-age-waivers.json parsed=waivers pr"
+expect_in "the driver says it parses the change's waivers" "$out" "this change's lock-age-waivers.json differs from the base's; parsing it"
+exits 0 0 0 2
+step pull_request "$base_sha" report
+expect_status "a waiver-only change whose waivers don't parse exits 2, even in report mode" 2
+expect_in "the parse's exit is recorded" "$out" "npm-lock: this change's waivers: exit 2"
+exits 0 0
+
+new_base
+echo "change" >"$repo/change.md"
+pr_commit
+step pull_request "$base_sha" block
+expect_status "unchanged waivers pass" 0
+expect_not_in "unchanged waivers are not parsed again" "$log" "waivers-parse"
+
+new_base
+g rm -q lock-age-waivers.json
+pr_commit
+step pull_request "$base_sha" report
+expect_status "a change that deletes the waivers fails closed" 2
+expect_in "the deleted waivers are what the parse was given" "$log" "file=lock-age-waivers.json parsed=MISSING"
 
 new_base
 g rm -q lock-age-waivers.json
@@ -308,6 +345,7 @@ step pull_request "$base_sha" block
 expect_status "a base without waivers passes on the change's" 0
 expect_in "a base without waivers uses the change's" "$log" "waivers=waivers pr"
 expect_in "with a warning" "$out" "::warning::npm-lock: the base has no lock-age-waivers.json; using this change's"
+expect_not_in "a base without waivers: no second parse" "$log" "waivers-parse"
 
 # --- ignores --------------------------------------------------------------------------
 
@@ -318,6 +356,15 @@ pr_commit
 step pull_request "$base_sha" block
 expect_in "a changed frontend lockfile takes the base's frontend ignores" "$log" "frontend=frontend ignores base"
 expect_in "an unchanged lexicons lockfile takes the change's lexicons ignores" "$log" "lexicons=lexicons ignores pr"
+expect_in "a base's ignore file used: the change's own pass the base's allow-list, under env -i" "$log" \
+    "allow-list copy=base env=HOME,NPM_ADVISORIES_MODE,PATH mode=block args=--frontend-config osv-scanner.frontend.toml --lexicons-config osv-scanner.lexicons.toml frontend=frontend ignores pr lexicons=lexicons ignores pr"
+exits 0 0 2 0
+step pull_request "$base_sha" block
+expect_status "a change's own ignore file that breaks the allow-list exits 2" 2
+expect_in "the allow-list's exit is recorded" "$out" "npm-lock: allow-list of this change's ignore files: exit 2"
+exits 0 0
+step pull_request "$base_sha" report
+expect_in "the allow-list runs in the scan's mode" "$log" "allow-list copy=base env=HOME,NPM_ADVISORIES_MODE,PATH mode=report"
 
 new_base
 change_ignores
@@ -326,6 +373,8 @@ pr_commit
 step pull_request "$base_sha" block
 expect_in "a changed lexicons lockfile takes the base's lexicons ignores" "$log" "lexicons=lexicons ignores base"
 expect_in "an unchanged frontend lockfile takes the change's frontend ignores" "$log" "frontend=frontend ignores pr"
+expect_in "a changed lexicons lockfile: the change's ignore files pass the allow-list" "$log" \
+    "allow-list copy=base env=HOME,NPM_ADVISORIES_MODE,PATH mode=block args=--frontend-config osv-scanner.frontend.toml --lexicons-config osv-scanner.lexicons.toml frontend=frontend ignores pr lexicons=lexicons ignores pr"
 
 new_base
 change_ignores
@@ -334,6 +383,15 @@ step pull_request "$base_sha" block
 expect_in "no lockfile change: the change's frontend ignores" "$log" "frontend=frontend ignores pr"
 expect_in "no lockfile change: the change's lexicons ignores" "$log" "lexicons=lexicons ignores pr"
 expect_in "the advisory tool gets both configs" "$log" "advisories args=--frontend-config"
+expect_not_in "no lockfile change: no separate allow-list run" "$log" "allow-list copy="
+
+new_base
+g rm -q osv-scanner.frontend.toml
+write frontend/yarn.lock "yarn new"
+pr_commit
+step pull_request "$base_sha" block
+expect_status "a lockfile change that deletes its own ignore file fails closed" 2
+expect_in "the deleted ignore file is what the allow-list was given" "$log" "frontend=MISSING"
 
 new_base
 g rm -q osv-scanner.frontend.toml
@@ -344,6 +402,7 @@ write frontend/yarn.lock "yarn new"
 pr_commit
 step pull_request "$base_sha" block
 expect_in "a changed lockfile whose base has no ignores takes the change's" "$log" "frontend=frontend ignores pr"
+expect_not_in "no base ignore file used: no separate allow-list run" "$log" "allow-list copy="
 
 # --- old lockfiles ----------------------------------------------------------------------
 
