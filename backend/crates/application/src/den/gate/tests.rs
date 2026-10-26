@@ -758,12 +758,13 @@ async fn a_create_writes_exactly_one_created_entry_on_postgres() {
 
 /// The create act for a commission titled [`TITLE`], choosing `maturity` and no deadline.
 fn rated_create_act(maturity: Maturity) -> DenAct {
+    let chosen = NewCommission {
+        maturity: Some(maturity),
+        deadline: None,
+    };
     let act = create::Act {
         title: TITLE.parse().expect("a valid test title"),
-        chosen: NewCommission {
-            maturity: Some(maturity),
-            deadline: None,
-        },
+        chosen,
     };
     DenAct::Commission(CommissionAct::Create(act))
 }
@@ -991,9 +992,8 @@ fn rated_with_a_note(
     at: DateTimeUtc,
 ) -> Option<NewChangelogEntry> {
     let open = NewChangelogEntry::event(commission, OpenKind::Archived, actor, json!({}), at);
-    Some(NewChangelogEntry::from(
-        open.with_note("free text the act chose".to_owned()),
-    ))
+    let noted = open.with_note("free text the act chose".to_owned());
+    Some(NewChangelogEntry::from(noted))
 }
 
 /// An optional constructor that never finds anything to record.
@@ -1029,13 +1029,11 @@ fn a_misbuilt_second_entry_is_a_broken_rule() {
     let unrecorded = built_entries(create_rule(), &written, None, Some(&alice()), now);
 
     let kinds: Vec<ChangelogEntryKind> = both.iter().map(NewChangelogEntry::kind).collect();
-    assert_eq!(
-        kinds,
-        [
-            ChangelogEntryKind::Created,
-            ChangelogEntryKind::MaturityRated
-        ]
-    );
+    let created_then_rated = [
+        ChangelogEntryKind::Created,
+        ChangelogEntryKind::MaturityRated,
+    ];
+    assert_eq!(kinds, created_then_rated);
     let alone: Vec<ChangelogEntryKind> = alone.iter().map(NewChangelogEntry::kind).collect();
     assert_eq!(alone, [ChangelogEntryKind::Created]);
     assert!(unrecorded.is_err(), "{unrecorded:?}");

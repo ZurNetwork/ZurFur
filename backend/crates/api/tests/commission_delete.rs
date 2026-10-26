@@ -274,10 +274,11 @@ impl UnitOfWork for StagedUow {
     )]
     fn commissions(&mut self) -> Box<dyn CommissionRepo + '_> {
         let staged = self.staged;
-        Box::new(StagedCommissions {
+        let commissions = StagedCommissions {
             inner: self.inner.commissions(),
             staged,
-        })
+        };
+        Box::new(commissions)
     }
 
     #[expect(
