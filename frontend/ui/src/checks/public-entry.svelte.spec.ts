@@ -7,19 +7,27 @@ describe('the public entry', () => {
 		expect(published).toBe(source);
 	});
 
-	it('exports exactly the paper lists, the environment and the token model', () => {
+	it('exports exactly the paper lists, the environment names, the token model, the icons, the first controls, the link mints and the motion seam', () => {
 		expect(Object.keys(published).sort()).toEqual([
+			'Button',
 			'ICON_NAMES',
 			'Icon',
 			'MOTION_ATTRIBUTE',
+			'NO_MOVES',
+			'NO_SOUNDS',
 			'PAPER_CLASSES',
 			'PAPER_MOVES',
 			'SKIN_ATTRIBUTE',
+			'STILL_ENVIRONMENT',
+			'Toggle',
 			'findToken',
 			'isIconName',
+			'isLinkHref',
+			'isSameOriginPath',
 			'isTokenName',
 			'parseSkin',
 			'parseTokenModel',
+			'provideEnvironment',
 			'resolveToken',
 			'valueIn'
 		]);

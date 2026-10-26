@@ -1,0 +1,78 @@
+/* Toggle: a track with a placed thumb that glides across when it turns on. */
+.zf-toggle {
+	display: flex;
+	gap: var(--space-2);
+	align-items: flex-start;
+}
+
+/* The track is the control's width and holds the thumb with a hairline of space all round. */
+.zf-toggle__track {
+	flex: none;
+	position: relative;
+	box-sizing: border-box;
+	width: var(--size-control);
+	height: calc(var(--space-4) + 2px);
+	margin-top: 1px;
+	padding: 0;
+	border: 1px solid var(--color-border-strong);
+	border-radius: var(--radius-full);
+	background: var(--color-bg);
+	cursor: pointer;
+	transition:
+		background-color var(--duration-base) var(--easing-standard),
+		border-color var(--duration-base) var(--easing-standard);
+}
+
+.zf-toggle__track:focus-visible {
+	outline: 2px solid var(--color-focus);
+	outline-offset: var(--space-half);
+}
+
+.zf-toggle__track[aria-checked='true'] {
+	background: var(--color-accent);
+	border-color: var(--color-accent-border);
+}
+
+.zf-toggle__track:disabled {
+	cursor: not-allowed;
+	opacity: 0.55;
+}
+
+/* The thumb glides on `left` through `.placed.glidex`. */
+.zf-toggle__thumb {
+	position: absolute;
+	top: var(--space-half);
+	left: var(--space-half);
+	width: var(--space-3);
+	height: var(--space-3);
+	border-radius: var(--radius-full);
+	background: var(--color-text-muted);
+}
+
+.zf-toggle__track[aria-checked='true'] .zf-toggle__thumb {
+	left: calc(100% - var(--space-3) - var(--space-half));
+	background: var(--color-on-accent);
+}
+
+/* Nothing disabled lifts or presses. */
+.zf-toggle__track:disabled .zf-toggle__thumb {
+	box-shadow: var(--elevation-button);
+	translate: none;
+}
+
+.zf-toggle__text {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.zf-toggle__label {
+	cursor: pointer;
+	color: var(--color-text);
+}
+
+.zf-toggle__desc {
+	font-size: var(--text-xs);
+	line-height: var(--leading-xs);
+	color: var(--color-text-muted);
+}
