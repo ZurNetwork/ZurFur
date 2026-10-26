@@ -385,8 +385,8 @@ export type GetCommissionResponse = Message<"zurfur.api.v1.GetCommissionResponse
    * Deadline axis of the two-dimensional status, if any, at the time of the request
    * (R8 vocabulary): `late` once the deadline has passed on a step that isn't
    * `completed` or `cancelled`, else `delayed` when a Participant raised it. While
-   * `disputed`, the clock stands at the dispute's start: `late` only when the deadline
-   * had passed by then. Absent with no deadline.
+   * `disputed`, the clock stands at the dispute's start: `late` only when it was late
+   * then. Absent with no deadline.
    *
    * @generated from field: optional string deadline_status = 8;
    */

@@ -233,6 +233,43 @@ fn late_freezes_at_the_dispute_s_start() {
     );
 }
 
+// A dispute raised on a Completed or Cancelled commission whose deadline had already passed
+// reads it on the step it left: not Late before the raise, all through the dispute, or after
+// the clear.
+#[test]
+fn a_dispute_raised_on_a_closed_commission_never_reads_late() {
+    for closed_step in [LifecycleStep::Completed, LifecycleStep::Cancelled] {
+        let before_the_raise = state(closed_step.clone(), Some(march()), None);
+        let while_disputed = crate::elements::commission::test_commission::disputed(
+            closed_step.clone(),
+            april(),
+            Some(march()),
+        );
+        let after_the_clear = state(closed_step.clone(), Some(march()), None);
+
+        assert_eq!(
+            before_the_raise.deadline_status_at(april()),
+            None,
+            "{closed_step:?} before the raise"
+        );
+        assert_eq!(
+            CommissionState::from(&while_disputed).deadline_status_at(may()),
+            None,
+            "{closed_step:?} while Disputed, by its state"
+        );
+        assert_eq!(
+            while_disputed.deadline_status_at(may()),
+            None,
+            "{closed_step:?} while Disputed, by the commission"
+        );
+        assert_eq!(
+            after_the_clear.deadline_status_at(may()),
+            None,
+            "{closed_step:?} after the clear"
+        );
+    }
+}
+
 // While Late (derived, the stored flag empty) the Delayed flag can be neither raised nor
 // taken down.
 #[test]
