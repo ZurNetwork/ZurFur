@@ -110,8 +110,9 @@ step_pins() {
     ' $workflow_files
 }
 
-# check_step_input <action> <input> <value> — at least one step uses <action>,
-# and every such step sets <input> to <value>.
+# check_step_input <action> <input> <value> [<why>] — at least one step uses
+# <action>, and every such step sets <input> to <value>; <why> names the rule
+# in the message (default: Justfile pin).
 check_step_input() {
     counts="$(step_pins "$1" "$2" "$3")"
     steps="${counts% *}"
@@ -119,13 +120,13 @@ check_step_input() {
     if [ "$steps" -eq 0 ]; then
         pin_error "no workflow uses $1"
     elif [ "$steps" != "$pinned" ]; then
-        pin_error "$steps $1 step(s) but $pinned set $2: '$3' (Justfile pin)"
+        pin_error "$steps $1 step(s) but $pinned set $2: '$3' (${4:-Justfile pin})"
     fi
 }
 check_step_input bufbuild/buf-action version "$BUF_VERSION"
 check_step_input extractions/setup-just just-version "$JUST_VERSION"
 # No checkout leaves its token in .git/config for later steps to read.
-check_step_input actions/checkout persist-credentials false
+check_step_input actions/checkout persist-credentials false "CI safety rule"
 
 # ci_safety — prints one "<file>:<line>: <problem>" per break of the CI safety
 # rules, in every workflow file:
