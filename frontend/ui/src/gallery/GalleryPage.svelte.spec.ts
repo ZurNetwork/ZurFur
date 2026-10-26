@@ -36,12 +36,20 @@ describe('GalleryPage', () => {
 			example: body('e'),
 			states: body('s')
 		});
-		expect(headingTexts()).toEqual(['States', 'Live example', 'Keyboard', 'Motion', 'Tests']);
+		expect(headingTexts()).toEqual(['States', 'Live Example', 'Keyboard', 'Motion', 'Tests']);
 	});
 
 	it('names each region by its heading', async () => {
 		render(GalleryPage, { states: body('s'), example: body('e') });
 		await expect.element(page.getByRole('region', { name: 'States' })).toBeVisible();
-		await expect.element(page.getByRole('region', { name: 'Live example' })).toBeVisible();
+		await expect.element(page.getByRole('region', { name: 'Live Example' })).toBeVisible();
+	});
+
+	it('pads the page only when it is framed', () => {
+		const screen = render(GalleryPage, { states: body('s') });
+		expect(screen.container.querySelector('.framed')).toBeNull();
+		screen.unmount();
+		const framed = render(GalleryPage, { states: body('s'), framed: true });
+		expect(framed.container.querySelector('.framed')).not.toBeNull();
 	});
 });

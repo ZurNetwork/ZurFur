@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { createRawSnippet, tick, type Component } from 'svelte';
-import colourPage from '../routes/components/colour/+page.svelte';
-import motionPage from '../routes/components/motion-and-sound/+page.svelte';
-import paperPage from '../routes/components/paper/+page.svelte';
-import shadowsPage from '../routes/components/shadows/+page.svelte';
-import spacePage from '../routes/components/space-and-shape/+page.svelte';
-import typePage from '../routes/components/type/+page.svelte';
+import colourPage from '../stories/tokens/ColourPage.svelte';
+import motionPage from '../stories/tokens/MotionAndSoundPage.svelte';
+import paperPage from '../stories/tokens/PaperPage.svelte';
+import shadowsPage from '../stories/tokens/ShadowsPage.svelte';
+import spacePage from '../stories/tokens/SpaceAndShapePage.svelte';
+import typePage from '../stories/tokens/TypePage.svelte';
 import TokenModelGate from '../gallery/TokenModelGate.svelte';
 import UsageText from '../gallery/UsageText.svelte';
 import { backgroundLabel, contrastReport } from '../gallery/contrast/contrast-pairs';
@@ -35,6 +35,8 @@ const tokenPages: readonly (readonly [string, Component])[] = [
 	['shadows', shadowsPage],
 	['motion-and-sound', motionPage]
 ];
+
+const allPages: readonly (readonly [string, Component])[] = [...tokenPages, ['paper', paperPage]];
 
 function columnsOf(skin: Skin): readonly HTMLElement[] {
 	return [...document.querySelectorAll<HTMLElement>(`[data-gallery-skin=${skin}]`)];
@@ -129,6 +131,50 @@ describe('the token pages', () => {
 		for (const skin of skins) {
 			const plotted = inSkin(skin, 'svg[role=img]').map((svg) => svg.getAttribute('aria-label'));
 			expect(plotted).toEqual(easings.map((token) => token.name));
+		}
+	});
+});
+
+describe('one skin at a time', () => {
+	it.each(allPages.flatMap(([slug, page]) => skins.map((skin) => [slug, skin, page] as const)))(
+		'the %s page in %s shows one copy per section, all in that skin',
+		(_slug, skin, page) => {
+			render(page, { skin });
+			const copies = [...document.querySelectorAll<HTMLElement>('[data-gallery-skin]')];
+			expect(copies.length).toBeGreaterThan(0);
+			expect(copies.map((copy) => copy.getAttribute('data-gallery-skin'))).toEqual(
+				copies.map(() => skin)
+			);
+			expect(copies.map((copy) => copy.getAttribute('data-skin'))).toEqual(copies.map(() => skin));
+			const sections = [...document.querySelectorAll('[data-gallery-state]')];
+			expect(sections.length).toBe(copies.length);
+			for (const section of sections) {
+				expect(section.querySelectorAll('[data-gallery-skin]')).toHaveLength(1);
+			}
+			expect(document.querySelectorAll('figure, figcaption')).toHaveLength(0);
+		}
+	);
+
+	it('shows every token of the model in the one skin, between the pages', () => {
+		const wanted = [...model.byName.keys()].toSorted();
+		for (const skin of skins) {
+			const shown: string[] = [];
+			for (const [, page] of tokenPages) {
+				const screen = render(page, { skin });
+				shown.push(...attributeValues(skin, 'data-token'));
+				screen.unmount();
+			}
+			expect(shown.toSorted(), `${skin} only`).toEqual(wanted);
+		}
+	});
+
+	it('prints each value of the one skin', () => {
+		render(colourPage, { skin: 'light' });
+		const rows = inSkin('light', '[data-token]');
+		expect(rows.length).toBeGreaterThan(0);
+		for (const row of rows) {
+			const name = row.getAttribute('data-token') ?? '';
+			expect(row.textContent, name).toContain(model.byName.get(name)?.resolved.light);
 		}
 	});
 });

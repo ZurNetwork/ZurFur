@@ -11,14 +11,16 @@
 		readonly heading: string;
 		readonly tokens: readonly Token[];
 		readonly drawing?: Snippet<[Token, Skin]> | undefined;
+		/** Shows only this skin; unset shows both side by side. */
+		readonly skin?: Skin | undefined;
 	}
 
-	let { name, heading, tokens, drawing }: Props = $props();
+	let { name, heading, tokens, drawing, skin }: Props = $props();
 </script>
 
 <GalleryState {name}>
 	<h3>{heading}</h3>
-	<GallerySkins>
+	<GallerySkins only={skin}>
 		{#snippet children(skin)}
 			<TokenList {tokens} {skin} {drawing} />
 		{/snippet}

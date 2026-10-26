@@ -5,9 +5,11 @@
 	interface Props {
 		/** Rendered once per skin, and handed the skin it is rendered in. */
 		readonly children: Snippet<[Skin]>;
+		/** When set, renders one copy, in this skin, with no caption; unset renders both side by side. */
+		readonly only?: Skin | undefined;
 	}
 
-	let { children }: Props = $props();
+	let { children, only }: Props = $props();
 
 	interface Column {
 		readonly skin: Skin;
@@ -20,16 +22,22 @@
 	];
 </script>
 
-<div class="gallery-skins">
-	{#each columns as column (column.skin)}
-		<figure>
-			<figcaption>{column.caption}</figcaption>
-			<div class="copy" data-skin={column.skin} data-gallery-skin={column.skin}>
-				{@render children(column.skin)}
-			</div>
-		</figure>
-	{/each}
-</div>
+{#if only !== undefined}
+	<div class="copy" data-skin={only} data-gallery-skin={only}>
+		{@render children(only)}
+	</div>
+{:else}
+	<div class="gallery-skins">
+		{#each columns as column (column.skin)}
+			<figure>
+				<figcaption>{column.caption}</figcaption>
+				<div class="copy" data-skin={column.skin} data-gallery-skin={column.skin}>
+					{@render children(column.skin)}
+				</div>
+			</figure>
+		{/each}
+	</div>
+{/if}
 
 <style>
 	.gallery-skins {
