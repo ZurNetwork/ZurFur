@@ -1,4 +1,4 @@
-//! [`CommissionStore`] (reads, pool-backed) and [`CommissionWrites`] (writes,
+//! [`CommissionStore`] and [`CommissionRows`] (reads, pool-backed) and [`CommissionWrites`] (writes,
 //! reachable only via an open [`UnitOfWork`](domain::ports::UnitOfWork)) over
 //! the `commission` table.
 //!
@@ -16,8 +16,8 @@ use domain::{
             LifecycleMove, LifecycleStep, LockedNode, LockedStanding, Markup, MarkupKey,
             MaturitySet, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
             SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SlotBirth, StoredDispute,
-            SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
-            declares_surface,
+            SurfaceAddress, SurfaceName, TabId, TabName, TabRow, ViewedSummary, VisibilityMode,
+            declared_tabs, declares_surface,
         },
         did::Did,
         invitation::InvitationState,
@@ -29,8 +29,8 @@ use domain::{
         workflow::{Column, ColumnId, WorkflowId},
     },
     ports::{
-        ColumnStore, CommissionReads, CommissionStore, CommissionWrites, Creator, ElementNotFound,
-        New, UnknownSurface, UnknownTab, WriteCapability,
+        ColumnStore, CommissionReads, CommissionRows, CommissionStore, CommissionWrites, Creator,
+        ElementNotFound, New, UnknownSurface, UnknownTab, WriteCapability,
     },
 };
 use sqlx::{PgConnection, PgPool};
@@ -683,7 +683,7 @@ fn to_seat_invitation(row: sql::CommissionInvitationRow) -> anyhow::Result<SeatI
     })
 }
 
-/// The [`CommissionStore`] read surface: pool-backed, no transaction tax.
+/// The [`CommissionStore`] and [`CommissionRows`] read surfaces: pool-backed, no transaction tax.
 /// Writes live on [`PgCommissionWrites`] via [`UnitOfWork`](domain::ports::UnitOfWork).
 pub struct PgCommissionStore {
     pool: PgPool,
@@ -905,7 +905,7 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
 /// connection so reads see its uncommitted writes. Vended by `uow.commissions()`.
 #[async_trait::async_trait]
 impl CommissionReads for PgCommissionWrites<'_> {
-    /// [`CommissionStore::find`] on the unit's connection.
+    /// [`CommissionRows::find`] on the unit's connection.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
         let Some(row) = sql::find(&mut *self.conn, uuid::Uuid::from(*id)).await? else {
@@ -991,7 +991,8 @@ impl CommissionReads for PgCommissionWrites<'_> {
         Ok(owed.unwrap_or(false))
     }
 
-    /// [`CommissionStore::is_participant`] on the unit's connection.
+    /// One `EXISTS` over the persisted `commission_participant` membership record, on the
+    /// unit's connection — never a computed owner-∪-seated union.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn is_participant(
         &mut self,
@@ -1019,7 +1020,7 @@ impl CommissionReads for PgCommissionWrites<'_> {
 }
 
 #[async_trait::async_trait]
-impl CommissionStore for PgCommissionStore {
+impl CommissionRows for PgCommissionStore {
     /// Rebuilds the [`Commission`] via `to_commission`; `None` if absent.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
@@ -1029,12 +1030,35 @@ impl CommissionStore for PgCommissionStore {
         to_commission(*id, row.into()).map(Some)
     }
 
-    /// One statement that always answers one row and probes the node index for an absent id
-    /// too. Reads only the node's name and level and whether it is archived; the level through
-    /// [`stored_level`], the name as stored. `None` if absent or without a node.
+    /// Active commissions (`archived_at IS NULL`) owned by `owner`, ordered by
+    /// id, each rebuilt through `to_commission`: tokens re-validated.
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>> {
-        let rows = sql::find_summary(&self.pool, uuid::Uuid::from(*id)).await?;
+    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
+        sql::list_owned_by(&self.pool, owner.as_ref())
+            .await?
+            .into_iter()
+            .map(|row| {
+                let id = CommissionId::from(row.id);
+                to_commission(id, row.into())
+            })
+            .collect()
+    }
+}
+
+#[async_trait::async_trait]
+impl CommissionStore for PgCommissionStore {
+    /// One statement that always answers one row, runs the participant probe once and probes
+    /// the node index for an absent id too; a row it doesn't show reads as the absent id's.
+    /// The level through [`stored_level`], the role and archive through [`to_standing`], the
+    /// name as stored; then the shown rule again, so a row the statement shows but the rule
+    /// doesn't answers `None` too.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn find_summary(
+        &self,
+        id: &CommissionId,
+        viewer: &UserId,
+    ) -> anyhow::Result<Option<ViewedSummary>> {
+        let rows = sql::find_summary(&self.pool, uuid::Uuid::from(*id), viewer.as_ref()).await?;
         let [row] = <[sql::FindSummaryRow; 1]>::try_from(rows).map_err(|rows| {
             anyhow::anyhow!("the summary probe answered {} rows, not one", rows.len())
         })?;
@@ -1044,13 +1068,26 @@ impl CommissionStore for PgCommissionStore {
         let (Some(name), Some(level)) = (row.name, row.level) else {
             return Ok(None);
         };
+        let standing = to_standing(
+            Some(level.as_str()),
+            row.is_owner,
+            row.is_participant.unwrap_or(false),
+            row.archived,
+        );
+        if !standing.is_shown() {
+            return Ok(None);
+        }
         let summary = CommissionSummary {
             id: *id,
             title: StoredText::from(name),
-            visibility: stored_level(&level),
-            archived: archived_flag(row.archived),
+            visibility: standing.level,
+            archived: standing.archived,
         };
-        Ok(Some(summary))
+        let viewed = ViewedSummary {
+            summary,
+            role: standing.role,
+        };
+        Ok(Some(viewed))
     }
 
     /// One statement that always answers one row: the probe left-joined to `commission` and
@@ -1196,18 +1233,6 @@ impl CommissionStore for PgCommissionStore {
             elements,
         };
         Ok(Some(composition))
-    }
-
-    /// One `EXISTS` over the persisted `commission_participant` membership record
-    /// — never a computed owner-∪-seated union. Unaffected by placement or view
-    /// grants.
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn is_participant(
-        &self,
-        commission: &CommissionId,
-        user: &UserId,
-    ) -> anyhow::Result<bool> {
-        Ok(sql::is_participant(&self.pool, uuid::Uuid::from(*commission), user.as_ref()).await?)
     }
 
     /// The file-entry link `key` names within `commission` — scoped by both id and
@@ -1356,20 +1381,6 @@ impl CommissionStore for PgCommissionStore {
             })
             .collect();
         Ok(slots)
-    }
-
-    /// Active commissions (`archived_at IS NULL`) owned by `owner`, ordered by
-    /// id, each rebuilt through `to_commission`: tokens re-validated.
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
-        sql::list_owned_by(&self.pool, owner.as_ref())
-            .await?
-            .into_iter()
-            .map(|row| {
-                let id = CommissionId::from(row.id);
-                to_commission(id, row.into())
-            })
-            .collect()
     }
 
     /// The sweep's scan on the pool: deadline strictly before `now`, step not in

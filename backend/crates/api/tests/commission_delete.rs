@@ -82,6 +82,7 @@ async fn spawn_app_on(did: &str, backend: &MemBackend, database: Arc<dyn Databas
                 database,
                 accounts: backend.account_store(),
                 commissions: backend.commission_store(),
+                commission_rows: backend.commission_rows(),
                 changelog: backend.changelog_store(),
                 ..rt
             })

@@ -32,6 +32,15 @@ async fn seeded() -> MemBackend {
     backend
 }
 
+/// Whether `user` holds a participant row on `id`: the unit's participation read, on a unit
+/// that keeps nothing.
+async fn participates(backend: &MemBackend, id: &CommissionId, user: &UserId) -> bool {
+    let mut unit = backend.database().begin().await.unwrap();
+    let participates = unit.commissions().is_participant(id, user).await.unwrap();
+    unit.rollback().await.unwrap();
+    participates
+}
+
 /// The stored titles of a listing, in order.
 fn titles(listing: &[domain::elements::commission::CommissionSummary]) -> Vec<&str> {
     listing
@@ -75,9 +84,9 @@ async fn bob_takes_part_only_in_untitled() {
     let listing = store.list_participating(&bob()).await.unwrap();
 
     assert_eq!(titles(&listing), ["Untitled"]);
-    assert!(store.is_participant(&untitled(), &bob()).await.unwrap());
-    assert!(!store.is_participant(&old_sketch(), &bob()).await.unwrap());
-    assert!(store.is_participant(&old_sketch(), &alice()).await.unwrap());
+    assert!(participates(&backend, &untitled(), &bob()).await);
+    assert!(!participates(&backend, &old_sketch(), &bob()).await);
+    assert!(participates(&backend, &old_sketch(), &alice()).await);
 }
 
 // "Untitled" holds its two files, named and keyed as fixed, and the name read

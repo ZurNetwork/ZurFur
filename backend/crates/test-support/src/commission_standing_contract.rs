@@ -4,17 +4,22 @@
 //! Each case takes a fresh [`Database`], the [`CommissionStore`] over the same store, the
 //! adapter's [`ParticipantRows`] and its [`CommissionSeeder`], and checks the pool's `standing`
 //! and a unit's `standing_for_update` alike wherever both apply, and the node the locked read
-//! answers.
+//! answers; and the pool's `find_summary`, which answers a commission the viewer can't be
+//! shown as it answers an absent one.
 //! [`commission_standing_contract_tests!`](crate::commission_standing_contract_tests) writes one
 //! test per case.
 
 use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::{
-    commission::{CommissionId, CommissionRole, CommissionStanding, LockedStanding},
+    commission::{
+        CommissionId, CommissionRole, CommissionStanding, CommissionSummary, LockedStanding,
+        ViewedSummary,
+    },
     did::Did,
     level::Level,
     node::{NodeId, NodeSegment, NodeType},
+    text::StoredText,
     user::UserId,
 };
 use domain::ports::{CommissionStore, Database};
@@ -52,6 +57,8 @@ macro_rules! commission_standing_contract_tests {
             the_level_is_reported,
             the_locked_read_sees_the_unit_s_own_writes,
             the_locked_read_answers_the_commission_s_node,
+            the_summary_is_shown_by_the_shown_rule,
+            the_owner_is_shown_the_summary_without_a_participant_row,
         );
     };
     (@cases $setup:path; $($case:ident),* $(,)?) => {
@@ -109,6 +116,22 @@ async fn locked_standing(
     standing
 }
 
+/// Whether `user` holds a participant row on `commission`, read on a unit that keeps nothing.
+async fn unit_participates(
+    database: &dyn Database,
+    commission: &CommissionId,
+    user: &UserId,
+) -> bool {
+    let mut unit = database.begin().await.expect("begin");
+    let participates = unit
+        .commissions()
+        .is_participant(commission, user)
+        .await
+        .expect("the unit's participation read");
+    unit.rollback().await.expect("roll the read back");
+    participates
+}
+
 /// The node `commission` stands for at the top of the tree, read on a unit that keeps nothing.
 async fn top_node(database: &dyn Database, commission: &CommissionId) -> Option<NodeId> {
     let segment = NodeSegment::try_from(commission.to_string()).expect("an id is a segment");
@@ -159,10 +182,7 @@ pub async fn the_owner_is_owner_without_a_participant_row(
     let owner = provision(database, "did:plc:standingowner").await;
     let commission = seed_commission(database, seeder, &owner, Level::Private, MADE_UP_NAME).await;
     rows.remove(&commission, &owner).await;
-    let still_a_participant = store
-        .is_participant(&commission, &owner)
-        .await
-        .expect("is_participant");
+    let still_a_participant = unit_participates(database, &commission, &owner).await;
     assert!(!still_a_participant, "the owner's row is gone");
 
     let expected = private_standing(Some(CommissionRole::Owner));
@@ -345,4 +365,99 @@ pub async fn the_locked_read_answers_the_commission_s_node(
         node,
         "a stranger's read"
     );
+}
+
+/// Each row: a commission's level, whether it is archived, and whether someone with no role
+/// on it is shown its summary.
+const SHOWN_TO_A_STRANGER: [(Level, bool, bool); 6] = [
+    (Level::Private, false, false),
+    (Level::Private, true, false),
+    (Level::Listed, false, true),
+    (Level::Listed, true, false),
+    (Level::Public, false, true),
+    (Level::Public, true, false),
+];
+
+/// `commission`'s summary as `viewer` reads it through the pool.
+async fn summary_for(
+    store: &dyn CommissionStore,
+    commission: &CommissionId,
+    viewer: &UserId,
+) -> Option<ViewedSummary> {
+    store
+        .find_summary(commission, viewer)
+        .await
+        .expect("the pool's summary read")
+}
+
+/// The owner and a Participant are shown every commission's summary, with their role; a
+/// stranger only a live Listed or Public one's, with none; an absent id is shown to no one.
+pub async fn the_summary_is_shown_by_the_shown_rule(
+    database: &dyn Database,
+    store: &dyn CommissionStore,
+    rows: &dyn ParticipantRows,
+    seeder: &dyn CommissionSeeder,
+) {
+    let owner = provision(database, "did:plc:summaryowner").await;
+    let member = provision(database, "did:plc:summarymember").await;
+    let stranger = provision(database, "did:plc:summarystranger").await;
+    for (level, archived, shown) in SHOWN_TO_A_STRANGER {
+        let commission = seed_commission(database, seeder, &owner, level, MADE_UP_NAME).await;
+        rows.add(&commission, &member).await;
+        if archived {
+            archive(database, &commission).await;
+        }
+        let summary = CommissionSummary {
+            id: commission,
+            title: StoredText::from(MADE_UP_NAME.to_owned()),
+            visibility: level,
+            archived,
+        };
+        let label = format!("{level:?}, archived {archived}");
+
+        let owner_s = summary_for(store, &commission, &owner).await;
+        let member_s = summary_for(store, &commission, &member).await;
+        let stranger_s = summary_for(store, &commission, &stranger).await;
+
+        let to_the_owner = ViewedSummary {
+            summary: summary.clone(),
+            role: Some(CommissionRole::Owner),
+        };
+        let to_the_member = ViewedSummary {
+            summary: summary.clone(),
+            role: Some(CommissionRole::Participant),
+        };
+        let to_anyone = ViewedSummary {
+            summary,
+            role: None,
+        };
+        let to_the_stranger = shown.then_some(to_anyone);
+        assert_eq!(owner_s, Some(to_the_owner), "the owner, {label}");
+        assert_eq!(member_s, Some(to_the_member), "a Participant, {label}");
+        assert_eq!(stranger_s, to_the_stranger, "a stranger, {label}");
+    }
+    let absent = CommissionId::from(uuid::Uuid::now_v7());
+    assert_eq!(
+        summary_for(store, &absent, &owner).await,
+        None,
+        "an absent id"
+    );
+}
+
+/// The owner is shown their Private commission's summary, as its Owner, on the commission row
+/// alone, with no participant row behind it.
+pub async fn the_owner_is_shown_the_summary_without_a_participant_row(
+    database: &dyn Database,
+    store: &dyn CommissionStore,
+    rows: &dyn ParticipantRows,
+    seeder: &dyn CommissionSeeder,
+) {
+    let owner = provision(database, "did:plc:summaryowner").await;
+    let commission = seed_commission(database, seeder, &owner, Level::Private, MADE_UP_NAME).await;
+    rows.remove(&commission, &owner).await;
+
+    let viewed = summary_for(store, &commission, &owner).await;
+
+    let role = viewed.map(|viewed| viewed.role);
+    assert_eq!(role, Some(Some(CommissionRole::Owner)));
 }

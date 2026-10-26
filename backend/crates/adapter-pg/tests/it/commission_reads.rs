@@ -22,6 +22,7 @@ use domain::{
         commission::{
             CommissionFile, CommissionId, CommissionRole, CommissionStanding, CommissionSummary,
             CommissionTitle, FileKey, FileName, LockedStanding, SurfaceAddress, SurfaceName,
+            ViewedSummary,
         },
         did::Did,
         handle::Handle,
@@ -31,7 +32,7 @@ use domain::{
         user::{User, UserId},
         workflow::{WorkflowId, WorkflowName},
     },
-    ports::{CommissionStore, Database, FileStore, WorkflowStore},
+    ports::{CommissionRows, CommissionStore, Database, FileStore, WorkflowStore},
 };
 
 /// The shipped summary statement, as the generated reader sends it.
@@ -272,13 +273,13 @@ async fn a_stored_title_loads_without_a_recheck() {
 
     let listing = store.list_participating(&owner.id).await.expect("list");
     let found = store
-        .find_summary(&id)
+        .find_summary(&id, &owner.id)
         .await
         .expect("find_summary")
         .expect("present");
 
     assert_eq!(listing[0].title.as_str(), "   ");
-    assert_eq!(found.title.as_str(), "   ");
+    assert_eq!(found.summary.title.as_str(), "   ");
 }
 
 // The file list holds only this commission's entries, in key (upload) order;
@@ -397,8 +398,12 @@ async fn the_summary_of_a_missing_commission_is_none() {
     let (pool, _container) = fresh_pool().await;
     let store = PgCommissionStore::new(pool.clone());
     let missing = CommissionId::from(uuid::Uuid::now_v7());
+    let viewer = UserId::from(Did::from("did:plc:summarymissingviewer".to_owned()));
 
-    let summary = store.find_summary(&missing).await.expect("find_summary");
+    let summary = store
+        .find_summary(&missing, &viewer)
+        .await
+        .expect("find_summary");
 
     assert_eq!(summary, None);
 }
@@ -417,6 +422,7 @@ async fn a_made_up_id_and_a_real_commission_both_probe_the_node_index_for_a_summ
     for (label, target) in cases {
         let plan: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(explain.clone()))
             .bind(uuid::Uuid::from(target))
+            .bind(owner.id.as_ref())
             .fetch_all(&pool)
             .await
             .expect("explain the summary statement");
@@ -436,8 +442,14 @@ async fn the_summary_answers_the_stored_title_visibility_and_archived_flag() {
     store_node_level(&pool, live, "listed").await;
     let store = PgCommissionStore::new(pool.clone());
 
-    let live_summary = store.find_summary(&live).await.expect("find_summary");
-    let archived_summary = store.find_summary(&archived).await.expect("find_summary");
+    let live_summary = store
+        .find_summary(&live, &owner.id)
+        .await
+        .expect("find_summary");
+    let archived_summary = store
+        .find_summary(&archived, &owner.id)
+        .await
+        .expect("find_summary");
 
     let expected_live = CommissionSummary {
         id: live,
@@ -451,24 +463,47 @@ async fn the_summary_answers_the_stored_title_visibility_and_archived_flag() {
         visibility: Level::Private,
         archived: true,
     };
-    assert_eq!(live_summary, Some(expected_live));
-    assert_eq!(archived_summary, Some(expected_archived));
+    let viewed_live = ViewedSummary {
+        summary: expected_live,
+        role: Some(CommissionRole::Owner),
+    };
+    let viewed_archived = ViewedSummary {
+        summary: expected_archived,
+        role: Some(CommissionRole::Owner),
+    };
+    assert_eq!(live_summary, Some(viewed_live));
+    assert_eq!(archived_summary, Some(viewed_archived));
 }
 
 // A node level no parser reads (stored with `node_level_known` dropped in this test's own
 // database) counts as Private: the summary, the standing and the participant listing each
-// read it so, and none fails, the whole commission's read included.
+// read it so, and none fails, the whole commission's read included. A Participant reads its
+// summary at Private, and a stranger, shown no Private commission, reads it as absent.
 #[tokio::test]
 async fn an_unreadable_node_level_reads_private() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:unreadableowner").await;
+    let member = provision(&pool, "did:plc:unreadablemember").await;
+    let stranger = provision(&pool, "did:plc:unreadablestranger").await;
     let id = seed_commission(&pool, &owner, "Untitled").await;
+    add_participant(&pool, id, &member).await;
     allow_any_node_level(&pool).await;
     store_node_level(&pool, id, "not-a-visibility").await;
     assert!("not-a-visibility".parse::<Level>().is_err());
     let store = PgCommissionStore::new(pool.clone());
 
-    let summary = store.find_summary(&id).await.expect("find_summary");
+    let summary = store
+        .find_summary(&id, &owner.id)
+        .await
+        .expect("find_summary");
+    let member_summary = store
+        .find_summary(&id, &member.id)
+        .await
+        .expect("find_summary");
+    let stranger_summary = store
+        .find_summary(&id, &stranger.id)
+        .await
+        .expect("find_summary");
     let standing = store.standing(&id, &owner.id).await.expect("standing");
     let found = store.find(&id).await.expect("find");
     let listing = store
@@ -477,9 +512,13 @@ async fn an_unreadable_node_level_reads_private() {
         .expect("list_participating");
 
     let summary = summary.expect("present");
+    let member_summary = member_summary.expect("present to a Participant");
     let standing = standing.expect("present");
     assert!(found.is_some(), "the whole commission still reads");
-    assert_eq!(summary.visibility, Level::Private);
+    assert_eq!(summary.summary.visibility, Level::Private);
+    assert_eq!(member_summary.summary.visibility, Level::Private);
+    assert_eq!(member_summary.role, Some(CommissionRole::Participant));
+    assert_eq!(stranger_summary, None, "a stranger reads it as absent");
     assert_eq!(standing.level, Level::Private);
     let listed: Vec<(CommissionId, Level)> = listing
         .into_iter()
@@ -500,7 +539,10 @@ async fn the_summary_and_standing_read_the_node_s_name_and_level() {
     store_node_name(&pool, id, "The node's name").await;
     let store = PgCommissionStore::new(pool.clone());
 
-    let summary = store.find_summary(&id).await.expect("find_summary");
+    let viewed = store
+        .find_summary(&id, &owner.id)
+        .await
+        .expect("find_summary");
     let listing = store
         .list_participating(&owner.id)
         .await
@@ -525,7 +567,11 @@ async fn the_summary_and_standing_read_the_node_s_name_and_level() {
         level: Level::Public,
         archived: false,
     };
-    assert_eq!(summary, Some(expected_summary.clone()));
+    let expected_viewed = ViewedSummary {
+        summary: expected_summary.clone(),
+        role: Some(CommissionRole::Owner),
+    };
+    assert_eq!(viewed, Some(expected_viewed));
     assert_eq!(listing, [expected_summary]);
     let node: uuid::Uuid = sqlx::query_scalar("SELECT node_id FROM commission WHERE id = $1")
         .bind(uuid::Uuid::from(id))
@@ -561,7 +607,7 @@ async fn a_node_less_commission_reads_as_absent_and_its_standing_as_private() {
     let owner = UserId::from(Did::from(OWNER_DID.to_owned()));
     let store = PgCommissionStore::new(pool.clone());
 
-    let summary = store.find_summary(&id).await.expect("find_summary");
+    let summary = store.find_summary(&id, &owner).await.expect("find_summary");
     let listing = store
         .list_participating(&owner)
         .await
@@ -602,13 +648,16 @@ async fn an_archive_time_out_of_range_reads_as_archived_without_a_panic() {
     assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
     let store = PgCommissionStore::new(pool.clone());
 
-    let summary = store.find_summary(&id).await.expect("find_summary");
+    let viewed = store
+        .find_summary(&id, &owner.id)
+        .await
+        .expect("find_summary");
     let listing = store
         .list_participating(&owner.id)
         .await
         .expect("list_participating");
 
-    assert!(summary.expect("present").is_archived());
+    assert!(viewed.expect("present").summary.is_archived());
     let listed: Vec<(CommissionId, bool)> = listing
         .iter()
         .map(|summary| (summary.id, summary.is_archived()))

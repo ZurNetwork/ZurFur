@@ -3,8 +3,8 @@
 //! domain writes**, never a dual write), the ordered
 //! read is the pool-backed [`ChangelogStore`], the table is append-only at the
 //! database (a `BEFORE UPDATE` trigger refuses edits; `DELETE` stays ungoverned so
-//! the commission hard-delete cascade works), and the owner-arm
-//! [`CommissionStore::is_participant`] predicate is born here. Requires a
+//! the commission hard-delete cascade works), and the unit's owner-arm
+//! [`CommissionReads::is_participant`] predicate is born here. Requires a
 //! container runtime socket (`DOCKER_HOST` honored).
 
 use crate::seed;
@@ -22,7 +22,7 @@ use domain::{
         maturity::{Maturity, MaturityRating},
         user::User,
     },
-    ports::{ChangelogStore, CommissionStore, Database},
+    ports::{ChangelogStore, CommissionRows, CommissionStore, Database},
 };
 use serde_json::json;
 
@@ -374,30 +374,18 @@ async fn is_participant_answers_the_owner_arm_only() {
     let (pool, _container) = fresh_pool().await;
     let commission = seed_commission(&pool, "did:plc:participant-owner").await;
     let stranger = provision(&pool, "did:plc:stranger").await;
-    let store = PgCommissionStore::new(pool.clone());
+    let unknown = CommissionId::from(uuid::Uuid::now_v7());
 
     assert!(
-        store
-            .is_participant(&commission.id, &commission.owner_id)
-            .await
-            .expect("ask owner"),
+        seed::participates(&pool, &commission.id, &commission.owner_id).await,
         "the owner is a Participant without a Seat",
     );
     assert!(
-        !store
-            .is_participant(&commission.id, &stranger.id)
-            .await
-            .expect("ask stranger"),
+        !seed::participates(&pool, &commission.id, &stranger.id).await,
         "a non-owner is not (yet) a Participant",
     );
     assert!(
-        !store
-            .is_participant(
-                &CommissionId::from(uuid::Uuid::now_v7()),
-                &commission.owner_id
-            )
-            .await
-            .expect("ask unknown commission"),
+        !seed::participates(&pool, &unknown, &commission.owner_id).await,
         "an unknown commission has no participants",
     );
 }
@@ -416,12 +404,12 @@ async fn find_roundtrips_the_linked_channel() {
         .await
         .expect("find")
         .expect("the commission exists");
-    let summary = store
-        .find_summary(&commission.id)
+    let viewed = store
+        .find_summary(&commission.id, &commission.owner_id)
         .await
         .expect("find_summary")
         .expect("the commission exists");
-    assert_eq!(summary.title.as_str(), "A ref sheet");
+    assert_eq!(viewed.summary.title.as_str(), "A ref sheet");
     assert_eq!(found.owner_id, commission.owner_id);
     assert!(found.linked_channel.is_none(), "born with no channel");
 

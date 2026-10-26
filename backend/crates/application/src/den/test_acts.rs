@@ -264,7 +264,7 @@ pub(crate) async fn entries_of(
 /// The stored fields of `commission`, as a rule reads them.
 pub(crate) async fn fields_of(ports: &Ports, commission: CommissionId) -> CommissionState {
     let stored = ports
-        .commissions
+        .commission_rows
         .find(&commission)
         .await
         .expect("the store reads")

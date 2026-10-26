@@ -13,7 +13,7 @@ use axum::{
     routing::{MethodRouter, delete, get, patch, post, put},
 };
 use domain::elements::{
-    commission::{Commission, CommissionId},
+    commission::{CommissionId, CommissionRole},
     user::UserId,
 };
 
@@ -225,8 +225,8 @@ fn channel_methods() -> MethodRouter<AppState> {
     put(channel::link_channel).delete(channel::clear_channel)
 }
 
-/// Admits only the commission's owner, returning the resolved [`Commission`].
-/// `404` for a non-participant, `403` for a non-owner participant.
+/// Admits only the commission's owner, from one standing read: `404` for no commission or no
+/// role, `403` for a role below Owner. Reads no row.
 ///
 /// ⚠️ Driver-side authorization: use-case code should own this check instead;
 /// it survives here only for `channel`/`elements`, which have no use case yet.
@@ -234,22 +234,17 @@ async fn require_owner(
     state: &AppState,
     commission: &CommissionId,
     user: &UserId,
-) -> Result<Commission, Problem> {
-    let found = state
+) -> Result<(), Problem> {
+    let role = state
         .commissions
-        .find(commission)
+        .standing(commission, user)
         .await?
+        .and_then(|standing| standing.role)
         .ok_or_else(Problem::commission_not_found)?;
-    if found.owner_id == *user {
-        return Ok(found);
+    if role < CommissionRole::Owner {
+        return Err(Problem::forbidden());
     }
-    Err(
-        if state.commissions.is_participant(commission, user).await? {
-            Problem::forbidden()
-        } else {
-            Problem::commission_not_found()
-        },
-    )
+    Ok(())
 }
 
 #[cfg(test)]

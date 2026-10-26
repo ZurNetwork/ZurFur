@@ -1,5 +1,5 @@
-//! The clock time of the commission read pair at the store, with no HTTP in front of it: the
-//! summary read, then the viewer's participant read, as one unit on the pool store. A stranger
+//! The clock time of the commission read at the store, with no HTTP in front of it: the
+//! summary as the viewer reads it, one statement on the pool store. A stranger
 //! asks about a Private commission with an ordinary name, one whose 2048-byte name is stored
 //! out of line, and a made-up id; the paired differences are printed with their bootstrap
 //! 95% intervals. Not a gate:
@@ -85,16 +85,15 @@ async fn store_node_name(pool: &PgPool, commission: CommissionId, name: &str) {
     assert_eq!(updated.rows_affected(), 1, "one node is updated");
 }
 
-/// The timed unit: what one read of a commission asks the store today, the summary and then
-/// whether `viewer` takes part. One small function, so the unit can be swapped when the read
-/// changes.
+/// The timed unit: what one read of a commission asks the store, its summary as `viewer`
+/// reads it. Before the one-statement read it was the summary and then whether `viewer`
+/// takes part, two statements.
 async fn read_pair(store: &PgCommissionStore, commission: &CommissionId, viewer: &UserId) {
-    let summary = store.find_summary(commission).await.expect("find_summary");
-    let participant = store
-        .is_participant(commission, viewer)
+    let viewed = store
+        .find_summary(commission, viewer)
         .await
-        .expect("is_participant");
-    std::hint::black_box((summary, participant));
+        .expect("find_summary");
+    std::hint::black_box(viewed);
 }
 
 /// One timed `read_pair`.

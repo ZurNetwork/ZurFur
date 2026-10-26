@@ -53,7 +53,7 @@ async fn entries(ports: &Ports, commission: CommissionId) -> Vec<ChangelogEntry>
 /// The lifecycle step `commission` holds.
 async fn step_of(ports: &Ports, commission: CommissionId) -> LifecycleStep {
     let stored = ports
-        .commissions
+        .commission_rows
         .find(&commission)
         .await
         .expect("the store reads")

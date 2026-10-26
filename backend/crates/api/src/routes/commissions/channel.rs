@@ -86,7 +86,12 @@ pub(super) async fn clear_channel(
     CommissionPath(commission_id): CommissionPath,
 ) -> Result<Response, Problem> {
     // TODO(engineer): unmigrated for the same reason as link_channel (no use case yet).
-    let found = require_owner(&state, &commission_id, &actor_id).await?;
+    require_owner(&state, &commission_id, &actor_id).await?;
+    let found = state
+        .commission_rows
+        .find(&commission_id)
+        .await?
+        .ok_or_else(Problem::commission_not_found)?;
 
     let Some(previous) = found.linked_channel else {
         return Ok(StatusCode::NO_CONTENT.into_response());

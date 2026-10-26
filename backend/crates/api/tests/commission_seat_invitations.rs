@@ -370,7 +370,7 @@ async fn revoking_with_nothing_pending_is_a_no_op() {
 
 // Floor — a participant who is NOT the owner cannot invite (403). Seeds a
 // foreign-owned commission with the signed-in user seated as a (non-owner)
-// participant, so require_owner's participant-but-not-owner arm is exercised.
+// participant, so the owner check's participant-but-not-owner arm is exercised.
 #[tokio::test]
 async fn a_participant_who_is_not_owner_cannot_invite() {
     let served = serve(
@@ -404,7 +404,7 @@ async fn a_participant_who_is_not_owner_cannot_invite() {
         .expect("seed foreign commission");
     backend.seed_participant(foreign.id, artist.id, Utc::now());
 
-    // The seat need not exist — require_owner refuses before the seat lookup.
+    // The seat need not exist — the owner check refuses before the seat lookup.
     let res = client
         .post(format!("{base}/commissions/{foreign_id}/invitations"))
         .json(&json!({ "seat": uuid::Uuid::now_v7(), "user": "did:plc:invitee" }))

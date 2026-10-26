@@ -98,6 +98,7 @@ impl MemRuntimeBuilder {
             identity_resolver: Arc::new(MemIdentityResolver::new()),
             accounts: backend.account_store(),
             commissions: backend.commission_store(),
+            commission_rows: backend.commission_rows(),
             changelog: backend.changelog_store(),
             workflows: backend.workflow_store(),
             columns: backend.column_store(),

@@ -1,8 +1,7 @@
 use crate::LazyUnit;
 use crate::use_case;
 use domain::elements::{
-    commission::{CommissionId, CommissionRole, CommissionStanding},
-    level::Level,
+    commission::{CommissionId, CommissionStanding},
     user::UserId,
     workflow::{ColumnId, LexOrdering, WorkflowError},
 };
@@ -23,13 +22,6 @@ pub struct Command {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Output {
     pub commissions: Vec<CommissionId>,
-}
-
-/// Whether the commission shows on a board without the actor's own view: its owner's, or
-/// at a Public or Listed level.
-fn is_immediately_visible(standing: &CommissionStanding) -> bool {
-    matches!(standing.level, Level::Public | Level::Listed)
-        || standing.role == Some(CommissionRole::Owner)
 }
 
 /// Whether `actor_id` sees the commission `standing` was read for through their own role or
@@ -95,12 +87,14 @@ impl Commissions<'_> {
             .standing(&commission_id, &actor_id)
             .await?;
 
-        // Two rails onto a board: PULL (publicly visible) or PUSH (the actor's
-        // OWN standing or OWN view grant — keys are per-User, so membership of
-        // this account lifts nothing).
-        let visible = standing.as_ref().is_some_and(is_immediately_visible);
+        // Two rails onto a board: PULL (the commission is shown to the actor) or PUSH (the
+        // actor's OWN standing or OWN view grant — keys are per-User, so membership of this
+        // account lifts nothing). The grant is read for every cause, so every cause runs the
+        // same statements.
+        let own_view = has_own_view(ports, &actor_id, &commission_id, standing.as_ref()).await?;
+        let shown = standing.as_ref().is_some_and(CommissionStanding::is_shown);
 
-        if !visible && !has_own_view(ports, &actor_id, &commission_id, standing.as_ref()).await? {
+        if !shown && !own_view {
             // The same closed door an absent commission gets: `IncorrectRole`
             // would render `403`, an existence oracle over private work.
             return Err(AccountError::NotFound(AccountEntity::Commission));

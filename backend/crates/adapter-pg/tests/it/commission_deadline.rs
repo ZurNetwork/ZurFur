@@ -18,7 +18,7 @@ use domain::{
         did::Did,
         user::User,
     },
-    ports::{CommissionStore, Database},
+    ports::{CommissionRows, CommissionStore, Database},
 };
 
 /// A fresh, fully migrated private database — a clone of the shared template
