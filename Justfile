@@ -435,6 +435,7 @@ gate:
     yarn --cwd frontend/ui run lint
     yarn --cwd frontend/ui run test
     yarn --cwd frontend/ui run build
+    node frontend/ui/src/checks/built-output.ts frontend/ui/build
     just engineer-tools-test
 
 # engineer-tools/review-pr.sh becomes ${XDG_BIN_HOME:-~/.local/bin}/review-pr,
