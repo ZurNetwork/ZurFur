@@ -8,8 +8,8 @@
 
 import { GuardError, parsePlainVersion, splitPattern } from './install-check.mjs';
 
-/** Licence ids the list may never put in `allow`, compared ignoring case. */
-export const NEVER_ALLOW = Object.freeze(['MPL-2.0', 'OFL-1.1']);
+/** Licence families the list may never put in `allow`: an id starting with one, compared ignoring case. */
+export const NEVER_ALLOW_FAMILIES = Object.freeze(['AGPL-', 'GPL-', 'LGPL-', 'MPL-', 'OFL-', 'SSPL-']);
 
 const MAX_NAME_LENGTH = 214;
 const RESERVED_NAMES = Object.freeze(['node_modules', 'favicon.ico']);
@@ -296,13 +296,18 @@ function requireStrictlySorted(where, values) {
 	});
 }
 
+/** The never-allowed family `id` belongs to, or undefined when it belongs to none. */
+function neverAllowedFamily(id) {
+	return NEVER_ALLOW_FAMILIES.find((family) => id.toLowerCase().startsWith(family.toLowerCase()));
+}
+
 function loadAllow(allow) {
 	if (!Array.isArray(allow)) throw new GuardError('allow is not an array');
 	allow.forEach((id, index) => {
 		const problem = plainIdProblem(id);
 		if (problem !== undefined) throw new GuardError(`allow[${index}]: ${JSON.stringify(id)} is ${problem}`);
-		const never = NEVER_ALLOW.find((refused) => refused.toLowerCase() === id.toLowerCase());
-		if (never !== undefined) throw new GuardError(`allow[${index}]: ${JSON.stringify(id)} is never allowed (${never}); give it a scoped entry`);
+		const family = neverAllowedFamily(id);
+		if (family !== undefined) throw new GuardError(`allow[${index}]: ${JSON.stringify(id)} is never allowed for every package (the ${family} family)`);
 	});
 	requireStrictlySorted('allow', allow);
 	return new Set(allow);

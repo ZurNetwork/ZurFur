@@ -32,10 +32,9 @@
     {
       "licence": "MPL-2.0",
       "packages": [
-        "@axe-core/playwright",
         "axe-core"
       ],
-      "reason": "UI-7's accessibility checks, for tests only: the lint UI-7 adds keeps them out of shipped code",
+      "reason": "Storybook's accessibility addon, a development tool, bundled only into the unpublished Storybook build and never into @zurfur/ui or web: the Storybook slice's web lint refuses axe-core, and declared-imports keeps it a devDependency that component code can't import",
       "readBy": "Beaver (census)",
       "readOn": "2026-10-26"
     },

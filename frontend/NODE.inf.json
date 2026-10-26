@@ -44,7 +44,7 @@
     },
     {
       "name": "licences.mjs",
-      "role": "the licence rule: the SPDX expression parser, the strict loader of npm-licences.json and the verdict on one package version (bundled code fails, then an exception may admit it, then the licence must be readable and allowed by the list), plus the npm naming rule lock-review.mjs re-exports; pure, Node built-ins and install-check.mjs only",
+      "role": "the licence rule: the SPDX expression parser, the strict loader of npm-licences.json (which refuses in `allow` any id of the AGPL, GPL, LGPL, MPL, OFL or SSPL families, matched by prefix ignoring case; scoped entries may still name them) and the verdict on one package version (bundled code fails, then an exception may admit it, then the licence must be readable and allowed by the list), plus the npm naming rule lock-review.mjs re-exports; pure, Node built-ins and install-check.mjs only",
       "node": false
     },
     {

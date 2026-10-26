@@ -11,7 +11,7 @@ import {
 	isScopedPackage,
 	judgeLicence,
 	loadLicenceList,
-	NEVER_ALLOW,
+	NEVER_ALLOW_FAMILIES,
 	packageNameProblem,
 	parseLicenceExpression
 } from './licences.mjs';
@@ -408,9 +408,48 @@ describe('the list loader', () => {
 		assert.ok(Object.isFrozen(LIST.exceptions.get('svelte-toolbelt@0.10.6')));
 	});
 
-	test('NEVER_ALLOW is exactly MPL-2.0 and OFL-1.1, frozen', () => {
-		assert.deepEqual(NEVER_ALLOW, ['MPL-2.0', 'OFL-1.1']);
-		assert.ok(Object.isFrozen(NEVER_ALLOW));
+	test('NEVER_ALLOW_FAMILIES is exactly AGPL-, GPL-, LGPL-, MPL-, OFL- and SSPL-, frozen', () => {
+		assert.deepEqual(NEVER_ALLOW_FAMILIES, ['AGPL-', 'GPL-', 'LGPL-', 'MPL-', 'OFL-', 'SSPL-']);
+		assert.ok(Object.isFrozen(NEVER_ALLOW_FAMILIES));
+	});
+
+	const neverAllowed = {
+		'MPL-2.0': 'MPL-',
+		'mpl-2.0': 'MPL-',
+		'MPL-2.0-no-copyleft-exception': 'MPL-',
+		'MPL-1.1': 'MPL-',
+		'OFL-1.1': 'OFL-',
+		'OFL-1.1-no-RFN': 'OFL-',
+		'OFL-1.0-RFN': 'OFL-',
+		'GPL-3.0-only': 'GPL-',
+		'GPL-2.0-or-later': 'GPL-',
+		'gpl-3.0-only': 'GPL-',
+		'AGPL-3.0-only': 'AGPL-',
+		'LGPL-2.1-only': 'LGPL-',
+		'Lgpl-3.0-or-later': 'LGPL-',
+		'SSPL-1.0': 'SSPL-'
+	};
+	for (const [id, family] of Object.entries(neverAllowed)) {
+		test(`refuses ${id} in allow, as the ${family} family`, () => {
+			const allow = ['Apache-2.0', 'ISC', 'MIT', id].sort();
+			const message = `allow[${allow.indexOf(id)}]: ${JSON.stringify(id)} is never allowed for every package (the ${family} family)`;
+			assert.throws(
+				() => loadLicenceList(canonical(fixtureDocument({ allow })), { today: TODAY }),
+				(error) => error instanceof GuardError && error.message === message
+			);
+		});
+	}
+
+	for (const id of ['BlueOak-1.0.0', '0BSD', 'MIT']) {
+		test(`loads ${id} in allow, which only resembles a never-allowed family`, () => {
+			const allow = [...new Set(['Apache-2.0', 'ISC', 'MIT', id])].sort();
+			const list = loadLicenceList(canonical(fixtureDocument({ allow })), { today: TODAY });
+			assert.ok(list.allow.has(id));
+		});
+	}
+
+	test('loads a never-allowed family member scoped to named packages (MPL-2.0 in the fixture)', () => {
+		assert.deepEqual([...LIST.scoped.get('MPL-2.0')], ['@axe-core/playwright', 'axe-core']);
 	});
 
 	test('accepts exception terms that pass only through the package\'s scoped entry', () => {
@@ -449,9 +488,6 @@ describe('the list loader', () => {
 		'a DocumentRef in allow': [canonical(fixtureDocument({ allow: ['DocumentRef-x'] })), /a LicenseRef or DocumentRef/],
 		'an unsorted allow': [canonical(fixtureDocument({ allow: ['MIT', 'ISC'] })), /allow: "ISC" is out of order or repeated/],
 		'a repeated allow id': [canonical(fixtureDocument({ allow: ['ISC', 'MIT', 'MIT'] })), /allow: "MIT" is out of order or repeated/],
-		'MPL-2.0 in allow': [canonical(fixtureDocument({ allow: ['Apache-2.0', 'ISC', 'MIT', 'MPL-2.0'] })), /"MPL-2\.0" is never allowed/],
-		'OFL-1.1 in allow': [canonical(fixtureDocument({ allow: ['Apache-2.0', 'ISC', 'MIT', 'OFL-1.1'] })), /"OFL-1\.1" is never allowed/],
-		'mpl-2.0 in allow': [canonical(fixtureDocument({ allow: ['Apache-2.0', 'ISC', 'MIT', 'mpl-2.0'] })), /"mpl-2\.0" is never allowed \(MPL-2\.0\)/],
 		'scoped that is not an array': [canonical(fixtureDocument({ scoped: {} })), /scoped is not an array/],
 		'a scoped entry with an extra key': [canonical(fixtureDocument({ scoped: [scopedEntry({ note: 'x' })] })), /scoped\[0\]: unexpected "note"/],
 		'a scoped entry missing a key': [
@@ -590,10 +626,11 @@ describe('the real list', () => {
 		assert.equal(`${JSON.stringify(JSON.parse(text), null, 2)}\n`, text);
 	});
 
-	test('npm-licences.json allows no NEVER_ALLOW id', () => {
+	test('npm-licences.json allows no never-allowed family', () => {
 		const list = loadLicenceList(text, { today });
-		const never = NEVER_ALLOW.map((id) => id.toLowerCase());
-		assert.deepEqual([...list.allow].filter((id) => never.includes(id.toLowerCase())), []);
+		const families = NEVER_ALLOW_FAMILIES.map((family) => family.toLowerCase());
+		const inFamily = (id) => families.some((family) => id.toLowerCase().startsWith(family));
+		assert.deepEqual([...list.allow].filter(inFamily), []);
 	});
 
 	test('every exception key in npm-licences.json is an exact name@x.y.z', () => {
