@@ -240,7 +240,7 @@ async fn bob_s_rename_answers_as_his_changelog_read_does() {
     assert_eq!(stored(&world, old_sketch).await.title, "Old sketch");
 }
 
-// The seven new writes and the read answer bob, who takes no part in "Old sketch", exactly as
+// The eight new writes and the read answer bob, who takes no part in "Old sketch", exactly as
 // they answer a made-up id: status, body and headers, and the code every one carries. A call
 // that answered otherwise is named by its label.
 #[tokio::test]
