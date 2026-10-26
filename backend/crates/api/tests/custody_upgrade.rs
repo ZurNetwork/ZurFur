@@ -35,6 +35,11 @@ const DISPUTE_COLUMNS: i64 = 20261026075811;
 /// and leaves its nodes and checks in place, since the parent's schema reads neither.
 const SLOT_FILL: i64 = 20261026080502;
 
+/// The third migration after the custody upgrade: the Slot title drop. The rehearsal forgets it
+/// and leaves the column dropped, since it checks custody alone; the parent build's Slot
+/// statements, which read and write the title, fail after it.
+const SLOT_TITLE_DROP: i64 = 20261026131355;
+
 /// The purposes the API boot derives.
 const BOOT_PURPOSES: [Purpose; 3] = [Purpose::DidCustody, Purpose::SigninSecrets, Purpose::DenMac];
 
@@ -240,7 +245,7 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
     let later_versions = embedded_versions(|version| version > SIGNIN_ROWS_DELETE);
     assert_eq!(
         later_versions,
-        [DISPUTE_COLUMNS, SLOT_FILL],
+        [DISPUTE_COLUMNS, SLOT_FILL, SLOT_TITLE_DROP],
         "the migrations after the custody upgrade"
     );
     let parent_versions = embedded_versions(|version| version < CUSTODY_ENVELOPE);

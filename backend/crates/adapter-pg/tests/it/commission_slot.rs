@@ -66,10 +66,11 @@ fn only_surface() -> SurfaceName {
         .expect("the skeleton declares valid labels")
 }
 
-/// The satellite row as stored, or `None` — `(title, notes)`.
+/// The satellite row as stored, or `None` — `(its node's name, notes)`.
 async fn slot_row(pool: &PgPool, element: ElementId) -> Option<(String, Option<String>)> {
     sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT title, notes FROM commission_slot WHERE element_id = $1",
+        "SELECT n.name, s.notes FROM commission_slot s JOIN node n ON n.id = s.node_id
+         WHERE s.element_id = $1",
     )
     .bind(uuid::Uuid::from(element))
     .fetch_optional(pool)
@@ -89,7 +90,7 @@ fn fresh_element(address: &SurfaceAddress) -> ElementId {
 // AC1/AC2 (pg) — declaring persists the carrying element AND its satellite in
 // one unit: the element reads back typed `slot` with the empty payload, the
 // owner's envelope, and append order; the satellite carries notes (and None for omitted notes)
-// and its title copied from its node's name; and a commission holds zero, then several, Slots.
+// and its node's name as its title; and a commission holds zero, then several, Slots.
 #[tokio::test]
 async fn declare_slot_persists_the_element_and_its_satellite() {
     let (pool, _container) = fresh_pool().await;
