@@ -1,5 +1,5 @@
 //! The commissions route group: the commission JSON API, split per area
-//! (create, read, rename, lifecycle, changelog, notes, channel, delete, archive, maturity,
+//! (create, read, rename, lifecycle, dispute, changelog, notes, channel, delete, archive, maturity,
 //! elements, slots, seats, invitations, status, deadline, files, markup,
 //! positioning). Mounted under the first-party-`Origin` (CSRF) layer.
 
@@ -78,6 +78,7 @@ impl From<CommissionError> for Problem {
             CommissionError::CommissionLate => Problem::commission_late(),
             CommissionError::LifecycleMoveRefused => Problem::lifecycle_move_refused(),
             CommissionError::CommissionDisputed => Problem::commission_disputed(),
+            CommissionError::CommissionNotDisputed => Problem::commission_not_disputed(),
             CommissionError::IncorrectContent => {
                 Problem::invalid_request("The submitted content is empty.")
             }
@@ -116,6 +117,7 @@ mod channel;
 mod create;
 mod deadline;
 mod delete;
+mod dispute;
 mod elements;
 mod files;
 mod get;
@@ -150,6 +152,10 @@ pub(crate) fn commissions_router(max_upload_bytes: usize) -> Router<AppState> {
         .route(
             "/commissions/{id}/lifecycle",
             put(lifecycle::move_lifecycle),
+        )
+        .route(
+            "/commissions/{id}/dispute",
+            put(dispute::raise_dispute).delete(dispute::clear_dispute),
         )
         .route(
             "/commissions/{id}/changelog",

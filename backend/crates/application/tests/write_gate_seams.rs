@@ -85,7 +85,7 @@ const COMMISSION_REPOS: [&str; 2] = ["commissions", "changelog"];
 /// The commission repo's field writes the gate doesn't hold yet, by name, each call site in
 /// `application` frozen whether it has one today or not. Each leaves when its method takes a
 /// write capability, until the list is empty.
-const FIELD_WRITES: [&str; 3] = ["set_archived", "set_maturity", "set_linked_channel"];
+const FIELD_WRITES: [&str; 2] = ["set_archived", "set_linked_channel"];
 
 /// The commission repo's writes counted only on a commission repo: their names are common.
 /// Through any other receiver in `application`, a create needs the gate's capability, and
@@ -106,18 +106,13 @@ const NODE_TABLE: &str = "node";
 
 /// The ungated commission field writes in `application`, by file, function and method: each
 /// leaves this list when the den's write gate takes it over, until the list is empty.
-const FROZEN_FIELD_WRITES: [(&str, &str, &str); 4] = [
+const FROZEN_FIELD_WRITES: [(&str, &str, &str); 3] = [
     (
         "commission/archive.rs",
         "Commissions::archive",
         "set_archived",
     ),
     ("commission/delete.rs", "Commissions::delete", "delete"),
-    (
-        "commission/maturity/set.rs",
-        "Maturity::run",
-        "set_maturity",
-    ),
     (
         "commission/unarchive.rs",
         "Commissions::unarchive",
@@ -1180,17 +1175,35 @@ const ENTRY: &str = "ENTRY";
 /// The entry rule's variants, each carrying one gated entry.
 const ENTRY_RULE_VARIANTS: [&str; 2] = ["Always", "OnChange"];
 
+/// The entry rule's one variant that carries two gated entries: the first, then a second its
+/// constructor may find nothing to build.
+const TWO_ENTRY_VARIANT: &str = "AlwaysThen";
+
+/// The one act whose entry rule may be [`TWO_ENTRY_VARIANT`], relative to the use-case layer's
+/// sources: the create, whose rating is recorded right after its `created` entry. Every other
+/// act writes at most one entry.
+const TWO_ENTRY_ACT: &str = "commission/create.rs";
+
+/// The entry rule's variants as [`ACT_FILE`] declares them, each with how many gated entries
+/// it carries.
+const DECLARED_ENTRY_RULE_VARIANTS: [(&str, usize); 3] =
+    [("Always", 1), ("OnChange", 1), (TWO_ENTRY_VARIANT, 2)];
+
 /// The handler trait, which declares [`ENTRY`] once, in [`GATE_FILE`], with no default.
 const HANDLER_TRAIT: &str = "trait Handler";
 
-/// The gated entries today's acts name, each by its file.
-const NAMED_GATED_ENTRIES: [(&str, &str); 11] = [
+/// The gated entries today's acts name, each by its file: the create names two.
+const NAMED_GATED_ENTRIES: [(&str, &str); 15] = [
     ("commission/create.rs", "CREATED"),
+    ("commission/create.rs", "RATED_AT_CREATE"),
     ("commission/deadline/clear.rs", "DEADLINE_CLEARED"),
     ("commission/deadline/set.rs", "DEADLINE_SET"),
     ("commission/deadline/status/clear.rs", "DELAYED_CLEARED"),
     ("commission/deadline/status/set.rs", "DELAYED_SET"),
+    ("commission/dispute/clear.rs", "DISPUTE_CLEARED"),
+    ("commission/dispute/raise.rs", "DISPUTED"),
     ("commission/lifecycle/move_to.rs", "LIFECYCLE_MOVED"),
+    ("commission/maturity/set.rs", "MATURITY_RATED"),
     ("commission/rename.rs", "RENAMED"),
     ("commission/slots/declare.rs", "SLOT_DECLARED"),
     ("commission/status/direction/clear.rs", "STATUS_CLEARED"),
@@ -1199,8 +1212,9 @@ const NAMED_GATED_ENTRIES: [(&str, &str); 11] = [
 ];
 
 /// The variants a gated entry's constructor is written out under: one takes no change, one
-/// the act's checked change, and the system's takes the checked change and no actor.
-const CONSTRUCTOR_VARIANTS: [&str; 3] = ["Bare", "Change", "System"];
+/// the act's checked change, one the checked change and may build nothing from it, and the
+/// system's takes the checked change and no actor.
+const CONSTRUCTOR_VARIANTS: [&str; 4] = ["Bare", "Change", "Optional", "System"];
 
 /// The use-case layer's production sources, each with its path relative to its `src`.
 fn application_sources() -> Vec<(String, String)> {
@@ -1270,14 +1284,22 @@ fn item_to_semicolon(level: &[TokenTree], at: usize) -> &[TokenTree] {
     &level[at..end]
 }
 
-/// The gated entry `value` names when it is exactly `EntryRule::Always(GatedEntry::NAME)` or
-/// `EntryRule::OnChange(GatedEntry::NAME)`, as written; `None` for anything else.
-fn named_gated_entry(value: &[TokenTree]) -> Option<String> {
+/// The gated entry `inner` names as `GatedEntry::NAME`, written out from `at`.
+fn gated_name_at(inner: &[TokenTree], at: usize) -> Option<String> {
+    let written_out =
+        ident_at(inner, at).as_deref() == Some(GATED_ENTRY) && path_separator_at(inner, at + 1);
+    written_out.then(|| ident_at(inner, at + 3)).flatten()
+}
+
+/// The variant and the gated entries `value` names when it is exactly
+/// `EntryRule::Always(GatedEntry::NAME)`, `EntryRule::OnChange(GatedEntry::NAME)` or
+/// `EntryRule::AlwaysThen(GatedEntry::FIRST, GatedEntry::THEN)`, as written; `None` for
+/// anything else.
+fn named_gated_entries(value: &[TokenTree]) -> Option<(String, Vec<String>)> {
     let variant = ident_at(value, 3)?;
     let rule_written_out = value.len() == 5
         && ident_at(value, 0).as_deref() == Some(ENTRY_RULE)
-        && path_separator_at(value, 1)
-        && ENTRY_RULE_VARIANTS.contains(&variant.as_str());
+        && path_separator_at(value, 1);
     let Some(TokenTree::Group(group)) = value.get(4) else {
         return None;
     };
@@ -1285,17 +1307,27 @@ fn named_gated_entry(value: &[TokenTree]) -> Option<String> {
         return None;
     }
     let inner: Vec<TokenTree> = group.stream().into_iter().collect();
-    let gated_written_out = inner.len() == 4
-        && ident_at(&inner, 0).as_deref() == Some(GATED_ENTRY)
-        && path_separator_at(&inner, 1);
-    gated_written_out.then(|| ident_at(&inner, 3)).flatten()
+    let names = if ENTRY_RULE_VARIANTS.contains(&variant.as_str()) {
+        let one = inner.len() == 4;
+        one.then(|| gated_name_at(&inner, 0))
+            .flatten()
+            .map(|name| vec![name])
+    } else if variant == TWO_ENTRY_VARIANT {
+        let two = inner.len() == 9 && punct_at(&inner, 4, ',');
+        let first = two.then(|| gated_name_at(&inner, 0)).flatten();
+        let then = two.then(|| gated_name_at(&inner, 5)).flatten();
+        first.zip(then).map(|(first, then)| vec![first, then])
+    } else {
+        None
+    };
+    names.map(|names| (variant, names))
 }
 
-/// What one `const ENTRY` item is: the bare declaration, or the gated entry its value names
-/// when written out; `Err` with the item as written otherwise.
+/// What one `const ENTRY` item is: the bare declaration, or the rule's variant and the gated
+/// entries its value names when written out; `Err` with the item as written otherwise.
 enum EntryItem {
     Declared,
-    Names(String),
+    Names { variant: String, names: Vec<String> },
 }
 
 fn entry_item(item: &[TokenTree]) -> Result<EntryItem, String> {
@@ -1318,16 +1350,17 @@ fn entry_item(item: &[TokenTree]) -> Result<EntryItem, String> {
     if !punct_at(item, past_type, '=') {
         return Err(shown());
     }
-    named_gated_entry(&item[past_type + 1..item.len() - 1])
-        .map(EntryItem::Names)
+    named_gated_entries(&item[past_type + 1..item.len() - 1])
+        .map(|(variant, names)| EntryItem::Names { variant, names })
         .ok_or_else(shown)
 }
 
 /// Every gated entry a production `const ENTRY` in `files` names, by file and piece, and what
 /// breaks the entry rule's pin: a `const ENTRY` at any depth (macro bodies included) not
 /// written out as `EntryRule::Always(GatedEntry::NAME)` or `EntryRule::OnChange(GatedEntry::NAME)`,
-/// a bare declaration anywhere but once in [`HANDLER_TRAIT`] in [`GATE_FILE`], and a gated
-/// entry two items name.
+/// or as `EntryRule::AlwaysThen(GatedEntry::FIRST, GatedEntry::THEN)` anywhere but in
+/// [`TWO_ENTRY_ACT`], a bare declaration anywhere but once in [`HANDLER_TRAIT`] in
+/// [`GATE_FILE`], and a gated entry two items, or one item twice, name.
 fn entry_rule_scan(files: &[(String, String)]) -> (Vec<(String, String)>, Vec<String>) {
     let mut named: Vec<(String, String)> = Vec::new();
     let mut by_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -1352,9 +1385,16 @@ fn entry_rule_scan(files: &[(String, String)]) -> (Vec<(String, String)>, Vec<St
                                 out.push(format!("{place}: a bare `{ENTRY}` declaration"));
                             }
                         }
-                        Ok(EntryItem::Names(name)) => {
-                            named.push((file.clone(), name.clone()));
-                            by_name.entry(name).or_default().push(place);
+                        Ok(EntryItem::Names { variant, names }) => {
+                            if variant == TWO_ENTRY_VARIANT && file != TWO_ENTRY_ACT {
+                                out.push(format!(
+                                    "{place}: only {TWO_ENTRY_ACT} names `{ENTRY_RULE}::{TWO_ENTRY_VARIANT}`"
+                                ));
+                            }
+                            for name in names {
+                                named.push((file.clone(), name.clone()));
+                                by_name.entry(name).or_default().push(place.clone());
+                            }
                         }
                         Err(written) => {
                             out.push(format!(
@@ -1381,8 +1421,8 @@ fn entry_rule_scan(files: &[(String, String)]) -> (Vec<(String, String)>, Vec<St
 
 /// What breaks the gated entries' definitions in [`ACT_FILE`]: an associated const of an
 /// inherent impl of [`GATED_ENTRY`] not written out as `Self { kinds: &[ChangelogEntryKind::K,
-/// …], constructor: EntryConstructor::Bare(NewChangelogEntry::c) }` (or `::Change(…)` or
-/// `::System(…)`), and
+/// …], constructor: EntryConstructor::Bare(NewChangelogEntry::c) }` (or `::Change(…)`,
+/// `::Optional(…)` or `::System(…)`), and
 /// two consts sharing a constructor. Two constructors may build one kind.
 fn gated_definition_findings(act: &syn::File) -> Vec<String> {
     let mut constructors: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -1459,7 +1499,8 @@ fn written_out_kinds(expr: &syn::Expr) -> Option<Vec<String>> {
 }
 
 /// The domain constructor a gated entry's const names: `EntryConstructor::Bare(NewChangelogEntry::c)`
-/// or `EntryConstructor::Change(…)` or `EntryConstructor::System(…)`; `None` for anything else.
+/// or `EntryConstructor::Change(…)`, `EntryConstructor::Optional(…)` or
+/// `EntryConstructor::System(…)`; `None` for anything else.
 fn written_out_constructor(expr: &syn::Expr) -> Option<String> {
     let syn::Expr::Call(call) = expr else {
         return None;
@@ -1476,7 +1517,7 @@ fn written_out_constructor(expr: &syn::Expr) -> Option<String> {
 
 /// The kinds and the constructor a gated entry's const is written out with:
 /// `Self { kinds: &[ChangelogEntryKind::K, …], constructor: EntryConstructor::Bare(NewChangelogEntry::c) }`
-/// (or `::Change(…)` or `::System(…)`), nothing else.
+/// (or `::Change(…)`, `::Optional(…)` or `::System(…)`), nothing else.
 fn gated_fields(expr: &syn::Expr) -> Option<(Vec<String>, String)> {
     let syn::Expr::Struct(literal) = expr else {
         return None;
@@ -1521,7 +1562,10 @@ fn each_act_names_one_gated_entry_and_constructors_are_unique() {
         .iter()
         .map(|(file, name)| ((*file).to_owned(), (*name).to_owned()))
         .collect();
-    assert_eq!(named, expected, "the scan reads today's eleven acts");
+    assert_eq!(
+        named, expected,
+        "the scan reads today's fourteen acts, the create's two entries among them"
+    );
     let act_source =
         std::fs::read_to_string(application_src().join(ACT_FILE)).expect("the act file reads");
     let shares_a_constructor = act_source.replacen(
@@ -1593,6 +1637,27 @@ fn the_entry_rule_scans_refuse_each_planted_shape() {
     let stamped = "macro_rules! act {\n    ($entry:expr) => {\n        impl Handler for Act {\n            type Role = AsOwner;\n            const ENTRY: EntryRule = $entry;\n        }\n    };\n}\nact!(EntryRule::OnChange(GatedEntry::RENAMED));";
     let stamped_name = "macro_rules! act {\n    ($name:ident) => {\n        impl Handler for Act {\n            const ENTRY: EntryRule = EntryRule::OnChange(GatedEntry::$name);\n        }\n    };\n}\nact!(RENAMED);";
     let second_trait = "pub(crate) trait Other {\n    const ENTRY: EntryRule;\n}";
+    let two_on_a_rename = act_with_entry(
+        "Act",
+        "EntryRule::AlwaysThen(GatedEntry::RENAMED, GatedEntry::RATED_AT_CREATE)",
+    );
+    let two_in_one_slot = act_with_entry(
+        "Act",
+        "EntryRule::Always(GatedEntry::CREATED, GatedEntry::RATED_AT_CREATE)",
+    );
+    let then_alone = act_with_entry("Act", "EntryRule::AlwaysThen(GatedEntry::CREATED)");
+    let three = act_with_entry(
+        "Act",
+        "EntryRule::AlwaysThen(GatedEntry::CREATED, GatedEntry::RATED_AT_CREATE, GatedEntry::RENAMED)",
+    );
+    let twice_over = act_with_entry(
+        "Act",
+        "EntryRule::AlwaysThen(GatedEntry::CREATED, GatedEntry::CREATED)",
+    );
+    let then_a_closure = act_with_entry(
+        "Act",
+        "EntryRule::AlwaysThen(GatedEntry::CREATED, |c, a, t| NewChangelogEntry::renamed(c, a, t))",
+    );
     let defaulted = "pub(crate) trait Handler {\n    const ENTRY: EntryRule = EntryRule::Always(GatedEntry::CREATED);\n}";
     let entry_plants: Vec<Vec<(String, String)>> = vec![
         with_file(&files, rename, &closure),
@@ -1607,12 +1672,33 @@ fn the_entry_rule_scans_refuse_each_planted_shape() {
         with_file(&files, rename, stamped_name),
         with_file(&files, "den/write.rs", second_trait),
         with_file(&files, "den/write.rs", defaulted),
+        with_file(&files, rename, &two_on_a_rename),
+        with_file(&files, TWO_ENTRY_ACT, &two_in_one_slot),
+        with_file(&files, TWO_ENTRY_ACT, &then_alone),
+        with_file(&files, TWO_ENTRY_ACT, &three),
+        with_file(&files, TWO_ENTRY_ACT, &twice_over),
+        with_file(&files, TWO_ENTRY_ACT, &then_a_closure),
     ];
     for planted in &entry_plants {
         let (_, findings) = entry_rule_scan(planted);
 
         assert!(!findings.is_empty(), "{:?}", planted.last());
     }
+    let (_, two_findings) = entry_rule_scan(&with_file(&files, rename, &two_on_a_rename));
+    assert!(
+        two_findings
+            .iter()
+            .any(|finding| finding.contains("only commission/create.rs names")),
+        "{two_findings:?}"
+    );
+    let kept_create = act_with_entry(
+        "Act",
+        "EntryRule::AlwaysThen(GatedEntry::CREATED, GatedEntry::RATED_AT_CREATE)",
+    );
+    let (kept_named, kept_findings) =
+        entry_rule_scan(&with_file(&files, TWO_ENTRY_ACT, &kept_create));
+    assert_eq!(kept_findings, Vec::<String>::new());
+    assert_eq!(kept_named.len(), NAMED_GATED_ENTRIES.len());
     let (_, shared_findings) = entry_rule_scan(&with_file(&files, rename, &shared));
     assert!(
         shared_findings
@@ -1773,6 +1859,58 @@ fn gated_entries_are_defined_only_in_top_level_impls() {
     assert_eq!(nested_gated_impls(&kept), Vec::<String>::new());
 }
 
+/// The variants of the entry rule `act`, the act file, declares at its top level, each with how
+/// many fields it carries.
+fn entry_rule_variants(act: &syn::File) -> Vec<(String, usize)> {
+    act.items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Enum(declared) if declared.ident == ENTRY_RULE => Some(declared),
+            _ => None,
+        })
+        .flat_map(|declared| &declared.variants)
+        .map(|variant| (variant.ident.to_string(), variant.fields.len()))
+        .collect()
+}
+
+// The entry rule carries one gated entry in every variant but the create's, which carries two:
+// a new variant, or a second entry on another, fails here and in the entry rule's scan.
+#[test]
+fn the_entry_rule_s_variants_are_its_pinned_ones() {
+    let act_source =
+        std::fs::read_to_string(application_src().join(ACT_FILE)).expect("the act file reads");
+    let act = syn::parse_file(&act_source).expect("the act file parses");
+
+    let declared = entry_rule_variants(&act);
+
+    let pinned: Vec<(String, usize)> = DECLARED_ENTRY_RULE_VARIANTS
+        .iter()
+        .map(|(name, fields)| ((*name).to_owned(), *fields))
+        .collect();
+    assert_eq!(declared, pinned);
+    let one_entry: Vec<&str> = DECLARED_ENTRY_RULE_VARIANTS
+        .iter()
+        .filter(|(_, fields)| *fields == 1)
+        .map(|(name, _)| *name)
+        .collect();
+    assert_eq!(one_entry, ENTRY_RULE_VARIANTS);
+    let widened = act_source.replacen(
+        "    OnChange(GatedEntry<C>),",
+        "    OnChange(GatedEntry<C>, GatedEntry<C>),",
+        1,
+    );
+    assert_ne!(widened, act_source, "the plant takes");
+    let widened = syn::parse_file(&widened).expect("the planted act file parses");
+    assert_ne!(entry_rule_variants(&widened), pinned);
+    let added = act_source.replacen(
+        "    OnChange(GatedEntry<C>),",
+        "    OnChange(GatedEntry<C>),\n    Twice(GatedEntry<C>, GatedEntry<C>),",
+        1,
+    );
+    let added = syn::parse_file(&added).expect("the planted act file parses");
+    assert_ne!(entry_rule_variants(&added), pinned);
+}
+
 // No core crate defines a macro.
 
 /// The crates whose production sources define no macro: a macro's expansion is a write no
@@ -1923,26 +2061,31 @@ const LENT_READ: &str = "lent";
 
 /// Each act with a write, as the gate file writes its type, and the one write its view holds,
 /// which calls the commission repo's method of the same name and nothing else.
-const ACT_WRITES: [(&str, &str); 9] = [
+const ACT_WRITES: [(&str, &str); 12] = [
     ("create::Act", "create"),
     ("move_to::Act", "set_lifecycle"),
+    ("dispute::raise::Act", "set_dispute"),
+    ("dispute::clear::Act", "clear_dispute"),
     ("direction::set::Act", "set_direction_status"),
     ("direction::clear::Act", "set_direction_status"),
     ("deadline::set::Act", "set_deadline"),
     ("deadline::clear::Act", "set_deadline"),
     ("deadline::status::set::Act", "set_deadline_status"),
     ("deadline::status::clear::Act", "set_deadline_status"),
+    ("maturity::set::Act", "set_maturity"),
     ("declare::Act", "declare_slot"),
 ];
 
 /// The modules the gate file must import each act's module from, so `create::Act`,
 /// `move_to::Act`, `direction::set::Act`, `deadline::set::Act` and `declare::Act` name the acts
 /// they say.
-const ACT_MODULE_HOMES: [(&str, &str); 5] = [
+const ACT_MODULE_HOMES: [(&str, &str); 7] = [
     ("create", "crate::commission"),
     ("move_to", "crate::commission::lifecycle"),
+    ("dispute", "crate::commission"),
     ("direction", "crate::commission::status"),
     ("deadline", "crate::commission"),
+    ("maturity", "crate::commission"),
     ("declare", "crate::commission::slots"),
 ];
 
@@ -2215,12 +2358,15 @@ fn each_lent_view_holds_its_act_s_one_write() {
     let expected: Vec<(String, String)> = [
         ("create", "create::Act"),
         ("set_lifecycle", "move_to::Act"),
+        ("set_dispute", "dispute::raise::Act"),
+        ("clear_dispute", "dispute::clear::Act"),
         ("set_direction_status", "direction::set::Act"),
         ("set_direction_status", "direction::clear::Act"),
         ("set_deadline", "deadline::set::Act"),
         ("set_deadline", "deadline::clear::Act"),
         ("set_deadline_status", "deadline::status::set::Act"),
         ("set_deadline_status", "deadline::status::clear::Act"),
+        ("set_maturity", "maturity::set::Act"),
         ("declare_slot", "declare::Act"),
         (LENT_READ, EVERY_ACT),
     ]
@@ -2262,12 +2408,12 @@ fn each_lent_view_holds_its_act_s_one_write() {
         ),
         ("impl Lent<'_, move_to::Act> {", "impl Lent<'_, Move> {"),
         (
-            "    commission::{\n        act::CommissionAct, create, deadline, lifecycle::move_to, rename, slots::declare,\n        status::direction,\n    },",
-            "    commission::{\n        act::CommissionAct, create as move_to, deadline, lifecycle::move_to as create, rename,\n        slots::declare, status::direction,\n    },",
+            "    commission::{\n        act::CommissionAct, create, deadline, dispute, lifecycle::move_to, maturity, rename,\n        slots::declare, status::direction,\n    },",
+            "    commission::{\n        act::CommissionAct, create as move_to, deadline, dispute, lifecycle::move_to as create,\n        maturity, rename, slots::declare, status::direction,\n    },",
         ),
         (
-            "    commission::{\n        act::CommissionAct, create, deadline, lifecycle::move_to, rename, slots::declare,\n        status::direction,\n    },",
-            "    commission::{\n        act::CommissionAct, create, deadline as direction, lifecycle::move_to, rename,\n        slots::declare, status::direction as deadline,\n    },",
+            "    commission::{\n        act::CommissionAct, create, deadline, dispute, lifecycle::move_to, maturity, rename,\n        slots::declare, status::direction,\n    },",
+            "    commission::{\n        act::CommissionAct, create, deadline as direction, dispute, lifecycle::move_to, maturity,\n        rename, slots::declare, status::direction as deadline,\n    },",
         ),
         (
             "impl Lent<'_, direction::set::Act> {",
@@ -2505,12 +2651,15 @@ fn each_view_write_calls_its_own_port_method() {
     let writes: Vec<(String, String)> = view_methods(&gate, &views);
     assert_eq!(
         writes.len(),
-        10,
+        13,
         "the scan reads every view method: {writes:?}"
     );
     let source =
         std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
     let move_call = "self.repo.set_lifecycle(&self.capability, change)";
+    let raise_call = "self.repo.set_dispute(&self.capability, change)";
+    let clear_call = "self.repo.clear_dispute(&self.capability, change)";
+    let rate_call = "self.repo.set_maturity(&self.capability, change)";
     let create_call = ".create(&self.capability, &birth, commission)";
     let direction_call =
         ".set_direction_status(&self.capability, &DirectionChange::from(change.clone()))";
@@ -2561,6 +2710,19 @@ fn each_view_write_calls_its_own_port_method() {
             "        let change = &forged;\n        self.wrote = Some(Wrote::Missed);\n        let landed",
         ),
         (create_call, ".set_lifecycle(&self.capability, commission)"),
+        (
+            raise_call,
+            "self.repo.set_lifecycle(&self.capability, change)",
+        ),
+        (
+            clear_call,
+            "self.repo.set_dispute(&self.capability, change)",
+        ),
+        (
+            rate_call,
+            "self.repo.set_direction_status(&self.capability, change)",
+        ),
+        (rate_call, "self.repo.set_maturity(&forged, change)"),
         (
             "impl View<'_, move_to::Act> {",
             "impl View<'_, rename::Act> {",
@@ -2653,7 +2815,11 @@ fn every_lent_method_goes_through_the_latch() {
 
     assert_eq!(unlatched, Vec::<String>::new());
     let (methods, _) = lent_surface(&gate);
-    assert_eq!(methods.len(), 10, "the scan reads all ten lent methods");
+    assert_eq!(
+        methods.len(),
+        13,
+        "the scan reads all thirteen lent methods"
+    );
     let source =
         std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
     let widened = format!("{WIDENED_MODULE}{AFTER_THE_LENT_VIEW}");
@@ -4875,7 +5041,7 @@ fn the_ungated_field_writes_are_exactly_these() {
         "async fn copy(uow: Unit<'_>) { let mut repo = uow.commissions(); repo.create(&commission).await?; }",
         "async fn purge(uow: Unit<'_>) { UnitOfWork::commissions(uow).delete(&id).await?; }",
         "async fn purge(uow: Unit<'_>) { let repo = uow.commissions(); (*repo).delete(&id).await?; }",
-        "fn setter() { let set = CommissionRepo::set_maturity; }",
+        "fn setter() { let set = CommissionRepo::set_archived; }",
         "async fn extend(uow: Unit<'_>) { tokio::join!(async { uow.commissions().set_linked_channel(&id, None).await }); }",
     ];
     for source in new_sites {
@@ -4889,7 +5055,7 @@ fn the_ungated_field_writes_are_exactly_these() {
         "async fn upload(ports: &Ports, key: FileKey) { ports.files.delete(key).await?; }",
         "async fn open(uow: Unit<'_>) { uow.accounts().create(&account, &owner).await?; }",
         "fn make() -> Commission { Commission::create(title, owner, now, None) }",
-        "trait Repo { async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity); }",
+        "trait Repo { async fn set_archived(&mut self, id: &CommissionId, at: Option<DateTimeUtc>); }",
     ];
     for source in not_field_writes {
         let file = syn::parse_file(source).expect("the planted source parses");
@@ -5646,17 +5812,21 @@ fn every_commission_write_takes_a_capability_or_is_named() {
         sorted.capped,
         BTreeSet::from(
             [
+                "clear_dispute",
                 "create",
                 "declare_slot",
                 "set_deadline",
                 "set_deadline_status",
                 "set_direction_status",
+                "set_dispute",
                 "set_lifecycle",
+                "set_maturity",
             ]
             .map(str::to_owned)
         ),
-        "create takes the gate's create capability, the lifecycle, direction, deadline and \
-         Delayed writes a Participant's, and the Slot declare the Owner's, each in place of the id"
+        "create takes the gate's create capability, the lifecycle, dispute, direction, deadline \
+         and Delayed writes a Participant's, and the rating and the Slot declare the Owner's, each \
+         in place of the id"
     );
     let (held, homes) = held_names(&file);
     assert_eq!(homes, Vec::<String>::new());
@@ -5730,11 +5900,6 @@ fn the_port_scan_names_each_planted_write() {
     let unlisted_lifecycle =
         "CommissionWrites::set_lifecycle takes no write capability and is on no list";
     let lifecycle_by_owner = "\n    async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, step: LifecycleStep) -> anyhow::Result<bool>;\n";
-    let errors_line = "pub use super::errors";
-    assert!(
-        source.contains(errors_line),
-        "the port file holds `{errors_line}`"
-    );
     let owner_planted = source.replacen(
         writes_header,
         &format!("{writes_header}{lifecycle_by_owner}"),
@@ -6011,13 +6176,16 @@ fn the_port_scan_names_each_planted_write() {
 /// The values a capped write may take beside its capability, each by its bare name behind at
 /// most one shared reference: a create's birth and start, each act's checked change, and a Slot
 /// declare's birth and what it chose.
-const CAPPED_VALUES: [&str; 8] = [
+const CAPPED_VALUES: [&str; 11] = [
     "CommissionBirth",
     "NewCommission",
     "LifecycleMove",
+    "Dispute",
+    "DisputeClear",
     "DirectionChange",
     "DeadlineChange",
     "DelayedChange",
+    "MaturitySet",
     "SlotBirth",
     "NewSlot",
 ];
@@ -9183,7 +9351,7 @@ const ENTRY_BUILDERS: [&str; 5] = [
 ];
 
 /// The gated constructors, as the domain defines them today.
-const GATED_CONSTRUCTORS: [&str; 11] = [
+const GATED_CONSTRUCTORS: [&str; 15] = [
     "created",
     "deadline_cleared",
     "deadline_set",
@@ -9191,8 +9359,12 @@ const GATED_CONSTRUCTORS: [&str; 11] = [
     "delayed_set",
     "direction_cleared",
     "direction_set",
+    "dispute_cleared",
+    "disputed",
     "late",
     "lifecycle_moved",
+    "maturity_rated",
+    "rated_at_create",
     "renamed",
     "slot_declared",
 ];
@@ -10249,10 +10421,11 @@ impl NewChangelogEntry {
 /// What each method of the PostgreSQL write view reaches: each generated commission write
 /// statement (`statement f`), write helper (`helper h`) and write-view method (`method m`) it
 /// names, by method. A new statement, or one named in a second method, fails until it is here.
-const PG_VIEW_REACHES: [(&str, &str); 25] = [
+const PG_VIEW_REACHES: [(&str, &str); 27] = [
     ("add_element", "helper insert_element"),
     ("add_file", "statement add_file"),
     ("add_markup", "statement add_markup"),
+    ("clear_dispute", "statement clear_dispute"),
     ("create", "statement add_participant"),
     ("create", "statement create_commission"),
     ("create", "statement create_tab"),
@@ -10272,6 +10445,7 @@ const PG_VIEW_REACHES: [(&str, &str); 25] = [
     ("set_deadline", "statement set_deadline"),
     ("set_deadline_status", "statement set_deadline_status"),
     ("set_direction_status", "statement set_direction_status"),
+    ("set_dispute", "statement set_dispute"),
     ("set_lifecycle", "statement set_lifecycle"),
     ("set_linked_channel", "statement set_linked_channel"),
     ("set_maturity", "statement set_maturity"),
@@ -10281,7 +10455,7 @@ const PG_VIEW_REACHES: [(&str, &str); 25] = [
 /// commission map (`map m`, `map handed on`), each write to a stored commission's field
 /// (`row f`), each call of the insert path (`calls insert_commission`) and each write-view
 /// method called on the view (`method m`), by piece.
-const MEM_VIEW_CHANGES: [(&str, &str); 21] = [
+const MEM_VIEW_CHANGES: [(&str, &str); 27] = [
     (
         "commission.rs: MemBackend::seed_bound_commission",
         "calls insert_commission",
@@ -10292,6 +10466,18 @@ const MEM_VIEW_CHANGES: [(&str, &str); 21] = [
     ),
     (
         "commission.rs: MemBackend::seed_lifecycle_step",
+        "row lifecycle_step",
+    ),
+    (
+        "commission.rs: MemCommissionWrites::clear_dispute",
+        "map get_mut",
+    ),
+    (
+        "commission.rs: MemCommissionWrites::clear_dispute",
+        "row dispute",
+    ),
+    (
+        "commission.rs: MemCommissionWrites::clear_dispute",
         "row lifecycle_step",
     ),
     (
@@ -10330,6 +10516,18 @@ const MEM_VIEW_CHANGES: [(&str, &str); 21] = [
     (
         "commission.rs: MemCommissionWrites::set_direction_status",
         "row direction_status",
+    ),
+    (
+        "commission.rs: MemCommissionWrites::set_dispute",
+        "map get_mut",
+    ),
+    (
+        "commission.rs: MemCommissionWrites::set_dispute",
+        "row dispute",
+    ),
+    (
+        "commission.rs: MemCommissionWrites::set_dispute",
+        "row lifecycle_step",
     ),
     (
         "commission.rs: MemCommissionWrites::set_lifecycle",
@@ -10651,7 +10849,7 @@ fn each_commission_write_statement_and_change_is_named_only_in_its_method() {
     }
     let mem_markup =
         "    async fn add_markup(&mut self, markup: &CommissionMarkup) -> anyhow::Result<()> {";
-    let mem_maturity = "            stored.maturity = Some(maturity);";
+    let mem_maturity = "        stored.maturity = Some(change.after());";
     let lock = ".lock().expect(\"MemBackend commissions mutex poisoned\")";
     let markup_context = "commission.rs: MemCommissionWrites::add_markup";
     let mem_refused = [
@@ -10683,7 +10881,7 @@ fn each_commission_write_statement_and_change_is_named_only_in_its_method() {
         ),
         (
             mem_maturity,
-            "            stored.archived_at = None;".to_owned(),
+            "        stored.archived_at = None;".to_owned(),
             (
                 "commission.rs: MemCommissionWrites::set_maturity",
                 "row archived_at",

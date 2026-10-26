@@ -170,9 +170,9 @@ fn a_lifecycle_move_needs_a_participant_and_is_a_change() {
     assert_eq!(format!("{moved:?}"), "MoveLifecycle");
 }
 
-// Each direction, deadline and Delayed act needs any Participant, read from its capability
-// marker, and changes the commission's fields on its own node; its Debug prints the variant
-// alone, never a value it carries.
+// The dispute's raise and clear and each direction, deadline and Delayed act need any
+// Participant, read from its capability marker, and change the commission's fields on its own
+// node; its Debug prints the variant alone, never a value it carries.
 #[test]
 fn each_field_act_needs_a_participant_and_is_a_change() {
     let instant: domain::datetime::DateTimeUtc =
@@ -180,6 +180,8 @@ fn each_field_act_needs_a_participant_and_is_a_change() {
     let deadline = domain::elements::commission::CommissionDeadline::from(instant);
     let commission = untitled();
     let acts = [
+        CommissionAct::RaiseDispute(dispute::raise::Act { commission }),
+        CommissionAct::ClearDispute(dispute::clear::Act { commission }),
         CommissionAct::SetDirection(direction::set::Act {
             commission,
             to: domain::elements::commission::DirectionStatus::WaitingForInput,
@@ -213,6 +215,8 @@ fn each_field_act_needs_a_participant_and_is_a_change() {
     }
     let printed: Vec<String> = acts.iter().map(|act| format!("{act:?}")).collect();
     let variants = [
+        "RaiseDispute",
+        "ClearDispute",
         "SetDirection",
         "ClearDirection",
         "SetDeadline",
@@ -227,6 +231,14 @@ fn each_field_act_needs_a_participant_and_is_a_change() {
     );
     assert_eq!(
         needs::<deadline::status::clear::Act>(),
+        Needs::Role(CommissionRole::Participant)
+    );
+    assert_eq!(
+        needs::<dispute::raise::Act>(),
+        Needs::Role(CommissionRole::Participant)
+    );
+    assert_eq!(
+        needs::<dispute::clear::Act>(),
         Needs::Role(CommissionRole::Participant)
     );
 }

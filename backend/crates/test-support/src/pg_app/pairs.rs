@@ -324,10 +324,11 @@ pub fn rename_call() -> CommissionCall {
     }
 }
 
-/// The eight write calls the commission's field acts and the slot declare add, each sent with a
+/// The eleven write calls the commission's field acts and the slot declare add, each sent with a
 /// body its own parsing accepts: move the lifecycle, set and clear the direction, set and clear
-/// the deadline, set and clear Delayed, declare a slot.
-pub fn new_write_calls() -> [CommissionCall; 8] {
+/// the deadline, set and clear Delayed, raise and clear the dispute, the owner's rating, and
+/// declare a slot.
+pub fn new_write_calls() -> [CommissionCall; 11] {
     let move_body = json!({ "to": "active" });
     let direction_body = json!({ "status": "waiting_for_input" });
     let deadline_body = json!({ "deadline": FAR_DEADLINE });
@@ -379,6 +380,25 @@ pub fn new_write_calls() -> [CommissionCall; 8] {
         tail: "/status/deadline",
         body: None,
     };
+    let rating_body = json!({ "rating": "suggestive", "graphic": false });
+    let raise_dispute = CommissionCall {
+        label: "raise a dispute",
+        method: reqwest::Method::PUT,
+        tail: "/dispute",
+        body: None,
+    };
+    let clear_dispute = CommissionCall {
+        label: "clear the dispute",
+        method: reqwest::Method::DELETE,
+        tail: "/dispute",
+        body: None,
+    };
+    let rate = CommissionCall {
+        label: "rate",
+        method: reqwest::Method::PUT,
+        tail: "/maturity",
+        body: Some(rating_body),
+    };
     let declare_slots = CommissionCall {
         label: "declare slots",
         method: reqwest::Method::POST,
@@ -393,6 +413,9 @@ pub fn new_write_calls() -> [CommissionCall; 8] {
         clear_deadline,
         set_delayed,
         clear_delayed,
+        raise_dispute,
+        clear_dispute,
+        rate,
         declare_slots,
     ]
 }

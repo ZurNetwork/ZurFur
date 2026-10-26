@@ -196,6 +196,116 @@ fn late_is_derived_at_the_given_time() {
     assert_eq!(unflagged.delayed_flag(), None, "Late is never stored");
 }
 
+// While Disputed, Late is read at the dispute's start: a deadline missed before the raise reads
+// Late all through the dispute; one passing after it doesn't, until the clear lets the clock
+// run again.
+#[test]
+fn late_freezes_at_the_dispute_s_start() {
+    let missed_before = crate::elements::commission::test_commission::disputed(
+        LifecycleStep::Active,
+        april(),
+        Some(march()),
+    );
+    let passing_after = crate::elements::commission::test_commission::disputed(
+        LifecycleStep::Active,
+        february(),
+        Some(march()),
+    );
+    let cleared = state(LifecycleStep::Active, Some(march()), None);
+
+    assert_eq!(
+        CommissionState::from(&missed_before).deadline_status_at(may()),
+        Some(DeadlineStatus::Late)
+    );
+    assert_eq!(
+        missed_before.deadline_status_at(may()),
+        Some(DeadlineStatus::Late)
+    );
+    assert_eq!(
+        CommissionState::from(&passing_after).deadline_status_at(may()),
+        None
+    );
+    assert_eq!(passing_after.deadline_status_at(may()), None);
+    assert_eq!(
+        cleared.deadline_status_at(may()),
+        Some(DeadlineStatus::Late),
+        "the clear resumes the clock"
+    );
+}
+
+// While Disputed the stored Delayed flag stays live: a deadline that hadn't lapsed at the
+// dispute's start reads Delayed once the flag is stored and nothing once it is taken down,
+// however late the clock has run since.
+#[test]
+fn the_delayed_flag_reads_as_stored_while_disputed() {
+    let mut disputed = crate::elements::commission::test_commission::disputed(
+        LifecycleStep::Active,
+        february(),
+        Some(march()),
+    );
+    assert_eq!(
+        disputed.deadline_status_at(may()),
+        None,
+        "no flag is stored and the deadline hadn't lapsed at the dispute's start"
+    );
+
+    disputed.delayed_flag = Some(DeadlineStatus::Delayed);
+    assert_eq!(
+        disputed.deadline_status_at(may()),
+        Some(DeadlineStatus::Delayed),
+        "the raised flag reads while Disputed"
+    );
+    assert_eq!(
+        CommissionState::from(&disputed).deadline_status_at(may()),
+        Some(DeadlineStatus::Delayed),
+        "by the state as well"
+    );
+
+    disputed.delayed_flag = None;
+    assert_eq!(
+        disputed.deadline_status_at(may()),
+        None,
+        "taking the flag down reads nothing"
+    );
+}
+
+// A dispute raised on a Completed or Cancelled commission whose deadline had already passed
+// reads it on the step it left: not Late before the raise, all through the dispute, or after
+// the clear.
+#[test]
+fn a_dispute_raised_on_a_closed_commission_never_reads_late() {
+    for closed_step in [LifecycleStep::Completed, LifecycleStep::Cancelled] {
+        let before_the_raise = state(closed_step.clone(), Some(march()), None);
+        let while_disputed = crate::elements::commission::test_commission::disputed(
+            closed_step.clone(),
+            april(),
+            Some(march()),
+        );
+        let after_the_clear = state(closed_step.clone(), Some(march()), None);
+
+        assert_eq!(
+            before_the_raise.deadline_status_at(april()),
+            None,
+            "{closed_step:?} before the raise"
+        );
+        assert_eq!(
+            CommissionState::from(&while_disputed).deadline_status_at(may()),
+            None,
+            "{closed_step:?} while Disputed, by its state"
+        );
+        assert_eq!(
+            while_disputed.deadline_status_at(may()),
+            None,
+            "{closed_step:?} while Disputed, by the commission"
+        );
+        assert_eq!(
+            after_the_clear.deadline_status_at(may()),
+            None,
+            "{closed_step:?} after the clear"
+        );
+    }
+}
+
 // While Late (derived, the stored flag empty) the Delayed flag can be neither raised nor
 // taken down.
 #[test]

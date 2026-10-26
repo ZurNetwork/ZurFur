@@ -12,13 +12,17 @@ use atta::{WriteCaps, WriteError, Writer};
 use chrono::Utc;
 use domain::{
     elements::{
-        commission::{ChangelogEntry, ChangelogEntryKind, LifecycleStep, OpenKind, TabId},
+        commission::{
+            ChangelogEntry, ChangelogEntryKind, LifecycleStep, NewCommission, OpenKind, TabId,
+        },
         did::Did,
         level::Level,
+        maturity::{Maturity, MaturityRating},
         user::UserId,
     },
     ports::{Database, UnitOfWork},
 };
+use serde_json::json;
 use strum::VariantArray;
 use test_support::pg_app::{StatementLog, pg_runtime, pg_runtime_recording};
 
@@ -754,6 +758,76 @@ async fn a_create_writes_exactly_one_created_entry_on_postgres() {
     one_created_entry(&ports, &actor).await;
 }
 
+/// The create act for a commission titled [`TITLE`], choosing `maturity` and no deadline.
+fn rated_create_act(maturity: Maturity) -> DenAct {
+    let chosen = NewCommission {
+        maturity: Some(maturity),
+        deadline: None,
+    };
+    let act = create::Act {
+        title: TITLE.parse().expect("a valid test title"),
+        chosen,
+    };
+    DenAct::Commission(CommissionAct::Create(act))
+}
+
+/// An adult rating with the Graphic flag.
+fn adult_graphic() -> Maturity {
+    Maturity {
+        rating: MaturityRating::Adult,
+        graphic: true,
+    }
+}
+
+/// A create by `actor` on `ports` that carries a rating writes two entries in its one unit, in
+/// order: `created`, then `maturity_rated` with the rating's literal payload, each by `actor`,
+/// at the create's time, with no note.
+async fn a_rated_create_records_its_rating(ports: &Ports, actor: &UserId) {
+    let now = Utc::now();
+    let written = write_at(ports, actor, rated_create_act(adult_graphic()), now)
+        .await
+        .expect("the create lands");
+
+    let stream = entries(ports, made(&written)).await;
+    let [created, rated] = stream.as_slice() else {
+        panic!("two entries: {stream:#?}");
+    };
+    assert_eq!(created.kind, ChangelogEntryKind::Created);
+    assert_eq!(created.payload, serde_json::json!({}));
+    assert_eq!(rated.kind, ChangelogEntryKind::MaturityRated);
+    assert_eq!(
+        rated.payload.to_string(),
+        r#"{"graphic":true,"rating":"adult"}"#
+    );
+    assert!(
+        created.seq < rated.seq,
+        "{} then {}",
+        created.seq,
+        rated.seq
+    );
+    for entry in [created, rated] {
+        assert_eq!(entry.actor_id.as_ref(), Some(actor), "{}", entry.kind);
+        assert_eq!(entry.note, None, "{}", entry.kind);
+        assert_eq!(entry.created_at, rated.created_at, "{}", entry.kind);
+    }
+}
+
+#[tokio::test]
+async fn a_create_that_carries_a_rating_records_it_after_created() {
+    let world = test_world::world().await;
+
+    a_rated_create_records_its_rating(&world.ports, &alice()).await;
+}
+
+#[tokio::test]
+async fn a_create_that_carries_a_rating_records_it_after_created_on_postgres() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let actor = provision(&*ports.database, "did:plc:gate-rated-create").await;
+
+    a_rated_create_records_its_rating(&ports, &actor).await;
+}
+
 /// A create and then a rename by `actor` on `ports` write their entries as the gate builds
 /// them: on the made commission, by `actor`, with an empty payload, no note and no title
 /// anywhere.
@@ -843,7 +917,7 @@ fn an_entry_built_off_the_grant_is_a_broken_rule() {
             &[ChangelogEntryKind::Created],
             EntryConstructor::Bare(constructor),
         );
-        let built = built_entry(
+        let built = built_entries(
             EntryRule::Always(gated),
             &written,
             None,
@@ -852,7 +926,7 @@ fn an_entry_built_off_the_grant_is_a_broken_rule() {
         );
         assert!(built.is_err(), "{built:?}");
     }
-    let built = built_entry(
+    let built = built_entries(
         EntryRule::<()>::Always(GatedEntry::CREATED),
         &written,
         None,
@@ -860,7 +934,154 @@ fn an_entry_built_off_the_grant_is_a_broken_rule() {
         now,
     )
     .expect("the domain's constructor builds as granted");
-    assert!(built.is_some());
+    assert_eq!(built.len(), 1);
+}
+
+/// What a create chose: an adult, Graphic rating and no deadline.
+fn rated_choice() -> NewCommission {
+    NewCommission {
+        maturity: Some(adult_graphic()),
+        deadline: None,
+    }
+}
+
+/// A rating entry built on another commission than it was given.
+fn rated_on_another_commission(
+    _: CommissionId,
+    actor: UserId,
+    chosen: &NewCommission,
+    at: DateTimeUtc,
+) -> Option<NewChangelogEntry> {
+    NewChangelogEntry::rated_at_create(old_sketch(), actor, chosen, at)
+}
+
+/// A rating entry built by another actor than it was given.
+fn rated_by_another_actor(
+    commission: CommissionId,
+    _: UserId,
+    chosen: &NewCommission,
+    at: DateTimeUtc,
+) -> Option<NewChangelogEntry> {
+    NewChangelogEntry::rated_at_create(commission, bob(), chosen, at)
+}
+
+/// A rating entry built at another time than it was given.
+fn rated_at_another_time(
+    commission: CommissionId,
+    actor: UserId,
+    chosen: &NewCommission,
+    at: DateTimeUtc,
+) -> Option<NewChangelogEntry> {
+    let earlier = at - chrono::TimeDelta::seconds(1);
+    NewChangelogEntry::rated_at_create(commission, actor, chosen, earlier)
+}
+
+/// A second entry of kind `Created`, whatever its gated entry names.
+fn rated_as_created(
+    commission: CommissionId,
+    actor: UserId,
+    _: &NewCommission,
+    at: DateTimeUtc,
+) -> Option<NewChangelogEntry> {
+    Some(NewChangelogEntry::created(commission, actor, at))
+}
+
+/// A second entry of kind `Archived` carrying a note.
+fn rated_with_a_note(
+    commission: CommissionId,
+    actor: UserId,
+    _: &NewCommission,
+    at: DateTimeUtc,
+) -> Option<NewChangelogEntry> {
+    let open = NewChangelogEntry::event(commission, OpenKind::Archived, actor, json!({}), at);
+    let noted = open.with_note("free text the act chose".to_owned());
+    Some(NewChangelogEntry::from(noted))
+}
+
+/// An optional constructor that never finds anything to record.
+fn records_nothing(
+    _: CommissionId,
+    _: UserId,
+    _: &NewCommission,
+    _: DateTimeUtc,
+) -> Option<NewChangelogEntry> {
+    None
+}
+
+// The create's rule builds `created`, then its rating's entry from the rating it chose, and only
+// `created` when it chose none; a second entry built off the grant's commission, actor or time,
+// of a kind its gated entry doesn't name, or carrying a note is a broken rule like a misbuilt
+// first one; a first entry that builds nothing, or a second whose change was never recorded, is
+// one too.
+#[test]
+fn a_misbuilt_second_entry_is_a_broken_rule() {
+    let now = Utc::now();
+    let written = changed_untitled();
+    let rated = rated_choice();
+    let unrated = NewCommission {
+        maturity: None,
+        deadline: None,
+    };
+    let create_rule = || EntryRule::AlwaysThen(GatedEntry::CREATED, GatedEntry::RATED_AT_CREATE);
+
+    let both = built_entries(create_rule(), &written, Some(&rated), Some(&alice()), now)
+        .expect("the create's entries build as granted");
+    let alone = built_entries(create_rule(), &written, Some(&unrated), Some(&alice()), now)
+        .expect("an unrated create's entry builds as granted");
+    let unrecorded = built_entries(create_rule(), &written, None, Some(&alice()), now);
+
+    let kinds: Vec<ChangelogEntryKind> = both.iter().map(NewChangelogEntry::kind).collect();
+    let created_then_rated = [
+        ChangelogEntryKind::Created,
+        ChangelogEntryKind::MaturityRated,
+    ];
+    assert_eq!(kinds, created_then_rated);
+    let alone: Vec<ChangelogEntryKind> = alone.iter().map(NewChangelogEntry::kind).collect();
+    assert_eq!(alone, [ChangelogEntryKind::Created]);
+    assert!(unrecorded.is_err(), "{unrecorded:?}");
+    let rating_kind: &'static [ChangelogEntryKind] = &[ChangelogEntryKind::MaturityRated];
+    let misbuilt: [(
+        &'static [ChangelogEntryKind],
+        EntryConstructor<NewCommission>,
+    ); 5] = [
+        (
+            rating_kind,
+            EntryConstructor::Optional(rated_on_another_commission),
+        ),
+        (
+            rating_kind,
+            EntryConstructor::Optional(rated_by_another_actor),
+        ),
+        (
+            rating_kind,
+            EntryConstructor::Optional(rated_at_another_time),
+        ),
+        (rating_kind, EntryConstructor::Optional(rated_as_created)),
+        (
+            &[ChangelogEntryKind::Archived],
+            EntryConstructor::Optional(rated_with_a_note),
+        ),
+    ];
+    for (kinds, constructor) in misbuilt {
+        let second = GatedEntry::for_test(kinds, constructor);
+        let rule = EntryRule::AlwaysThen(GatedEntry::CREATED, second);
+
+        let built = built_entries(rule, &written, Some(&rated), Some(&alice()), now);
+
+        assert!(built.is_err(), "{kinds:?}: {built:?}");
+    }
+    let empty_first = GatedEntry::for_test(
+        &[ChangelogEntryKind::MaturityRated],
+        EntryConstructor::Optional(records_nothing),
+    );
+    let nothing_first = built_entries(
+        EntryRule::Always(empty_first),
+        &written,
+        Some(&rated),
+        Some(&alice()),
+        now,
+    );
+    assert!(nothing_first.is_err(), "{nothing_first:?}");
 }
 
 /// A constructor that builds an archive's entry carrying a title and a note, whatever kind its
@@ -879,7 +1100,7 @@ fn an_entry_of_another_kind_than_its_gated_entry_s_is_a_broken_rule() {
         EntryConstructor::Bare(leaky),
     );
 
-    let built = built_entry(
+    let built = built_entries(
         EntryRule::OnChange(gated),
         &changed_untitled(),
         None,
@@ -898,7 +1119,7 @@ fn an_entry_carrying_a_note_is_a_broken_rule() {
         EntryConstructor::Bare(leaky),
     );
 
-    let built = built_entry(
+    let built = built_entries(
         EntryRule::OnChange(gated),
         &changed_untitled(),
         None,
@@ -918,14 +1139,14 @@ fn a_change_constructor_with_no_recorded_change_builds_no_entry() {
         ..changed_untitled()
     };
 
-    let always = built_entry(
+    let always = built_entries(
         EntryRule::Always(GatedEntry::LIFECYCLE_MOVED),
         &unchanged,
         None,
         Some(&alice()),
         Utc::now(),
     );
-    let on_change = built_entry(
+    let on_change = built_entries(
         EntryRule::OnChange(GatedEntry::LIFECYCLE_MOVED),
         &unchanged,
         None,
@@ -935,7 +1156,7 @@ fn a_change_constructor_with_no_recorded_change_builds_no_entry() {
     .expect("nothing changed, so nothing is built");
 
     assert!(always.is_err(), "{always:?}");
-    assert!(on_change.is_none(), "{on_change:?}");
+    assert!(on_change.is_empty(), "{on_change:?}");
 }
 
 /// The leaky constructor under kind `Renamed`, appended through the gate's own append on a unit
@@ -953,7 +1174,7 @@ async fn another_kind_appends_nothing(ports: &Ports, actor: &UserId, commission:
     };
     let mut unit = ports.database.begin().await.expect("begin");
 
-    let appended = append_entry(
+    let appended = append_entries(
         &mut *unit,
         EntryRule::OnChange(gated),
         &written,
@@ -1088,30 +1309,32 @@ fn the_system_s_entry_carries_no_actor_and_a_user_s_is_refused() {
         EntryConstructor::System(by_someone),
     );
 
-    let late = built_entry(
+    let late = built_entries(
         EntryRule::Always(GatedEntry::LATE),
         &written,
         Some(&mark),
         None,
         now,
     )
-    .expect("the system's entry builds as granted")
-    .expect("one entry");
-    let with_an_actor = built_entry(
+    .expect("the system's entry builds as granted");
+    let [late] = late.as_slice() else {
+        panic!("one entry: {late:?}");
+    };
+    let with_an_actor = built_entries(
         EntryRule::Always(by_a_user),
         &written,
         Some(&mark),
         None,
         now,
     );
-    let under_a_user = built_entry(
+    let under_a_user = built_entries(
         EntryRule::Always(GatedEntry::LATE),
         &written,
         Some(&mark),
         Some(&alice()),
         now,
     );
-    let unrecorded = built_entry(
+    let unrecorded = built_entries(
         EntryRule::Always(GatedEntry::LATE),
         &written,
         None,

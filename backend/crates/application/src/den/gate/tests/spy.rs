@@ -10,12 +10,11 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
         AsOwner, AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile,
-        CommissionId, CommissionMarkup, DeadlineChange, DelayedChange, DirectionChange, ElementId,
-        GrantLevel, LateKinds, LifecycleMove, LockedNode, LockedStanding, NewChangelogEntry,
-        NewCommission, NewElement, NewSeat, NewSlot, SeatInvitation, SeatInvitationId, SlotBirth,
-        TabId, TabRow,
+        CommissionId, CommissionMarkup, DeadlineChange, DelayedChange, DirectionChange, Dispute,
+        DisputeClear, ElementId, GrantLevel, LateKinds, LifecycleMove, LockedNode, LockedStanding,
+        MaturitySet, NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot,
+        SeatInvitation, SeatInvitationId, SlotBirth, TabId, TabRow,
     },
-    maturity::Maturity,
     node::{NewNode, NodeId, NodeRow, NodeSegment, NodeType},
     text::StoredText,
     user::UserId,
@@ -360,6 +359,24 @@ impl CommissionWrites for SpyRepo<'_> {
         Ok(landed || self.spy.lifecycle_lands)
     }
 
+    async fn set_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        dispute: &Dispute,
+    ) -> anyhow::Result<bool> {
+        self.spy.record("set_dispute");
+        self.inner.set_dispute(capability, dispute).await
+    }
+
+    async fn clear_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        clear: &DisputeClear,
+    ) -> anyhow::Result<bool> {
+        self.spy.record("clear_dispute");
+        self.inner.clear_dispute(capability, clear).await
+    }
+
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
         self.inner.declare_seat(seat).await
     }
@@ -422,8 +439,12 @@ impl CommissionWrites for SpyRepo<'_> {
         self.inner.set_archived(id, archived_at).await
     }
 
-    async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
-        self.inner.set_maturity(id, maturity).await
+    async fn set_maturity(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        change: &MaturitySet,
+    ) -> anyhow::Result<bool> {
+        self.inner.set_maturity(capability, change).await
     }
 
     async fn set_linked_channel(

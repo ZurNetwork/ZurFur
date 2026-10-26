@@ -1,11 +1,15 @@
 use super::*;
 use crate::elements::commission::{
     CommissionState, DeadlineStatus, DirectionStatus, ElementId, LateFacts, LifecycleStep, NewSlot,
-    SurfaceAddress, TabId, clear_deadline, clear_delayed, clear_direction, move_lifecycle,
-    owes_late, schedule_deadline, set_delayed, set_direction, test_commission,
+    SurfaceAddress, TabId, clear_deadline, clear_delayed, clear_direction, clear_dispute,
+    move_lifecycle, owes_late, raise_dispute, rate_maturity, schedule_deadline, set_delayed,
+    set_direction, test_commission,
 };
 use identity::elements::user::UserId;
-use kernel::elements::did::Did;
+use kernel::elements::{
+    did::Did,
+    maturity::{Maturity, MaturityRating},
+};
 
 fn actor() -> UserId {
     UserId::from(Did::from("did:plc:actor".to_owned()))
@@ -79,6 +83,13 @@ fn gated_entries(commission: CommissionId) -> Vec<(NewChangelogEntry, &'static s
         .expect("a real move");
     let lifecycle_moved = NewChangelogEntry::lifecycle_moved(commission, actor(), &moved, at);
 
+    let from_draft = test_commission::at(LifecycleStep::Draft);
+    let dispute = raise_dispute(&CommissionState::from(&from_draft), at).expect("a raise passes");
+    let disputed = NewChangelogEntry::disputed(commission, actor(), &dispute, at);
+    let held = test_commission::disputed(LifecycleStep::Draft, at, None);
+    let clear = clear_dispute(&CommissionState::from(&held)).expect("a clear passes");
+    let dispute_cleared = NewChangelogEntry::dispute_cleared(commission, actor(), &clear, at);
+
     let first_direction =
         set_direction(&active(None, None, None), DirectionStatus::WaitingForInput)
             .expect("a real set");
@@ -135,6 +146,19 @@ fn gated_entries(commission: CommissionId) -> Vec<(NewChangelogEntry, &'static s
     let mark = owes_late(&late_facts, may()).expect("a late entry is owed");
     let late = NewChangelogEntry::late(commission, &mark, may());
 
+    let nudity = Maturity {
+        rating: MaturityRating::Nudity,
+        graphic: true,
+    };
+    let first_rating = rate_maturity(&active(None, None, None), nudity).expect("a real rating");
+    let maturity_rated = NewChangelogEntry::maturity_rated(commission, actor(), &first_rating, at);
+    let chosen = NewCommission {
+        maturity: Some(nudity),
+        deadline: None,
+    };
+    let rated_at_create = NewChangelogEntry::rated_at_create(commission, actor(), &chosen, at)
+        .expect("a create given a rating records it");
+
     let slot_declared =
         NewChangelogEntry::slot_declared(commission, actor(), &declaration(Some("notes")), at);
 
@@ -145,6 +169,16 @@ fn gated_entries(commission: CommissionId) -> Vec<(NewChangelogEntry, &'static s
             lifecycle_moved,
             "lifecycle_moved",
             json!({ "from": "active", "to": "completed" }),
+        ),
+        (
+            disputed,
+            "lifecycle_moved",
+            json!({ "from": "draft", "to": "disputed" }),
+        ),
+        (
+            dispute_cleared,
+            "lifecycle_moved",
+            json!({ "from": "disputed", "to": "draft" }),
         ),
         (
             direction_first,
@@ -197,6 +231,16 @@ fn gated_entries(commission: CommissionId) -> Vec<(NewChangelogEntry, &'static s
             json!({ "deadline": "2026-03-01T12:00:00Z", "from": "delayed" }),
         ),
         (
+            maturity_rated,
+            "maturity_rated",
+            json!({ "rating": "nudity", "graphic": true }),
+        ),
+        (
+            rated_at_create,
+            "maturity_rated",
+            json!({ "rating": "nudity", "graphic": true }),
+        ),
+        (
             slot_declared,
             "slot_declared",
             json!({ "slot": DECLARED_ELEMENT }),
@@ -210,7 +254,12 @@ fn each_legacy_kind_s_typed_payload_is_its_stored_shape() {
     let commission = CommissionId::mint();
     let legacy = gated_entries(commission)
         .into_iter()
-        .filter(|(_, token, _)| !matches!(*token, "lifecycle_moved" | "slot_declared"));
+        .filter(|(_, token, _)| {
+            !matches!(
+                *token,
+                "lifecycle_moved" | "maturity_rated" | "slot_declared"
+            )
+        });
 
     for (entry, token, stored_shape) in legacy {
         assert_eq!(<&'static str>::from(entry.kind()), token);
@@ -223,18 +272,58 @@ fn each_legacy_kind_s_typed_payload_is_its_stored_shape() {
     }
 }
 
-// A lifecycle move stores its two step tokens and nothing else.
+// A lifecycle move, a dispute raised and a dispute cleared each store their two step tokens and
+// nothing else, as literal JSON; a rating stores its rating token and its Graphic flag and
+// nothing else, with no note, the held rating not among them.
 #[test]
 fn each_new_kind_s_stored_shape_is_its_literal_json() {
     let moved = move_lifecycle(&active(None, None, None), LifecycleStep::Batched)
         .expect("active → batched passes")
         .expect("a real move");
     let entry = NewChangelogEntry::lifecycle_moved(CommissionId::mint(), actor(), &moved, may());
+    let dispute = raise_dispute(&active(None, None, None), may()).expect("a raise passes");
+    let raised = NewChangelogEntry::disputed(CommissionId::mint(), actor(), &dispute, may());
+    let held = test_commission::disputed(LifecycleStep::Batched, may(), None);
+    let clear = clear_dispute(&CommissionState::from(&held)).expect("a clear passes");
+    let cleared = NewChangelogEntry::dispute_cleared(CommissionId::mint(), actor(), &clear, may());
 
     let lifecycle_moved = json!({ "from": "active", "to": "batched" });
     assert_eq!(entry.kind(), ChangelogEntryKind::LifecycleMoved);
     assert_eq!(entry.payload(), &lifecycle_moved);
     assert_eq!(entry.actor_id(), Some(&actor()));
+    let stored = [
+        (raised, r#"{"from":"active","to":"disputed"}"#),
+        (cleared, r#"{"from":"disputed","to":"batched"}"#),
+    ];
+    for (entry, literal) in stored {
+        assert_eq!(entry.kind(), ChangelogEntryKind::LifecycleMoved);
+        assert_eq!(entry.payload().to_string(), literal);
+        assert_eq!(entry.note_text(), None);
+        assert_eq!(entry.actor_id(), Some(&actor()));
+    }
+
+    let safe = Maturity {
+        rating: MaturityRating::Safe,
+        graphic: false,
+    };
+    let adult = Maturity {
+        rating: MaturityRating::Adult,
+        graphic: true,
+    };
+    let mut rated_safe = test_commission::at(LifecycleStep::Active);
+    rated_safe.maturity = Some(safe);
+    let re_rated =
+        rate_maturity(&CommissionState::from(&rated_safe), adult).expect("a real rating");
+    let rating = NewChangelogEntry::maturity_rated(CommissionId::mint(), actor(), &re_rated, may());
+
+    // serde_json writes an object's keys in order, so the literal reads `graphic` first.
+    assert_eq!(rating.kind(), ChangelogEntryKind::MaturityRated);
+    assert_eq!(
+        rating.payload().to_string(),
+        r#"{"graphic":true,"rating":"adult"}"#
+    );
+    assert_eq!(rating.note_text(), None);
+    assert_eq!(rating.actor_id(), Some(&actor()));
 }
 
 // A declared Slot's entry stores its element id and nothing else: no title, no notes.
@@ -327,4 +416,43 @@ fn a_rename_entry_carries_no_title_and_no_note() {
         "the payload names no title"
     );
     assert_eq!(renamed.note_text(), None, "a rename carries no note");
+}
+
+// A create given a rating records it as a later rating would: kind `maturity_rated`, its rating
+// token and Graphic flag as literal JSON, by its creator, at its time, with no note; a create
+// given no rating records none.
+#[test]
+fn a_create_s_rating_is_recorded_in_the_rating_s_literal_shape() {
+    let commission = CommissionId::mint();
+    let adult = Maturity {
+        rating: MaturityRating::Adult,
+        graphic: true,
+    };
+    let rated = NewCommission {
+        maturity: Some(adult),
+        deadline: Some(april().into()),
+    };
+    let unrated = NewCommission {
+        maturity: None,
+        deadline: Some(april().into()),
+    };
+
+    let entry = NewChangelogEntry::rated_at_create(commission, actor(), &rated, may())
+        .expect("a rating was given");
+    let none = NewChangelogEntry::rated_at_create(commission, actor(), &unrated, may());
+
+    let later = rate_maturity(&active(None, None, None), adult).expect("a real rating");
+    let later_rating = NewChangelogEntry::maturity_rated(commission, actor(), &later, may());
+    // serde_json writes an object's keys in order, so the literal reads `graphic` first.
+    assert_eq!(entry.kind(), ChangelogEntryKind::MaturityRated);
+    assert_eq!(
+        entry.payload().to_string(),
+        r#"{"graphic":true,"rating":"adult"}"#
+    );
+    assert_eq!(entry.payload(), later_rating.payload());
+    assert_eq!(entry.commission_id(), commission);
+    assert_eq!(entry.actor_id(), Some(&actor()));
+    assert_eq!(entry.created_at(), may());
+    assert_eq!(entry.note_text(), None);
+    assert!(none.is_none(), "{none:?}");
 }

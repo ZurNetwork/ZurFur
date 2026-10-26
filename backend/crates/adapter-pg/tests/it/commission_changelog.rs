@@ -16,9 +16,10 @@ use domain::{
             ChangelogEntryKind, ChannelPointer, Commission, CommissionId, CommissionState,
             DeadlineStatus, DirectionChange, DirectionStatus, LateFacts, LifecycleStep,
             NewChangelogEntry, clear_deadline, clear_delayed, clear_direction, move_lifecycle,
-            owes_late, schedule_deadline, set_delayed, set_direction,
+            owes_late, rate_maturity, schedule_deadline, set_delayed, set_direction,
         },
         did::Did,
+        maturity::{Maturity, MaturityRating},
         user::User,
     },
     ports::{ChangelogStore, CommissionStore, Database},
@@ -212,13 +213,20 @@ fn typed_entries(commission: &mut Commission) -> Vec<(NewChangelogEntry, serde_j
     let lowered = clear_delayed(&flagged, before_march)
         .expect("passes")
         .expect("a real clear");
-    let delayed_cleared = NewChangelogEntry::delayed_cleared(id, owner, &lowered, at);
+    let delayed_cleared = NewChangelogEntry::delayed_cleared(id, owner.clone(), &lowered, at);
     let late_facts = LateFacts {
         state: flagged,
         owed: true,
     };
     let mark = owes_late(&late_facts, at).expect("a late entry is owed");
     let late = NewChangelogEntry::late(id, &mark, at);
+    let suggestive = Maturity {
+        rating: MaturityRating::Suggestive,
+        graphic: true,
+    };
+    let unrated = CommissionState::from(&*commission);
+    let rating = rate_maturity(&unrated, suggestive).expect("a real rating");
+    let maturity_rated = NewChangelogEntry::maturity_rated(id, owner, &rating, at);
 
     vec![
         (
@@ -257,11 +265,15 @@ fn typed_entries(commission: &mut Commission) -> Vec<(NewChangelogEntry, serde_j
             late,
             json!({ "deadline": "2026-03-01T12:00:00Z", "from": "delayed" }),
         ),
+        (
+            maturity_rated,
+            json!({ "rating": "suggestive", "graphic": true }),
+        ),
     ]
 }
 
-// Each typed entry, the new `lifecycle_moved` among them, reads back with its kind and the
-// literal JSON its constructor wrote, and no note.
+// Each typed entry, the new `lifecycle_moved` and `maturity_rated` among them, reads back with
+// its kind and the literal JSON its constructor wrote, and no note.
 #[tokio::test]
 async fn each_new_kind_s_stored_shape_is_its_literal_json() {
     let (pool, _container) = fresh_pool().await;

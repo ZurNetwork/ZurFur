@@ -1,9 +1,6 @@
 use adapter_mem::fixture::{bob, untitled};
 use chrono::Utc;
-use domain::{
-    datetime::DateTimeUtc,
-    elements::commission::{ChangelogEntryKind, LifecycleStep},
-};
+use domain::{datetime::DateTimeUtc, elements::commission::ChangelogEntryKind};
 
 use crate::{
     commission::CommissionError,
@@ -59,9 +56,15 @@ async fn a_disputed_commission_s_deadline_clear_is_refused() {
     field_call(&world.ports, &bob(), untitled(), dated, Utc::now())
         .await
         .expect("bob sets the deadline");
-    world
-        .backend
-        .seed_lifecycle_step(untitled(), LifecycleStep::Disputed);
+    field_call(
+        &world.ports,
+        &bob(),
+        untitled(),
+        FieldCall::RaiseDispute,
+        Utc::now(),
+    )
+    .await
+    .expect("bob raises a dispute");
     let before = entries_of(&world.ports, untitled()).await.len();
 
     let refused = field_call(

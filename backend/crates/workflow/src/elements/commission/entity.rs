@@ -1,5 +1,6 @@
 use super::{
-    ChannelPointer, CommissionId, DeadlineStatus, DirectionStatus, LifecycleStep, deadline,
+    ChannelPointer, CommissionId, DeadlineStatus, DirectionStatus, LifecycleStep, StoredDispute,
+    deadline,
 };
 use identity::elements::user::UserId;
 use kernel::datetime::DateTimeUtc;
@@ -19,6 +20,9 @@ pub struct Commission {
     /// The single lifecycle state the commission is in; a fresh one is at
     /// [`CommissionStart`](super::CommissionStart)'s.
     pub lifecycle_step: LifecycleStep,
+    /// While Disputed, the step it left and when the dispute began; `None` on every other
+    /// step.
+    pub dispute: Option<StoredDispute>,
     /// The deadline, or `None` when the commission carries none.
     pub deadline: Option<DateTimeUtc>,
     /// The commission's maturity posture, or `None` while unrated; a create may
@@ -55,9 +59,16 @@ impl Commission {
     }
 
     /// The deadline-axis status at `now`: Late once the deadline is past on a step that isn't
-    /// terminal, else the stored flag; nothing with no deadline.
+    /// terminal, read at the dispute's start while Disputed; else the stored flag; nothing with
+    /// no deadline.
     pub fn deadline_status_at(&self, now: DateTimeUtc) -> Option<DeadlineStatus> {
-        deadline::status_at(self.deadline, &self.lifecycle_step, self.delayed_flag, now)
+        deadline::status_at(
+            self.deadline,
+            &self.lifecycle_step,
+            self.dispute.as_ref(),
+            self.delayed_flag,
+            now,
+        )
     }
 }
 

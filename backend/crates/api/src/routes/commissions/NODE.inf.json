@@ -46,7 +46,12 @@
     },
     {
       "name": "delete.rs",
-      "role": "DELETE — fact-free hard delete → commission::delete",
+      "role": "DELETE → commission::delete: in Draft and fact-free 204; past Draft or fact-bearing → 409 commission_has_facts",
+      "node": false
+    },
+    {
+      "name": "dispute.rs",
+      "role": "PUT /{id}/dispute → commission::dispute::raise and DELETE /{id}/dispute → commission::dispute::clear, each answering 204 and taking no body (a raise's body is ignored); 409 commission_disputed for a second raise and commission_not_disputed for a clear when not Disputed",
       "node": false
     },
     {
@@ -81,12 +86,12 @@
     },
     {
       "name": "maturity.rs",
-      "role": "PUT /{id}/maturity (replace-only) → commission::maturity::set",
+      "role": "PUT /{id}/maturity (replace-only; the body is the generated SetCommissionMaturityRequest, an unknown field a 422 invalid_request) → commission::maturity::set, through the Den's write: 204, Owner-only (a Participant 403, a stranger the made-up id's 404), a rating outside the vocabulary a 422 unknown_maturity_rating with a field error at #/rating before any standing, from the field registry, echoing nothing",
       "node": false
     },
     {
       "name": "mod.rs",
-      "role": "router assembly, body limits, the CommissionError→Problem mapping (create, rename, the read and the lifecycle move map through it too), title_refused (a title the name rule refuses at parse, as a field error at #/title), and require_owner — the last driver-side gate, kept only for the unmigrated channel/elements acts",
+      "role": "router assembly, body limits, the CommissionError→Problem mapping (create, rename, the read, the lifecycle move and the dispute's raise and clear map through it too; CommissionNotDisputed → 409 commission_not_disputed), title_refused (a title the name rule refuses at parse, as a field error at #/title), and require_owner — the last driver-side gate, kept only for the unmigrated channel/elements acts",
       "node": false
     },
     {

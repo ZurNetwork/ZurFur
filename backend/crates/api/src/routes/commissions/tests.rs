@@ -28,6 +28,7 @@ fn each_rule_refusal_answers_its_own_409() {
     let answered: Vec<(&'static str, i32, String)> = [
         CommissionRefusal::LifecycleMoveRefused,
         CommissionRefusal::CommissionDisputed,
+        CommissionRefusal::CommissionNotDisputed,
         CommissionRefusal::NoDeadline,
         CommissionRefusal::CommissionLate,
         CommissionRefusal::NothingOwed,
@@ -47,6 +48,11 @@ fn each_rule_refusal_answers_its_own_409() {
             "lifecycle_move_refused".to_owned(),
         ),
         ("commission_disputed", 409, "commission_disputed".to_owned()),
+        (
+            "commission_not_disputed",
+            409,
+            "commission_not_disputed".to_owned(),
+        ),
         ("no_deadline", 409, "no_deadline".to_owned()),
         ("commission_late", 409, "commission_late".to_owned()),
         ("nothing_owed", 500, "internal_error".to_owned()),

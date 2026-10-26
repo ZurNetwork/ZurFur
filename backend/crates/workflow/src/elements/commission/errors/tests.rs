@@ -15,6 +15,7 @@ fn refusal_tokens_are_pinned_literally() {
         [
             "lifecycle_move_refused",
             "commission_disputed",
+            "commission_not_disputed",
             "no_deadline",
             "commission_late",
             "nothing_owed"

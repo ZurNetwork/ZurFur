@@ -18,11 +18,13 @@ pub mod slot;
 mod commission_role;
 mod deadline;
 mod direction;
+mod dispute;
 mod entity;
 mod errors;
 mod grant_level;
 mod id;
 mod lifecycle;
+mod rating;
 mod role_marker;
 mod rows;
 mod standing;
@@ -46,6 +48,7 @@ pub use direction::{
     DirectionChange, DirectionCleared, DirectionSet, DirectionStatus, clear_direction,
     set_direction,
 };
+pub use dispute::{Dispute, DisputeClear, StoredDispute, clear_dispute, raise_dispute};
 pub use element::{
     Band, CommissionComposition, CompositionLabel, CompositionLabelError, DeclaredTab, ElementId,
     ElementPayload, ElementRow, ElementType, LABEL_MAX_CHARS, NewElement, SKELETON, SeatId,
@@ -64,6 +67,7 @@ pub use grant_level::GrantLevel;
 pub use id::CommissionId;
 pub use lifecycle::{LifecycleMove, LifecycleStep, move_lifecycle};
 pub use markup::{CommissionMarkup, Markup, MarkupError, MarkupKey, MarkupShape};
+pub use rating::{MaturitySet, rate_maturity};
 pub use role_marker::{AsOwner, AsParticipant, AsSystem};
 pub use rows::{CommissionBirth, CommissionSummary, NewCommission};
 pub use seat::{

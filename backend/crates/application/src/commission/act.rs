@@ -4,7 +4,8 @@ use std::fmt;
 
 use crate::{
     commission::{
-        create, deadline, lifecycle::move_to, rename, slots::declare, status::direction, sweep,
+        create, deadline, dispute, lifecycle::move_to, maturity, rename, slots::declare,
+        status::direction, sweep,
     },
     den::act::ActSpec,
 };
@@ -24,6 +25,10 @@ pub(crate) enum CommissionAct {
     Rename(rename::Act),
     /// Moves a commission's lifecycle step.
     MoveLifecycle(move_to::Act),
+    /// Raises a dispute on a commission.
+    RaiseDispute(dispute::raise::Act),
+    /// Clears a commission's dispute.
+    ClearDispute(dispute::clear::Act),
     /// Sets a commission's direction status.
     SetDirection(direction::set::Act),
     /// Clears a commission's direction status.
@@ -36,6 +41,8 @@ pub(crate) enum CommissionAct {
     SetDelayed(deadline::status::set::Act),
     /// Takes a commission's Delayed flag down.
     ClearDelayed(deadline::status::clear::Act),
+    /// Rates a commission.
+    SetMaturity(maturity::set::Act),
     /// Declares one Slot on a commission.
     DeclareSlot(declare::Act),
     /// The system's Late mark on a commission whose deadline lapsed.
@@ -49,12 +56,15 @@ impl CommissionAct {
             CommissionAct::Create(act) => act.spec(),
             CommissionAct::Rename(act) => act.spec(),
             CommissionAct::MoveLifecycle(act) => act.spec(),
+            CommissionAct::RaiseDispute(act) => act.spec(),
+            CommissionAct::ClearDispute(act) => act.spec(),
             CommissionAct::SetDirection(act) => act.spec(),
             CommissionAct::ClearDirection(act) => act.spec(),
             CommissionAct::SetDeadline(act) => act.spec(),
             CommissionAct::ClearDeadline(act) => act.spec(),
             CommissionAct::SetDelayed(act) => act.spec(),
             CommissionAct::ClearDelayed(act) => act.spec(),
+            CommissionAct::SetMaturity(act) => act.spec(),
             CommissionAct::DeclareSlot(act) => act.spec(),
             CommissionAct::MarkLate(act) => act.spec(),
         }
@@ -68,12 +78,15 @@ impl fmt::Debug for CommissionAct {
             CommissionAct::Create(_) => "Create",
             CommissionAct::Rename(_) => "Rename",
             CommissionAct::MoveLifecycle(_) => "MoveLifecycle",
+            CommissionAct::RaiseDispute(_) => "RaiseDispute",
+            CommissionAct::ClearDispute(_) => "ClearDispute",
             CommissionAct::SetDirection(_) => "SetDirection",
             CommissionAct::ClearDirection(_) => "ClearDirection",
             CommissionAct::SetDeadline(_) => "SetDeadline",
             CommissionAct::ClearDeadline(_) => "ClearDeadline",
             CommissionAct::SetDelayed(_) => "SetDelayed",
             CommissionAct::ClearDelayed(_) => "ClearDelayed",
+            CommissionAct::SetMaturity(_) => "SetMaturity",
             CommissionAct::DeclareSlot(_) => "DeclareSlot",
             CommissionAct::MarkLate(_) => "MarkLate",
         };

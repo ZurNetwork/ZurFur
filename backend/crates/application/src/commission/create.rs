@@ -79,7 +79,8 @@ impl Handler for Act {
 
     type Checked = NewCommission;
 
-    const ENTRY: EntryRule<NewCommission> = EntryRule::Always(GatedEntry::CREATED);
+    const ENTRY: EntryRule<NewCommission> =
+        EntryRule::AlwaysThen(GatedEntry::CREATED, GatedEntry::RATED_AT_CREATE);
 
     /// What the create chose: nothing is made yet, so no rule refuses it.
     fn precondition(
@@ -100,7 +101,8 @@ impl Handler for Act {
 
 impl Commissions<'_> {
     /// Create a commission owned by the caller through the Den's write, which makes its node,
-    /// its entries and its `created` entry in one unit; answer it as the write left it.
+    /// its entries and its `created` changelog entry in one unit, followed by a
+    /// `maturity_rated` entry when the create carries a rating; answer it as the write left it.
     #[use_case]
     pub async fn create(
         &self,

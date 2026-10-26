@@ -493,6 +493,7 @@ async fn a_created_commission_is_stored_in_the_domain_s_starting_state() {
         .expect("the commission is stored");
     let stored_start = CommissionStart {
         lifecycle_step: found.lifecycle_step.clone(),
+        dispute: found.dispute.clone(),
         direction_status: found.direction_status,
         delayed_flag: found.delayed_flag,
         linked_channel: found.linked_channel.clone(),

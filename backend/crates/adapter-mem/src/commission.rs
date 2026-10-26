@@ -14,12 +14,12 @@ use domain::elements::{
         Commission, CommissionBirth, CommissionComposition, CommissionDeadline, CommissionFile,
         CommissionId, CommissionMarkup, CommissionRole, CommissionStanding, CommissionStart,
         CommissionSummary, CommissionTitle, DeadlineChange, DeadlineStatus, DelayedChange,
-        DirectionChange, DirectionStatus, ElementId, ElementPayload, ElementRow, ElementType,
-        FileKey, FileSummary, GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode,
-        LockedStanding, NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot, Seat,
-        SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SlotBirth,
-        SlotTitle, SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode,
-        declared_tabs, declares_surface,
+        DirectionChange, DirectionStatus, Dispute, DisputeClear, ElementId, ElementPayload,
+        ElementRow, ElementType, FileKey, FileSummary, GrantLevel, LateKinds, LifecycleMove,
+        LifecycleStep, LockedNode, LockedStanding, MaturitySet, NewChangelogEntry, NewCommission,
+        NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink,
+        SeatPrompt, Slot, SlotBirth, SlotTitle, StoredDispute, SurfaceAddress, SurfaceName, TabId,
+        TabName, TabRow, VisibilityMode, declared_tabs, declares_surface,
     },
     did::Did,
     invitation::InvitationState,
@@ -172,6 +172,7 @@ pub(crate) fn insert_commission(
         // No `..`: a field the start gains fails to compile here until it is stored.
         let CommissionStart {
             lifecycle_step,
+            dispute,
             direction_status,
             delayed_flag,
             linked_channel,
@@ -181,6 +182,7 @@ pub(crate) fn insert_commission(
             node_id: node.id,
             owner_id: birth.owner_id.clone(),
             lifecycle_step,
+            dispute,
             deadline: commission.deadline.map(DateTimeUtc::from),
             maturity: commission.maturity,
             direction_status,
@@ -227,6 +229,10 @@ pub(crate) struct StoredCommission {
     owner_id: UserId,
     /// Its single [`LifecycleStep`]; a freshly created commission is at [`CommissionStart`]'s.
     lifecycle_step: LifecycleStep,
+    /// While Disputed, the step it left and when the dispute began; one field, so pg's
+    /// "the dispute's time is set with its step" holds by construction, and the rest of pg's
+    /// dispute CHECK runs at commit.
+    dispute: Option<StoredDispute>,
     /// The nullable-but-fixed deadline envelope field.
     deadline: Option<domain::datetime::DateTimeUtc>,
     /// The maturity posture, or `None` while unrated; one field, so pg's
@@ -263,6 +269,7 @@ impl StoredCommission {
             id,
             owner_id: self.owner_id.clone(),
             lifecycle_step: self.lifecycle_step.clone(),
+            dispute: self.dispute.clone(),
             deadline: self.deadline,
             maturity: self.maturity,
             direction_status: self.direction_status,
@@ -546,6 +553,68 @@ impl CommissionWrites for MemCommissionWrites<'_> {
             return Ok(false);
         }
         stored.lifecycle_step = change.after().clone();
+        Ok(true)
+    }
+
+    /// Put the capability's commission into Disputed from `dispute`'s held step, storing that
+    /// step and when it began, only while it still holds the held step: the mem mirror of the
+    /// pg compare-and-set. An absent commission, or one at another step, changes nothing and
+    /// answers `false`.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn set_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        dispute: &Dispute,
+    ) -> anyhow::Result<bool> {
+        let id = *capability.thing();
+        let mut commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        let Some(stored) = commissions.get_mut(&id) else {
+            return Ok(false);
+        };
+        if stored.lifecycle_step != *dispute.before() {
+            return Ok(false);
+        }
+        stored.lifecycle_step = LifecycleStep::Disputed;
+        stored.dispute = Some(StoredDispute {
+            left: dispute.before().clone(),
+            began: dispute.began(),
+        });
+        Ok(true)
+    }
+
+    /// Return the capability's commission from Disputed to the step its stored dispute left,
+    /// only while it is Disputed from `clear`'s step, and forget the dispute: the mem mirror of
+    /// the pg compare-and-set. Otherwise, or with no such commission, it changes nothing and
+    /// answers `false`.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn clear_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        clear: &DisputeClear,
+    ) -> anyhow::Result<bool> {
+        let id = *capability.thing();
+        let mut commissions = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned");
+        let Some(stored) = commissions.get_mut(&id) else {
+            return Ok(false);
+        };
+        let held = stored
+            .dispute
+            .as_ref()
+            .filter(|_| stored.lifecycle_step == LifecycleStep::Disputed)
+            .map(|dispute| dispute.left.clone());
+        let Some(left) = held.filter(|left| left == clear.after()) else {
+            return Ok(false);
+        };
+        stored.lifecycle_step = left;
+        stored.dispute = None;
         Ok(true)
     }
 
@@ -835,22 +904,29 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         Ok(true)
     }
 
-    /// Write the maturity posture — the mem mirror of the pg
-    /// `UPDATE commission SET maturity, graphic`. Replace-only by
-    /// signature (no clear arm exists); an absent commission is a no-op, per
-    /// the port contract (existence is the caller's check).
+    /// Rates the commission by compare-and-set: only while the stored rating, Graphic flag
+    /// included, is `change`'s held one (none while unrated), the mem mirror of the pg write.
+    /// Otherwise, or with no such commission, it changes nothing and answers `false`.
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
-        let id = *id;
+    async fn set_maturity(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        change: &MaturitySet,
+    ) -> anyhow::Result<bool> {
+        let id = *capability.thing();
         let mut commissions = self
             .0
             .commissions
             .lock()
             .expect("MemBackend commissions mutex poisoned");
-        if let Some(stored) = commissions.get_mut(&id) {
-            stored.maturity = Some(maturity);
+        let Some(stored) = commissions.get_mut(&id) else {
+            return Ok(false);
+        };
+        if stored.maturity != change.before() {
+            return Ok(false);
         }
-        Ok(())
+        stored.maturity = Some(change.after());
+        Ok(true)
     }
     /// Declare a seat: behind the shared address gate, one `StoredElement`
     /// and one `StoredSeat` land under the same [`ElementId`], so both halves
@@ -1849,15 +1925,31 @@ fn seed_nodes(seed: &CommissionSeed) -> anyhow::Result<Vec<NewNode>> {
     Ok(nodes)
 }
 
+/// Whether `stored`'s dispute matches its step, as pg's dispute CHECK holds it: a dispute
+/// stands exactly while Disputed, and the step it left is one of the other five.
+fn dispute_matches_its_step(stored: &StoredCommission) -> bool {
+    let disputed = stored.lifecycle_step == LifecycleStep::Disputed;
+    let left_another_step = stored
+        .dispute
+        .as_ref()
+        .is_none_or(|dispute| dispute.left != LifecycleStep::Disputed);
+    disputed == stored.dispute.is_some() && left_another_step
+}
+
 /// The commission checks PostgreSQL runs at commit, over one unit's staged state.
 impl MemBackend {
-    /// Refuses a state where a commission's or a Slot's node isn't its own, or a commission
-    /// node has no commission, or a slot node no Slot.
+    /// Refuses a state where a commission's or a Slot's node isn't its own, a commission node has
+    /// no commission, a slot node no Slot, or a commission's dispute doesn't match its step.
     pub(crate) fn check_bindings(&self) -> anyhow::Result<()> {
         let commissions = self
             .commissions
             .lock()
             .expect("MemBackend commissions mutex poisoned");
+        let every_dispute_matches = commissions.values().all(dispute_matches_its_step);
+        anyhow::ensure!(
+            every_dispute_matches,
+            "a commission's dispute stands exactly while it is Disputed; nothing was kept"
+        );
         let nodes = self.nodes.lock().expect("MemBackend nodes mutex poisoned");
         let every_one_bound = commissions.iter().all(|(id, stored)| {
             nodes
@@ -2088,15 +2180,27 @@ impl MemBackend {
             .name = StoredText::from(title.to_owned());
     }
 
-    /// Overwrite a stored commission's lifecycle step (test-only seeder): a create is born
-    /// at [`CommissionStart`]'s, and no use case moves it yet. Panics if `commission` is not stored.
+    /// Overwrite a stored, undisputed commission's lifecycle step with another undisputed one
+    /// (test-only seeder), past the moves' rules. Panics if `commission` is not stored, is
+    /// Disputed, or `step` is Disputed: only the dispute's raise puts it there.
     pub fn seed_lifecycle_step(&self, commission: CommissionId, step: LifecycleStep) {
-        self.commissions
+        assert_ne!(
+            step,
+            LifecycleStep::Disputed,
+            "seed_lifecycle_step: only the dispute's raise puts a commission into Disputed"
+        );
+        let mut commissions = self
+            .commissions
             .lock()
-            .expect("MemBackend commissions mutex poisoned")
+            .expect("MemBackend commissions mutex poisoned");
+        let stored = commissions
             .get_mut(&commission)
-            .expect("seed_lifecycle_step: no such commission")
-            .lifecycle_step = step;
+            .expect("seed_lifecycle_step: no such commission");
+        assert!(
+            stored.dispute.is_none(),
+            "seed_lifecycle_step: only the dispute's clear takes a commission out of Disputed"
+        );
+        stored.lifecycle_step = step;
     }
 
     /// Store one changelog entry exactly as given, beneath every rule a

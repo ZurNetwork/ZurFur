@@ -10,6 +10,7 @@ fn stored_commission() -> Commission {
         id: CommissionId::mint(),
         owner_id: owner,
         lifecycle_step: LifecycleStep::Draft,
+        dispute: None,
         deadline: None,
         maturity: None,
         direction_status: None,

@@ -9,6 +9,7 @@ use super::*;
 use crate::{
     commission::{CommissionError, Commissions},
     common_error::{CommonError, NotFoundEntity},
+    den::test_acts::{FieldCall, field_call},
     test_world,
 };
 
@@ -110,9 +111,15 @@ async fn a_move_back_to_draft_is_refused() {
 #[tokio::test]
 async fn a_disputed_commission_s_move_is_refused() {
     let world = test_world::world().await;
-    world
-        .backend
-        .seed_lifecycle_step(untitled(), LifecycleStep::Disputed);
+    field_call(
+        &world.ports,
+        &bob(),
+        untitled(),
+        FieldCall::RaiseDispute,
+        Utc::now(),
+    )
+    .await
+    .expect("bob raises a dispute");
     let before = entries(&world.ports, untitled()).await.len();
 
     let refused = move_by(&world.ports, &bob(), untitled(), LifecycleStep::Active).await;

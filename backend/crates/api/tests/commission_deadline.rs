@@ -999,7 +999,12 @@ async fn a_disputed_commission_s_deadline_is_frozen() {
     )
     .await;
     for id in [undated, dated] {
-        backend.seed_lifecycle_step(CommissionId::from(id), LifecycleStep::Disputed);
+        let raised = client
+            .put(format!("{base}/commissions/{id}/dispute"))
+            .send()
+            .await
+            .expect("PUT dispute");
+        assert_eq!(raised.status(), 204, "the dispute is raised");
     }
     let undated_log = entries(&backend, undated).await.len();
     let dated_log = entries(&backend, dated).await.len();

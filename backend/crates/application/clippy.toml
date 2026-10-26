@@ -15,6 +15,8 @@ disallowed-methods = [
     { path = "domain::elements::commission::NewChangelogEntry::created", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
     { path = "domain::elements::commission::NewChangelogEntry::renamed", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
     { path = "domain::elements::commission::NewChangelogEntry::lifecycle_moved", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
+    { path = "domain::elements::commission::NewChangelogEntry::disputed", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
+    { path = "domain::elements::commission::NewChangelogEntry::dispute_cleared", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
     { path = "domain::elements::commission::NewChangelogEntry::slot_declared", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
     { path = "domain::elements::commission::NewChangelogEntry::direction_set", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
     { path = "domain::elements::commission::NewChangelogEntry::direction_cleared", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
@@ -22,5 +24,7 @@ disallowed-methods = [
     { path = "domain::elements::commission::NewChangelogEntry::deadline_cleared", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
     { path = "domain::elements::commission::NewChangelogEntry::delayed_set", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
     { path = "domain::elements::commission::NewChangelogEntry::delayed_cleared", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
+    { path = "domain::elements::commission::NewChangelogEntry::maturity_rated", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
+    { path = "domain::elements::commission::NewChangelogEntry::rated_at_create", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
     { path = "domain::elements::commission::NewChangelogEntry::late", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
 ]

@@ -37,12 +37,15 @@ use crate::commission::den::{CommissionPlace, Verdict, verdict};
 use crate::commission::sweep;
 use crate::{
     commission::{
-        act::CommissionAct, create, deadline, lifecycle::move_to, rename, slots::declare,
-        status::direction,
+        act::CommissionAct, create, deadline, dispute, lifecycle::move_to, maturity, rename,
+        slots::declare, status::direction,
     },
     den::{
         Place,
-        act::{ArmAnswer, DenAct, EntryRule, Handled, HandlerError, HandlerRefusal, Needs},
+        act::{
+            ArmAnswer, DenAct, EntryRule, GatedEntry, Handled, HandlerError, HandlerRefusal, Needs,
+            Planned,
+        },
         authority::{Grant, GrantKind},
         host::{host_error, type_kind},
         level::den_level,
@@ -350,8 +353,9 @@ pub(crate) trait Handler: Sized {
     /// The change its rule checks, which its view's one write writes.
     type Checked;
 
-    /// When the gate writes the act's one changelog entry, and the gated entry it builds: the
-    /// kinds it may build with its own domain constructor, over the checked change.
+    /// When the gate writes the act's changelog entry, and the gated entry it builds: the kinds
+    /// it may build with its own domain constructor, over the checked change. One entry for
+    /// every act but the create, which may write a second right after its first.
     const ENTRY: EntryRule<Self::Checked>;
 
     /// The act's domain rule on the facts its grant read at `now`: the change it checks,
@@ -428,12 +432,15 @@ pub(in crate::den) fn judge_act(
         CommissionAct::Create(_) | CommissionAct::MarkLate(_) => Judgement::Refused,
         CommissionAct::Rename(rename) => judge(rename, standing, state, now),
         CommissionAct::MoveLifecycle(move_to) => judge(move_to, standing, state, now),
+        CommissionAct::RaiseDispute(raise) => judge(raise, standing, state, now),
+        CommissionAct::ClearDispute(clear) => judge(clear, standing, state, now),
         CommissionAct::SetDirection(set) => judge(set, standing, state, now),
         CommissionAct::ClearDirection(clear) => judge(clear, standing, state, now),
         CommissionAct::SetDeadline(set) => judge(set, standing, state, now),
         CommissionAct::ClearDeadline(clear) => judge(clear, standing, state, now),
         CommissionAct::SetDelayed(set) => judge(set, standing, state, now),
         CommissionAct::ClearDelayed(clear) => judge(clear, standing, state, now),
+        CommissionAct::SetMaturity(set) => judge(set, standing, state, now),
         CommissionAct::DeclareSlot(declare) => judge(declare, standing, state, now),
     }
 }
@@ -723,6 +730,10 @@ enum Prepared {
     Rename(Passed<rename::Act>),
     /// A commission's lifecycle move.
     MoveLifecycle(Passed<move_to::Act>),
+    /// A commission's dispute raised.
+    RaiseDispute(Passed<dispute::raise::Act>),
+    /// A commission's dispute cleared.
+    ClearDispute(Passed<dispute::clear::Act>),
     /// A commission's direction status set.
     SetDirection(Passed<direction::set::Act>),
     /// A commission's direction status clear.
@@ -735,6 +746,8 @@ enum Prepared {
     SetDelayed(Passed<deadline::status::set::Act>),
     /// A commission's Delayed flag taken down.
     ClearDelayed(Passed<deadline::status::clear::Act>),
+    /// A commission's rating.
+    SetMaturity(Passed<maturity::set::Act>),
     /// A Slot declared on a commission.
     DeclareSlot(Passed<declare::Act>),
     /// The system's Late mark on a commission.
@@ -768,6 +781,12 @@ fn prepare(act: DenAct, grant: &Grant, now: DateTimeUtc) -> Result<Prepared, Den
         DenAct::Commission(CommissionAct::MoveLifecycle(move_to)) => {
             passed(move_to, grant, now).map(Prepared::MoveLifecycle)
         }
+        DenAct::Commission(CommissionAct::RaiseDispute(raise)) => {
+            passed(raise, grant, now).map(Prepared::RaiseDispute)
+        }
+        DenAct::Commission(CommissionAct::ClearDispute(clear)) => {
+            passed(clear, grant, now).map(Prepared::ClearDispute)
+        }
         DenAct::Commission(CommissionAct::SetDirection(set)) => {
             passed(set, grant, now).map(Prepared::SetDirection)
         }
@@ -785,6 +804,9 @@ fn prepare(act: DenAct, grant: &Grant, now: DateTimeUtc) -> Result<Prepared, Den
         }
         DenAct::Commission(CommissionAct::ClearDelayed(clear)) => {
             passed(clear, grant, now).map(Prepared::ClearDelayed)
+        }
+        DenAct::Commission(CommissionAct::SetMaturity(set)) => {
+            passed(set, grant, now).map(Prepared::SetMaturity)
         }
         DenAct::Commission(CommissionAct::DeclareSlot(declare)) => {
             passed(declare, grant, now).map(Prepared::DeclareSlot)
@@ -893,6 +915,48 @@ impl View<'_, move_to::Act> {
         let landed = self.repo.set_lifecycle(&self.capability, change).await?;
         if !landed {
             return Err(facts_lied("the lifecycle move matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
+impl View<'_, dispute::raise::Act> {
+    /// Puts the capability's commission into Disputed as the rule checked, by compare-and-set,
+    /// once; a raise that matches no row fails.
+    async fn set_dispute(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self.repo.set_dispute(&self.capability, change).await?;
+        if !landed {
+            return Err(facts_lied("the dispute's raise matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
+impl View<'_, dispute::clear::Act> {
+    /// Returns the capability's commission from Disputed to the step the rule checked, by
+    /// compare-and-set, once; a clear that matches no row fails.
+    async fn clear_dispute(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self.repo.clear_dispute(&self.capability, change).await?;
+        if !landed {
+            return Err(facts_lied("the dispute's clear matched no row"));
         }
         self.wrote = Some(Wrote::Landed);
         Ok(())
@@ -1043,6 +1107,27 @@ impl View<'_, deadline::status::clear::Act> {
     }
 }
 
+impl View<'_, maturity::set::Act> {
+    /// Rates the capability's commission as the rule checked, by compare-and-set on the held
+    /// rating, once; a rating that matches no row fails.
+    async fn set_maturity(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self.repo.set_maturity(&self.capability, change).await?;
+        if !landed {
+            return Err(facts_lied("the rating matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
 impl View<'_, declare::Act> {
     /// Declares the Slot as the act declared it on the capability's commission, at the gate's
     /// node, by the grant's actor, at the gate's time, once. The store reads its tab, locked,
@@ -1127,6 +1212,20 @@ impl Lent<'_, move_to::Act> {
     }
 }
 
+impl Lent<'_, dispute::raise::Act> {
+    /// Puts the commission into Disputed as the rule checked: once.
+    pub(crate) async fn set_dispute(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_dispute().await)
+    }
+}
+
+impl Lent<'_, dispute::clear::Act> {
+    /// Returns the commission to the step its dispute left, as the rule checked: once.
+    pub(crate) async fn clear_dispute(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.clear_dispute().await)
+    }
+}
+
 impl Lent<'_, direction::set::Act> {
     /// Sets the commission's direction status as the rule checked: once, and only a real set.
     pub(crate) async fn set_direction_status(&mut self) -> anyhow::Result<()> {
@@ -1166,6 +1265,13 @@ impl Lent<'_, deadline::status::clear::Act> {
     /// Takes the commission's Delayed flag down as the rule checked: once, and only a real clear.
     pub(crate) async fn set_deadline_status(&mut self) -> anyhow::Result<()> {
         self.latch.pass(self.view.set_deadline_status().await)
+    }
+}
+
+impl Lent<'_, maturity::set::Act> {
+    /// Rates the commission as the rule checked: once, and only a real rating.
+    pub(crate) async fn set_maturity(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_maturity().await)
     }
 }
 
@@ -1260,7 +1366,7 @@ fn settle<H: Handler>(
 
 /// Issues `H`'s capability and lends it, in a view of the act's own over the commission repo
 /// holding the change its rule checked, to its handler; then settles what the handler did and,
-/// while the capability lives, builds and appends the act's entry from the change the act
+/// while the capability lives, builds and appends the act's entries from the change the act
 /// recorded.
 async fn lend_as<H: Handler>(
     passed: Passed<H>,
@@ -1292,7 +1398,7 @@ async fn lend_as<H: Handler>(
         Err(refusal) => return Ok(Err(refusal)),
     };
     let recorded = settled.recorded.as_ref();
-    append_entry(unit, H::ENTRY, written, recorded, grant.user(), now).await?;
+    append_entries(unit, H::ENTRY, written, recorded, grant.user(), now).await?;
     drop(settled.capability);
     Ok(Ok(settled.answer))
 }
@@ -1310,12 +1416,15 @@ async fn lend(
         Prepared::Create(create) => lend_as(create, grant, unit, written, now).await,
         Prepared::Rename(rename) => lend_as(rename, grant, unit, written, now).await,
         Prepared::MoveLifecycle(move_to) => lend_as(move_to, grant, unit, written, now).await,
+        Prepared::RaiseDispute(raise) => lend_as(raise, grant, unit, written, now).await,
+        Prepared::ClearDispute(clear) => lend_as(clear, grant, unit, written, now).await,
         Prepared::SetDirection(set) => lend_as(set, grant, unit, written, now).await,
         Prepared::ClearDirection(clear) => lend_as(clear, grant, unit, written, now).await,
         Prepared::SetDeadline(set) => lend_as(set, grant, unit, written, now).await,
         Prepared::ClearDeadline(clear) => lend_as(clear, grant, unit, written, now).await,
         Prepared::SetDelayed(set) => lend_as(set, grant, unit, written, now).await,
         Prepared::ClearDelayed(clear) => lend_as(clear, grant, unit, written, now).await,
+        Prepared::SetMaturity(set) => lend_as(set, grant, unit, written, now).await,
         Prepared::DeclareSlot(declare) => lend_as(declare, grant, unit, written, now).await,
         Prepared::MarkLate(mark) => lend_as(mark, grant, unit, written, now).await,
     }
@@ -1347,35 +1456,24 @@ fn grant_fits(grant: &Grant, shape: &Shape) -> bool {
     }
 }
 
-/// The act's one entry, if `rule` writes one for what changed: built by its gated entry's
-/// constructor on the grant's commission, by `actor` (none for the system), at `now`, from the
-/// recorded change. A kind it may not name, or another commission, actor or time than the
-/// grant's, or a note, is a broken rule.
-fn built_entry<C>(
-    rule: EntryRule<C>,
+/// `entry`, as `gated` built it, checked: a kind `gated` doesn't name, another commission,
+/// actor or time than the grant's, or a note, is a broken rule.
+fn as_granted<C>(
+    gated: &GatedEntry<C>,
+    entry: NewChangelogEntry,
     written: &Written,
-    recorded: Option<&C>,
     actor: Option<&UserId>,
     now: DateTimeUtc,
-) -> anyhow::Result<Option<NewChangelogEntry>> {
-    let changed = written.changed || recorded.is_some();
-    let Some(gated) = rule.entry(changed) else {
-        return Ok(None);
-    };
-    let entry = gated
-        .construct(written.commission, actor, recorded, now)
-        .ok_or_else(|| {
-            facts_lied("an entry's constructor takes a change or an actor the act doesn't have")
-        })?;
+) -> anyhow::Result<NewChangelogEntry> {
     if !gated.builds(entry.kind()) {
         return Err(facts_lied(
             "an entry's constructor built a kind its gated entry doesn't name",
         ));
     }
-    let as_granted = entry.commission_id() == written.commission
+    let on_the_grant = entry.commission_id() == written.commission
         && entry.actor_id() == actor
         && entry.created_at() == now;
-    if !as_granted {
+    if !on_the_grant {
         return Err(facts_lied(
             "an entry's constructor built it off the grant's commission, actor or time",
         ));
@@ -1383,12 +1481,39 @@ fn built_entry<C>(
     if entry.note_text().is_some() {
         return Err(facts_lied("an entry's constructor attached a note"));
     }
-    Ok(Some(entry))
+    Ok(entry)
 }
 
-/// Appends the act's one entry in the unit, if `rule` writes one for what changed; a broken
-/// rule appends nothing.
-async fn append_entry<C>(
+/// The act's entries, in order, if `rule` writes any for what changed: each built by its gated
+/// entry's constructor on the grant's commission, by `actor` (none for the system), at `now`,
+/// from the recorded change, and each checked by [`as_granted`]. The first must be built; the
+/// one that follows it, the create's alone, is written only when its constructor builds one.
+fn built_entries<C>(
+    rule: EntryRule<C>,
+    written: &Written,
+    recorded: Option<&C>,
+    actor: Option<&UserId>,
+    now: DateTimeUtc,
+) -> anyhow::Result<Vec<NewChangelogEntry>> {
+    let changed = written.changed || recorded.is_some();
+    let Some(Planned { first, then }) = rule.planned(changed) else {
+        return Ok(Vec::new());
+    };
+    let first_entry = first
+        .construct(written.commission, actor, recorded, now)?
+        .ok_or_else(|| facts_lied("an act's first entry built nothing"))?;
+    let mut entries = vec![as_granted(&first, first_entry, written, actor, now)?];
+    if let Some(then) = then
+        && let Some(then_entry) = then.construct(written.commission, actor, recorded, now)?
+    {
+        entries.push(as_granted(&then, then_entry, written, actor, now)?);
+    }
+    Ok(entries)
+}
+
+/// Appends the act's entries in the unit, in order, if `rule` writes any for what changed; a
+/// broken rule appends nothing.
+async fn append_entries<C>(
     unit: Unit<'_>,
     rule: EntryRule<C>,
     written: &Written,
@@ -1396,8 +1521,9 @@ async fn append_entry<C>(
     actor: Option<&UserId>,
     now: DateTimeUtc,
 ) -> anyhow::Result<()> {
-    if let Some(entry) = built_entry(rule, written, recorded, actor, now)? {
-        unit.changelog().append(&entry).await?;
+    let entries = built_entries(rule, written, recorded, actor, now)?;
+    for entry in &entries {
+        unit.changelog().append(entry).await?;
     }
     Ok(())
 }

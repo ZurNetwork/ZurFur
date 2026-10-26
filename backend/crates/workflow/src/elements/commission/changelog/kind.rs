@@ -99,6 +99,9 @@ pub enum ChangelogEntryKind {
     /// The commission was renamed. The entry carries neither the old title nor
     /// the new one.
     Renamed,
+    /// The owner rated the commission or changed its rating: the rating and the
+    /// Graphic flag it now carries.
+    MaturityRated,
     /// A Slot was declared on the commission. The entry carries its element id, never its
     /// title or notes.
     SlotDeclared,

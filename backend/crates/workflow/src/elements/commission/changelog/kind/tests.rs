@@ -68,6 +68,7 @@ fn kind_tokens_are_pinned_literally() {
         "channel_linked",
         "channel_unlinked",
         "renamed",
+        "maturity_rated",
         "slot_declared",
     ];
 

@@ -2,7 +2,8 @@
 //! den world: each answers the commission as stored, a Participant who isn't the owner can't
 //! rename, and someone outside the commission gets the answer a made-up id gets, which is
 //! also the answer their changelog read gets. So does every other write call and the read.
-//! Requires a container runtime socket.
+//! `PUT /commissions/{id}/maturity` likewise: a Participant who isn't the owner can't rate, and
+//! a stranger gets a made-up id's answer. Requires a container runtime socket.
 
 use chrono::{DateTime, Utc};
 use domain::elements::commission::CommissionId;
@@ -242,7 +243,69 @@ async fn bob_s_rename_answers_as_his_changelog_read_does() {
     assert_eq!(stored(&world, old_sketch).await.title, "Old sketch");
 }
 
-// The eight new writes and the read answer bob, who takes no part in "Old sketch", exactly as
+/// `PUT /commissions/{id}/maturity` with `body` as `client`.
+async fn rate(
+    world: &DenWorld,
+    client: &reqwest::Client,
+    id: CommissionId,
+    body: &Value,
+) -> reqwest::Response {
+    client
+        .put(format!("{}/commissions/{id}/maturity", world.base_url()))
+        .json(body)
+        .send()
+        .await
+        .expect("the rating is answered")
+}
+
+/// How many changelog entries `id` holds.
+async fn entry_count(world: &DenWorld, id: CommissionId) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM commission_changelog WHERE commission_id = $1")
+        .bind(uuid::Uuid::from(id))
+        .fetch_one(&world.served.runtime.pool)
+        .await
+        .expect("count the commission's entries")
+}
+
+// Bob, a Participant on "Untitled" who isn't its owner, may not rate it: 403 before any rule,
+// the rating unwritten and nothing recorded.
+#[tokio::test]
+async fn a_participant_s_rating_is_forbidden() {
+    let world = pg_app::den_world(api::app).await;
+    let untitled = world.untitled.id;
+    let entries = entry_count(&world, untitled).await;
+    let body = json!({ "rating": "adult", "graphic": true });
+
+    let response = rate(&world, &world.bob, untitled, &body).await;
+
+    let problem = json_with_status(response, 403).await;
+    assert_eq!(problem["code"], "forbidden");
+    assert_eq!(stored(&world, untitled).await.maturity, None);
+    assert_eq!(entry_count(&world, untitled).await, entries);
+}
+
+// The rating answers bob, who takes no part in "Old sketch", exactly as it answers a made-up id:
+// status, body and headers, and `commission_not_found`; nothing is written.
+#[tokio::test]
+async fn a_stranger_s_rating_answers_like_a_made_up_id() {
+    let world = pg_app::den_world(api::app).await;
+    let old_sketch = world.old_sketch.id;
+    let body = json!({ "rating": "suggestive" });
+
+    let not_yours = rate(&world, &world.bob, old_sketch, &body).await;
+    let absent = rate(&world, &world.bob, absent_commission(), &body).await;
+
+    let not_yours = Answer::read(not_yours).await;
+    let absent = Answer::read(absent).await;
+    assert_eq!(not_yours, absent);
+    assert_eq!(absent.status, 404);
+    let problem: Value = serde_json::from_slice(&absent.body).expect("a JSON body");
+    assert_eq!(problem["code"], "commission_not_found");
+    assert_eq!(problem.get("instance"), None, "the problem names no path");
+    assert_eq!(stored(&world, old_sketch).await.maturity, None);
+}
+
+// The eleven new writes and the read answer bob, who takes no part in "Old sketch", exactly as
 // they answer a made-up id: status, body and headers, and the code every one carries. A call
 // that answered otherwise is named by its label.
 #[tokio::test]

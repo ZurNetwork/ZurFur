@@ -1,6 +1,6 @@
 use super::{
     CommissionDeadline, CommissionRefusal, CommissionState, DeadlineStatusError, LateFacts,
-    LifecycleStep,
+    LifecycleStep, StoredDispute,
 };
 use kernel::datetime::DateTimeUtc;
 
@@ -35,15 +35,22 @@ fn unknown_token(_token: &str) -> DeadlineStatusError {
 }
 
 /// The deadline-axis status at `now`: Late once `deadline` is past on a step that isn't
-/// terminal, else the stored flag; nothing with no deadline, a lingering flag included.
+/// terminal, else the stored flag; nothing with no deadline, a lingering flag included. While a
+/// `dispute` stands, only Late freezes: it is judged at the dispute's start on the step it left,
+/// so a dispute never makes a commission Late and never stops one being Late. The stored flag
+/// stays live and reads as stored.
 pub(super) fn status_at(
     deadline: Option<DateTimeUtc>,
     lifecycle_step: &LifecycleStep,
+    dispute: Option<&StoredDispute>,
     delayed_flag: Option<DeadlineStatus>,
     now: DateTimeUtc,
 ) -> Option<DeadlineStatus> {
     let deadline = deadline?;
-    if deadline < now && !lifecycle_step.is_terminal() {
+    let (clock, step) = dispute.map_or((now, lifecycle_step), |held| {
+        (held.began.min(now), &held.left)
+    });
+    if deadline < clock && !step.is_terminal() {
         Some(DeadlineStatus::Late)
     } else {
         delayed_flag

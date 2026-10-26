@@ -6,10 +6,11 @@ use serde_json::{Value, json};
 use super::{ChangelogEntryKind, OpenKind};
 use crate::elements::commission::{
     CommissionId, DeadlineCleared, DeadlineSet, DelayedCleared, DelayedSet, DirectionCleared,
-    DirectionSet, LateMark, LifecycleMove, SlotDeclaration,
+    DirectionSet, Dispute, DisputeClear, LateMark, LifecycleMove, LifecycleStep, MaturitySet,
+    NewCommission, SlotDeclaration,
 };
 use identity::elements::user::UserId;
-use kernel::datetime::DateTimeUtc;
+use kernel::{datetime::DateTimeUtc, elements::maturity::Maturity};
 
 /// A changelog entry to append; the store assigns `seq` on insert. Its fields are private: a
 /// gated kind is built only by its own constructor from the change its rule passed, an open
@@ -165,6 +166,84 @@ impl NewChangelogEntry {
         )
     }
 
+    /// A dispute raised: kind [`LifecycleMoved`](ChangelogEntryKind::LifecycleMoved),
+    /// `{"from", "to": "disputed"}`, `from` the step it left.
+    pub fn disputed(
+        commission: CommissionId,
+        actor: UserId,
+        raised: &Dispute,
+        at: DateTimeUtc,
+    ) -> Self {
+        let payload = json!({
+            "from": <&'static str>::from(raised.before()),
+            "to": <&'static str>::from(&LifecycleStep::Disputed),
+        });
+        Self::by(
+            commission,
+            ChangelogEntryKind::LifecycleMoved,
+            actor,
+            payload,
+            at,
+        )
+    }
+
+    /// A dispute cleared: kind [`LifecycleMoved`](ChangelogEntryKind::LifecycleMoved),
+    /// `{"from": "disputed", "to"}`, `to` the step it returns to.
+    pub fn dispute_cleared(
+        commission: CommissionId,
+        actor: UserId,
+        cleared: &DisputeClear,
+        at: DateTimeUtc,
+    ) -> Self {
+        let payload = json!({
+            "from": <&'static str>::from(&LifecycleStep::Disputed),
+            "to": <&'static str>::from(cleared.after()),
+        });
+        Self::by(
+            commission,
+            ChangelogEntryKind::LifecycleMoved,
+            actor,
+            payload,
+            at,
+        )
+    }
+
+    /// A rating given: kind [`MaturityRated`](ChangelogEntryKind::MaturityRated),
+    /// `{"rating", "graphic"}`, the rating token and the Graphic flag it now carries.
+    pub fn maturity_rated(
+        commission: CommissionId,
+        actor: UserId,
+        rated: &MaturitySet,
+        at: DateTimeUtc,
+    ) -> Self {
+        Self::by(
+            commission,
+            ChangelogEntryKind::MaturityRated,
+            actor,
+            rating_payload(rated.after()),
+            at,
+        )
+    }
+
+    /// The rating a create was given: kind [`MaturityRated`](ChangelogEntryKind::MaturityRated),
+    /// the same `{"rating", "graphic"}` a later rating records; `None` for a create given none.
+    pub fn rated_at_create(
+        commission: CommissionId,
+        actor: UserId,
+        chosen: &NewCommission,
+        at: DateTimeUtc,
+    ) -> Option<Self> {
+        chosen.maturity.map(|given| {
+            Self::by(
+                commission,
+                ChangelogEntryKind::MaturityRated,
+                actor,
+                rating_payload(given),
+                at,
+            )
+        })
+    }
+
     /// A direction status set: kind [`StatusChanged`](ChangelogEntryKind::StatusChanged),
     /// `{"from", "to"}` as status tokens, `from` null when none was held.
     pub fn direction_set(
@@ -291,6 +370,14 @@ impl NewChangelogEntry {
             created_at: at,
         }
     }
+}
+
+/// A rating entry's payload: the rating token and the Graphic flag `given` carries.
+fn rating_payload(given: Maturity) -> Value {
+    json!({
+        "rating": <&'static str>::from(given.rating),
+        "graphic": given.graphic,
+    })
 }
 
 /// An entry of an [`OpenKind`], the only kind free text may ride beside its payload. Becomes a

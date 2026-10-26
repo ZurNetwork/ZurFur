@@ -27,6 +27,14 @@ use test_support::pg_app::{self, PgServed};
 /// The custody upgrade's second migration: it deletes the in-flight sign-in rows.
 const SIGNIN_ROWS_DELETE: i64 = 20261022231357;
 
+/// The first migration after the custody upgrade: the commission dispute columns, rolled back
+/// before it.
+const DISPUTE_COLUMNS: i64 = 20261026075811;
+
+/// The second migration after the custody upgrade: the Slot node fill. The rehearsal forgets it
+/// and leaves its nodes and checks in place, since the parent's schema reads neither.
+const SLOT_FILL: i64 = 20261026080502;
+
 /// The purposes the API boot derives.
 const BOOT_PURPOSES: [Purpose; 3] = [Purpose::DidCustody, Purpose::SigninSecrets, Purpose::DenMac];
 
@@ -222,11 +230,18 @@ async fn listed_handles(served: &PgServed, client: &reqwest::Client) -> Vec<Stri
 #[tokio::test]
 async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
     // 1. A 0.1 database: two Accounts, their 0.1 custody rows, in-flight sign-in rows.
-    let id_1_versions = embedded_versions(|version| version >= CUSTODY_ENVELOPE);
+    let id_1_versions =
+        embedded_versions(|version| (CUSTODY_ENVELOPE..=SIGNIN_ROWS_DELETE).contains(&version));
     assert_eq!(
-        id_1_versions.get(..2),
-        Some([CUSTODY_ENVELOPE, SIGNIN_ROWS_DELETE].as_slice()),
-        "the custody upgrade's migrations come first after the parent's"
+        id_1_versions,
+        [CUSTODY_ENVELOPE, SIGNIN_ROWS_DELETE],
+        "the custody upgrade's two migrations"
+    );
+    let later_versions = embedded_versions(|version| version > SIGNIN_ROWS_DELETE);
+    assert_eq!(
+        later_versions,
+        [DISPUTE_COLUMNS, SLOT_FILL],
+        "the migrations after the custody upgrade"
     );
     let parent_versions = embedded_versions(|version| version < CUSTODY_ENVELOPE);
     let (pool, db) = custody::before_the_envelope().await;
@@ -286,7 +301,7 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
 
     let latest = embedded_versions(|_| true).last().copied();
     let upgraded = MigrationReport {
-        applied: id_1_versions.len(),
+        applied: id_1_versions.len() + later_versions.len(),
         version: latest,
         rows_rewrapped: 2,
     };
@@ -443,9 +458,24 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
     assert_eq!(rerun, nothing_to_do);
     assert_eq!(custody::store_snapshot(&pool).await, before_rerun);
 
-    // 7. Rollback rehearsal: the rollback recipe's statements, in its order and in one
-    // transaction, back to the parent's schema, where the 0.1 opener opens both.
+    // 7. Rollback rehearsal: the dispute columns rolled back first, then the rollback recipe's
+    // statements, in its order and in one transaction, back to the parent's schema, where the
+    // 0.1 opener opens both.
     let mut rollback = pool.begin().await.expect("the rollback begins");
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ANY($1)")
+        .bind(&later_versions)
+        .execute(&mut *rollback)
+        .await
+        .expect("forget the migrations after the upgrade");
+    sqlx::query(
+        "ALTER TABLE commission
+             DROP CONSTRAINT commission_dispute_matches_its_step,
+             DROP COLUMN disputed_from,
+             DROP COLUMN disputed_at",
+    )
+    .execute(&mut *rollback)
+    .await
+    .expect("roll back the dispute columns first");
     sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ANY($1)")
         .bind(&id_1_versions)
         .execute(&mut *rollback)

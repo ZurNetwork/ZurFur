@@ -1,16 +1,17 @@
 //! The commission maturity posture over PostgreSQL, against a throwaway
 //! container: the nullable
 //! `maturity` + `graphic` envelope column pair starts NULL (a commission is
-//! born unrated), `set_maturity` writes both halves on the open unit of work,
-//! `find` re-validates them through the domain gates, and the schema's
-//! both-or-neither CHECK makes a half-set posture unrepresentable. Requires a
-//! container runtime socket (DOCKER_HOST honored).
+//! born unrated), `set_maturity` writes both halves on the open unit of work
+//! by compare-and-set on the held pair, `find` re-validates them through the
+//! domain gates, and the schema's both-or-neither CHECK makes a half-set
+//! posture unrepresentable. Requires a container runtime socket (DOCKER_HOST
+//! honored).
 
 use crate::seed;
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use domain::{
     elements::{
-        commission::Commission,
+        commission::{Commission, CommissionState, MaturitySet, rate_maturity},
         did::Did,
         maturity::{Maturity, MaturityRating},
         user::User,
@@ -46,15 +47,36 @@ async fn seed_commission(pool: &PgPool, owner_did: &str) -> Commission {
     seed::seed_stored(pool, &owner.id, "A ref sheet").await
 }
 
-/// Sets the posture in its own committed unit of work.
-async fn set_maturity(pool: &PgPool, commission: &Commission, maturity: Maturity) {
+/// The rating `to` on what the store holds for `commission`, as its rule checks it.
+async fn rating_of(pool: &PgPool, commission: &Commission, to: Maturity) -> MaturitySet {
+    let stored = PgCommissionStore::new(pool.clone())
+        .find(&commission.id)
+        .await
+        .expect("find")
+        .expect("exists");
+    rate_maturity(&CommissionState::from(&stored), to).expect("a real rating")
+}
+
+/// Writes `change` in its own committed unit of work, answering whether it landed.
+async fn write_rating(pool: &PgPool, commission: &Commission, change: &MaturitySet) -> bool {
     let db = PgDatabase::new(pool.clone());
     let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .set_maturity(&commission.id, maturity)
+    let landed = uow
+        .commissions()
+        .set_maturity(&seed::owner_on(commission.id), change)
         .await
         .expect("set maturity");
     uow.commit().await.expect("commit");
+    landed
+}
+
+/// Rates `commission` `maturity` in its own committed unit of work; it lands.
+async fn set_maturity(pool: &PgPool, commission: &Commission, maturity: Maturity) {
+    let change = rating_of(pool, commission, maturity).await;
+    assert!(
+        write_rating(pool, commission, &change).await,
+        "{maturity:?}"
+    );
 }
 
 // The birth invariant (pg): a freshly created commission reads back unrated —
@@ -110,17 +132,16 @@ async fn set_maturity_rolls_back_with_its_unit() {
     let commission = seed_commission(&pool, "did:plc:rollback-owner").await;
     let store = PgCommissionStore::new(pool.clone());
 
+    let adult = Maturity {
+        rating: MaturityRating::Adult,
+        graphic: true,
+    };
+    let change = rating_of(&pool, &commission, adult).await;
     {
         let db = PgDatabase::new(pool.clone());
         let mut uow = db.begin().await.expect("begin");
         uow.commissions()
-            .set_maturity(
-                &commission.id,
-                Maturity {
-                    rating: MaturityRating::Adult,
-                    graphic: true,
-                },
-            )
+            .set_maturity(&seed::owner_on(commission.id), &change)
             .await
             .expect("set maturity");
         // `uow` drops here without `commit` → the staged write is discarded.
@@ -136,6 +157,45 @@ async fn set_maturity_rolls_back_with_its_unit() {
         None,
         "a dropped unit of work rates nothing",
     );
+}
+
+// A rating checked from one the row no longer holds matches no row: one checked while it was
+// unrated, once it is rated, and one checked from another Graphic flag. Neither lands, and the
+// rating held stays.
+#[tokio::test]
+async fn a_stale_rating_matches_no_row() {
+    let (pool, _container) = fresh_pool().await;
+    let commission = seed_commission(&pool, "did:plc:stale-rating-owner").await;
+    let store = PgCommissionStore::new(pool.clone());
+    let safe = Maturity {
+        rating: MaturityRating::Safe,
+        graphic: false,
+    };
+    let graphic_safe = Maturity {
+        rating: MaturityRating::Safe,
+        graphic: true,
+    };
+    let adult = Maturity {
+        rating: MaturityRating::Adult,
+        graphic: false,
+    };
+    let from_unrated = rating_of(&pool, &commission, adult).await;
+    set_maturity(&pool, &commission, graphic_safe).await;
+    let from_graphic = rating_of(&pool, &commission, adult).await;
+    set_maturity(&pool, &commission, safe).await;
+
+    let stale_unrated = write_rating(&pool, &commission, &from_unrated).await;
+    let stale_graphic = write_rating(&pool, &commission, &from_graphic).await;
+
+    assert!(!stale_unrated, "checked while unrated");
+    assert!(!stale_graphic, "checked from the Graphic flag");
+    let held = store
+        .find(&commission.id)
+        .await
+        .expect("find")
+        .expect("exists")
+        .maturity;
+    assert_eq!(held, Some(safe));
 }
 
 // The schema's teeth: a half-set posture (a rating with no graphic arm, or a

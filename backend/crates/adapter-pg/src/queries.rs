@@ -1133,6 +1133,8 @@ pub mod commission {
     pub struct FindForUpdateRow {
         pub owner_id: String,
         pub lifecycle: String,
+        pub disputed_from: Option<String>,
+        pub disputed_at: Option<chrono::DateTime<chrono::Utc>>,
         pub deadline: Option<chrono::DateTime<chrono::Utc>>,
         pub maturity: Option<String>,
         pub graphic: Option<bool>,
@@ -1148,6 +1150,8 @@ pub mod commission {
     pub struct FindRow {
         pub owner_id: String,
         pub lifecycle: String,
+        pub disputed_from: Option<String>,
+        pub disputed_at: Option<chrono::DateTime<chrono::Utc>>,
         pub deadline: Option<chrono::DateTime<chrono::Utc>>,
         pub maturity: Option<String>,
         pub graphic: Option<bool>,
@@ -1173,6 +1177,8 @@ pub mod commission {
         pub id: uuid::Uuid,
         pub owner_id: String,
         pub lifecycle: String,
+        pub disputed_from: Option<String>,
+        pub disputed_at: Option<chrono::DateTime<chrono::Utc>>,
         pub deadline: Option<chrono::DateTime<chrono::Utc>>,
         pub maturity: Option<String>,
         pub graphic: Option<bool>,
@@ -1390,6 +1396,24 @@ pub mod commission {
             .bind(commission_id)
             .bind(user_id)
             .bind(created_at)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/commission/clear_dispute.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Return a Disputed commission to the step its dispute left, read from the row, and forget the
+    /// dispute, by compare-and-set: the row changes only while it is still Disputed from the step
+    /// the clear was checked against, so a stale clear matches no row.
+    pub async fn clear_dispute(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        to_step: &str,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/commission/clear_dispute.sql"))
+            .bind(id)
+            .bind(to_step)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
@@ -2088,6 +2112,26 @@ pub mod commission {
         .map(|r| r.rows_affected())
     }
 
+    /// `queries/commission/set_dispute.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Put a commission into Disputed by compare-and-set, storing the step it left and when the
+    /// dispute began: the row changes only while it still holds the step the raise was checked
+    /// from, so a stale raise matches no row.
+    pub async fn set_dispute(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        from_step: &str,
+        began_at: chrono::DateTime<chrono::Utc>,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/commission/set_dispute.sql"))
+            .bind(id)
+            .bind(from_step)
+            .bind(began_at)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
     /// `queries/commission/set_lifecycle.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// Move a commission's lifecycle step by compare-and-set: the row changes only while it still
@@ -2122,16 +2166,24 @@ pub mod commission {
     }
 
     /// `queries/commission/set_maturity.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Rate a commission by compare-and-set: the row changes only while it still holds the rating
+    /// and Graphic flag the change was checked from (both NULL while unrated), so a stale change
+    /// matches no row. The schema's both-or-neither CHECK keeps the pair whole.
     pub async fn set_maturity(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
         maturity: Option<&str>,
         graphic: Option<bool>,
+        held_maturity: Option<&str>,
+        held_graphic: Option<bool>,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/commission/set_maturity.sql"))
             .bind(id)
             .bind(maturity)
             .bind(graphic)
+            .bind(held_maturity)
+            .bind(held_graphic)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
@@ -2981,6 +3033,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "commission::add_file",
     "commission::add_markup",
     "commission::add_participant",
+    "commission::clear_dispute",
     "commission::create_commission",
     "commission::create_seat_invitation",
     "commission::create_tab",
@@ -2996,6 +3049,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "commission::set_deadline",
     "commission::set_deadline_status",
     "commission::set_direction_status",
+    "commission::set_dispute",
     "commission::set_lifecycle",
     "commission::set_linked_channel",
     "commission::set_maturity",

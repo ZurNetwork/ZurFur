@@ -1,13 +1,14 @@
 use kernel::{datetime::DateTimeUtc, elements::maturity::Maturity};
 
-use super::{Commission, DeadlineStatus, DirectionStatus, LifecycleStep, deadline};
+use super::{Commission, DeadlineStatus, DirectionStatus, LifecycleStep, StoredDispute, deadline};
 
-/// The stored facts a rule on an existing commission reads: its lifecycle step, deadline,
-/// stored Delayed flag, direction status and rating. Read with no clock; a rule that needs
-/// the time takes it beside the state.
+/// The stored facts a rule on an existing commission reads: its lifecycle step, its dispute
+/// (the step it left and when it began), deadline, stored Delayed flag, direction status and
+/// rating. Read with no clock; a rule that needs the time takes it beside the state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommissionState {
     lifecycle_step: LifecycleStep,
+    dispute: Option<StoredDispute>,
     deadline: Option<DateTimeUtc>,
     delayed_flag: Option<DeadlineStatus>,
     direction_status: Option<DirectionStatus>,
@@ -18,6 +19,11 @@ impl CommissionState {
     /// The lifecycle step it holds.
     pub fn lifecycle_step(&self) -> &LifecycleStep {
         &self.lifecycle_step
+    }
+
+    /// Its dispute while Disputed: the step it left and when it began.
+    pub fn dispute(&self) -> Option<&StoredDispute> {
+        self.dispute.as_ref()
     }
 
     /// Its deadline, if it has one.
@@ -46,9 +52,16 @@ impl CommissionState {
     }
 
     /// The deadline-axis status at `now`: Late once the deadline is past on a step that isn't
-    /// terminal, else the stored flag; nothing with no deadline.
+    /// terminal, read at the dispute's start while Disputed; else the stored flag; nothing with
+    /// no deadline.
     pub fn deadline_status_at(&self, now: DateTimeUtc) -> Option<DeadlineStatus> {
-        deadline::status_at(self.deadline, &self.lifecycle_step, self.delayed_flag, now)
+        deadline::status_at(
+            self.deadline,
+            &self.lifecycle_step,
+            self.dispute.as_ref(),
+            self.delayed_flag,
+            now,
+        )
     }
 }
 
@@ -57,6 +70,7 @@ impl From<&Commission> for CommissionState {
     fn from(commission: &Commission) -> Self {
         Self {
             lifecycle_step: commission.lifecycle_step.clone(),
+            dispute: commission.dispute.clone(),
             deadline: commission.deadline,
             delayed_flag: commission.delayed_flag,
             direction_status: commission.direction_status,
