@@ -1,6 +1,6 @@
 {
   "path": ".",
-  "charted": "2026-10-22",
+  "charted": "2026-10-26",
   "short": "The Zurfur monorepo: Rust backend, SvelteKit frontend, contract, lexicons",
   "is": "Zurfur — an AT Protocol-native art-commission platform: a Rust ports-and-adapters backend, a SvelteKit frontend, and the protobuf contract + atproto lexicons that sit between them and the network.",
   "type": "code",
@@ -51,7 +51,7 @@
     },
     {
       "name": ".github/",
-      "role": "CI workflow (changes/fmt/clippy/test/contract/deny/typos/nodes/hooks/web), the daily advisories workflow, copilot-instructions.md",
+      "role": "CI workflow (changes/fmt/clippy/test/contract/deny/typos/nodes/hooks/web/ui), the daily advisories workflow, copilot-instructions.md",
       "node": false
     },
     {
@@ -91,7 +91,7 @@
     },
     {
       "name": "Justfile",
-      "role": "task runner — the dev loop (just dev/up/gate/test/migrate-add/gen-*; dev-profile + dev-profile-web for the in-memory fixture world in a browser) and the node tree (just nodes/nodes-check/nodes-install; NODES_VERSION pins the tool); every dev recipe (dev, dev-back, dev-web, dev-mock, dev-profile, dev-profile-web, up) logs to logs/<name>/ through scripts/dev-log.sh, up follows each compose service into logs/compose/, and logs-tail/logs-clean read and sweep them",
+      "role": "task runner — the dev loop (just dev/up/gate/test/migrate-add/gen-*; frontend-install is the guarded workspace install and gallery serves the @zurfur/ui component gallery; dev-profile + dev-profile-web for the in-memory fixture world in a browser) and the node tree (just nodes/nodes-check/nodes-install; NODES_VERSION pins the tool); every dev recipe (dev, dev-back, dev-web, dev-mock, dev-profile, dev-profile-web, up) logs to logs/<name>/ through scripts/dev-log.sh, up follows each compose service into logs/compose/, and logs-tail/logs-clean read and sweep them",
       "node": false
     },
     {
@@ -141,7 +141,7 @@
     },
     {
       "name": "frontend/",
-      "role": "the SvelteKit web app (frontend/web)",
+      "role": "the client tier: one yarn workspace of two packages, the SvelteKit app (frontend/web) and the @zurfur/ui component library with its gallery (frontend/ui), plus the install guard",
       "node": true
     },
     {

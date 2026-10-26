@@ -1,6 +1,6 @@
 {
   "path": "scripts",
-  "charted": "2026-10-20",
+  "charted": "2026-10-26",
   "short": "Shell backing just recipes and hooks",
   "is": "Shell scripts backing the `just` dev-loop recipes and jj/session hooks — not cargo tests, but scripted proofs and glue for the manual dev loop.",
   "type": "code",
@@ -47,7 +47,7 @@
     },
     {
       "name": "gate-light.sh",
-      "role": "the light local gate for base merges and fix rounds (just gate-light)",
+      "role": "the light local gate for base merges and fix rounds (just gate-light): fmt, clippy, typos, the design-index and node-tree checks, the touched crates' tests, and, on a frontend/ or contract/ change, the guarded frontend install, the install guard's tests and web's and ui's checks (tested by gate-light.test.sh)",
       "node": false
     },
     {
@@ -107,7 +107,7 @@
     },
     {
       "name": "tools-check.sh",
-      "role": "local tool versions vs CI's pins (warns) and SHA-pinned workflow actions (fails); just tools-check",
+      "role": "local tool versions vs CI's pins (warns), and the workflow checks (fails): actions pinned to a commit SHA, tool versions equal to the Justfile's, and the CI safety rules (read-only top-level permissions, no job-level permissions, persist-credentials: false on every checkout, no pull_request_target or secrets, every yarn install frozen, script-free and wrapped in the frontend install guard's steps); just tools-check, and --pins-only in CI's hooks job (tested by tools-check.test.sh)",
       "node": false
     },
     {

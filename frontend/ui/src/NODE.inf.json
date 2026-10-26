@@ -1,0 +1,56 @@
+{
+  "path": "frontend/ui/src",
+  "charted": "2026-10-26",
+  "short": "The library, the gallery frame and routes, the checks",
+  "is": "The package's code in four parts: `lib/` is the public entry, `routes/` hosts the gallery, `gallery/` is the frame the pages register with, and `checks/` are specs that guard the package's own shape.",
+  "type": "code",
+  "tags": [
+    "category:ui",
+    "category:source"
+  ],
+  "conventions": [
+    "Specs sit beside the code they test (`*.spec.ts` in node, `*.svelte.spec.ts` in real Chromium); `expect.requireAssertions` is on.",
+    "A gallery page registers itself with a `meta.ts` under `routes/components/<slug>/` exporting `meta` (a title and one of the groups in `gallery/groups.ts`); the registry finds it by glob and turns away, rather than throws on, a malformed, duplicate or misplaced one.",
+    "The gallery's user-visible words live in `gallery/groups.ts` and the frame; the frame is imported through the `$gallery` alias.",
+    "Reserved inside `lib/`: `motion/` (the one place motion libraries may be imported), `lazy/` (the one place heavy libraries load, by dynamic import only) and `styles/tokens.css` (the style scan's one exempt file). None exists yet.",
+    "The library exports nothing yet; `lib/index.ts` is the whole public surface."
+  ],
+  "entry_points": [
+    "lib/index.ts",
+    "routes/+layout.svelte",
+    "gallery/registry.ts"
+  ],
+  "fs": [
+    {
+      "name": "app.d.ts",
+      "role": "SvelteKit's ambient types",
+      "node": false
+    },
+    {
+      "name": "app.html",
+      "role": "the page shell",
+      "node": false
+    },
+    {
+      "name": "checks/",
+      "role": "specs over the package itself: the lint boundary rules, declared imports, forbidden server-side files, the style and network scans (scan/), serve config, tsconfig parity with web, workspace shape and the public entry",
+      "node": false
+    },
+    {
+      "name": "gallery/",
+      "role": "the gallery frame: the registry (page discovery), page meta, the nav groups, GalleryNav, GalleryPage and GalleryState",
+      "node": false
+    },
+    {
+      "name": "lib/",
+      "role": "the public entry (index.ts)",
+      "node": false
+    },
+    {
+      "name": "routes/",
+      "role": "the gallery host: the layout (header, nav, main), the index and, later, components/<slug>/ pages",
+      "node": false
+    }
+  ],
+  "notes": []
+}

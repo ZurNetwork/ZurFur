@@ -1,0 +1,66 @@
+{
+  "path": "frontend/ui",
+  "charted": "2026-10-26",
+  "short": "@zurfur/ui: the component library and its gallery",
+  "is": "@zurfur/ui — a private SvelteKit library of components, consumed by `web` as TypeScript source, with a component gallery (its routes) prerendered by adapter-static and served on loopback by `just gallery`.",
+  "type": "code",
+  "tags": [
+    "category:ui",
+    "category:source"
+  ],
+  "conventions": [
+    "Consumed as source, no package step: `exports` gives `types` and `svelte` the same entry, `src/lib/index.ts`; the version stays `0.0.0` and `web` depends on exactly that. Routes import the library only as `@zurfur/ui`; `$lib` is banned in this package, since it would resolve to the importer's `src/lib`.",
+    "Plain client-side SvelteKit, nothing server-side: the gallery is prerendered (adapter-static, `strict`), and files that run server code (`+server`, `.server.`, hooks) are refused by a check.",
+    "`eslint.config.js` partitions `src/` into file sets (checks, routes, gallery, motion, lazy, and the components' rules for every other file) and runs with `noInlineConfig`, so no inline comment switches a rule off; lint guards against accidental coupling, it is not a sandbox.",
+    "`just gallery` serves on 127.0.0.1 at `ZURFUR_GALLERY_PORT` or 5190 (`vite.config.ts` alone decides host and port; a busy port is an error).",
+    "Installs only through the workspace's guarded trio (`just frontend-install`), never a bare `yarn install` here."
+  ],
+  "entry_points": [
+    "src/lib/index.ts (the public entry)",
+    "src/routes/+layout.svelte (the gallery host)",
+    "vite.config.ts"
+  ],
+  "fs": [
+    {
+      "name": ".gitignore",
+      "role": "ignores this package's build output (.svelte-kit/, build/) and .env*",
+      "node": false
+    },
+    {
+      "name": ".prettierignore",
+      "role": "lockfiles, static/ and NODE.inf.json files (the nodes tool formats those) are not formatted",
+      "node": false
+    },
+    {
+      "name": "eslint.config.js",
+      "role": "type-aware lint with the file-set partition of src/ and the boundary rules; exports boundaryRules for the checks",
+      "node": false
+    },
+    {
+      "name": "package.json",
+      "role": "@zurfur/ui 0.0.0: the exports map, yarn scripts (dev/build/preview/check/lint/test) and the dev dependencies; svelte is a peer",
+      "node": false
+    },
+    {
+      "name": "prettier.config.js",
+      "role": "tabs, single quotes, no trailing comma, width 100",
+      "node": false
+    },
+    {
+      "name": "src/",
+      "role": "the library, the gallery frame, the gallery routes and the repo-shape checks",
+      "node": true
+    },
+    {
+      "name": "tsconfig.json",
+      "role": "strict + noUncheckedIndexedAccess + exactOptionalPropertyTypes + erasableSyntaxOnly, kept equal to web's by a check",
+      "node": false
+    },
+    {
+      "name": "vite.config.ts",
+      "role": "adapter-static (strict), runes forced outside node_modules, the $gallery alias, 127.0.0.1 server and preview on the gallery port with strictPort, and the two vitest projects (browser by *.svelte.spec.ts, node for the rest)",
+      "node": false
+    }
+  ],
+  "notes": []
+}

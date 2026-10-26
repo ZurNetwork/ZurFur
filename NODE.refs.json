@@ -1134,6 +1134,18 @@
       "governs": "reverted 2026-08-09"
     }
   ],
+  "frontend/ui": [
+    {
+      "page": 11763713,
+      "title": "Domains and Applications",
+      "governs": "a thin UI: components render and never decide"
+    },
+    {
+      "page": 39944194,
+      "title": "Frontend Stack — Server-Only Effect & the Runes Seam",
+      "governs": "the package's place in the client tier: plain SvelteKit, nothing server-side"
+    }
+  ],
   "frontend/web/src/lib/server": [
     {
       "page": 23592962,
