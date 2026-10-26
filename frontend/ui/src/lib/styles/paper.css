@@ -121,8 +121,9 @@
 		translate var(--duration-spring) var(--easing-spring);
 }
 
-.pick:hover:not(.is-locked):not(:disabled):not([aria-disabled='true']),
-.pick:focus-visible:not(.is-locked) {
+/* The :where keeps hover and focus below the selected rule that follows, so selected wins. */
+.pick:hover:where(:not(.is-locked):not(:disabled):not([aria-disabled='true'])),
+.pick:focus-visible:where(:not(.is-locked)) {
 	background: var(--color-object);
 	box-shadow: var(--elevation-art);
 	translate: 0 calc(-1 * var(--space-rise));
