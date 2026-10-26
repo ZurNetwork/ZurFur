@@ -37,6 +37,9 @@ workflows=".github/workflows"
 workflow_files="$(find "$workflows" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) | sort)"
 errors=0
 
+# The only actions a step may use; a new one is added here deliberately, after review.
+allowed_actions="actions/checkout actions/setup-node Swatinem/rust-cache bufbuild/buf-action EmbarkStudios/cargo-deny-action crate-ci/typos extractions/setup-just"
+
 pin_error() {
     echo "tools-check: $1" >&2
     errors=$((errors + 1))
@@ -168,12 +171,15 @@ fi
 #     or dlx (each fetches and runs a package, changes which yarn runs, or
 #     runs any yarn command);
 #   - every `run:` is a step's (a `defaults: run:` block aside), so a shape
-#     this reader can't follow fails rather than hiding an install.
+#     this reader can't follow fails rather than hiding an install;
+#   - every `uses:` is a step's, so a job-level `uses:` (a reusable workflow
+#     call) fails, and names, before its `@`, exactly one of allowed_actions
+#     (no other action, sub-path, local `./` action or `docker://` image).
 # Top level means column 0: GitHub's workflow keys sit there, so any
 # `permissions:` indented under them is a job's (or deeper).
 ci_safety() {
     # shellcheck disable=SC2086 # $workflow_files is a newline list without spaces
-    TOOLS_CHECK_INSTALL="$install_command" awk -v q="'" '
+    TOOLS_CHECK_INSTALL="$install_command" TOOLS_CHECK_ACTIONS="$allowed_actions" awk -v q="'" '
         function indent(s) { match(s, /^ */); return RLENGTH }
         function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
         function squeeze(s) { gsub(/[ \t\n]+/, " ", s); return trim(s) }
@@ -183,6 +189,22 @@ ci_safety() {
         function base(w) { w = unquote(w); sub(/^.*\//, "", w); return w }
         function is_yarn(w) { w = base(w); return w == "yarn" || w == "yarnpkg" }
         function add_bad(msg) { if (!(msg in bad_seen)) { bad_seen[msg] = 1; bad[++n_bad] = msg } }
+
+        # check_action <file> <line> <value> — the action a `uses:` value
+        # names, its text before `@`, is exactly one on the allow list.
+        function check_action(file, at, v,    name) {
+            name = trim(v)
+            sub("^[\"" q "]", "", name)
+            sub("[]@ \t,}\"" q "#].*$", "", name)
+            if (!(name in ACTIONS)) problem(file, at, "an action not on the allow list: " (name == "" ? "(none)" : name))
+        }
+
+        # not_a_step_use <line> — a `uses:` that is not a step key fails, and
+        # what it names is checked too.
+        function not_a_step_use(line) {
+            problem(FILENAME, FNR, "a uses: that is not a step key (a reusable workflow call, or a shape tools-check cannot read)")
+            if (match(line, /uses[ \t]*:/)) check_action(FILENAME, FNR, substr(line, RSTART + RLENGTH))
+        }
 
         # strip_comments <text> — <text> without its shell comments: a `#`
         # that starts a word outside quotes, to the end of its line.
@@ -332,6 +354,7 @@ ci_safety() {
             if (k !~ /^[A-Za-z_][A-Za-z0-9_-]*$/ || index(t, ":") == 0)
                 problem(FILENAME, at, "a step tools-check cannot read (not one key per line)")
             step_keys[n] = step_keys[n] " " k
+            if (k == "uses") check_action(FILENAME, at, substr(t, index(t, ":") + 1))
             if (k != "run") return
             v = trim(substr(t, 5))
             has_run[n]++
@@ -364,6 +387,8 @@ ci_safety() {
             for (i = 1; i <= ni; i++) INSTALLERS[a[i]] = 1
             ni = split("create policies set init config workspace self-update dlx", a, " ")
             for (i = 1; i <= ni; i++) YARN_REFUSED[a[i]] = 1
+            ni = split(ENVIRON["TOOLS_CHECK_ACTIONS"], a, " ")
+            for (i = 1; i <= ni; i++) ACTIONS[a[i]] = 1
         }
 
         FNR == 1 {
@@ -419,6 +444,7 @@ ci_safety() {
             if (ind == 0) {
                 end_steps()
                 in_top_perm = 0
+                if (line ~ /(^|[ \t{,-])uses[ \t]*:/) not_a_step_use(line)
                 if (line ~ /^permissions[ \t]*:/) {
                     top_perm = FNR
                     v = line
@@ -454,6 +480,8 @@ ci_safety() {
                 } else if (line ~ /(^|[ \t{,-])run[ \t]*:/ &&
                            !(line ~ /^ *run[ \t]*:[ \t]*(#.*)?$/ && prev_line ~ /^ *defaults[ \t]*:[ \t]*(#.*)?$/ && ind > prev_ind)) {
                     problem(FILENAME, FNR, "a run: that is not a step command tools-check can read")
+                } else if (line ~ /(^|[ \t{,-])uses[ \t]*:/) {
+                    not_a_step_use(line)
                 }
             }
             prev_line = line

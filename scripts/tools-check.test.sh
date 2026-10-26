@@ -328,6 +328,33 @@ new_tree
 printf '    container:\n      options: [{run: yarn install}]\n' >>"$work/repo/.github/workflows/ci.yml"
 expect_exit "a run: outside any step fails" 1 "a run: that is not a step command"
 
+# Every uses: is a step's, naming exactly one action on the allow list.
+not_allowed="an action not on the allow list:"
+
+# expect_use <name> <expected exit> <uses value> [<fragment>] — a step using <uses value>.
+expect_use() {
+    new_tree
+    printf '      - uses: %s\n' "$3" >>"$work/repo/.github/workflows/ci.yml"
+    expect_exit "$1" "$2" "${4:-}"
+}
+
+expect_use "a step using rust-cache passes" 0 "Swatinem/rust-cache@$sha # v2.9.2"
+expect_use "a SHA-pinned action off the allow list fails" 1 "bahmutov/npm-install@$sha # v1.10.0" "$not_allowed bahmutov/npm-install"
+expect_use "a local action fails" 1 "./.github/actions/x" "$not_allowed ./.github/actions/x"
+expect_use "a docker image fails" 1 "docker://alpine@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" "$not_allowed docker://alpine"
+expect_use "a case-changed action name fails" 1 "Actions/checkout@$sha # v7.0.1" "$not_allowed Actions/checkout"
+expect_use "a sub-path of an allowed action fails" 1 "actions/checkout/sub@$sha # v7.0.1" "$not_allowed actions/checkout/sub"
+
+new_tree
+at="$(($(wc -l <"$work/repo/.github/workflows/ci.yml") + 2))"
+printf '  b:\n    uses: other/repo/.github/workflows/x.yml@%s # v1.0.0\n' "$sha" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a job-level uses: fails" 1 "ci.yml:$at: a uses: that is not a step key"
+expect_exit "a job-level uses: names its workflow" 1 "ci.yml:$at: $not_allowed other/repo/.github/workflows/x.yml"
+
+new_tree
+printf '      - { uses: actions/checkout@%s }\n' "$sha" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a flow-style uses: step fails" 1 "a step tools-check cannot read"
+
 # expect_nodes_line <name> <nodes --version output> <pattern> — runs the local half
 # with a `nodes` stub printing that output first on PATH; the exit code stays 0
 # (local drift only warns) and the nodes line matches <pattern>. Every other

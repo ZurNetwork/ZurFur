@@ -107,7 +107,7 @@
     },
     {
       "name": "tools-check.sh",
-      "role": "local tool versions vs CI's pins (warns), and the workflow checks (fails): actions pinned to a commit SHA, tool versions equal to the Justfile's, and the CI safety rules (read-only top-level permissions, no job-level permissions, persist-credentials: false on every checkout, no pull_request_target or secrets, every yarn install exactly frontend/install-check.mjs's INSTALL_COMMAND and wrapped in the install guard's steps, and no other package manager (npm, npx, pnpm, pnpx, bun, bunx, corepack), no yarn --use-yarnrc and no yarn create, policies, set, init, config or workspace in any run: or shell:); just tools-check, and --pins-only in CI's hooks job (tested by tools-check.test.sh)",
+      "role": "local tool versions vs CI's pins (warns), and the workflow checks (fails): every uses: a step's (no job-level uses:, a reusable workflow call) naming one of the seven actions on its allow list, pinned to a commit SHA; tool versions equal to the Justfile's, and the CI safety rules (read-only top-level permissions, no job-level permissions, persist-credentials: false on every checkout, no pull_request_target or secrets, every yarn install exactly frontend/install-check.mjs's INSTALL_COMMAND and wrapped in the install guard's steps, and no other package manager (npm, npx, pnpm, pnpx, bun, bunx, corepack), no yarn --use-yarnrc and no yarn create, policies, set, init, config or workspace in any run: or shell:); just tools-check, and --pins-only in CI's hooks job (tested by tools-check.test.sh)",
       "node": false
     },
     {
