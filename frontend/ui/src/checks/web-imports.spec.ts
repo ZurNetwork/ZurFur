@@ -229,7 +229,20 @@ describe("web's imports", { timeout: 120_000 }, () => {
 			at.config,
 			"import './node_modules/x';",
 			NODE_MODULES
-		]
+		],
+		[
+			'a type import into node_modules',
+			at.module,
+			"export type T = typeof import('../../../node_modules/bits-ui');",
+			NODE_MODULES
+		],
+		[
+			'a type import in a component',
+			at.component,
+			component("\ttype T = typeof import('../../../../node_modules/bits-ui');", ''),
+			NODE_MODULES
+		],
+		['a type import out of src', at.module, "export type T = import('../../x').X;", OUTSIDE]
 	];
 
 	it.each(refused)('refuses %s', async (_label, filePath, code, why) => {

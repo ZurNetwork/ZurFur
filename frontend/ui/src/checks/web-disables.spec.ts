@@ -85,17 +85,55 @@ function findingsIn(text: string): readonly Finding[] {
 	});
 }
 
-/** Every file under web/src, relative to it, but those in a `generated/` folder. */
+/** buf's protobuf output, relative to web/src: the one tree the check skips. */
+const PROTOBUF_OUTPUT = 'lib/server/api/generated/';
+
+/** Whether the check reads `relative`, a path under web/src written with `/`. */
+function isWalked(relative: string): boolean {
+	return !relative.startsWith(PROTOBUF_OUTPUT);
+}
+
+/** Every file under web/src the check reads, relative to it and written with `/`. */
 function webFiles(): readonly string[] {
 	return readdirSync(webSrc, { recursive: true, withFileTypes: true })
 		.filter((entry) => entry.isFile())
 		.map((entry) => path.relative(webSrc, path.join(entry.parentPath, entry.name)))
-		.filter((relative) => !relative.split(path.sep).includes('generated'));
+		.map((relative) => relative.split(path.sep).join('/'))
+		.filter(isWalked);
 }
 
 describe("web's disable comments", () => {
 	it('reads the files of web/src', () => {
 		expect(webFiles()).toContain('hooks.server.ts');
+	});
+
+	const walked: readonly string[] = [
+		'lib/components/generated/leak.ts',
+		'generated/x.ts',
+		'lib/server/generated/x.ts',
+		'lib/server/api/x.ts',
+		'lib/server/api/generated.ts',
+		'lib/server/api/generatedx/x.ts',
+		'lib/Server/api/generated/x.ts',
+		'routes/lib/server/api/generated/x.ts'
+	];
+
+	it.each(walked)('reads %s', (relative) => {
+		expect(isWalked(relative)).toBe(true);
+	});
+
+	it.each(['lib/server/api/generated/x_pb.ts', 'lib/server/api/generated/zurfur/v1/x_pb.ts'])(
+		'skips %s',
+		(relative) => {
+			expect(isWalked(relative)).toBe(false);
+		}
+	);
+
+	it('refuses a disable in a generated/ folder outside the protobuf output', () => {
+		const relative = 'lib/components/generated/leak.ts';
+		const leak = "/* eslint-disable */\nimport { Switch } from 'bits-ui';";
+		expect(isWalked(relative)).toBe(true);
+		expect(findingsIn(leak).map((finding) => finding.why)).toEqual(['bare']);
 	});
 
 	it('finds no comment in web/src that switches the import bans off', () => {

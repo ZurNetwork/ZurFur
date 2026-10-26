@@ -1052,6 +1052,20 @@ function staticTextOf(node) {
 	return typeof cooked === 'string' ? cooked : undefined;
 }
 
+/**
+ * The specifier node of a type query's `import('…')`: `source` when it holds a
+ * string literal, else the older `argument.literal`.
+ *
+ * @param {unknown} node the TSImportType
+ * @returns {unknown}
+ */
+function importTypeSource(node) {
+	const source = fieldOf(node, 'source');
+	const holdsString =
+		fieldOf(source, 'type') === 'Literal' && typeof fieldOf(source, 'value') === 'string';
+	return holdsString ? source : fieldOf(fieldOf(node, 'argument'), 'literal');
+}
+
 /** @type {import('eslint').Rule.RuleModule} */
 const importTiersRule = {
 	meta: {
@@ -1122,7 +1136,7 @@ const importTiersRule = {
 			ImportExpression: checkSource,
 			/** @param {import('eslint').Rule.Node} node */
 			TSImportType(node) {
-				check(node, fieldOf(fieldOf(node, 'argument'), 'literal'));
+				check(node, importTypeSource(node));
 			},
 			/** @param {import('eslint').Rule.Node} node */
 			TSExternalModuleReference(node) {
@@ -1285,7 +1299,7 @@ function sourceVisitors(check) {
 		ImportExpression: checkSource,
 		/** @param {import('eslint').Rule.Node} node */
 		TSImportType(node) {
-			check(node, fieldOf(fieldOf(node, 'argument'), 'literal'));
+			check(node, importTypeSource(node));
 		},
 		/** @param {import('eslint').Rule.Node} node */
 		TSExternalModuleReference(node) {

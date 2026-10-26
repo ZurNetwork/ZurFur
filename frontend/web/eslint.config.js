@@ -301,9 +301,18 @@ const importSpecifiersRule = {
 			ImportExpression(node) {
 				check(node, fieldOf(node, 'source'), true);
 			},
-			/** @param {import('eslint').Rule.Node} node */
+			/**
+			 * Reads `source` when it holds a string literal, else the older
+			 * `argument.literal`, so the check keeps working across both shapes.
+			 *
+			 * @param {import('eslint').Rule.Node} node
+			 */
 			TSImportType(node) {
-				check(node, fieldOf(fieldOf(node, 'argument'), 'literal'), false);
+				const source = fieldOf(node, 'source');
+				const holdsString =
+					fieldOf(source, 'type') === 'Literal' && typeof fieldOf(source, 'value') === 'string';
+				const specifier = holdsString ? source : fieldOf(fieldOf(node, 'argument'), 'literal');
+				check(node, specifier, false);
 			},
 			/** @param {import('eslint').Rule.Node} node */
 			TSExternalModuleReference(node) {
