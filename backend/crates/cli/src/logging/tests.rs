@@ -1,4 +1,4 @@
-use test_support::log_capture::CapturedLog;
+use test_support::log_capture::{self, CapturedLog};
 
 use super::*;
 
@@ -8,7 +8,7 @@ fn a_dns_client_error_naming_a_handle_never_reaches_the_cli_log() {
     let wide_open = EnvFilter::new("trace,hickory_resolver=trace,hickory_net=trace");
     let subscriber = subscriber(wide_open, log.clone());
 
-    tracing::subscriber::with_default(subscriber, || {
+    log_capture::with_default(subscriber, || {
         tracing::error!(target: "hickory_resolver::name_server_pool", "malformed answer for alice.example.com");
         tracing::error!(target: "hickory_net::xfer", "truncated reply for bob.example.com");
         tracing::warn!(target: "cli", "a warning still shows");

@@ -27,4 +27,9 @@ disallowed-methods = [
     { path = "domain::elements::commission::NewChangelogEntry::maturity_rated", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
     { path = "domain::elements::commission::NewChangelogEntry::rated_at_create", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
     { path = "domain::elements::commission::NewChangelogEntry::late", reason = "a gated changelog entry is built only by the den's gate, from its act's GatedEntry in `den/act.rs`, under an `#[expect]`" },
+    { path = "tracing::subscriber::set_default", reason = "install a test's log capture through `test_support::log_capture::set_default` or `with_default`, which keeps a second dispatcher alive so a parallel test can't cache a callsite as never" },
+    { path = "tracing::subscriber::with_default", reason = "install a test's log capture through `test_support::log_capture::set_default` or `with_default`, which keeps a second dispatcher alive so a parallel test can't cache a callsite as never" },
+    { path = "tracing::dispatcher::set_default", reason = "install a test's log capture through `test_support::log_capture::set_default` or `with_default`, which keeps a second dispatcher alive so a parallel test can't cache a callsite as never" },
+    { path = "tracing::dispatcher::with_default", reason = "install a test's log capture through `test_support::log_capture::set_default` or `with_default`, which keeps a second dispatcher alive so a parallel test can't cache a callsite as never" },
+    { path = "tracing_subscriber::util::SubscriberInitExt::set_default", reason = "install a test's log capture through `test_support::log_capture::set_default` or `with_default`, which keeps a second dispatcher alive so a parallel test can't cache a callsite as never" },
 ]

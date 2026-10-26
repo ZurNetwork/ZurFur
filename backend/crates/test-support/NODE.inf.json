@@ -22,7 +22,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers, application for pg_app::den_world's Workflows (made through the create use case), reqwest multipart for its uploads, strum for pg_app::ProfileCacheState and node_contract's NodeType::VARIANTS, adapter-hkdf + zeroize for custody's test custodian and test root, data-encoding for its hex fixtures, hmac + sha2-0-11 for custody's canary (RFC 5869 apart from adapter-hkdf), adapter-atproto + jacquard-oauth + jacquard-common + fluent-uri + smol_str for custody's sign-in round trip through the auth store",
+      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers, application for pg_app::den_world's Workflows (made through the create use case), reqwest multipart for its uploads, strum for pg_app::ProfileCacheState and node_contract's NodeType::VARIANTS, adapter-hkdf + zeroize for custody's test custodian and test root, data-encoding for its hex fixtures, hmac + sha2-0-11 for custody's canary (RFC 5869 apart from adapter-hkdf), adapter-atproto + jacquard-oauth + jacquard-common + fluent-uri + smol_str for custody's sign-in round trip through the auth store, tracing for log_capture's keeper dispatcher",
       "node": false
     },
     {
@@ -77,7 +77,7 @@
     },
     {
       "name": "src/log_capture.rs",
-      "role": "CapturedLog — a tracing-subscriber writer a driver's log test reads its own subscriber's output back from",
+      "role": "CapturedLog — a tracing-subscriber writer a driver's log test reads its own subscriber's output back from; set_default and with_default, the one way a test installs its capture for its thread (tracing's own, with a never-dropped keeper dispatcher forced alive first; application's and api's clippy.toml ban the direct installs)",
       "node": false
     },
     {
@@ -176,6 +176,11 @@
       "node": false
     },
     {
+      "name": "tests/log_capture_interest.rs",
+      "role": "a capture installed through log_capture::set_default sees an event whose callsite a subscriber-less thread reached first; alone in its binary so no other dispatcher masks it",
+      "node": false
+    },
+    {
       "name": "tests/throwaway_pds.rs",
       "role": "self-test incl. the image/.env.example drift assertion",
       "node": false
@@ -192,6 +197,7 @@
     "See also: ZMVP-106 — determinism capstone that reuses `contract::fixed_created_at()` (src/contract.rs).",
     "See also: ZMVP-199 ruling 8 / Engineer ruling 2026-08-25 — one shared `MemRuntime` fixture instead of a copy per test file (src/runtime.rs).",
     "See also: uow 28ca4f — origin of the `default_image_matches_env_example` drift guard (src/lib.rs).",
-    "src/pg_app.rs — the PostgreSQL test setup. Only the sign-in and profile ports are swapped (both onto `InProcessPds`); every other port is composition's live wiring, so the DID minter is the real one over the test root (`custody::TEST_ROOT`, every purpose) and PLC submission off (minting stays in PostgreSQL). The setup touches the app only through the sign-in routes, so a change to the sign-in seam is fixed here alone. A test that needs another port changed (a recording or silent profile source) swaps it inside the `app` closure, which receives the Runtime."
+    "src/pg_app.rs — the PostgreSQL test setup. Only the sign-in and profile ports are swapped (both onto `InProcessPds`); every other port is composition's live wiring, so the DID minter is the real one over the test root (`custody::TEST_ROOT`, every purpose) and PLC submission off (minting stays in PostgreSQL). The setup touches the app only through the sign-in routes, so a change to the sign-in seam is fixed here alone. A test that needs another port changed (a recording or silent profile source) swaps it inside the `app` closure, which receives the Runtime.",
+    "src/log_capture.rs — why the keeper: tracing-core caches one process-wide Interest per callsite. While a single dispatcher is alive, a callsite's first registration asks only the registering thread's default; on a parallel test's thread with no subscriber that is the no-op dispatch, which answers never, and the callsite stays never until the next Dispatch::new rebuilds every interest. So a lone scoped capture missed events whose callsite another test reached first (den::write's log test lost its \"use case finished\" line in CI). The keeper is a second dispatcher that enables nothing and answers every callsite sometimes, created before the capture and never dropped; with two live dispatchers registration asks each of them, so a capture's interest is never cached as never. A `.try_init()` global capture is every thread's default and doesn't share the cause."
   ]
 }
