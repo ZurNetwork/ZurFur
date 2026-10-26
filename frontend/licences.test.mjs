@@ -20,8 +20,8 @@ const FRONTEND = path.dirname(fileURLToPath(import.meta.url));
 const MODULE_FILE = path.join(FRONTEND, 'licences.mjs');
 const REAL_LIST_FILE = path.join(FRONTEND, '..', 'npm-licences.json');
 
-/** The files CI extracts to run the licence rule; the module's relative imports must stay inside this set. */
-const DRIVER_FILES = Object.freeze(['licences.mjs', 'install-check.mjs']);
+/** The only files licences.mjs may import: it stays pure and never imports lock-review.mjs, which imports it. */
+const LICENCES_IMPORTS = Object.freeze(['licences.mjs', 'install-check.mjs']);
 
 const TODAY = '2026-10-26';
 const HASH = 'a'.repeat(64);
@@ -611,7 +611,7 @@ describe('the imports', () => {
 		return [...source.matchAll(/\b(?:from|import)\s*\(?\s*(['"])([^'"]+)\1/g)].map((match) => match[2]);
 	}
 
-	test('licences.mjs imports only the driver files, and reads no file or network', () => {
+	test('licences.mjs imports only install-check.mjs, and reads no file or network', () => {
 		const source = fs.readFileSync(MODULE_FILE, 'utf8');
 		assert.doesNotMatch(source, /\bimport\s*\(\s*[^'"\s]/, 'a computed dynamic import');
 		assert.doesNotMatch(source, /\bcreateRequire\b|\brequire\s*\(/, 'a CommonJS require');
@@ -621,7 +621,7 @@ describe('the imports', () => {
 		for (const specifier of found) {
 			assert.ok(specifier.startsWith('./'), `a package or built-in import ${specifier}`);
 			const target = path.relative(FRONTEND, path.resolve(FRONTEND, specifier));
-			assert.ok(DRIVER_FILES.includes(target), `licences.mjs imports ${specifier}, outside ${DRIVER_FILES.join(', ')}`);
+			assert.ok(LICENCES_IMPORTS.includes(target), `licences.mjs imports ${specifier}, outside ${LICENCES_IMPORTS.join(', ')}`);
 		}
 	});
 });

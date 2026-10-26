@@ -26,7 +26,16 @@ import fs from 'node:fs';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { GuardError, parseLockfile, parsePlainVersion, splitPattern } from './install-check.mjs';
-import { isScopedPackage, judgeLicence, loadLicenceList, packageNameProblem } from './licences.mjs';
+import {
+	isPlainObject,
+	isScopedPackage,
+	judgeLicence,
+	loadLicenceList,
+	nonEmptyString,
+	ownValue,
+	packageNameProblem,
+	readOnProblem
+} from './licences.mjs';
 
 export { packageNameProblem };
 
@@ -40,7 +49,6 @@ const DAY_MS = 86_400_000;
 const REGISTRY_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 const WAIVER_KEYS = Object.freeze(['package', 'fixes', 'reason', 'diffReadBy', 'diffReadOn']);
 const ADVISORY_ID = /^(?:GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}|CVE-\d{4}-\d{4,})$/;
-const CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const POSITIVE_INTEGER = /^[1-9]\d*$/;
 const NO_WAIVERS = new Map();
 const NPM_ALIAS = 'npm:';
@@ -48,18 +56,6 @@ const USAGE = [
 	'usage: node frontend/lock-review.mjs <old-lockfile> <new-lockfile> [--no-removals] [--licences <file> [--min-age-days <n> [--waivers <file>]]]',
 	'       node frontend/lock-review.mjs --licence-sweep --licences <file> <lockfile>...'
 ].join('\n');
-
-/** True for a JSON-shaped object: not null, not an array, prototype `Object.prototype` or null. */
-function isPlainObject(value) {
-	if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
-	const prototype = Object.getPrototypeOf(value);
-	return prototype === Object.prototype || prototype === null;
-}
-
-/** The object's own property `key`, never an inherited one. */
-function ownValue(object, key) {
-	return Object.hasOwn(object, key) ? object[key] : undefined;
-}
 
 /** The package name a lockfile key installs, following an `npm:` alias. */
 export function packageName(key) {
@@ -305,23 +301,6 @@ export function diffLockfiles(oldText, newText) {
 	return { format: 'npm', removed: subtractTriples(oldTriples, newTriples), added: addedTriples(newTriples, oldTriples) };
 }
 
-/** Why `text` is not a real `YYYY-MM-DD` date on or before `todayUtc`, or undefined when it is. */
-function readOnProblem(text, todayUtc) {
-	const match = typeof text === 'string' ? CALENDAR_DATE.exec(text) : null;
-	if (match === null) return 'not a YYYY-MM-DD date';
-	const [year, month, day] = match.slice(1).map(Number);
-	const date = new Date(Date.UTC(year, month - 1, day));
-	if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
-		return 'not a real date';
-	}
-	if (text > todayUtc) return `after today (${todayUtc})`;
-	return undefined;
-}
-
-function nonEmptyString(value) {
-	return typeof value === 'string' && value.trim() !== '';
-}
-
 /** Checks one waiver entry and returns its exact `name@version` key. */
 function waiverKey(waiver, index, todayUtc) {
 	const where = `waivers[${index}]`;
@@ -361,7 +340,7 @@ export function parseWaivers(text, nowMs) {
 	if (topKeys.length !== 1 || topKeys[0] !== 'waivers') throw new GuardError('the top level must be exactly {"waivers": [...]}');
 	const { waivers } = document;
 	if (!Array.isArray(waivers)) throw new GuardError('waivers is not an array');
-	const todayUtc = new Date(nowMs).toISOString().slice(0, 10);
+	const todayUtc = utcDate(nowMs);
 	const table = new Map();
 	waivers.forEach((waiver, index) => {
 		const key = waiverKey(waiver, index, todayUtc);

@@ -11,8 +11,8 @@
 # lock=true when a path is a Cargo.lock, or when there are no paths at all.
 # npmlock=true when a path is an npm lockfile (a yarn.lock or a
 # package-lock.json, at any depth), a root osv-scanner.*.toml ignore file or
-# the root npm-licences.json licence list, or when there are no paths at all. All three fail closed: CI treats any output
-# but an explicit `false` as true.
+# the root npm-licences.json licence list, or when there are no paths at all.
+# All three fail closed: CI treats any output but an explicit `false` as true.
 #
 # CI runs the BASE branch's copy of this file, so a PR that edits the list
 # cannot use its own edit to skip its own jobs. Keep the list in step with the

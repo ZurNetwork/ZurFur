@@ -223,6 +223,14 @@ else
     fail "just gate ends with just npm-licences, then just npm-advisories" "its last two lines are '$gate_last'"
 fi
 
+licences_recipe="$(awk '
+    /^npm-licences:/ { inside = 1; next }
+    inside && /^[^[:space:]]/ { inside = 0 }
+    inside { print }
+' "$root/Justfile")"
+expect_line "just npm-licences sweeps both lockfiles under env -i" "$licences_recipe" \
+    "env -i PATH=\"\$PATH\" HOME=\"\$HOME\" node frontend/lock-review.mjs --licence-sweep --licences npm-licences.json frontend/yarn.lock lexicons/package-lock.json"
+
 # --- the guard's tests and the manual review -----------------------------------------
 
 guard_tests="node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs frontend/licences.test.mjs"

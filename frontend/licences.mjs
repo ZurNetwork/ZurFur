@@ -31,14 +31,14 @@ const HASH_KEY = 'textSha256';
 const NO_LICENCE = '(no licence field)';
 
 /** True for a JSON-shaped object: not null, not an array, prototype `Object.prototype` or null. */
-function isPlainObject(value) {
+export function isPlainObject(value) {
 	if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
 	const prototype = Object.getPrototypeOf(value);
 	return prototype === Object.prototype || prototype === null;
 }
 
 /** The object's own property `key`, never an inherited one. */
-function ownValue(object, key) {
+export function ownValue(object, key) {
 	return Object.hasOwn(object, key) ? object[key] : undefined;
 }
 
@@ -250,14 +250,15 @@ function calendarDateProblem(text) {
 }
 
 /** Why `text` is not a real `YYYY-MM-DD` date on or before `today`, or undefined when it is. */
-function readOnProblem(text, today) {
+export function readOnProblem(text, today) {
 	const problem = calendarDateProblem(text);
 	if (problem !== undefined) return problem;
 	if (text > today) return `after today (${today})`;
 	return undefined;
 }
 
-function nonEmptyString(value) {
+/** True for a string holding more than whitespace. */
+export function nonEmptyString(value) {
 	return typeof value === 'string' && value.trim() !== '';
 }
 
