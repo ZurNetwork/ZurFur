@@ -74,7 +74,7 @@ pub use seat::{
     NewSeat, Seat, SeatKind, SeatKindError, SeatLink, SeatLinkError, SeatPrompt, SeatPromptError,
 };
 pub use seat_invitation::{SeatInvitation, SeatInvitationId};
-pub use slot::{NewSlot, Slot, SlotTitle, SlotTitleError};
+pub use slot::{NewSlot, Slot, SlotBirth, SlotDeclaration, SlotTitle};
 pub use standing::{CommissionStanding, LockedNode, LockedStanding};
 pub use start::CommissionStart;
 pub use state::{CommissionState, LateFacts};

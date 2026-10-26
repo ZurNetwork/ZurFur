@@ -23,6 +23,7 @@ pub use bug_report::{MemBugReportStore, MemBugReportWrites};
 pub use character::{MemCharacterStore, MemCharacterWrites};
 pub use commission::{
     CommissionSeed, MemChangelogStore, MemChangelogWrites, MemCommissionStore, MemCommissionWrites,
+    SlotSeed,
 };
 pub use file_store::MemFileStore;
 pub use fixed_sign_in::FixedSignIn;

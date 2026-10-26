@@ -11,7 +11,7 @@ use crate::elements::{
         DeadlineChange, DelayedChange, DirectionChange, Dispute, DisputeClear, ElementId, FileKey,
         FileSummary, GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode,
         LockedStanding, MaturitySet, NewCommission, NewElement, NewSeat, NewSlot, Seat,
-        SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
+        SeatInvitation, SeatInvitationId, Slot, SlotBirth, TabId, TabRow,
     },
     workflow::{Column, ColumnId, WorkflowId},
 };
@@ -164,9 +164,9 @@ pub trait CommissionStore: Send + Sync {
 /// open `UnitOfWork` (`uow.commissions()`). A create's authority is the den's write
 /// gate's create [`WriteCapability`], which [`create`](Self::create) takes; a lifecycle move's,
 /// a dispute's raise and clear, a direction status's, a deadline's and a Delayed flag's is a
-/// Participant's, and a rating's the Owner's, which their writes take. Every other method's
-/// authority, and the commission's own existence, are the caller's checks, settled before it
-/// is reached.
+/// Participant's, and a rating's the Owner's, which their writes take; a Slot declare's is the
+/// Owner's, which [`declare_slot`](Self::declare_slot) takes. Every other method's authority,
+/// and the commission's own existence, are the caller's checks, settled before it is reached.
 #[async_trait]
 pub trait CommissionWrites: Send {
     /// Persist a new commission under the id `capability` was issued for, at `birth`'s
@@ -258,12 +258,18 @@ pub trait CommissionWrites: Send {
     /// is bookkeeping, not a [`Fact`](crate::elements::commission::Fact).
     async fn add_markup(&mut self, markup: &CommissionMarkup) -> anyhow::Result<()>;
 
-    /// Declare Slots on the commission, as a batch in one write: each [`NewSlot`]
-    /// becomes an ordinary element in the named surface plus a satellite row keyed
-    /// by that element's id. All-or-nothing — the first refusal aborts the write.
-    /// Same gates as [`add_element`](Self::add_element). Nothing here fills a
-    /// Slot; no occupant is representable.
-    async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()>;
+    /// Declare one Slot on the commission `capability` was issued for, at `birth`'s node, element,
+    /// declarer and time: an ordinary element in `slot`'s surface, behind the same tab and
+    /// surface gates as [`add_element`](Self::add_element), plus its satellite row, bound to
+    /// `birth`'s node only when that node is a `slot` node under this commission's `slots` entry
+    /// whose segment is the element's id; any other node stores nothing, and the declare errs.
+    /// Nothing here fills a Slot; no occupant is representable.
+    async fn declare_slot(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        birth: &SlotBirth,
+        slot: &NewSlot,
+    ) -> anyhow::Result<()>;
 
     /// Whether the commission bears any [`Fact`](crate::elements::commission::Fact)
     /// — the single predicate deciding hard-delete legality. A read on the write

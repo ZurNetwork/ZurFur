@@ -102,6 +102,9 @@ pub enum ChangelogEntryKind {
     /// The owner rated the commission or changed its rating: the rating and the
     /// Graphic flag it now carries.
     MaturityRated,
+    /// A Slot was declared on the commission. The entry carries its element id, never its
+    /// title or notes.
+    SlotDeclared,
 }
 
 /// The kinds that say whether a Late is still owed: the kind a Late mark records, and the kinds

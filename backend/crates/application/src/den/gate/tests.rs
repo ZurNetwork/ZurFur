@@ -12,7 +12,9 @@ use atta::{WriteCaps, WriteError, Writer};
 use chrono::Utc;
 use domain::{
     elements::{
-        commission::{ChangelogEntry, ChangelogEntryKind, LifecycleStep, NewCommission, OpenKind},
+        commission::{
+            ChangelogEntry, ChangelogEntryKind, LifecycleStep, NewCommission, OpenKind, TabId,
+        },
         did::Did,
         level::Level,
         maturity::{Maturity, MaturityRating},
@@ -34,8 +36,8 @@ use crate::{
         authority::{GrantKind, MINT_AS},
         host::DenHost,
         test_acts::{
-            commission_path, create_act, hand_built_create, hand_built_rename, mark_late_act,
-            move_act, rename_act, set_deadline_act, state_at,
+            commission_path, create_act, declare_act, hand_built_create, hand_built_create_under,
+            hand_built_rename, mark_late_act, move_act, rename_act, set_deadline_act, state_at,
         },
         write::{Actor, Command, DenWriteError, WriteResult},
     },
@@ -196,7 +198,7 @@ async fn write_at(
 ) -> Result<WriteResult, DenWriteError> {
     let command = Command {
         actor: Actor::User(actor.clone()),
-        act,
+        acts: vec![act],
     };
     Den::from(ports).write(command, now).await
 }
@@ -1406,4 +1408,155 @@ fn judging_refuses_a_create_and_the_late_mark_to_every_standing() {
             assert_eq!(judgement, Judgement::Refused, "{act:?} for {role:?}");
         }
     }
+}
+
+/// The first tab of `commission`, read from its committed composition.
+async fn first_tab(ports: &Ports, commission: CommissionId) -> TabId {
+    let composition = ports
+        .commissions
+        .load_composition(&commission)
+        .await
+        .expect("the composition reads")
+        .expect("the commission composes");
+    composition
+        .tabs
+        .first()
+        .expect("the commission has its tab")
+        .id
+}
+
+/// The path of `commission`'s `slots` entry.
+fn slots_path(commission: CommissionId) -> RealPath {
+    let word = names::fixed_segment(names::SLOTS).expect("a word is a segment");
+    commission_path(commission).join(word)
+}
+
+/// A Slot's node made under the node at `parent`, as Atta's act carries it.
+fn slot_made_under(parent: RealPath) -> Shape {
+    let act = hand_built_create_under(
+        parent,
+        crate::den::DenType::CommissionSlots,
+        crate::den::DenType::Slot,
+        crate::den::DenType::Slot,
+        names::id_segment(made_up()).expect("an id is a key"),
+        "A made Slot",
+        declare_act(untitled(), "A made Slot", TabId::mint()),
+    );
+    act.shape
+}
+
+// A declare of three Slots walks from the commission's node to its `slots` entry once, and
+// declares each Slot at its own node.
+#[tokio::test]
+async fn a_declare_walks_to_slots_once() {
+    let spy = Spy::default();
+    let world = spied(&spy).await;
+    let tab = first_tab(&world.ports, untitled()).await;
+    let acts = ["One", "Two", "Three"]
+        .into_iter()
+        .map(|text| declare_act(untitled(), text, tab))
+        .collect();
+    let command = Command {
+        actor: Actor::User(alice()),
+        acts,
+    };
+
+    Den::from(&world.ports)
+        .write(command, Utc::now())
+        .await
+        .expect("alice declares three Slots");
+
+    assert_eq!(spy.recorded_node_reads(), ["at_top", "child"]);
+    let declares = spy
+        .recorded_calls()
+        .into_iter()
+        .filter(|call| *call == "declare_slot")
+        .count();
+    assert_eq!(declares, 3);
+}
+
+// A create fits a grant on an existing commission only below that commission: in one of its
+// entries, never at the commission itself, under another commission or in `/commission`, and
+// never under the system's grant.
+#[test]
+fn a_create_in_an_entry_fits_only_a_grant_below_its_commission() {
+    let owner = existing(&alice(), CommissionRole::Owner);
+    let system_kind = GrantKind::System {
+        commission: untitled(),
+        level: Level::Private,
+        node: NodeId::mint(),
+        facts: domain::elements::commission::LateFacts {
+            state: state_at(LifecycleStep::Active),
+            owed: true,
+        },
+    };
+    let system = Grant::for_system_test(system_kind);
+    let directory = crate::den::write::commission_directory().expect("a top-level path");
+
+    assert!(grant_fits(&owner, &slot_made_under(slots_path(untitled()))));
+    assert!(!grant_fits(
+        &owner,
+        &slot_made_under(commission_path(untitled()))
+    ));
+    assert!(!grant_fits(
+        &owner,
+        &slot_made_under(slots_path(old_sketch()))
+    ));
+    assert!(!grant_fits(&owner, &slot_made_under(directory)));
+    assert!(!grant_fits(
+        &system,
+        &slot_made_under(slots_path(untitled()))
+    ));
+}
+
+// A child create is fixed by its act's type: an act whose node is of another type than its own
+// is Atta's refusal, and an entry made under `slots` the node rows refuse; neither writes.
+#[tokio::test]
+async fn a_hand_built_child_create_of_another_type_writes_nothing() {
+    let world = test_world::world().await;
+    let database = &*world.ports.database;
+    let node = top_row(database, untitled()).await.expect("seeded").id;
+    let tab = first_tab(&world.ports, untitled()).await;
+    let before = world.backend.all_nodes();
+    let key = || names::id_segment(made_up()).expect("an id is a key");
+    let other_type = hand_built_create_under(
+        slots_path(untitled()),
+        crate::den::DenType::CommissionSlots,
+        crate::den::DenType::Slot,
+        crate::den::DenType::CommissionBrief,
+        key(),
+        "Not a Slot",
+        declare_act(untitled(), "Not a Slot", tab),
+    );
+    let entry_under_slots = hand_built_create_under(
+        slots_path(untitled()),
+        crate::den::DenType::CommissionSlots,
+        crate::den::DenType::CommissionBrief,
+        crate::den::DenType::CommissionBrief,
+        key(),
+        "An entry",
+        declare_act(untitled(), "An entry", tab),
+    );
+
+    let refused = through_host(
+        database,
+        DenHost::viewer_of(&alice()),
+        existing_on(&alice(), CommissionRole::Owner, node),
+        other_type,
+    )
+    .await;
+    let failed = through_host(
+        database,
+        DenHost::viewer_of(&alice()),
+        existing_on(&alice(), CommissionRole::Owner, node),
+        entry_under_slots,
+    )
+    .await;
+
+    assert!(
+        matches!(refused, Err(WriteError::Refused(atta::Refusal::OtherType))),
+        "{refused:?}"
+    );
+    assert!(matches!(failed, Err(WriteError::Host(_))), "{failed:?}");
+    assert_eq!(world.backend.all_nodes().len(), before.len());
 }

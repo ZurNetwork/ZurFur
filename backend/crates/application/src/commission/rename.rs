@@ -97,7 +97,7 @@ impl Commissions<'_> {
         };
         let command = write::Command {
             actor: actor_id.into(),
-            act: DenAct::Commission(CommissionAct::Rename(act)),
+            acts: vec![DenAct::Commission(CommissionAct::Rename(act))],
         };
         let written = Den::from(self.ports()).write(command, now).await?;
         let values = CommissionValues::answered(written, now)?;

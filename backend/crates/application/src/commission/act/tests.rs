@@ -92,14 +92,61 @@ fn a_create_makes_six_private_entries_named_by_their_words() {
     assert_eq!(made, expected);
 }
 
+/// The declare of one Slot on "Untitled" titled `title`, with `notes`.
+fn declare(title: &str, notes: &str) -> CommissionAct {
+    let slot = domain::elements::commission::NewSlot {
+        address: domain::elements::commission::SurfaceAddress::new(
+            domain::elements::commission::TabId::mint(),
+            "content".parse().expect("a surface name"),
+        ),
+        notes: Some(notes.to_owned()),
+    };
+    let act = crate::commission::slots::declare::Act {
+        commission: untitled(),
+        title: title.parse().expect("a valid slot title"),
+        declaration: domain::elements::commission::SlotDeclaration::minted(slot),
+    };
+    CommissionAct::DeclareSlot(act)
+}
+
 #[test]
 fn an_act_s_debug_prints_no_title() {
     let printed = [
         format!("{:?}", create("A secret piece")),
         format!("{:?}", rename("A secret name")),
+        format!("{:?}", declare("A secret Slot", "Secret notes")),
     ];
 
-    assert_eq!(printed, ["Create", "Rename"]);
+    assert_eq!(printed, ["Create", "Rename", "DeclareSlot"]);
+}
+
+// A Slot declare needs the Owner, read from its capability marker, and makes its node in the
+// commission's `slots` entry, keyed by its element id and named by its title.
+#[test]
+fn a_slot_declare_needs_the_owner_and_makes_its_node_in_slots() {
+    let declared = declare("A Slot", "notes");
+    let CommissionAct::DeclareSlot(act) = &declared else {
+        panic!("a declare");
+    };
+    let element = act.declaration.element;
+
+    let spec = declared.spec();
+
+    let untitled_place = Place::Commission(CommissionPlace::Commission(untitled()));
+    let shape = ActShape::CreateInEntry {
+        entry: crate::den::names::SLOTS,
+        entry_type: DenType::CommissionSlots,
+        key: element,
+        name: "A Slot".parse().expect("a name"),
+    };
+    assert_eq!(spec.needs, Needs::Role(CommissionRole::Owner));
+    assert_eq!(
+        spec.needs,
+        needs::<crate::commission::slots::declare::Act>()
+    );
+    assert_eq!(spec.anchor, Anchor::Thing(untitled_place));
+    assert_eq!(spec.den_type, DenType::Slot);
+    assert_eq!(spec.shape, shape);
 }
 
 // A lifecycle move needs any Participant, read from its capability marker, and changes the

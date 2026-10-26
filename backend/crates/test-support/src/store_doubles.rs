@@ -21,7 +21,7 @@ use domain::elements::{
         DeadlineChange, DelayedChange, DirectionChange, Dispute, DisputeClear, ElementId, FileKey,
         FileSummary, GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode,
         LockedStanding, MaturitySet, NewCommission, NewElement, NewSeat, NewSlot, Seat,
-        SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
+        SeatInvitation, SeatInvitationId, Slot, SlotBirth, TabId, TabRow,
     },
     did::Did,
     handle::Handle,
@@ -779,8 +779,13 @@ impl CommissionWrites for ScriptedStandingRepo<'_> {
         self.inner.add_markup(markup).await
     }
 
-    async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()> {
-        self.inner.declare_slots(slots).await
+    async fn declare_slot(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        birth: &SlotBirth,
+        slot: &NewSlot,
+    ) -> anyhow::Result<()> {
+        self.inner.declare_slot(capability, birth, slot).await
     }
 
     async fn commission_has_facts(&mut self, id: &CommissionId) -> anyhow::Result<bool> {

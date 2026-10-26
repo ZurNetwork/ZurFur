@@ -7,7 +7,7 @@ use super::{ChangelogEntryKind, OpenKind};
 use crate::elements::commission::{
     CommissionId, DeadlineCleared, DeadlineSet, DelayedCleared, DelayedSet, DirectionCleared,
     DirectionSet, Dispute, DisputeClear, LateMark, LifecycleMove, LifecycleStep, MaturitySet,
-    NewCommission,
+    NewCommission, SlotDeclaration,
 };
 use identity::elements::user::UserId;
 use kernel::{datetime::DateTimeUtc, elements::maturity::Maturity};
@@ -123,6 +123,24 @@ impl NewChangelogEntry {
             ChangelogEntryKind::Renamed,
             actor,
             json!({}),
+            at,
+        )
+    }
+
+    /// A Slot declared: kind [`SlotDeclared`](ChangelogEntryKind::SlotDeclared), `{"slot"}`
+    /// as its element id, and nothing of its title or notes.
+    pub fn slot_declared(
+        commission: CommissionId,
+        actor: UserId,
+        declared: &SlotDeclaration,
+        at: DateTimeUtc,
+    ) -> Self {
+        let payload = json!({ "slot": declared.element.to_string() });
+        Self::by(
+            commission,
+            ChangelogEntryKind::SlotDeclared,
+            actor,
+            payload,
             at,
         )
     }

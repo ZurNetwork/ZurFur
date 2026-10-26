@@ -92,7 +92,7 @@
     },
     {
       "name": "src/node_contract.rs",
-      "role": "the shared node conformance suite: one pub async fn per case over (&dyn Database, &dyn NodeStore, &dyn CommissionSeeder), building 0.2's tree (a commission node, its six entries, Slots under slots), and node_contract_tests!(setup), which writes one #[tokio::test] per case; write_tree binds each tree's commission (its segment a commission id), and every committed commission node is bound; a case deleting a commission node deletes its commission in the same unit; a refusal ends the unit",
+      "role": "the shared node conformance suite: one pub async fn per case over (&dyn Database, &dyn NodeStore, Seeders: the adapter's CommissionSeeder and SlotSeeder), building 0.2's tree (a commission node, its six entries, Slots under slots), and node_contract_tests!(setup), which writes one #[tokio::test] per case; write_tree binds each tree's commission (its segment a commission id), and every committed commission node is bound; committed Slots are written in a second unit, each node keyed by a fresh element id and bound to its Slot through the SlotSeeder, so a slot node no Slot points at lives only inside an uncommitted unit (the bytewise children order and one segment under two parents are read there) and is refused at commit (a_slot_node_without_its_slot_is_refused_at_commit); a case deleting a commission node deletes its commission in the same unit; a refusal ends the unit",
       "node": false
     },
     {
@@ -112,7 +112,7 @@
     },
     {
       "name": "src/pg_app/den_world.rs",
-      "role": "den_world(app) -> DenWorld, and den_world_recording(app, &StatementLog) through the statement proxy: alice, bob and a stranger signed in (profiles cached through GET /me); alice's Account \"Supreme Arts\" (Workflow \"Queue\") and bob's \"Night Shift\" (\"Backlog\"); \"Untitled\" and the archived \"Old sketch\", a file and a slot each, all through routes or use cases; bob a Participant of \"Untitled\" and test-only writes: set_visibility (the commission node's level and the commission's own visibility column, since no trigger copies a level), store_unparsable_level (drops node_level_known in the world's own database, then writes a level no parser reads onto both), store_legacy_title (the node's name and the created entry's payload); set_lifecycle_step (the commission row's undisputed step; the dispute CHECK refuses Disputed, which only PUT …/dispute enters); add_backlog_column adds a column to bob's \"Backlog\" through the add use case; set_profile_cache(ProfileCacheState::{Warm, Cold}) fixes the profile cache's state for all three users; absent_* ids no seed writes",
+      "role": "den_world(app) -> DenWorld, and den_world_recording(app, &StatementLog) through the statement proxy: alice, bob and a stranger signed in (profiles cached through GET /me); alice's Account \"Supreme Arts\" (Workflow \"Queue\") and bob's \"Night Shift\" (\"Backlog\"); \"Untitled\" and the archived \"Old sketch\", a file and a slot each, all through routes or use cases; bob a Participant of \"Untitled\" and test-only writes: set_visibility (the commission node's level), store_unparsable_level (drops node_level_known in the world's own database, then writes a level no parser reads onto the node), store_legacy_title (the node's name and the created entry's payload); set_lifecycle_step (the commission row's undisputed step; the dispute CHECK refuses Disputed, which only PUT …/dispute enters); add_backlog_column adds a column to bob's \"Backlog\" through the add use case; set_profile_cache(ProfileCacheState::{Warm, Cold}) fixes the profile cache's state for all three users; absent_* ids no seed writes",
       "node": false
     },
     {
@@ -127,7 +127,7 @@
     },
     {
       "name": "src/pg_app/pairs.rs",
-      "role": "the pairs of not-found causes on the den world, shared by the route, read and statement suites and the timing run: MissPair (absent, not_yours, home), stranger_targets (Untitled Private live; Old sketch Private, Public and Listed archived); the den routes' den_stranger_pairs (the commission, its changelog, its file), den_account_pair, den_character_pair (bob's user DID stands in: no Character on PostgreSQL yet) and den_participant_pairs (a file key, a slot, a Workflow); commission's commission_read_stranger_pairs, commission_read_live_pairs (with each pair's problem code), public_live_download_pair and download_participant_pair; the rename's rename_stranger_pair (PATCH …/title with RENAME_TITLE: a made-up id against alice's Old sketch, which bob takes no part in); CommissionCall (a method, a path tail and a body its own parsing accepts; path, send, and pair on a target) with rename_call, the ten writes in new_write_calls (the field writes, the dispute pair and the rating) and the commission read in read_call",
+      "role": "the pairs of not-found causes on the den world, shared by the route, read and statement suites and the timing run: MissPair (absent, not_yours, home), stranger_targets (Untitled Private live; Old sketch Private, Public and Listed archived); the den routes' den_stranger_pairs (the commission, its changelog, its file), den_account_pair, den_character_pair (bob's user DID stands in: no Character on PostgreSQL yet) and den_participant_pairs (a file key, a slot, a Workflow); commission's commission_read_stranger_pairs, commission_read_live_pairs (with each pair's problem code), public_live_download_pair and download_participant_pair; the rename's rename_stranger_pair (PATCH …/title with RENAME_TITLE: a made-up id against alice's Old sketch, which bob takes no part in); CommissionCall (a method, a path tail and a body its own parsing accepts; path, send, and pair on a target) with rename_call, the eleven writes in new_write_calls (the seven field writes, the dispute pair, the rating and the slot declare) and the commission read in read_call",
       "node": false
     },
     {
@@ -162,7 +162,7 @@
     },
     {
       "name": "src/seeder.rs",
-      "role": "CommissionSeeder (each adapter's test code mints the capability and calls the port's create; this crate never mints) and the gate's shapes over it: made_up_owner, bind (a commission at a commission node, its id the segment), commission_node, entry_nodes, write_commission, seed_commission",
+      "role": "CommissionSeeder (each adapter's test code mints the capability and calls the port's create; this crate never mints) and SlotSeeder (the port's declare of a Slot bound to a given node, on a committed commission, under an Owner's capability the adapter's test code mints) and the gate's shapes over it: made_up_owner, bind (a commission at a commission node, its id the segment), commission_node, entry_nodes, write_commission, seed_commission",
       "node": false
     },
     {

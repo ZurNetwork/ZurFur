@@ -27,9 +27,13 @@ use test_support::pg_app::{self, PgServed};
 /// The custody upgrade's second migration: it deletes the in-flight sign-in rows.
 const SIGNIN_ROWS_DELETE: i64 = 20261022231357;
 
-/// The migration after the custody upgrade: the commission dispute columns, rolled back before
-/// it.
+/// The first migration after the custody upgrade: the commission dispute columns, rolled back
+/// before it.
 const DISPUTE_COLUMNS: i64 = 20261026075811;
+
+/// The second migration after the custody upgrade: the Slot node fill. The rehearsal forgets it
+/// and leaves its nodes and checks in place, since the parent's schema reads neither.
+const SLOT_FILL: i64 = 20261026080502;
 
 /// The purposes the API boot derives.
 const BOOT_PURPOSES: [Purpose; 3] = [Purpose::DidCustody, Purpose::SigninSecrets, Purpose::DenMac];
@@ -236,8 +240,8 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
     let later_versions = embedded_versions(|version| version > SIGNIN_ROWS_DELETE);
     assert_eq!(
         later_versions,
-        [DISPUTE_COLUMNS],
-        "the migrations after the custody upgrade, each rolled back before it"
+        [DISPUTE_COLUMNS, SLOT_FILL],
+        "the migrations after the custody upgrade"
     );
     let parent_versions = embedded_versions(|version| version < CUSTODY_ENVELOPE);
     let (pool, db) = custody::before_the_envelope().await;

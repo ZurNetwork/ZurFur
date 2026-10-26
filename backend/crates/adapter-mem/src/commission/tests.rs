@@ -2,7 +2,7 @@ use chrono::Utc;
 use domain::elements::account::AccountId;
 use domain::elements::commission::{
     CommissionDeadline, CommissionState, CommissionTitle, DirectionStatus, FileName, LateFacts,
-    LateKinds, NewSlot, SKELETON, SeatInvitation, SeatKind, SlotTitle, clear_deadline,
+    LateKinds, NewSlot, SKELETON, SeatInvitation, SeatKind, SlotDeclaration, clear_deadline,
     clear_delayed, clear_direction, move_lifecycle, owes_late, rate_maturity, schedule_deadline,
     set_delayed, set_direction,
 };
@@ -1780,6 +1780,86 @@ async fn remove_element(
     uow.commit().await
 }
 
+/// The node of commission `id`'s `slots` entry, read on `uow`.
+async fn slots_entry_in(uow: &mut dyn UnitOfWork, id: CommissionId) -> NodeId {
+    let top = NodeSegment::try_from(id.to_string()).unwrap();
+    let commission_node = uow
+        .nodes()
+        .at_top(&NodeType::Commission, &top)
+        .await
+        .unwrap()
+        .expect("the commission has its node");
+    let word = NodeSegment::try_from("slots").unwrap();
+    uow.nodes()
+        .child(&commission_node.id, &word)
+        .await
+        .unwrap()
+        .expect("the commission has its slots entry")
+        .id
+}
+
+/// A Slot's node named `title` for `element` under the `slots` entry `parent`.
+fn slot_node(parent: NodeId, element: ElementId, title: &str) -> NewNode {
+    NewNode {
+        id: NodeId::mint(),
+        parent: Some(parent),
+        segment: NodeSegment::try_from(element.to_string()).unwrap(),
+        node_type: NodeType::Slot,
+        level: Level::Private,
+        name: StoredText::from(title.to_owned()),
+    }
+}
+
+/// Declares on `uow` a Slot titled `title` at `address` with `notes` on commission `id`, as the
+/// den's write gate does: its node under the commission's `slots` entry, then the port's
+/// declare under an Owner's capability minted here. Answers its element id, or the refusal.
+async fn declare_in(
+    uow: &mut dyn UnitOfWork,
+    id: CommissionId,
+    address: &SurfaceAddress,
+    title: &str,
+    notes: Option<&str>,
+) -> anyhow::Result<ElementId> {
+    let element = SlotDeclaration::minted(NewSlot {
+        address: address.clone(),
+        notes: None,
+    })
+    .element;
+    let parent = slots_entry_in(uow, id).await;
+    let node = slot_node(parent, element, title);
+    uow.nodes().create(&node).await?;
+    let birth = SlotBirth {
+        element,
+        node: node.id,
+        created_by: user_id(),
+        created_at: Utc::now(),
+    };
+    let slot = NewSlot {
+        address: address.clone(),
+        notes: notes.map(str::to_owned),
+    };
+    uow.commissions()
+        .declare_slot(&owner_on(id), &birth, &slot)
+        .await?;
+    Ok(element)
+}
+
+/// [`declare_in`] in a unit of its own, committed.
+async fn declare_committed(
+    backend: &MemBackend,
+    id: CommissionId,
+    address: &SurfaceAddress,
+    title: &str,
+) -> ElementId {
+    let database = backend.database();
+    let mut uow = database.begin().await.unwrap();
+    let element = declare_in(&mut *uow, id, address, title, None)
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+    element
+}
+
 // ZMVP-166 — removing an element takes exactly that element (there is no
 // subtree to take: elements are leaves, always) and renumbers the remaining
 // ordering group so positions stay contiguous from 0, in the same
@@ -1889,21 +1969,14 @@ async fn deleting_the_commission_sweeps_its_whole_composition() {
         Utc::now(),
     );
     let seat_id = seat.id;
-    let slot = NewSlot::contributed_at(
-        id,
-        address.clone(),
-        "The knight".parse::<SlotTitle>().unwrap(),
-        None,
-        owner.clone(),
-        Utc::now(),
-    );
-    let slot_id = slot.id;
     let invited = user_id();
     let invitation = SeatInvitation::issue(id, seat_id, invited.clone(), owner, Utc::now());
     let mut uow = database.begin().await.unwrap();
     uow.commissions().add_element(&element).await.unwrap();
     uow.commissions().declare_seat(&seat).await.unwrap();
-    uow.commissions().declare_slots(&[slot]).await.unwrap();
+    let slot_id = declare_in(&mut *uow, id, &address, "The knight", None)
+        .await
+        .unwrap();
     uow.commissions()
         .create_seat_invitation(&invitation)
         .await
@@ -2321,45 +2394,34 @@ async fn removing_a_seats_element_sweeps_its_satellite_and_offers() {
     );
 }
 
-// ZMVP-77 AC1 (store layer) — declaring Slots contributes one element per
-// Slot AND its title/notes satellite sharing the id, all in one unit: the
-// batch lands together, in request order, and nothing anywhere can name an
-// occupant.
+// ZMVP-77 AC1 (store layer) — declaring a Slot contributes its element AND its notes
+// satellite sharing the id, bound to its node, whose name is its title; nothing anywhere can
+// name an occupant.
 #[tokio::test]
 async fn declare_slot_creates_an_element_with_its_satellite() {
     let backend = MemBackend::new();
     let database = backend.database();
     let owner = user_id();
-    let (id, address) = composed_commission(&backend, owner.clone()).await;
-
-    let knight = NewSlot::contributed_at(
-        id,
-        address.clone(),
-        "The knight".parse::<SlotTitle>().unwrap(),
-        Some("plate, not chain".to_string()),
-        owner.clone(),
-        Utc::now(),
-    );
-    let mage = NewSlot::contributed_at(
-        id,
-        address.clone(),
-        "The mage".parse::<SlotTitle>().unwrap(),
-        None,
-        owner,
-        Utc::now(),
-    );
-    let (knight_id, mage_id) = (knight.id, mage.id);
+    let (id, address) = composed_commission(&backend, owner).await;
 
     let mut uow = database.begin().await.unwrap();
-    uow.commissions()
-        .declare_slots(&[knight, mage])
+    let knight_id = declare_in(
+        &mut *uow,
+        id,
+        &address,
+        "The knight",
+        Some("plate, not chain"),
+    )
+    .await
+    .unwrap();
+    let mage_id = declare_in(&mut *uow, id, &address, "The mage", None)
         .await
         .unwrap();
     uow.commit().await.unwrap();
 
     let elements = backend.elements_of(id).await.unwrap();
     assert_eq!(elements.len(), 2, "one element per Slot");
-    assert_eq!(elements[0].id, knight_id, "request order is append order");
+    assert_eq!(elements[0].id, knight_id, "declare order is append order");
     assert_eq!(elements[1].id, mage_id);
     assert!(
         elements
@@ -2384,34 +2446,47 @@ async fn declare_slot_creates_an_element_with_its_satellite() {
     assert!(mage.notes.is_none(), "notes are optional");
 }
 
-// ZMVP-77/166 — Slots walk the same address gate, and the batch is
-// ALL-OR-NOTHING: a refusal partway through leaves nothing behind, because
-// the whole batch rides one unit of work.
+// A Slot reads its title from its node: a rename of the node is the Slot's new title.
+#[tokio::test]
+async fn a_slot_s_title_is_its_node_s_name() {
+    let backend = MemBackend::new();
+    let database = backend.database();
+    let (id, address) = composed_commission(&backend, user_id()).await;
+    let element = declare_committed(&backend, id, &address, "Before").await;
+    let node = backend
+        .all_nodes()
+        .into_iter()
+        .find(|node| node.segment.as_ref() == element.to_string())
+        .expect("the Slot's node");
+
+    let mut uow = database.begin().await.unwrap();
+    let renamed = uow
+        .nodes()
+        .set_name(&node.id, &StoredText::from("After".to_owned()))
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+
+    assert!(renamed);
+    let slot = backend.find_slot(element).await.unwrap().expect("the Slot");
+    assert_eq!(slot.title.as_str(), "After");
+}
+
+// ZMVP-77/166 — a Slot walks the same address gate as every element: an absent tab
+// refuses as UnknownTab and an undeclared surface as UnknownSurface, and a dropped unit keeps
+// nothing of an earlier Slot.
 #[tokio::test]
 async fn declare_slot_refuses_bad_addresses_and_takes_the_batch_with_it() {
     let backend = MemBackend::new();
     let database = backend.database();
-    let owner = user_id();
-    let (id, address) = composed_commission(&backend, owner.clone()).await;
+    let (id, address) = composed_commission(&backend, user_id()).await;
 
-    let slot_at = |address: SurfaceAddress, title: &str| {
-        NewSlot::contributed_at(
-            id,
-            address,
-            title.parse::<SlotTitle>().unwrap(),
-            None,
-            owner.clone(),
-            Utc::now(),
-        )
-    };
-
-    // The first Slot is fine; the second names a tab that exists nowhere.
-    let good = slot_at(address.clone(), "Fine");
-    let bad = slot_at(SurfaceAddress::new(TabId::mint(), only_surface()), "Doomed");
+    let nowhere = SurfaceAddress::new(TabId::mint(), only_surface());
     let mut uow = database.begin().await.unwrap();
-    let err = uow
-        .commissions()
-        .declare_slots(&[good, bad])
+    declare_in(&mut *uow, id, &address, "Fine", None)
+        .await
+        .unwrap();
+    let err = declare_in(&mut *uow, id, &nowhere, "Doomed", None)
         .await
         .unwrap_err();
     assert!(
@@ -2421,19 +2496,13 @@ async fn declare_slot_refuses_bad_addresses_and_takes_the_batch_with_it() {
     drop(uow);
     assert!(
         backend.elements_of(id).await.unwrap().is_empty(),
-        "the EARLIER Slot of the aborted batch left nothing behind (all-or-nothing)"
+        "the EARLIER Slot of the dropped unit left nothing behind"
     );
     assert!(backend.slots_of(id).await.unwrap().is_empty());
 
-    // An undeclared surface refuses the same way.
-    let invented = slot_at(
-        SurfaceAddress::new(address.tab, "invented".parse::<SurfaceName>().unwrap()),
-        "Invented",
-    );
+    let invented = SurfaceAddress::new(address.tab, "invented".parse::<SurfaceName>().unwrap());
     let mut uow = database.begin().await.unwrap();
-    let err = uow
-        .commissions()
-        .declare_slots(&[invented])
+    let err = declare_in(&mut *uow, id, &invented, "Invented", None)
         .await
         .unwrap_err();
     assert!(
@@ -2450,43 +2519,24 @@ async fn declare_slot_refuses_bad_addresses_and_takes_the_batch_with_it() {
 async fn declare_slot_commits_and_rolls_back_with_the_unit() {
     let backend = MemBackend::new();
     let database = backend.database();
-    let owner = user_id();
-    let (id, address) = composed_commission(&backend, owner.clone()).await;
+    let (id, address) = composed_commission(&backend, user_id()).await;
 
-    let staged = NewSlot::contributed_at(
-        id,
-        address.clone(),
-        "Uncommitted".parse::<SlotTitle>().unwrap(),
-        None,
-        owner.clone(),
-        Utc::now(),
-    );
-    let staged_id = staged.id;
-    {
+    let staged_id = {
         let mut uow = database.begin().await.unwrap();
-        uow.commissions().declare_slots(&[staged]).await.unwrap();
+        let staged_id = declare_in(&mut *uow, id, &address, "Uncommitted", None)
+            .await
+            .unwrap();
         assert!(
             backend.find_slot(staged_id).await.unwrap().is_none(),
             "an open unit's staged Slot is invisible to a shared read"
         );
+        staged_id
         // drops without commit -> rollback
-    }
+    };
     assert!(backend.find_slot(staged_id).await.unwrap().is_none());
     assert!(backend.elements_of(id).await.unwrap().is_empty());
 
-    // Committed, then removed: the satellite leaves with its element.
-    let kept = NewSlot::contributed_at(
-        id,
-        address,
-        "Kept".parse::<SlotTitle>().unwrap(),
-        None,
-        owner,
-        Utc::now(),
-    );
-    let kept_id = kept.id;
-    let mut uow = database.begin().await.unwrap();
-    uow.commissions().declare_slots(&[kept]).await.unwrap();
-    uow.commit().await.unwrap();
+    let kept_id = declare_committed(&backend, id, &address, "Kept").await;
     assert!(backend.find_slot(kept_id).await.unwrap().is_some());
 
     remove_element(&database, id, kept_id).await.unwrap();
@@ -2494,6 +2544,105 @@ async fn declare_slot_commits_and_rolls_back_with_the_unit() {
         backend.find_slot(kept_id).await.unwrap().is_none(),
         "the satellite cascaded away with its element"
     );
+}
+
+// Removing a Slot's element removes its node, so no slot node stands without its Slot.
+#[tokio::test]
+async fn removing_a_slot_s_element_removes_its_node() {
+    let backend = MemBackend::new();
+    let database = backend.database();
+    let (id, address) = composed_commission(&backend, user_id()).await;
+    let element = declare_committed(&backend, id, &address, "Doomed").await;
+    let kept = declare_committed(&backend, id, &address, "Kept").await;
+
+    remove_element(&database, id, element).await.unwrap();
+
+    let slot_segments: Vec<String> = backend
+        .all_nodes()
+        .into_iter()
+        .filter(|node| node.node_type == NodeType::Slot)
+        .map(|node| node.segment.as_ref().to_owned())
+        .collect();
+    assert_eq!(slot_segments, [kept.to_string()]);
+}
+
+// A slot node no Slot points at is refused at commit, and nothing of its unit is kept.
+#[tokio::test]
+async fn a_slot_node_without_its_slot_is_refused_at_commit() {
+    let backend = MemBackend::new();
+    let database = backend.database();
+    let (id, address) = composed_commission(&backend, user_id()).await;
+    let element = SlotDeclaration::minted(NewSlot {
+        address,
+        notes: None,
+    })
+    .element;
+
+    let mut uow = database.begin().await.unwrap();
+    let parent = slots_entry_in(&mut *uow, id).await;
+    uow.nodes()
+        .create(&slot_node(parent, element, "Phantom"))
+        .await
+        .unwrap();
+    let committed = uow.commit().await;
+
+    let refusal = committed.expect_err("a phantom slot node is refused at commit");
+    assert!(
+        refusal
+            .to_string()
+            .contains("a slot node stands without its slot"),
+        "{refusal}"
+    );
+    assert!(
+        backend
+            .all_nodes()
+            .iter()
+            .all(|node| node.node_type != NodeType::Slot),
+        "nothing of the unit is kept"
+    );
+}
+
+// A declare bound to a node that isn't the Slot's own stores nothing and spends the unit:
+// another commission's slot node, a node of another element, or no node at all.
+#[tokio::test]
+async fn a_declare_on_a_node_not_its_own_spends_the_unit() {
+    let backend = MemBackend::new();
+    let database = backend.database();
+    let (mine, my_address) = composed_commission(&backend, user_id()).await;
+    let (other, _) = composed_commission(&backend, user_id()).await;
+    let element = SlotDeclaration::minted(NewSlot {
+        address: my_address.clone(),
+        notes: None,
+    })
+    .element;
+
+    let mut uow = database.begin().await.unwrap();
+    let foreign_parent = slots_entry_in(&mut *uow, other).await;
+    let foreign = slot_node(foreign_parent, element, "Elsewhere");
+    uow.nodes().create(&foreign).await.unwrap();
+    let birth = SlotBirth {
+        element,
+        node: foreign.id,
+        created_by: user_id(),
+        created_at: Utc::now(),
+    };
+    let slot = NewSlot {
+        address: my_address,
+        notes: None,
+    };
+    let refused = uow
+        .commissions()
+        .declare_slot(&owner_on(mine), &birth, &slot)
+        .await;
+    let committed = uow.commit().await;
+
+    assert!(
+        refused.is_err(),
+        "another commission's slot node is refused"
+    );
+    assert!(committed.is_err(), "the unit is spent");
+    assert!(backend.slots_of(mine).await.unwrap().is_empty());
+    assert!(backend.elements_of(mine).await.unwrap().is_empty());
 }
 
 // ── The My Den read ports ────────────────────────────────────────────────────
@@ -2644,28 +2793,12 @@ async fn filename_answers_the_stored_name_or_none() {
 #[tokio::test]
 async fn slots_lists_only_this_commissions_slots_in_declaration_order() {
     let backend = MemBackend::new();
-    let database = backend.database();
     let owner = user_id();
     let (mine, my_address) = composed_commission(&backend, owner.clone()).await;
-    let (other, other_address) = composed_commission(&backend, owner.clone()).await;
-    let declared = |commission, address: &SurfaceAddress, title: &str| {
-        NewSlot::contributed_at(
-            commission,
-            address.clone(),
-            title.parse::<SlotTitle>().unwrap(),
-            None,
-            owner.clone(),
-            Utc::now(),
-        )
-    };
-    let slots = [
-        declared(mine, &my_address, "Abco"),
-        declared(other, &other_address, "Elsewhere"),
-        declared(mine, &my_address, "Ember"),
-    ];
-    let mut uow = database.begin().await.unwrap();
-    uow.commissions().declare_slots(&slots).await.unwrap();
-    uow.commit().await.unwrap();
+    let (other, other_address) = composed_commission(&backend, owner).await;
+    declare_committed(&backend, mine, &my_address, "Abco").await;
+    declare_committed(&backend, other, &other_address, "Elsewhere").await;
+    declare_committed(&backend, mine, &my_address, "Ember").await;
 
     let listed = backend.commission_store().slots(&mine).await.unwrap();
 

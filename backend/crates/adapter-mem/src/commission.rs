@@ -18,8 +18,8 @@ use domain::elements::{
         ElementRow, ElementType, FileKey, FileSummary, GrantLevel, LateKinds, LifecycleMove,
         LifecycleStep, LockedNode, LockedStanding, MaturitySet, NewChangelogEntry, NewCommission,
         NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink,
-        SeatPrompt, Slot, StoredDispute, SurfaceAddress, SurfaceName, TabId, TabName, TabRow,
-        VisibilityMode, declared_tabs, declares_surface,
+        SeatPrompt, Slot, SlotBirth, SlotTitle, StoredDispute, SurfaceAddress, SurfaceName, TabId,
+        TabName, TabRow, VisibilityMode, declared_tabs, declares_surface,
     },
     did::Did,
     invitation::InvitationState,
@@ -321,29 +321,98 @@ pub(crate) struct StoredTab {
 }
 
 /// One declared Slot's satellite, keyed by the [`ElementId`] of the element
-/// carrying it. Deliberately occupant-less: fill is unrepresentable until the
-/// Character epic adds it.
+/// carrying it, bound to its node, which holds its name. Deliberately occupant-less: fill is
+/// unrepresentable until the Character epic adds it.
 #[derive(Clone, PartialEq)]
 pub(crate) struct StoredSlot {
     /// The commission the Slot belongs to (the pg row's own commission FK).
     pub(crate) commission_id: CommissionId,
-    /// The Slot's title as the store holds it, never re-checked on load.
-    pub(crate) title: StoredText,
+    /// The Slot's own node: a `slot` node under its commission's `slots` entry whose segment
+    /// is the element's id.
+    pub(crate) node_id: NodeId,
     /// The optional freeform notes, exactly as declared.
     pub(crate) notes: Option<String>,
 }
 
 impl StoredSlot {
-    /// Rebuild the read shape for the carrying element `id` that keys this
-    /// satellite.
-    fn rebuild(&self, id: ElementId) -> Slot {
-        Slot {
+    /// Rebuild the read shape for the carrying element `id` that keys this satellite, titled
+    /// by its node's name in `nodes`; `None` when its node is missing.
+    fn rebuild(&self, id: ElementId, nodes: &HashMap<NodeId, NodeRow>) -> Option<Slot> {
+        let node = nodes.get(&self.node_id)?;
+        let slot = Slot {
             element_id: id,
             commission_id: self.commission_id,
-            title: self.title.clone(),
+            title: node.name.clone(),
             notes: self.notes.clone(),
-        }
+        };
+        Some(slot)
     }
+}
+
+/// The `slots` entry of the commission whose own node is `commission_node`, in `nodes`.
+fn slots_entry_of(nodes: &HashMap<NodeId, NodeRow>, commission_node: NodeId) -> Option<NodeId> {
+    nodes
+        .values()
+        .find(|node| {
+            node.parent == Some(commission_node) && node.node_type == NodeType::CommissionSlots
+        })
+        .map(|node| node.id)
+}
+
+/// Whether `node` is the Slot `element`'s own under the commission whose own node is
+/// `commission_node`: a `slot` node whose segment is the element's id, under that
+/// commission's `slots` entry.
+fn is_own_slot_node(
+    nodes: &HashMap<NodeId, NodeRow>,
+    commission_node: NodeId,
+    element: ElementId,
+    node: &NodeRow,
+) -> bool {
+    let under_its_slots =
+        node.parent.is_some() && node.parent == slots_entry_of(nodes, commission_node);
+    node.node_type == NodeType::Slot
+        && node.segment.as_ref() == element.to_string()
+        && under_its_slots
+}
+
+/// Binds the Slot `birth` names to its node on `backend`, on commission `commission`: its
+/// satellite, stored only when `birth`'s node is the Slot's own under that commission. Refuses
+/// any other node, and a commission `backend` doesn't hold; its carrying element is the
+/// caller's, written first.
+pub(crate) fn bind_slot(
+    backend: &MemBackend,
+    commission: CommissionId,
+    birth: &SlotBirth,
+    slot: &NewSlot,
+) -> anyhow::Result<()> {
+    let commission_node = backend
+        .commissions
+        .lock()
+        .expect("MemBackend commissions mutex poisoned")
+        .get(&commission)
+        .map(|stored| stored.node_id)
+        .ok_or_else(|| anyhow::anyhow!("the unit holds no such commission"))?;
+    let own = {
+        let nodes = backend
+            .nodes
+            .lock()
+            .expect("MemBackend nodes mutex poisoned");
+        nodes
+            .get(&birth.node)
+            .is_some_and(|node| is_own_slot_node(&nodes, commission_node, birth.element, node))
+    };
+    anyhow::ensure!(own, "the node is not the slot's own: no slot was stored");
+    let stored = StoredSlot {
+        commission_id: commission,
+        node_id: birth.node,
+        notes: slot.notes.clone(),
+    };
+    backend
+        .slots
+        .lock()
+        .expect("MemBackend slots mutex poisoned")
+        .insert(birth.element, stored);
+    Ok(())
 }
 
 /// One declared Seat's interpreted half, keyed by the seat's [`ElementId`] —
@@ -610,12 +679,20 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         }
         drop(elements);
 
-        // The identity-sharing satellites, and a seat's pending offers.
-        self.0
+        // The identity-sharing satellites, a Slot's node, and a seat's pending offers.
+        let removed_slot = self
+            .0
             .slots
             .lock()
             .expect("MemBackend slots mutex poisoned")
             .remove(&element);
+        if let Some(slot) = removed_slot {
+            self.0
+                .nodes
+                .lock()
+                .expect("MemBackend nodes mutex poisoned")
+                .remove(&slot.node_id);
+        }
         let had_seat = self
             .0
             .seats
@@ -661,38 +738,33 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Declare a batch of Slots: per Slot, the shared address gate plants an
-    /// [`ElementType::slot`]-typed element and the Slot lands as its
-    /// `StoredSlot` satellite. The batch commits or vanishes together, so a
-    /// refusal mid-batch applies nothing.
+    /// Declare one Slot on the capability's commission: the shared address gate plants an
+    /// [`ElementType::slot`]-typed element, then the Slot lands as its `StoredSlot` satellite
+    /// bound to `birth`'s node, only when that node is the Slot's own under this commission's
+    /// `slots` entry; any other node stores nothing and spends the unit, as a pg insert of no
+    /// row ends its unit.
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn declare_slots(&mut self, new_slots: &[NewSlot]) -> anyhow::Result<()> {
-        for slot in new_slots {
-            let carrier = NewElement::carrying(
-                slot.id,
-                slot.commission_id,
-                slot.address.clone(),
-                ElementType::slot(),
-                slot.created_by.clone(),
-                slot.created_at,
-            );
-            insert_element(&self.0, &carrier)?;
-
-            let mut slots = self
-                .0
-                .slots
-                .lock()
-                .expect("MemBackend slots mutex poisoned");
-            slots.insert(
-                slot.id,
-                StoredSlot {
-                    commission_id: slot.commission_id,
-                    title: StoredText::from(slot.title.clone()),
-                    notes: slot.notes.clone(),
-                },
-            );
+    async fn declare_slot(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        birth: &SlotBirth,
+        slot: &NewSlot,
+    ) -> anyhow::Result<()> {
+        let commission = *capability.thing();
+        let carrier = NewElement::carrying(
+            birth.element,
+            commission,
+            slot.address.clone(),
+            ElementType::slot(),
+            birth.created_by.clone(),
+            birth.created_at,
+        );
+        insert_element(&self.0, &carrier)?;
+        let bound = bind_slot(&self.0, commission, birth, slot);
+        if bound.is_err() {
+            *self.1 = true;
         }
-        Ok(())
+        bound
     }
 
     /// Whether the commission bears any fact, answered on the unit's staged
@@ -1681,7 +1753,8 @@ impl CommissionStore for MemCommissionStore {
     }
 
     /// Every Slot declared on `commission`, in declaration order (carrying
-    /// element ids are UUIDv7, so id order is creation order).
+    /// element ids are UUIDv7, so id order is creation order), each titled by its node's
+    /// name; one whose node is missing is left out.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>> {
         let slots = self
@@ -1689,10 +1762,15 @@ impl CommissionStore for MemCommissionStore {
             .slots
             .lock()
             .expect("MemBackend slots mutex poisoned");
+        let nodes = self
+            .0
+            .nodes
+            .lock()
+            .expect("MemBackend nodes mutex poisoned");
         let mut found: Vec<Slot> = slots
             .iter()
             .filter(|(_, stored)| &stored.commission_id == commission)
-            .map(|(id, stored)| stored.rebuild(*id))
+            .filter_map(|(id, stored)| stored.rebuild(*id, &nodes))
             .collect();
         found.sort_by_key(|slot| uuid::Uuid::from(slot.element_id));
         Ok(found)
@@ -1771,7 +1849,7 @@ pub struct CommissionSeed {
     pub id: CommissionId,
     /// Its title, which its node is named by.
     pub title: CommissionTitle,
-    /// Its node's level, which the commission's visibility copies.
+    /// Its node's level.
     pub level: Level,
     /// The User who owns it.
     pub owner_id: UserId,
@@ -1797,6 +1875,24 @@ impl CommissionSeed {
             maturity: None,
         }
     }
+}
+
+/// A Slot a test or the fixture seeds on a stored commission: what the den's write gate decides
+/// for a declare, chosen by the seeder, and what the declare itself may choose.
+#[derive(Debug, Clone)]
+pub struct SlotSeed {
+    /// The commission it is declared on.
+    pub commission: CommissionId,
+    /// The id of its carrying element, which its node's segment carries.
+    pub element: ElementId,
+    /// Its title, which its node is named by.
+    pub title: SlotTitle,
+    /// What the declare chose: its address and its notes.
+    pub slot: NewSlot,
+    /// The User who declared it.
+    pub created_by: UserId,
+    /// When it was declared.
+    pub created_at: DateTimeUtc,
 }
 
 /// The nodes the den's write gate writes for `seed`: its commission node, then its six
@@ -1842,8 +1938,8 @@ fn dispute_matches_its_step(stored: &StoredCommission) -> bool {
 
 /// The commission checks PostgreSQL runs at commit, over one unit's staged state.
 impl MemBackend {
-    /// Refuses a state where a commission's node isn't its own, a commission node has no
-    /// commission, or a commission's dispute doesn't match its step.
+    /// Refuses a state where a commission's or a Slot's node isn't its own, a commission node has
+    /// no commission, a slot node no Slot, or a commission's dispute doesn't match its step.
     pub(crate) fn check_bindings(&self) -> anyhow::Result<()> {
         let commissions = self
             .commissions
@@ -1871,6 +1967,30 @@ impl MemBackend {
         anyhow::ensure!(
             !phantom,
             "a commission node stands without its commission; nothing was kept"
+        );
+        let slots = self.slots.lock().expect("MemBackend slots mutex poisoned");
+        let every_slot_bound = slots.iter().all(|(element, stored)| {
+            let commission_node = commissions
+                .get(&stored.commission_id)
+                .map(|commission| commission.node_id);
+            let node = nodes.get(&stored.node_id);
+            commission_node
+                .zip(node)
+                .is_some_and(|(commission_node, node)| {
+                    is_own_slot_node(&nodes, commission_node, *element, node)
+                })
+        });
+        anyhow::ensure!(
+            every_slot_bound,
+            "a slot points only at its own node under its own commission; nothing was kept"
+        );
+        let bound_slots: HashSet<NodeId> = slots.values().map(|stored| stored.node_id).collect();
+        let phantom_slot = nodes
+            .values()
+            .any(|node| node.node_type == NodeType::Slot && !bound_slots.contains(&node.id));
+        anyhow::ensure!(
+            !phantom_slot,
+            "a slot node stands without its slot; nothing was kept"
         );
         Ok(())
     }
@@ -1908,6 +2028,54 @@ impl MemBackend {
         insert_commission(&unit.staged, seed.id, &birth, &chosen)?;
         Box::new(unit).commit().await?;
         Ok(node)
+    }
+
+    /// Seed `seed` as the den's write gate writes a declare: its Private node under its
+    /// commission's `slots` entry named by its title, then its carrying element and its
+    /// satellite bound to that node, in one unit whose commit runs the binding checks. Answers
+    /// the node's id.
+    pub async fn seed_bound_slot(&self, seed: &SlotSeed) -> anyhow::Result<NodeId> {
+        let commission_node = self
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned")
+            .get(&seed.commission)
+            .map(|stored| stored.node_id)
+            .ok_or_else(|| anyhow::anyhow!("seed_bound_slot: no such commission"))?;
+        let slots_entry = {
+            let nodes = self.nodes.lock().expect("MemBackend nodes mutex poisoned");
+            slots_entry_of(&nodes, commission_node).ok_or_else(|| {
+                anyhow::anyhow!("seed_bound_slot: the commission has no slots entry")
+            })?
+        };
+        let node = NewNode {
+            id: NodeId::mint(),
+            parent: Some(slots_entry),
+            segment: NodeSegment::try_from(seed.element.to_string())?,
+            node_type: NodeType::Slot,
+            level: Level::Private,
+            name: StoredText::from(seed.title.to_string()),
+        };
+        let birth = SlotBirth {
+            element: seed.element,
+            node: node.id,
+            created_by: seed.created_by.clone(),
+            created_at: seed.created_at,
+        };
+        let carrier = NewElement::carrying(
+            seed.element,
+            seed.commission,
+            seed.slot.address.clone(),
+            ElementType::slot(),
+            seed.created_by.clone(),
+            seed.created_at,
+        );
+        let mut unit = self.unit();
+        unit.nodes().create(&node).await?;
+        insert_element(&unit.staged, &carrier)?;
+        bind_slot(&unit.staged, seed.commission, &birth, &seed.slot)?;
+        Box::new(unit).commit().await?;
+        Ok(node.id)
     }
 
     /// Resolve a commission by id (inspect helper).
@@ -1969,13 +2137,28 @@ impl MemBackend {
     /// there is no read port for the satellite yet.
     pub async fn find_slot(&self, element: ElementId) -> anyhow::Result<Option<Slot>> {
         let slots = self.slots.lock().expect("MemBackend slots mutex poisoned");
-        Ok(slots.get(&element).map(|stored| stored.rebuild(element)))
+        let nodes = self.nodes.lock().expect("MemBackend nodes mutex poisoned");
+        let found = slots
+            .get(&element)
+            .and_then(|stored| stored.rebuild(element, &nodes));
+        Ok(found)
     }
 
     /// Every Slot declared on `commission`, in declaration order (inspect
     /// helper over [`CommissionStore::slots`]).
     pub async fn slots_of(&self, commission: CommissionId) -> anyhow::Result<Vec<Slot>> {
         MemCommissionStore(self.clone()).slots(&commission).await
+    }
+
+    /// Overwrite the level of a stored node (test-only seeder), standing in for a level written
+    /// by hand. Panics if `node` is not stored.
+    pub fn seed_node_level(&self, node: NodeId, level: Level) {
+        self.nodes
+            .lock()
+            .expect("MemBackend nodes mutex poisoned")
+            .get_mut(&node)
+            .expect("seed_node_level: no such node")
+            .level = level;
     }
 
     /// Overwrite the name of a stored commission's node with raw text (test-only seeder),

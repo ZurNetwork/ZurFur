@@ -2,8 +2,8 @@
 //! participant listing (archived rows included) and its by-user index, a
 //! commission's file list, the name-only file read, a commission's Slots and
 //! an Account's Workflows, and one commission's summary. A commission's name and level
-//! are its node's: the summary, the listing and the standing read them there, never the
-//! commission's own columns, and a commission with no node reads as absent. A node level no
+//! are its node's: the summary, the listing and the standing read them there, and a
+//! commission with no node reads as absent. A node level no
 //! parser reads counts as Private on every read of it. Names load as stored text, never
 //! re-checked, so a row written under an older rule still reads. The summary's statement
 //! probes the node index for a made-up id as for a real commission. One named test per read.
@@ -21,8 +21,7 @@ use domain::{
         account::{Account, AccountId, AccountName},
         commission::{
             CommissionFile, CommissionId, CommissionRole, CommissionStanding, CommissionSummary,
-            CommissionTitle, FileKey, FileName, LockedStanding, NewSlot, SlotTitle, SurfaceAddress,
-            SurfaceName,
+            CommissionTitle, FileKey, FileName, LockedStanding, SurfaceAddress, SurfaceName,
         },
         did::Did,
         handle::Handle,
@@ -74,8 +73,7 @@ async fn archive(pool: &PgPool, commission: CommissionId) {
     uow.commit().await.expect("commit");
 }
 
-/// Store `token` as the level of the node `commission` points at, a test-only update; the
-/// commission's own visibility column keeps its value, since no trigger copies a level.
+/// Store `token` as the level of the node `commission` points at, a test-only update.
 pub(crate) async fn store_node_level(pool: &PgPool, commission: CommissionId, token: &str) {
     let updated = sqlx::query(
         "UPDATE node SET level = $1 FROM commission c WHERE c.id = $2 AND node.id = c.node_id",
@@ -355,28 +353,10 @@ async fn slot_list_holds_this_commissions_slots_in_declaration_order() {
     let other = seed_commission(&pool, &owner, "Other").await;
     let my_address = only_address(&pool, mine).await;
     let other_address = only_address(&pool, other).await;
-    let declared = |commission, address: &SurfaceAddress, title: &str| {
-        NewSlot::contributed_at(
-            commission,
-            address.clone(),
-            title.parse::<SlotTitle>().expect("slot title"),
-            None,
-            owner.id.clone(),
-            Utc::now(),
-        )
-    };
-    let slots = [
-        declared(mine, &my_address, "Abco"),
-        declared(other, &other_address, "Elsewhere"),
-        declared(mine, &my_address, "Ember"),
-    ];
-    let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .declare_slots(&slots)
-        .await
-        .expect("declare");
-    uow.commit().await.expect("commit");
+    crate::seed::declare_committed(&pool, mine, &owner.id, &my_address, "Abco", None).await;
+    crate::seed::declare_committed(&pool, other, &owner.id, &other_address, "Elsewhere", None)
+        .await;
+    crate::seed::declare_committed(&pool, mine, &owner.id, &my_address, "Ember", None).await;
     let store = PgCommissionStore::new(pool.clone());
 
     let listed = store.slots(&mine).await.expect("slots");
@@ -509,8 +489,8 @@ async fn an_unreadable_node_level_reads_private() {
 }
 
 // The summary, the participant listing and the standing read the name and level of the node
-// the commission points at, not the commission's own title and visibility columns, which a
-// test-only update has set apart from the node's.
+// the commission points at, which test-only updates have set apart from what it was created
+// with.
 #[tokio::test]
 async fn the_summary_and_standing_read_the_node_s_name_and_level() {
     let (pool, _container) = fresh_pool().await;
@@ -518,14 +498,6 @@ async fn the_summary_and_standing_read_the_node_s_name_and_level() {
     let id = seed_commission(&pool, &owner, "Untitled").await;
     store_node_level(&pool, id, "public").await;
     store_node_name(&pool, id, "The node's name").await;
-    let updated = sqlx::query(
-        "UPDATE commission SET title = 'The old column', visibility = 'private' WHERE id = $1",
-    )
-    .bind(uuid::Uuid::from(id))
-    .execute(&pool)
-    .await
-    .expect("set the commission's own columns apart from its node");
-    assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
     let store = PgCommissionStore::new(pool.clone());
 
     let summary = store.find_summary(&id).await.expect("find_summary");
@@ -570,7 +542,7 @@ async fn the_summary_and_standing_read_the_node_s_name_and_level() {
 
 // On a database migrated only through the node table's migration, a commission row with no
 // node is absent to the summary, the participant listing and the locked standing, and the
-// pool's standing finds it at Private, whatever its own visibility column says.
+// pool's standing finds it at Private, whatever visibility that schema's row was seeded with.
 #[tokio::test]
 async fn a_node_less_commission_reads_as_absent_and_its_standing_as_private() {
     let (pool, _container) = bare_pool().await;

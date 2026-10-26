@@ -20,7 +20,7 @@ use domain::{
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::{CommissionSeed, MemBackend, workflow::StoredWorkflow};
+use crate::{CommissionSeed, MemBackend, SlotSeed, workflow::StoredWorkflow};
 
 /// "Untitled", the commission alice owns and bob takes part in.
 const UNTITLED: Uuid = Uuid::from_u128(0x01a0ef9c_4e00_7a00_8000_000000000001);
@@ -111,26 +111,20 @@ async fn seed_untitled(backend: &MemBackend, alice: &UserId, bob: &UserId) -> an
     }
 
     let address = only_address(backend, untitled()).await?;
-    let slots = SLOTS
-        .iter()
-        .map(|(id, title)| {
-            let title = title.parse::<SlotTitle>()?;
-            let mut slot = NewSlot::contributed_at(
-                untitled(),
-                address.clone(),
-                title,
-                None,
-                alice.clone(),
-                time_of(*id),
-            );
-            slot.id = ElementId::from(*id);
-            Ok(slot)
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let database = backend.database();
-    let mut uow = database.begin().await?;
-    uow.commissions().declare_slots(&slots).await?;
-    uow.commit().await?;
+    for (id, title) in SLOTS {
+        let seed = SlotSeed {
+            commission: untitled(),
+            element: ElementId::from(id),
+            title: title.parse::<SlotTitle>()?,
+            slot: NewSlot {
+                address: address.clone(),
+                notes: None,
+            },
+            created_by: alice.clone(),
+            created_at: time_of(id),
+        };
+        backend.seed_bound_slot(&seed).await?;
+    }
     Ok(())
 }
 

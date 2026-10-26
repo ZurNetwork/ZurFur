@@ -116,7 +116,7 @@
     },
     {
       "name": "slots.rs",
-      "role": "POST /{id}/slots — all-or-nothing Slot batch → commission::slots::declare",
+      "role": "POST /{id}/slots — the owner's all-or-nothing Slot declare → commission::slots::declare: the body is the contract's DeclareCommissionSlot array, at most 32 (MAX_SLOTS_PER_DECLARE) and never empty, each refused title a field error at #/<i>/title, all before the use case; 201 with the contract's DeclareCommissionSlotsResponse",
       "node": false
     },
     {

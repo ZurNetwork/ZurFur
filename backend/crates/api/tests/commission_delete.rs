@@ -40,7 +40,7 @@ use domain::elements::{
         CommissionId, CommissionMarkup, CommissionTitle, DeadlineChange, DelayedChange,
         DirectionChange, Dispute, DisputeClear, ElementId, GrantLevel, LateKinds, LifecycleMove,
         LifecycleStep, LockedNode, LockedStanding, MaturitySet, NewCommission, NewElement, NewSeat,
-        NewSlot, SeatInvitation, SeatInvitationId, TabId, element::TabRow,
+        NewSlot, SeatInvitation, SeatInvitationId, SlotBirth, TabId, element::TabRow,
     },
     did::Did,
     profile::Profile,
@@ -471,8 +471,13 @@ impl CommissionWrites for StagedCommissions<'_> {
         self.inner.add_markup(markup).await
     }
 
-    async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()> {
-        self.inner.declare_slots(slots).await
+    async fn declare_slot(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        birth: &SlotBirth,
+        slot: &NewSlot,
+    ) -> anyhow::Result<()> {
+        self.inner.declare_slot(capability, birth, slot).await
     }
 
     async fn delete(&mut self, id: &CommissionId) -> anyhow::Result<()> {
@@ -734,7 +739,7 @@ async fn changelog_kinds(
 
 // On PostgreSQL: bob, a Participant, moves alice's "Untitled" to Active and raises a dispute;
 // alice's delete answers the 409 `commission_has_facts`, the commission still reads, and its
-// changelog keeps all four entries.
+// changelog keeps all five entries, the seeded world's three among them.
 #[tokio::test]
 async fn on_postgres_a_disputed_active_commission_is_refused_and_keeps_its_entries() {
     let world = pg_app::den_world(api::app).await;
@@ -743,13 +748,14 @@ async fn on_postgres_a_disputed_active_commission_is_refused_and_keeps_its_entri
     move_to(&world.bob, &base, &untitled, "active").await;
     dispute(&world.bob, &base, &untitled, reqwest::Method::PUT).await;
     let kinds_before = changelog_kinds(&world.alice, &world, &untitled).await;
-    let four_kinds = [
+    let five_kinds = [
         "created",
         "file_added",
+        "slot_declared",
         "lifecycle_moved",
         "lifecycle_moved",
     ];
-    assert_eq!(kinds_before, four_kinds);
+    assert_eq!(kinds_before, five_kinds);
 
     let res = delete_commission(&world.alice, &base, &untitled).await;
 
@@ -757,5 +763,5 @@ async fn on_postgres_a_disputed_active_commission_is_refused_and_keeps_its_entri
     let read = get(&world.alice, &base, &format!("/commissions/{untitled}")).await;
     assert_eq!(read.status(), 200, "the commission still reads");
     let kinds_after = changelog_kinds(&world.alice, &world, &untitled).await;
-    assert_eq!(kinds_after, four_kinds, "every entry stays");
+    assert_eq!(kinds_after, five_kinds, "every entry stays");
 }

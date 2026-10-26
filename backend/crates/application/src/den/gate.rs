@@ -2,8 +2,9 @@
 //! issuer of a write capability, the one lender of a handler's view, and the one builder of a
 //! write's changelog entry. Each act's rule runs first, on the facts its grant read, before any
 //! row is written or any capability issued; each act is lent a view of its own, whose one write
-//! lands its checked change exactly once. Create and rename answer from what the gate wrote and
-//! the view read, never from a second read of the node.
+//! lands its checked change exactly once. A create in an entry walks to that entry once per
+//! write. Create and rename answer from what the gate wrote and the view read, never from a
+//! second read of the node.
 
 use std::{
     fmt,
@@ -20,24 +21,31 @@ use domain::{
         commission::{
             AsOwner, AsParticipant, AsSystem, Commission, CommissionBirth, CommissionId,
             CommissionRefusal, CommissionRole, CommissionStanding, CommissionState, DeadlineChange,
-            DelayedChange, DirectionChange, LateFacts, NewChangelogEntry,
+            DelayedChange, DirectionChange, LateFacts, NewChangelogEntry, NewSlot, SlotBirth,
         },
         node::{NewNode, NodeId, NodeRow, NodeSegment, NodeType},
         text::StoredText,
         user::UserId,
     },
-    ports::{CommissionRepo, Creator, New, NodeRepo, SegmentTaken, Unit, WriteCapability},
+    ports::{
+        CommissionRepo, Creator, New, NodeRepo, SegmentTaken, Unit, UnknownSurface, UnknownTab,
+        WriteCapability,
+    },
 };
 
-use crate::commission::den::{Verdict, verdict};
+use crate::commission::den::{CommissionPlace, Verdict, verdict};
 use crate::commission::sweep;
 use crate::{
     commission::{
         act::CommissionAct, create, deadline, dispute, lifecycle::move_to, maturity, rename,
-        status::direction,
+        slots::declare, status::direction,
     },
     den::{
-        act::{ArmAnswer, DenAct, EntryRule, GatedEntry, Handled, HandlerError, Needs, Planned},
+        Place,
+        act::{
+            ArmAnswer, DenAct, EntryRule, GatedEntry, Handled, HandlerError, HandlerRefusal, Needs,
+            Planned,
+        },
         authority::{Grant, GrantKind},
         host::{host_error, type_kind},
         level::den_level,
@@ -57,6 +65,8 @@ pub(in crate::den) enum DenRefusal {
     SegmentTaken,
     /// The act's own domain rule refused it, on the facts its grant read.
     Precondition(CommissionRefusal),
+    /// The act's handler refused it on what its lent view read, before its write.
+    Handler(HandlerRefusal),
 }
 
 /// What the gate wrote: the commission written, the name Atta checked, a made node's settled
@@ -87,6 +97,11 @@ impl fmt::Debug for DenApplied {
 /// What a gate step answers: a store failure as `Err`, the gate's refusal inside it.
 type Gated<T> = anyhow::Result<Result<T, DenRefusal>>;
 
+/// The entry row a create in an entry walked to, by its path, kept for the write's later acts,
+/// so a write walks to an entry once.
+#[derive(Default)]
+pub(in crate::den) struct WalkedEntry(Option<(RealPath, NodeRow)>);
+
 /// The host Atta hands a checked act to, for one write: it serves no read and applies acts
 /// only through the gate. Built once, by the den's write.
 pub(in crate::den) struct DenWriteHost<'u> {
@@ -94,6 +109,7 @@ pub(in crate::den) struct DenWriteHost<'u> {
     unit: Mutex<Unit<'u>>,
     grant: Grant,
     now: DateTimeUtc,
+    walked: WalkedEntry,
 }
 
 impl<'u> DenWriteHost<'u> {
@@ -105,6 +121,7 @@ impl<'u> DenWriteHost<'u> {
             unit: Mutex::new(unit),
             grant,
             now,
+            walked: WalkedEntry::default(),
         }
     }
 }
@@ -170,9 +187,15 @@ impl Host for DenWriteHost<'_> {
             return Err(host_error(anyhow::Error::new(AnotherViewer)));
         }
         let unit = self.unit.get_mut().unwrap_or_else(PoisonError::into_inner);
-        gate(&mut **unit, &self.grant, checked, self.now)
-            .await
-            .map_err(host_error)
+        gate(
+            &mut **unit,
+            &self.grant,
+            &mut self.walked,
+            checked,
+            self.now,
+        )
+        .await
+        .map_err(host_error)
     }
 }
 
@@ -418,6 +441,7 @@ pub(in crate::den) fn judge_act(
         CommissionAct::SetDelayed(set) => judge(set, standing, state, now),
         CommissionAct::ClearDelayed(clear) => judge(clear, standing, state, now),
         CommissionAct::SetMaturity(set) => judge(set, standing, state, now),
+        CommissionAct::DeclareSlot(declare) => judge(declare, standing, state, now),
     }
 }
 
@@ -579,6 +603,46 @@ async fn write_create(
     Ok(Ok(written))
 }
 
+/// Writes a create in an entry: the entry `parent` names, walked from the bound node once per
+/// write and kept for the write's later acts, whose level must be `parent`'s, else the facts
+/// lied; then the one node born under it, at the level Atta settled.
+async fn write_child_create(
+    rows: &mut dyn NodeRepo,
+    grant: &Grant,
+    parent: &Placed,
+    born: &[(Born, atta::Level)],
+    walked: &mut WalkedEntry,
+) -> Gated<Written> {
+    let entry = match &walked.0 {
+        Some((path, row)) if path == &parent.path => row.clone(),
+        Some(_) | None => {
+            let row = walk(rows, grant, parent).await?;
+            walked.0 = Some((parent.path.clone(), row.clone()));
+            row
+        }
+    };
+    if entry.level != den_level(parent.level) {
+        return Err(facts_lied(
+            "the walked entry's level differs from the act's",
+        ));
+    }
+    let [(node, level)] = born else {
+        return Err(facts_lied("a create in an entry makes other than one node"));
+    };
+    let made = new_node(Some(entry.id), node, *level)?;
+    if let Err(refusal) = create(rows, &made).await? {
+        return Ok(Err(refusal));
+    }
+    let written = Written {
+        node: made.id,
+        commission: *row_commission(grant)?,
+        name: Some(node.name.clone()),
+        level: *level,
+        changed: true,
+    };
+    Ok(Ok(written))
+}
+
 /// Writes a rename's new name on the walked row, unless the row already holds it; then it
 /// writes nothing, and nothing changed.
 async fn write_rename(
@@ -619,18 +683,25 @@ async fn write_change(rows: &mut dyn NodeRepo, grant: &Grant, node: &Placed) -> 
     Ok(Ok(written))
 }
 
-/// Writes the rows of `shape` from Atta's checked act: a create's node and entries, a
-/// rename's new name on the walked row, and nothing for a change, whose node is only walked.
+/// Writes the rows of `shape` from Atta's checked act: a create's node and entries, or under a
+/// grant on an existing commission its one node in an entry; a rename's new name on the walked
+/// row; and nothing for a change, whose node is only walked.
 async fn write_rows(
     rows: &mut dyn NodeRepo,
     grant: &Grant,
+    walked: &mut WalkedEntry,
     shape: &Shape,
     born: &[(Born, atta::Level)],
 ) -> Gated<Written> {
-    match shape {
-        Shape::Create { parent, .. } => write_create(rows, grant, parent, born).await,
-        Shape::Rename { node, name } => write_rename(rows, grant, node, name).await,
-        Shape::Change { node } => write_change(rows, grant, node).await,
+    match (shape, grant.kind()) {
+        (Shape::Create { parent, .. }, GrantKind::Create { .. }) => {
+            write_create(rows, grant, parent, born).await
+        }
+        (Shape::Create { parent, .. }, GrantKind::Existing { .. } | GrantKind::System { .. }) => {
+            write_child_create(rows, grant, parent, born, walked).await
+        }
+        (Shape::Rename { node, name }, _) => write_rename(rows, grant, node, name).await,
+        (Shape::Change { node }, _) => write_change(rows, grant, node).await,
     }
 }
 
@@ -677,6 +748,8 @@ enum Prepared {
     ClearDelayed(Passed<deadline::status::clear::Act>),
     /// A commission's rating.
     SetMaturity(Passed<maturity::set::Act>),
+    /// A Slot declared on a commission.
+    DeclareSlot(Passed<declare::Act>),
     /// The system's Late mark on a commission.
     MarkLate(Passed<sweep::Act>),
 }
@@ -734,6 +807,9 @@ fn prepare(act: DenAct, grant: &Grant, now: DateTimeUtc) -> Result<Prepared, Den
         }
         DenAct::Commission(CommissionAct::SetMaturity(set)) => {
             passed(set, grant, now).map(Prepared::SetMaturity)
+        }
+        DenAct::Commission(CommissionAct::DeclareSlot(declare)) => {
+            passed(declare, grant, now).map(Prepared::DeclareSlot)
         }
         DenAct::Commission(CommissionAct::MarkLate(mark)) => {
             passed(mark, grant, now).map(Prepared::MarkLate)
@@ -1052,6 +1128,56 @@ impl View<'_, maturity::set::Act> {
     }
 }
 
+impl View<'_, declare::Act> {
+    /// Declares the Slot as the act declared it on the capability's commission, at the gate's
+    /// node, by the grant's actor, at the gate's time, once. The store reads its tab, locked,
+    /// within the commission and checks its surface on that tab before it writes; a miss is the
+    /// handler's refusal, with nothing written.
+    async fn declare_slot(&mut self) -> anyhow::Result<Result<(), HandlerRefusal>> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(declared) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(Ok(()));
+        };
+        self.wrote = Some(Wrote::Missed);
+        let created_by = self
+            .actor
+            .clone()
+            .ok_or_else(|| facts_lied("a declare has no user to declare it"))?;
+        let birth = SlotBirth {
+            element: declared.element,
+            node: self.node,
+            created_by,
+            created_at: self.now,
+        };
+        let landed = self
+            .repo
+            .declare_slot(&self.capability, &birth, &NewSlot::from(declared.clone()))
+            .await;
+        if let Err(failure) = landed {
+            return address_refusal(&failure).map_or(Err(failure), |refusal| Ok(Err(refusal)));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(Ok(()))
+    }
+}
+
+/// The handler's refusal a store's failure stands for, when it refused an address: a tab the
+/// commission doesn't hold, or a surface its tab doesn't declare.
+fn address_refusal(failure: &anyhow::Error) -> Option<HandlerRefusal> {
+    failure.chain().find_map(|cause| {
+        if cause.is::<UnknownTab>() {
+            Some(HandlerRefusal::UnknownTab)
+        } else if cause.is::<UnknownSurface>() {
+            Some(HandlerRefusal::UnknownSurface)
+        } else {
+            None
+        }
+    })
+}
+
 impl<H: Handler> View<'_, H> {
     /// The capability's commission as the unit holds it; no row is a failure.
     async fn lent(&mut self) -> anyhow::Result<Commission> {
@@ -1149,6 +1275,14 @@ impl Lent<'_, maturity::set::Act> {
     }
 }
 
+impl Lent<'_, declare::Act> {
+    /// Declares the Slot as the act declared it, at the node the gate made: once, on a tab and
+    /// a surface the commission holds; else the refusal, with nothing written.
+    pub(crate) async fn declare_slot(&mut self) -> anyhow::Result<Result<(), HandlerRefusal>> {
+        self.latch.pass(self.view.declare_slot().await)
+    }
+}
+
 impl<H: Handler> Lent<'_, H> {
     /// The capability's commission as the unit holds it, read after the act's writes.
     pub(crate) async fn lent(&mut self) -> anyhow::Result<Commission> {
@@ -1188,14 +1322,14 @@ fn checked_unwritten<C>(change: Option<C>, wrote: Option<Wrote>) -> anyhow::Resu
 }
 
 /// Takes the lent view back after its handler answered: a tripped latch fails the act whatever
-/// the handler answered; an answer naming another commission than the grant's is a broken
-/// rule; and a checked change must have landed exactly once, or, for a role whose capability
-/// no write takes, be recorded as checked with nothing written.
+/// the handler answered; a handler's refusal is the gate's; an answer naming another commission
+/// than the grant's is a broken rule; and a checked change must have landed exactly once, or,
+/// for a role whose capability no write takes, be recorded as checked with nothing written.
 fn settle<H: Handler>(
     lent: Lent<'_, H>,
     handled: Result<Handled, HandlerError>,
     written: &Written,
-) -> anyhow::Result<Settled<H>> {
+) -> Gated<Settled<H>> {
     let Lent { view, latch } = lent;
     let View {
         repo,
@@ -1208,7 +1342,11 @@ fn settle<H: Handler>(
     if let Some(failure) = latch.tripped() {
         return Err(failure);
     }
-    let Handled { answer } = handled.map_err(|HandlerError::Store(failure)| failure)?;
+    let Handled { answer } = match handled {
+        Ok(handled) => handled,
+        Err(HandlerError::Store(failure)) => return Err(failure),
+        Err(HandlerError::Refused(refusal)) => return Ok(Err(DenRefusal::Handler(refusal))),
+    };
     if answer.id != written.commission {
         return Err(facts_lied(
             "the handler answered another commission than the grant's",
@@ -1223,7 +1361,7 @@ fn settle<H: Handler>(
         recorded,
         capability,
     };
-    Ok(settled)
+    Ok(Ok(settled))
 }
 
 /// Issues `H`'s capability and lends it, in a view of the act's own over the commission repo
@@ -1255,7 +1393,10 @@ async fn lend_as<H: Handler>(
         latch: Latch::default(),
     };
     let handled = handler.handle(&mut lent).await;
-    let settled = settle(lent, handled, written)?;
+    let settled = match settle(lent, handled, written)? {
+        Ok(settled) => settled,
+        Err(refusal) => return Ok(Err(refusal)),
+    };
     let recorded = settled.recorded.as_ref();
     append_entries(unit, H::ENTRY, written, recorded, grant.user(), now).await?;
     drop(settled.capability);
@@ -1284,18 +1425,32 @@ async fn lend(
         Prepared::SetDelayed(set) => lend_as(set, grant, unit, written, now).await,
         Prepared::ClearDelayed(clear) => lend_as(clear, grant, unit, written, now).await,
         Prepared::SetMaturity(set) => lend_as(set, grant, unit, written, now).await,
+        Prepared::DeclareSlot(declare) => lend_as(declare, grant, unit, written, now).await,
         Prepared::MarkLate(mark) => lend_as(mark, grant, unit, written, now).await,
     }
 }
 
-/// Whether `grant` is the kind `shape` needs: a create grant for a create, a user's grant on
-/// an existing thing for a rename, and a user's or the system's for a change.
+/// Whether `path` lies below the granted `commission`'s own node, never at it.
+fn below_commission(path: &RealPath, commission: CommissionId) -> bool {
+    let Some(top) = Place::Commission(CommissionPlace::Commission(commission)).anchored_path()
+    else {
+        return false;
+    };
+    path.depth() > top.depth() && path.segments().starts_with(top.segments())
+}
+
+/// Whether `grant` is the kind `shape` needs: a create grant for a create, or a user's grant on
+/// an existing commission for a create below it; a user's grant on an existing thing for a
+/// rename; and a user's or the system's for a change.
 fn grant_fits(grant: &Grant, shape: &Shape) -> bool {
     match (shape, grant.kind()) {
+        (Shape::Create { parent, .. }, GrantKind::Existing { commission, .. }) => {
+            below_commission(&parent.path, *commission)
+        }
         (Shape::Create { .. }, GrantKind::Create { .. })
         | (Shape::Rename { .. }, GrantKind::Existing { .. })
         | (Shape::Change { .. }, GrantKind::Existing { .. } | GrantKind::System { .. }) => true,
-        (Shape::Create { .. }, GrantKind::Existing { .. } | GrantKind::System { .. })
+        (Shape::Create { .. }, GrantKind::System { .. })
         | (Shape::Rename { .. }, GrantKind::Create { .. } | GrantKind::System { .. })
         | (Shape::Change { .. }, GrantKind::Create { .. }) => false,
     }
@@ -1380,6 +1535,7 @@ async fn append_entries<C>(
 pub(in crate::den) async fn gate(
     unit: Unit<'_>,
     grant: &Grant,
+    walked: &mut WalkedEntry,
     checked: Checked<DenAct>,
     now: DateTimeUtc,
 ) -> Gated<DenApplied> {
@@ -1404,7 +1560,7 @@ pub(in crate::den) async fn gate(
         reason = "the den's write gate is the one place that reaches the node port"
     )]
     let mut rows = unit.nodes();
-    let written = write_rows(&mut *rows, grant, &shape, &born).await;
+    let written = write_rows(&mut *rows, grant, walked, &shape, &born).await;
     drop(rows);
     let written = match written? {
         Ok(written) => written,

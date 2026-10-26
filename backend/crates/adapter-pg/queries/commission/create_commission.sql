@@ -1,6 +1,6 @@
--- Store a new commission bound to its node, taking its title and visibility from
--- that node. The node must be a top-level `commission` node whose segment is the
--- commission's id; any other node inserts no row.
+-- Store a new commission bound to its node. The node must be a top-level
+-- `commission` node whose segment is the commission's id; any other node inserts
+-- no row.
 -- $1: id
 -- $2: node_id
 -- $3: owner_id
@@ -10,8 +10,8 @@
 -- $7: graphic
 -- $8: created_at
 INSERT INTO commission
-    (id, node_id, title, owner_id, lifecycle, visibility, deadline, maturity, graphic, created_at)
-SELECT given.id, n.id, n.name, given.owner_id, given.lifecycle, n.level,
+    (id, node_id, owner_id, lifecycle, deadline, maturity, graphic, created_at)
+SELECT given.id, n.id, given.owner_id, given.lifecycle,
        given.deadline, given.maturity, given.graphic, given.created_at
 FROM (VALUES (
     $1::uuid, $2::uuid, $3::text, $4::text,

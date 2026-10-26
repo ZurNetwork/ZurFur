@@ -4,7 +4,8 @@ use std::fmt;
 
 use crate::{
     commission::{
-        create, deadline, dispute, lifecycle::move_to, maturity, rename, status::direction, sweep,
+        create, deadline, dispute, lifecycle::move_to, maturity, rename, slots::declare,
+        status::direction, sweep,
     },
     den::act::ActSpec,
 };
@@ -42,6 +43,8 @@ pub(crate) enum CommissionAct {
     ClearDelayed(deadline::status::clear::Act),
     /// Rates a commission.
     SetMaturity(maturity::set::Act),
+    /// Declares one Slot on a commission.
+    DeclareSlot(declare::Act),
     /// The system's Late mark on a commission whose deadline lapsed.
     MarkLate(sweep::Act),
 }
@@ -62,6 +65,7 @@ impl CommissionAct {
             CommissionAct::SetDelayed(act) => act.spec(),
             CommissionAct::ClearDelayed(act) => act.spec(),
             CommissionAct::SetMaturity(act) => act.spec(),
+            CommissionAct::DeclareSlot(act) => act.spec(),
             CommissionAct::MarkLate(act) => act.spec(),
         }
     }
@@ -83,6 +87,7 @@ impl fmt::Debug for CommissionAct {
             CommissionAct::SetDelayed(_) => "SetDelayed",
             CommissionAct::ClearDelayed(_) => "ClearDelayed",
             CommissionAct::SetMaturity(_) => "SetMaturity",
+            CommissionAct::DeclareSlot(_) => "DeclareSlot",
             CommissionAct::MarkLate(_) => "MarkLate",
         };
         formatter.write_str(variant)

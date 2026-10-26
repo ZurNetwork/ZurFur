@@ -1,7 +1,7 @@
 //! A spy over a real database for the gate's tests: its units record each commission create's
-//! birth and each commission read and write by name, can redirect every commission read to
-//! another commission or fail it, can answer every lifecycle write as landed, and can refuse
-//! every changelog append; everything else delegates.
+//! birth, each commission read and write by name and each node read by name, can redirect every
+//! commission read to another commission or fail it, can answer every lifecycle write as landed,
+//! and can refuse every changelog append; everything else delegates.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -13,14 +13,16 @@ use domain::elements::{
         CommissionId, CommissionMarkup, DeadlineChange, DelayedChange, DirectionChange, Dispute,
         DisputeClear, ElementId, GrantLevel, LateKinds, LifecycleMove, LockedNode, LockedStanding,
         MaturitySet, NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot,
-        SeatInvitation, SeatInvitationId, TabId, TabRow,
+        SeatInvitation, SeatInvitationId, SlotBirth, TabId, TabRow,
     },
+    node::{NewNode, NodeId, NodeRow, NodeSegment, NodeType},
+    text::StoredText,
     user::UserId,
 };
 use domain::ports::{
     AccountRepo, ActorIdentityWrites, BugReportWrites, ChangelogWrites, CharacterWrites,
     ColumnWrites, CommissionReads, CommissionRepo, CommissionWrites, Creator, Database, New,
-    NodeRepo, UnitOfWork, UserWrites, WorkflowWrites, WriteCapability,
+    NodeReads, NodeRepo, NodeWrites, UnitOfWork, UserWrites, WorkflowWrites, WriteCapability,
 };
 
 /// What a spy's units record and change; every clone spies alike.
@@ -29,6 +31,8 @@ pub(super) struct Spy {
     births: Arc<Mutex<Vec<CommissionBirth>>>,
     /// Each commission read and write the spied repos saw, by name, in order.
     calls: Arc<Mutex<Vec<&'static str>>>,
+    /// Each node read the spied units saw, by name, in order.
+    node_reads: Arc<Mutex<Vec<&'static str>>>,
     /// Whether every unit's lifecycle write answers landed, whatever the store did.
     lifecycle_lands: bool,
     /// When set, every unit's commission `find` reads this commission instead.
@@ -78,6 +82,21 @@ impl Spy {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    /// Each node read the spied units saw so far, by name, in order.
+    pub(super) fn recorded_node_reads(&self) -> Vec<&'static str> {
+        self.node_reads
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn record_node_read(&self, read: &'static str) {
+        self.node_reads
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(read);
     }
 
     fn record(&self, call: &'static str) {
@@ -185,8 +204,13 @@ impl UnitOfWork for SpyUnit {
         self.inner.bug_reports()
     }
 
+    // An interposition: every node read is recorded.
     fn nodes(&mut self) -> Box<dyn NodeRepo + '_> {
-        self.inner.nodes()
+        let nodes = SpyNodes {
+            inner: self.inner.nodes(),
+            spy: self.spy.clone(),
+        };
+        Box::new(nodes)
     }
 
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
@@ -195,6 +219,53 @@ impl UnitOfWork for SpyUnit {
 
     async fn rollback(self: Box<Self>) -> anyhow::Result<()> {
         self.inner.rollback().await
+    }
+}
+
+/// A unit's node repo the spy watches: each read recorded by name; writes delegate.
+struct SpyNodes<'a> {
+    inner: Box<dyn NodeRepo + 'a>,
+    spy: Spy,
+}
+
+#[async_trait]
+impl NodeReads for SpyNodes<'_> {
+    async fn at_top(
+        &mut self,
+        node_type: &NodeType,
+        segment: &NodeSegment,
+    ) -> anyhow::Result<Option<NodeRow>> {
+        self.spy.record_node_read("at_top");
+        self.inner.at_top(node_type, segment).await
+    }
+
+    async fn child(
+        &mut self,
+        parent: &NodeId,
+        segment: &NodeSegment,
+    ) -> anyhow::Result<Option<NodeRow>> {
+        self.spy.record_node_read("child");
+        self.inner.child(parent, segment).await
+    }
+
+    async fn children(&mut self, parent: &NodeId) -> anyhow::Result<Vec<NodeRow>> {
+        self.spy.record_node_read("children");
+        self.inner.children(parent).await
+    }
+}
+
+#[async_trait]
+impl NodeWrites for SpyNodes<'_> {
+    async fn create(&mut self, node: &NewNode) -> anyhow::Result<()> {
+        self.inner.create(node).await
+    }
+
+    async fn set_name(&mut self, id: &NodeId, name: &StoredText) -> anyhow::Result<bool> {
+        self.inner.set_name(id, name).await
+    }
+
+    async fn delete(&mut self, id: &NodeId) -> anyhow::Result<bool> {
+        self.inner.delete(id).await
     }
 }
 
@@ -341,8 +412,15 @@ impl CommissionWrites for SpyRepo<'_> {
         self.inner.add_markup(markup).await
     }
 
-    async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()> {
-        self.inner.declare_slots(slots).await
+    // An interposition: every Slot declare is recorded.
+    async fn declare_slot(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        birth: &SlotBirth,
+        slot: &NewSlot,
+    ) -> anyhow::Result<()> {
+        self.spy.record("declare_slot");
+        self.inner.declare_slot(capability, birth, slot).await
     }
 
     async fn commission_has_facts(&mut self, id: &CommissionId) -> anyhow::Result<bool> {

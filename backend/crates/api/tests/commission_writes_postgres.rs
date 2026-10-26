@@ -28,7 +28,7 @@ struct CommissionFacts {
     created_at: DateTime<Utc>,
 }
 
-/// A stored commission row's columns, in [`CommissionFacts`]'s order.
+/// A stored commission's columns and its node's name and level, in [`CommissionFacts`]'s order.
 type CommissionRow = (
     String,
     String,
@@ -42,11 +42,13 @@ type CommissionRow = (
     DateTime<Utc>,
 );
 
-/// The commission `id` as its row stores it.
+/// The commission `id` as its row and its node store it: its title and visibility are its
+/// node's name and level.
 async fn stored(world: &DenWorld, id: CommissionId) -> CommissionFacts {
     let row: CommissionRow = sqlx::query_as(
-        "SELECT title, lifecycle, visibility, deadline, maturity, graphic, direction_status, \
-         deadline_status, linked_channel, created_at FROM commission WHERE id = $1",
+        "SELECT n.name, c.lifecycle, n.level, c.deadline, c.maturity, c.graphic, \
+         c.direction_status, c.deadline_status, c.linked_channel, c.created_at \
+         FROM commission c JOIN node n ON n.id = c.node_id WHERE c.id = $1",
     )
     .bind(uuid::Uuid::from(id))
     .fetch_one(&world.served.runtime.pool)
@@ -303,7 +305,7 @@ async fn a_stranger_s_rating_answers_like_a_made_up_id() {
     assert_eq!(stored(&world, old_sketch).await.maturity, None);
 }
 
-// The ten new writes and the read answer bob, who takes no part in "Old sketch", exactly as
+// The eleven new writes and the read answer bob, who takes no part in "Old sketch", exactly as
 // they answer a made-up id: status, body and headers, and the code every one carries. A call
 // that answered otherwise is named by its label.
 #[tokio::test]
@@ -335,4 +337,68 @@ async fn a_stranger_and_a_made_up_id_answer_alike_on_every_new_call() {
         );
     }
     assert_eq!(stored(&world, old_sketch.id).await.title, "Old sketch");
+}
+
+/// `POST /commissions/{id}/slots` with one Slot on a made-up tab, as `client`: a body its own
+/// parsing accepts, so the answer is the standing's.
+async fn declare(
+    world: &DenWorld,
+    client: &reqwest::Client,
+    id: CommissionId,
+) -> reqwest::Response {
+    let request = json!([{
+        "tab": uuid::Uuid::now_v7(),
+        "surface": "content",
+        "title": "A probed Slot",
+    }]);
+    client
+        .post(format!("{}/commissions/{id}/slots", world.base_url()))
+        .json(&request)
+        .send()
+        .await
+        .expect("the declare is answered")
+}
+
+/// How many Slots `id` holds, as their rows store them.
+async fn slot_count(world: &DenWorld, id: CommissionId) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM commission_slot WHERE commission_id = $1")
+        .bind(uuid::Uuid::from(id))
+        .fetch_one(&world.served.runtime.pool)
+        .await
+        .expect("count the Slots")
+}
+
+// Declaring Slots is the owner's: bob, a Participant of "Untitled" who isn't its owner, is
+// forbidden, and no Slot lands.
+#[tokio::test]
+async fn a_participant_s_declare_is_forbidden() {
+    let world = pg_app::den_world(api::app).await;
+    let untitled = world.untitled.id;
+    let before = slot_count(&world, untitled).await;
+
+    let response = declare(&world, &world.bob, untitled).await;
+
+    let problem = json_with_status(response, 403).await;
+    assert_eq!(problem["code"], "forbidden");
+    assert_eq!(slot_count(&world, untitled).await, before);
+}
+
+// bob, who takes no part in "Old sketch", gets from the declare exactly what a made-up id gets:
+// status, body and headers.
+#[tokio::test]
+async fn a_stranger_and_a_made_up_id_answer_alike_on_the_declare() {
+    let world = pg_app::den_world(api::app).await;
+    let old_sketch = world.old_sketch.id;
+    let before = slot_count(&world, old_sketch).await;
+
+    let not_yours = declare(&world, &world.bob, old_sketch).await;
+    let absent = declare(&world, &world.bob, absent_commission()).await;
+
+    let not_yours = Answer::read(not_yours).await;
+    let absent = Answer::read(absent).await;
+    assert_eq!(not_yours, absent);
+    assert_eq!(absent.status, 404);
+    let problem: Value = serde_json::from_slice(&absent.body).expect("a JSON body");
+    assert_eq!(problem["code"], "commission_not_found");
+    assert_eq!(slot_count(&world, old_sketch).await, before);
 }

@@ -85,7 +85,7 @@ const COMMISSION_REPOS: [&str; 2] = ["commissions", "changelog"];
 /// The commission repo's field writes the gate doesn't hold yet, by name, each call site in
 /// `application` frozen whether it has one today or not. Each leaves when its method takes a
 /// write capability, until the list is empty.
-const FIELD_WRITES: [&str; 3] = ["set_archived", "declare_slots", "set_linked_channel"];
+const FIELD_WRITES: [&str; 2] = ["set_archived", "set_linked_channel"];
 
 /// The commission repo's writes counted only on a commission repo: their names are common.
 /// Through any other receiver in `application`, a create needs the gate's capability, and
@@ -106,18 +106,13 @@ const NODE_TABLE: &str = "node";
 
 /// The ungated commission field writes in `application`, by file, function and method: each
 /// leaves this list when the den's write gate takes it over, until the list is empty.
-const FROZEN_FIELD_WRITES: [(&str, &str, &str); 4] = [
+const FROZEN_FIELD_WRITES: [(&str, &str, &str); 3] = [
     (
         "commission/archive.rs",
         "Commissions::archive",
         "set_archived",
     ),
     ("commission/delete.rs", "Commissions::delete", "delete"),
-    (
-        "commission/slots/declare.rs",
-        "Slots::declare",
-        "declare_slots",
-    ),
     (
         "commission/unarchive.rs",
         "Commissions::unarchive",
@@ -1198,7 +1193,7 @@ const DECLARED_ENTRY_RULE_VARIANTS: [(&str, usize); 3] =
 const HANDLER_TRAIT: &str = "trait Handler";
 
 /// The gated entries today's acts name, each by its file: the create names two.
-const NAMED_GATED_ENTRIES: [(&str, &str); 14] = [
+const NAMED_GATED_ENTRIES: [(&str, &str); 15] = [
     ("commission/create.rs", "CREATED"),
     ("commission/create.rs", "RATED_AT_CREATE"),
     ("commission/deadline/clear.rs", "DEADLINE_CLEARED"),
@@ -1210,6 +1205,7 @@ const NAMED_GATED_ENTRIES: [(&str, &str); 14] = [
     ("commission/lifecycle/move_to.rs", "LIFECYCLE_MOVED"),
     ("commission/maturity/set.rs", "MATURITY_RATED"),
     ("commission/rename.rs", "RENAMED"),
+    ("commission/slots/declare.rs", "SLOT_DECLARED"),
     ("commission/status/direction/clear.rs", "STATUS_CLEARED"),
     ("commission/status/direction/set.rs", "STATUS_SET"),
     ("commission/sweep.rs", "LATE"),
@@ -1568,7 +1564,7 @@ fn each_act_names_one_gated_entry_and_constructors_are_unique() {
         .collect();
     assert_eq!(
         named, expected,
-        "the scan reads today's thirteen acts, the create's two entries among them"
+        "the scan reads today's fourteen acts, the create's two entries among them"
     );
     let act_source =
         std::fs::read_to_string(application_src().join(ACT_FILE)).expect("the act file reads");
@@ -2065,7 +2061,7 @@ const LENT_READ: &str = "lent";
 
 /// Each act with a write, as the gate file writes its type, and the one write its view holds,
 /// which calls the commission repo's method of the same name and nothing else.
-const ACT_WRITES: [(&str, &str); 11] = [
+const ACT_WRITES: [(&str, &str); 12] = [
     ("create::Act", "create"),
     ("move_to::Act", "set_lifecycle"),
     ("dispute::raise::Act", "set_dispute"),
@@ -2077,17 +2073,20 @@ const ACT_WRITES: [(&str, &str); 11] = [
     ("deadline::status::set::Act", "set_deadline_status"),
     ("deadline::status::clear::Act", "set_deadline_status"),
     ("maturity::set::Act", "set_maturity"),
+    ("declare::Act", "declare_slot"),
 ];
 
 /// The modules the gate file must import each act's module from, so `create::Act`,
-/// `move_to::Act`, `direction::set::Act` and `deadline::set::Act` name the acts they say.
-const ACT_MODULE_HOMES: [(&str, &str); 6] = [
+/// `move_to::Act`, `direction::set::Act`, `deadline::set::Act` and `declare::Act` name the acts
+/// they say.
+const ACT_MODULE_HOMES: [(&str, &str); 7] = [
     ("create", "crate::commission"),
     ("move_to", "crate::commission::lifecycle"),
     ("dispute", "crate::commission"),
     ("direction", "crate::commission::status"),
     ("deadline", "crate::commission"),
     ("maturity", "crate::commission"),
+    ("declare", "crate::commission::slots"),
 ];
 
 /// A type as written, its path's segments joined by `::`, generic arguments left out:
@@ -2368,6 +2367,7 @@ fn each_lent_view_holds_its_act_s_one_write() {
         ("set_deadline_status", "deadline::status::set::Act"),
         ("set_deadline_status", "deadline::status::clear::Act"),
         ("set_maturity", "maturity::set::Act"),
+        ("declare_slot", "declare::Act"),
         (LENT_READ, EVERY_ACT),
     ]
     .iter()
@@ -2408,12 +2408,12 @@ fn each_lent_view_holds_its_act_s_one_write() {
         ),
         ("impl Lent<'_, move_to::Act> {", "impl Lent<'_, Move> {"),
         (
-            "    commission::{\n        act::CommissionAct, create, deadline, dispute, lifecycle::move_to, maturity, rename,\n        status::direction,\n    },",
-            "    commission::{\n        act::CommissionAct, create as move_to, deadline, dispute, lifecycle::move_to as create,\n        maturity, rename, status::direction,\n    },",
+            "    commission::{\n        act::CommissionAct, create, deadline, dispute, lifecycle::move_to, maturity, rename,\n        slots::declare, status::direction,\n    },",
+            "    commission::{\n        act::CommissionAct, create as move_to, deadline, dispute, lifecycle::move_to as create,\n        maturity, rename, slots::declare, status::direction,\n    },",
         ),
         (
-            "    commission::{\n        act::CommissionAct, create, deadline, dispute, lifecycle::move_to, maturity, rename,\n        status::direction,\n    },",
-            "    commission::{\n        act::CommissionAct, create, deadline as direction, dispute, lifecycle::move_to, maturity,\n        rename, status::direction as deadline,\n    },",
+            "    commission::{\n        act::CommissionAct, create, deadline, dispute, lifecycle::move_to, maturity, rename,\n        slots::declare, status::direction,\n    },",
+            "    commission::{\n        act::CommissionAct, create, deadline as direction, dispute, lifecycle::move_to, maturity,\n        rename, slots::declare, status::direction as deadline,\n    },",
         ),
         (
             "impl Lent<'_, direction::set::Act> {",
@@ -2651,7 +2651,7 @@ fn each_view_write_calls_its_own_port_method() {
     let writes: Vec<(String, String)> = view_methods(&gate, &views);
     assert_eq!(
         writes.len(),
-        12,
+        13,
         "the scan reads every view method: {writes:?}"
     );
     let source =
@@ -2815,7 +2815,11 @@ fn every_lent_method_goes_through_the_latch() {
 
     assert_eq!(unlatched, Vec::<String>::new());
     let (methods, _) = lent_surface(&gate);
-    assert_eq!(methods.len(), 12, "the scan reads all twelve lent methods");
+    assert_eq!(
+        methods.len(),
+        13,
+        "the scan reads all thirteen lent methods"
+    );
     let source =
         std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
     let widened = format!("{WIDENED_MODULE}{AFTER_THE_LENT_VIEW}");
@@ -5038,7 +5042,7 @@ fn the_ungated_field_writes_are_exactly_these() {
         "async fn purge(uow: Unit<'_>) { UnitOfWork::commissions(uow).delete(&id).await?; }",
         "async fn purge(uow: Unit<'_>) { let repo = uow.commissions(); (*repo).delete(&id).await?; }",
         "fn setter() { let set = CommissionRepo::set_archived; }",
-        "async fn extend(uow: Unit<'_>) { tokio::join!(async { uow.commissions().declare_slots(&slots).await }); }",
+        "async fn extend(uow: Unit<'_>) { tokio::join!(async { uow.commissions().set_linked_channel(&id, None).await }); }",
     ];
     for source in new_sites {
         let file = syn::parse_file(source).expect("the planted use case parses");
@@ -5810,6 +5814,7 @@ fn every_commission_write_takes_a_capability_or_is_named() {
             [
                 "clear_dispute",
                 "create",
+                "declare_slot",
                 "set_deadline",
                 "set_deadline_status",
                 "set_direction_status",
@@ -5820,7 +5825,8 @@ fn every_commission_write_takes_a_capability_or_is_named() {
             .map(str::to_owned)
         ),
         "create takes the gate's create capability, the lifecycle, dispute, direction, deadline \
-         and Delayed writes a Participant's, and the rating the Owner's, each in place of the id"
+         and Delayed writes a Participant's, and the rating and the Slot declare the Owner's, each \
+         in place of the id"
     );
     let (held, homes) = held_names(&file);
     assert_eq!(homes, Vec::<String>::new());
@@ -6168,8 +6174,9 @@ fn the_port_scan_names_each_planted_write() {
 // A capped write's other parameters: only the named values, none holding a commission's id.
 
 /// The values a capped write may take beside its capability, each by its bare name behind at
-/// most one shared reference: a create's birth and start, and each act's checked change.
-const CAPPED_VALUES: [&str; 9] = [
+/// most one shared reference: a create's birth and start, each act's checked change, and a Slot
+/// declare's birth and what it chose.
+const CAPPED_VALUES: [&str; 11] = [
     "CommissionBirth",
     "NewCommission",
     "LifecycleMove",
@@ -6179,6 +6186,8 @@ const CAPPED_VALUES: [&str; 9] = [
     "DeadlineChange",
     "DelayedChange",
     "MaturitySet",
+    "SlotBirth",
+    "NewSlot",
 ];
 
 /// The module the port file imports each of [`CAPPED_VALUES`] from.
@@ -9342,7 +9351,7 @@ const ENTRY_BUILDERS: [&str; 5] = [
 ];
 
 /// The gated constructors, as the domain defines them today.
-const GATED_CONSTRUCTORS: [&str; 14] = [
+const GATED_CONSTRUCTORS: [&str; 15] = [
     "created",
     "deadline_cleared",
     "deadline_set",
@@ -9357,6 +9366,7 @@ const GATED_CONSTRUCTORS: [&str; 14] = [
     "maturity_rated",
     "rated_at_create",
     "renamed",
+    "slot_declared",
 ];
 
 /// The domain file that defines the entry types and their constructors, from the crates folder.
@@ -10422,8 +10432,8 @@ const PG_VIEW_REACHES: [(&str, &str); 27] = [
     ("create_seat_invitation", "statement create_seat_invitation"),
     ("declare_seat", "helper insert_element"),
     ("declare_seat", "statement declare_seat_satellite"),
-    ("declare_slots", "helper insert_element"),
-    ("declare_slots", "statement declare_slot_satellite"),
+    ("declare_slot", "helper insert_element"),
+    ("declare_slot", "statement declare_slot_satellite"),
     ("delete", "statement delete"),
     ("grant_view", "statement grant_view"),
     ("insert_element", "statement add_element"),

@@ -26,6 +26,16 @@ impl FieldPointer {
         );
         Self(format!("#/{name}"))
     }
+
+    /// Points at the member with this ProtoJSON name of the item at `index` of a request body
+    /// that is an array: `#/0/title`.
+    pub fn item_member(index: usize, name: &'static str) -> Self {
+        debug_assert!(
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric()),
+            "a member name is non-empty ASCII letters and digits, got {name:?}"
+        );
+        Self(format!("#/{index}/{name}"))
+    }
 }
 
 /// Why one field was refused. Each code has one fixed, plain-words detail.

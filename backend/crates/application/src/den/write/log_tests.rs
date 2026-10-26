@@ -6,7 +6,9 @@
 //! leaves out (the direction set and clear, the Delayed raise and take-down, the deadline clear)
 //! log the same, a stranger's of them included; so do the dispute's raise and clear, landed,
 //! refused by their rule and a stranger's; and so does the owner's rating, landed, unchanged and
-//! a stranger's. The system's Late mark logs no DID and no name at any level.
+//! a stranger's. The system's Late mark logs no DID and no name at any level. A Slot declare,
+//! landing, missing for a stranger, and failing in the store after its first rows, logs no DID
+//! at info or above and no title or notes at any level.
 
 use std::sync::Arc;
 
@@ -24,7 +26,7 @@ use test_support::{
     store_doubles::{ScriptedStanding, StandingScript},
 };
 
-use super::tests::{PG_TITLE, node_name, pg_seed, provision, write};
+use super::tests::{PG_TITLE, RefusingChangelogDatabase, node_name, pg_seed, provision, write};
 use super::*;
 use crate::commission::CommissionError;
 use crate::common_error::{CommonError, NotFoundEntity};
@@ -416,7 +418,102 @@ async fn the_system_act_logs_no_did_or_name_at_any_level() {
 async fn system_write(ports: &Ports, act: DenAct) -> Result<WriteResult, DenWriteError> {
     let command = Command {
         actor: the_system(),
-        act,
+        acts: vec![act],
     };
     Den::from(ports).write(command, chrono::Utc::now()).await
+}
+
+/// The owner of the declare's commission.
+const DECLARE_OWNER: &str = "did:plc:den-write-log-declare-owner";
+
+/// A stranger to the declare's commission.
+const DECLARE_STRANGER: &str = "did:plc:den-write-log-declare-stranger";
+
+/// The Slot title the declare gives, which no line may carry.
+const SECRET_SLOT_TITLE: &str = "Quiet secret slot 3a9f";
+
+/// The Slot notes the declare gives, which no line may carry.
+const SECRET_SLOT_NOTES: &str = "Quiet secret notes 5c71";
+
+/// `actor`'s declare of two Slots titled [`SECRET_SLOT_TITLE`] on `commission`'s first tab.
+async fn declare_secret_slots(
+    ports: &Ports,
+    actor: &UserId,
+    commission: CommissionId,
+) -> crate::commission::CommissionResult<crate::commission::slots::declare::Output> {
+    use crate::commission::slots::declare::{Command as DeclareCommand, SlotBody};
+    use domain::elements::commission::SurfaceAddress;
+
+    let composition = ports
+        .commissions
+        .load_composition(&commission)
+        .await
+        .expect("the composition reads")
+        .expect("the commission composes");
+    let tab = composition.tabs.first().expect("a tab").id;
+    let body = || SlotBody {
+        surface: SurfaceAddress::new(tab, "content".parse().expect("a surface name")),
+        title: SECRET_SLOT_TITLE.parse().expect("a slot title"),
+        notes: Some(SECRET_SLOT_NOTES.to_owned()),
+    };
+    let command = DeclareCommand {
+        user_id: actor.clone(),
+        commission_id: commission,
+        slots: vec![body(), body()],
+    };
+    crate::commission::Commissions::new(ports)
+        .slots()
+        .declare(command, chrono::Utc::now())
+        .await
+}
+
+// A Slot declare at trace: the owner's lands, a stranger's misses, and one whose changelog
+// append fails after its first rows fails in the store. No line at info or above carries a DID,
+// and no line at any level carries a Slot's title or notes.
+#[tokio::test]
+async fn a_declare_logs_no_identity_and_no_title_or_notes() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let (owner, commission) = pg_seed(&ports, DECLARE_OWNER).await;
+    let stranger = provision(&*ports.database, DECLARE_STRANGER).await;
+    let mut failing = Ports::from(&pg.runtime);
+    failing.database = Arc::new(RefusingChangelogDatabase(failing.database.clone()));
+    let (log, _guard) = capture_at_trace();
+
+    let declared = declare_secret_slots(&ports, &owner, commission).await;
+    let unseen = declare_secret_slots(&ports, &stranger, commission).await;
+    let failed = declare_secret_slots(&failing, &owner, commission).await;
+
+    assert!(declared.is_ok(), "{declared:?}");
+    assert!(unseen.is_err(), "{unseen:?}");
+    assert!(
+        matches!(
+            failed,
+            Err(crate::commission::CommissionError::CommonError(
+                crate::common_error::CommonError::Infrastructure(_)
+            ))
+        ),
+        "{failed:?}"
+    );
+    let text = log.text();
+    assert!(
+        text.contains("use case finished"),
+        "the capture saw nothing: {text}"
+    );
+    for line in text.lines() {
+        for leak in [SECRET_SLOT_TITLE, SECRET_SLOT_NOTES, PG_TITLE, "DETAIL"] {
+            assert!(!line.contains(leak), "a line carries {leak}: {line}");
+        }
+        let at_info_or_above = [" INFO ", " WARN ", " ERROR "]
+            .iter()
+            .any(|level| line.contains(level));
+        if at_info_or_above {
+            for identity in [DECLARE_OWNER, DECLARE_STRANGER, "did:plc:"] {
+                assert!(
+                    !line.contains(identity),
+                    "an info line carries {identity}: {line}"
+                );
+            }
+        }
+    }
 }

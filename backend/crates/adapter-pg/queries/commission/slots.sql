@@ -1,7 +1,8 @@
 -- Every Slot declared on one commission, in declaration order (the carrying
--- element ids are UUIDv7). Empty for a commission with none and for an
--- unknown one.
-SELECT element_id, commission_id, title, notes
-FROM commission_slot
-WHERE commission_id = $1
-ORDER BY element_id
+-- element ids are UUIDv7), each titled by its node's name. A Slot with no node
+-- is left out. Empty for a commission with none and for an unknown one.
+SELECT s.element_id, s.commission_id, n.name AS title, s.notes
+FROM commission_slot s
+JOIN node n ON n.id = s.node_id
+WHERE s.commission_id = $1
+ORDER BY s.element_id

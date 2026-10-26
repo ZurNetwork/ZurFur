@@ -1,22 +1,25 @@
 //! The shared node conformance suite, run by both adapters: `adapter-mem`'s
 //! `tests/node.rs` and `adapter-pg`'s `tests/it/node.rs`.
 //!
-//! Each case takes a fresh [`Database`], the [`NodeStore`] over the same store and the
-//! adapter's [`CommissionSeeder`], and builds 0.2's tree: a commission node, its six
-//! entries, Slots under `slots`. Every commission node a case commits is bound to its
-//! commission, so its segment is a commission id.
+//! Each case takes a fresh [`Database`], the [`NodeStore`] over the same store, the
+//! adapter's [`CommissionSeeder`] and its [`SlotSeeder`], and builds 0.2's tree: a commission
+//! node, its six entries, Slots under `slots`. Every commission node a case commits is bound
+//! to its commission, so its segment is a commission id; every slot node a case commits is
+//! bound to its Slot, so its segment is an element id. A slot node no Slot points at lives
+//! only inside an uncommitted unit.
 //! [`node_contract_tests!`](crate::node_contract_tests) writes one test per case.
 //! The suite holds the port's promise that a refusal ends the unit: every later
 //! call on it fails, and its commit returns an error and keeps nothing.
 
-use domain::elements::commission::CommissionId;
+use chrono::Utc;
+use domain::elements::commission::{CommissionId, NewSlot, SlotBirth, SlotDeclaration};
 use domain::elements::level::Level;
 use domain::elements::node::{NewNode, NodeId, NodeRow, NodeSegment, NodeType};
 use domain::elements::text::StoredText;
 use domain::ports::{Database, NodeStore, SegmentTaken, UnitOfWork};
 use strum::VariantArray;
 
-use crate::seeder::{CommissionSeeder, bind, made_up_owner};
+use crate::seeder::{CommissionSeeder, SlotSeeder, bind, made_up_owner};
 
 /// The six fixed entries, in the order a commission's are written.
 pub const ENTRY_TYPES: [NodeType; 6] = [
@@ -29,8 +32,8 @@ pub const ENTRY_TYPES: [NodeType; 6] = [
 ];
 
 /// Writes one `#[tokio::test]` per suite case. `$setup` is an async fn returning
-/// `(Arc<dyn Database>, Arc<dyn NodeStore>, Arc<dyn CommissionSeeder>, impl Sized)` over
-/// one fresh store; the fourth item is kept alive for the test.
+/// `(Arc<dyn Database>, Arc<dyn NodeStore>, Arc<dyn CommissionSeeder>, Arc<dyn SlotSeeder>,
+/// impl Sized)` over one fresh store; the fifth item is kept alive for the test.
 #[macro_export]
 macro_rules! node_contract_tests {
     ($setup:path) => {
@@ -54,14 +57,19 @@ macro_rules! node_contract_tests {
             set_name_changes_only_the_name,
             an_empty_name_is_refused,
             a_rolled_back_unit_keeps_no_node,
+            a_slot_node_without_its_slot_is_refused_at_commit,
         );
     };
     (@cases $setup:path; $($case:ident),* $(,)?) => {
         $(
             #[tokio::test]
             async fn $case() {
-                let (database, store, seeder, _kept) = $setup().await;
-                $crate::node_contract::$case(&*database, &*store, &*seeder).await;
+                let (database, store, seeder, slots, _kept) = $setup().await;
+                let seeders = $crate::node_contract::Seeders {
+                    commissions: &*seeder,
+                    slots: &*slots,
+                };
+                $crate::node_contract::$case(&*database, &*store, seeders).await;
             }
         )*
     };
@@ -80,6 +88,15 @@ fn name(text: &str) -> StoredText {
 /// A fresh commission segment: a new commission id's text, as a commission's own segment is.
 fn fresh_segment() -> NodeSegment {
     segment(&CommissionId::mint().to_string())
+}
+
+/// The adapter's two seeders: of commissions, and of Slots on committed commissions.
+#[derive(Clone, Copy)]
+pub struct Seeders<'a> {
+    /// Creates a commission through the port.
+    pub commissions: &'a dyn CommissionSeeder,
+    /// Declares a Slot through the port.
+    pub slots: &'a dyn SlotSeeder,
 }
 
 /// A top-level commission node holding `top`.
@@ -198,16 +215,67 @@ pub async fn write_tree(
     }
 }
 
-/// Writes 0.2's tree in a unit of its own and commits it.
-async fn committed_tree(
-    database: &dyn Database,
-    seeder: &dyn CommissionSeeder,
-    slot_segments: &[&str],
-) -> Tree {
+/// Writes 0.2's tree in a unit of its own and commits it, then `slot_count` Slots under its
+/// `slots` entry in a second unit, each node bound to its Slot, keyed by its element id.
+async fn committed_tree(database: &dyn Database, seeders: Seeders<'_>, slot_count: usize) -> Tree {
     let mut unit = database.begin().await.expect("begin");
-    let tree = write_tree(&mut *unit, seeder, &fresh_segment(), slot_segments).await;
+    let mut tree = write_tree(&mut *unit, seeders.commissions, &fresh_segment(), &[]).await;
     unit.commit().await.expect("the tree commits");
+    if slot_count > 0 {
+        let mut unit = database.begin().await.expect("begin");
+        let slots = write_slots(&mut *unit, seeders.slots, &tree, slot_count).await;
+        unit.commit().await.expect("the Slots commit");
+        tree.slots = slots;
+    }
     tree
+}
+
+/// A fresh Slot segment: a new element id's text, as a Slot's own segment is.
+fn fresh_slot_segment() -> NodeSegment {
+    let declaration = SlotDeclaration::minted(NewSlot {
+        address: domain::elements::commission::SurfaceAddress::new(
+            domain::elements::commission::TabId::mint(),
+            "content".parse().expect("a surface name"),
+        ),
+        notes: None,
+    });
+    segment(&declaration.element.to_string())
+}
+
+/// Writes on `unit` `count` Slot nodes under the committed `tree`'s `slots` entry, each keyed
+/// by a fresh element id and bound to its Slot through `slots`. Answers the nodes.
+async fn write_slots(
+    unit: &mut dyn UnitOfWork,
+    slots: &dyn SlotSeeder,
+    tree: &Tree,
+    count: usize,
+) -> Vec<NewNode> {
+    let owner = made_up_owner(unit).await;
+    let mut written = Vec::new();
+    for _ in 0..count {
+        let node = slot_node(tree.slots_entry().id, fresh_slot_segment().as_ref());
+        unit.nodes()
+            .create(&node)
+            .await
+            .expect("a slot node is stored");
+        let element = node
+            .segment
+            .as_ref()
+            .parse()
+            .expect("a slot node's segment is an element id");
+        let birth = SlotBirth {
+            element,
+            node: node.id,
+            created_by: owner.clone(),
+            created_at: Utc::now(),
+        };
+        slots
+            .declare_slot(unit, tree.commission_id, &birth)
+            .await
+            .expect("the Slot is declared at its node");
+        written.push(node);
+    }
+    written
 }
 
 /// Asserts `read` is `node` as written, field by field.
@@ -233,30 +301,40 @@ async fn assert_refused_not_taken(database: &dyn Database, node: &NewNode, what:
     );
 }
 
-/// A created node reads back by its parent and segment, on the unit and after commit.
+/// A created node reads back by its parent and segment, on the unit and after commit; a Slot's
+/// node too, committed with its Slot.
 pub async fn create_then_child_reads_back(
     database: &dyn Database,
     store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
     let mut unit = database.begin().await.expect("begin");
-    let tree = write_tree(&mut *unit, seeder, &fresh_segment(), &["slot-one"]).await;
-    let brief = tree.entry(NodeType::CommissionBrief);
-    let slot = &tree.slots[0];
+    let mut tree = write_tree(&mut *unit, seeders.commissions, &fresh_segment(), &[]).await;
+    let brief = tree.entry(NodeType::CommissionBrief).clone();
 
     let on_the_unit = unit
         .nodes()
         .child(&tree.commission.id, &brief.segment)
         .await
         .expect("a read on the unit");
-    assert_reads_back(on_the_unit, brief);
+    assert_reads_back(on_the_unit, &brief);
+    unit.commit().await.expect("commit");
+    let mut unit = database.begin().await.expect("begin");
+    tree.slots = write_slots(&mut *unit, seeders.slots, &tree, 1).await;
+    let slot = &tree.slots[0];
+    let slot_on_the_unit = unit
+        .nodes()
+        .child(&tree.slots_entry().id, &slot.segment)
+        .await
+        .expect("a read on the unit");
+    assert_reads_back(slot_on_the_unit, slot);
     unit.commit().await.expect("commit");
 
     let brief_read = store
         .child(&tree.commission.id, &brief.segment)
         .await
         .expect("a read");
-    assert_reads_back(brief_read, brief);
+    assert_reads_back(brief_read, &brief);
     let slot_read = store
         .child(&tree.slots_entry().id, &slot.segment)
         .await
@@ -273,9 +351,9 @@ pub async fn create_then_child_reads_back(
 pub async fn at_top_filters_by_type(
     database: &dyn Database,
     store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
-    let tree = committed_tree(database, seeder, &[]).await;
+    let tree = committed_tree(database, seeders, 0).await;
     let top = &tree.commission.segment;
 
     for other in NodeType::VARIANTS
@@ -306,7 +384,7 @@ pub async fn at_top_filters_by_type(
 pub async fn at_top_reads_back_the_stored_name_and_level(
     database: &dyn Database,
     store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
     let top = fresh_segment();
     let listed = NewNode {
@@ -327,8 +405,8 @@ pub async fn at_top_reads_back_the_stored_name_and_level(
         nodes.create(&public).await.expect("create");
     }
     let owner = made_up_owner(&mut *unit).await;
-    bind(&mut *unit, seeder, &listed, &owner).await;
-    bind(&mut *unit, seeder, &public, &owner).await;
+    bind(&mut *unit, seeders.commissions, &listed, &owner).await;
+    bind(&mut *unit, seeders.commissions, &public, &owner).await;
     unit.commit().await.expect("commit");
 
     let listed_read = store
@@ -347,9 +425,9 @@ pub async fn at_top_reads_back_the_stored_name_and_level(
 pub async fn every_node_type_is_storable(
     database: &dyn Database,
     store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
-    let tree = committed_tree(database, seeder, &["slot-one"]).await;
+    let tree = committed_tree(database, seeders, 1).await;
 
     for node_type in NodeType::VARIANTS {
         let written = tree
@@ -369,9 +447,9 @@ pub async fn every_node_type_is_storable(
 pub async fn a_second_top_level_row_with_the_same_segment_is_refused(
     database: &dyn Database,
     _store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
-    let tree = committed_tree(database, seeder, &[]).await;
+    let tree = committed_tree(database, seeders, 0).await;
     let second = commission_node(&tree.commission.segment);
 
     let mut unit = database.begin().await.expect("begin");
@@ -388,9 +466,9 @@ pub async fn a_second_top_level_row_with_the_same_segment_is_refused(
 pub async fn a_primary_key_collision_is_not_segment_taken(
     database: &dyn Database,
     _store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
-    let tree = committed_tree(database, seeder, &[]).await;
+    let tree = committed_tree(database, seeders, 0).await;
     let same_id = NewNode {
         id: tree.commission.id,
         ..commission_node(&fresh_segment())
@@ -403,9 +481,9 @@ pub async fn a_primary_key_collision_is_not_segment_taken(
 pub async fn a_write_after_segment_taken_fails_on_the_same_unit(
     database: &dyn Database,
     _store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
-    let tree = committed_tree(database, seeder, &[]).await;
+    let tree = committed_tree(database, seeders, 0).await;
     let mut unit = database.begin().await.expect("begin");
     let refused = unit
         .nodes()
@@ -434,9 +512,9 @@ pub async fn a_write_after_segment_taken_fails_on_the_same_unit(
 pub async fn a_commit_after_segment_taken_fails_and_keeps_nothing(
     database: &dyn Database,
     store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
-    let tree = committed_tree(database, seeder, &[]).await;
+    let tree = committed_tree(database, seeders, 0).await;
     let kept_before = commission_node(&fresh_segment());
     let mut unit = database.begin().await.expect("begin");
     unit.nodes()
@@ -462,14 +540,15 @@ pub async fn a_commit_after_segment_taken_fails_and_keeps_nothing(
     );
 }
 
-/// One segment is held under two parents, an entry word and a Slot's segment alike.
+/// One segment is held under two parents: an entry word, committed, and a Slot's segment, on
+/// one unit (two Slots never share an element id, so never a committed segment).
 pub async fn the_same_segment_under_two_parents_is_allowed(
     database: &dyn Database,
     store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
-    let first = committed_tree(database, seeder, &["shared-slot"]).await;
-    let second = committed_tree(database, seeder, &["shared-slot"]).await;
+    let first = committed_tree(database, seeders, 0).await;
+    let second = committed_tree(database, seeders, 0).await;
 
     for tree in [&first, &second] {
         let brief = tree.entry(NodeType::CommissionBrief);
@@ -478,10 +557,28 @@ pub async fn the_same_segment_under_two_parents_is_allowed(
             .await
             .expect("a read");
         assert_reads_back(brief_read, brief);
-        let slot_read = store
+    }
+    let mut unit = database.begin().await.expect("begin");
+    let one = write_tree(
+        &mut *unit,
+        seeders.commissions,
+        &fresh_segment(),
+        &["shared-slot"],
+    )
+    .await;
+    let other = write_tree(
+        &mut *unit,
+        seeders.commissions,
+        &fresh_segment(),
+        &["shared-slot"],
+    )
+    .await;
+    for tree in [&one, &other] {
+        let slot_read = unit
+            .nodes()
             .child(&tree.slots_entry().id, &segment("shared-slot"))
             .await
-            .expect("a read");
+            .expect("a read on the unit");
         assert_reads_back(slot_read, &tree.slots[0]);
     }
 }
@@ -490,7 +587,7 @@ pub async fn the_same_segment_under_two_parents_is_allowed(
 pub async fn a_child_of_a_missing_parent_is_refused(
     database: &dyn Database,
     store: &dyn NodeStore,
-    _seeder: &dyn CommissionSeeder,
+    _seeders: Seeders<'_>,
 ) {
     let missing = NodeId::mint();
     let orphans = [
@@ -505,22 +602,17 @@ pub async fn a_child_of_a_missing_parent_is_refused(
     assert!(read.is_empty(), "no orphan is kept");
 }
 
-/// Children come bytewise by segment, so `B` sorts before `a`.
+/// Children come bytewise by segment, so `B` sorts before `a`: a Slot's on the unit, since a
+/// slot node commits only with its Slot, and the entries after commit.
 pub async fn children_come_in_segment_order(
     database: &dyn Database,
     store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
-    let tree = committed_tree(database, seeder, &["b", "a", "B", "_", "0", "~", "A"]).await;
+    let tree = committed_tree(database, seeders, 0).await;
 
-    let slots = store
-        .children(&tree.slots_entry().id)
-        .await
-        .expect("a read");
     let entries = store.children(&tree.commission.id).await.expect("a read");
 
-    let slot_segments: Vec<&str> = slots.iter().map(|node| node.segment.as_ref()).collect();
-    assert_eq!(slot_segments, ["0", "A", "B", "_", "a", "b", "~"]);
     let entry_segments: Vec<&str> = entries.iter().map(|node| node.segment.as_ref()).collect();
     assert_eq!(
         entry_segments,
@@ -534,16 +626,23 @@ pub async fn children_come_in_segment_order(
         ]
     );
     let mut unit = database.begin().await.expect("begin");
+    let unit_tree = write_tree(
+        &mut *unit,
+        seeders.commissions,
+        &fresh_segment(),
+        &["b", "a", "B", "_", "0", "~", "A"],
+    )
+    .await;
     let on_the_unit = unit
         .nodes()
-        .children(&tree.slots_entry().id)
+        .children(&unit_tree.slots_entry().id)
         .await
         .expect("a read on the unit");
     let unit_segments: Vec<&str> = on_the_unit
         .iter()
         .map(|node| node.segment.as_ref())
         .collect();
-    assert_eq!(unit_segments, slot_segments, "the unit's read orders alike");
+    assert_eq!(unit_segments, ["0", "A", "B", "_", "a", "b", "~"]);
 }
 
 /// Deleting a commission node takes every node under it, the Slots under `slots` included;
@@ -551,10 +650,10 @@ pub async fn children_come_in_segment_order(
 pub async fn delete_takes_the_subtree(
     database: &dyn Database,
     store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
-    let tree = committed_tree(database, seeder, &["slot-one", "slot-two"]).await;
-    let other = committed_tree(database, seeder, &["slot-one"]).await;
+    let tree = committed_tree(database, seeders, 2).await;
+    let other = committed_tree(database, seeders, 1).await;
 
     let mut unit = database.begin().await.expect("begin");
     let deleted = unit
@@ -590,9 +689,9 @@ pub async fn delete_takes_the_subtree(
 pub async fn deleting_a_commission_node_takes_its_entries(
     database: &dyn Database,
     store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
-    let tree = committed_tree(database, seeder, &[]).await;
+    let tree = committed_tree(database, seeders, 0).await;
 
     let mut unit = database.begin().await.expect("begin");
     unit.nodes()
@@ -620,9 +719,9 @@ pub async fn deleting_a_commission_node_takes_its_entries(
 pub async fn a_node_that_does_not_fit_its_parent_is_refused(
     database: &dyn Database,
     _store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
-    let tree = committed_tree(database, seeder, &["slot-one"]).await;
+    let tree = committed_tree(database, seeders, 1).await;
     let brief = tree.entry(NodeType::CommissionBrief).id;
     let slots_entry = tree.slots_entry().id;
     let slot = tree.slots[0].id;
@@ -683,9 +782,9 @@ pub async fn a_node_that_does_not_fit_its_parent_is_refused(
 pub async fn deleting_a_fixed_entry_is_refused_while_its_commission_lives(
     database: &dyn Database,
     store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
-    let tree = committed_tree(database, seeder, &[]).await;
+    let tree = committed_tree(database, seeders, 0).await;
 
     for entry in &tree.entries {
         let mut unit = database.begin().await.expect("begin");
@@ -706,10 +805,10 @@ pub async fn deleting_a_fixed_entry_is_refused_while_its_commission_lives(
 pub async fn set_name_and_delete_of_a_missing_id_answer_false(
     database: &dyn Database,
     store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
     let missing = NodeId::mint();
-    let tree = committed_tree(database, seeder, &[]).await;
+    let tree = committed_tree(database, seeders, 0).await;
 
     let mut unit = database.begin().await.expect("begin");
     let renamed = unit
@@ -744,9 +843,9 @@ pub async fn set_name_and_delete_of_a_missing_id_answer_false(
 pub async fn set_name_changes_only_the_name(
     database: &dyn Database,
     store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
-    let tree = committed_tree(database, seeder, &["slot-one"]).await;
+    let tree = committed_tree(database, seeders, 1).await;
     let slot = &tree.slots[0];
     let new_name = name("A renamed made-up slot");
 
@@ -779,9 +878,9 @@ pub async fn set_name_changes_only_the_name(
 pub async fn an_empty_name_is_refused(
     database: &dyn Database,
     store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
-    let tree = committed_tree(database, seeder, &[]).await;
+    let tree = committed_tree(database, seeders, 0).await;
     let nameless = NewNode {
         name: name(""),
         ..commission_node(&fresh_segment())
@@ -804,16 +903,22 @@ pub async fn an_empty_name_is_refused(
 pub async fn a_rolled_back_unit_keeps_no_node(
     database: &dyn Database,
     store: &dyn NodeStore,
-    seeder: &dyn CommissionSeeder,
+    seeders: Seeders<'_>,
 ) {
     let rolled_back_top = fresh_segment();
     let mut unit = database.begin().await.expect("begin");
-    write_tree(&mut *unit, seeder, &rolled_back_top, &["slot-one"]).await;
+    write_tree(
+        &mut *unit,
+        seeders.commissions,
+        &rolled_back_top,
+        &["slot-one"],
+    )
+    .await;
     unit.rollback().await.expect("rollback");
 
     let dropped_top = fresh_segment();
     let mut unit = database.begin().await.expect("begin");
-    write_tree(&mut *unit, seeder, &dropped_top, &["slot-one"]).await;
+    write_tree(&mut *unit, seeders.commissions, &dropped_top, &["slot-one"]).await;
     drop(unit);
 
     for top in [&rolled_back_top, &dropped_top] {
@@ -823,4 +928,31 @@ pub async fn a_rolled_back_unit_keeps_no_node(
             .expect("a read");
         assert!(read.is_none(), "no node of the unit is kept");
     }
+}
+
+/// A slot node no Slot points at is refused at commit, and nothing of its unit is kept.
+pub async fn a_slot_node_without_its_slot_is_refused_at_commit(
+    database: &dyn Database,
+    store: &dyn NodeStore,
+    seeders: Seeders<'_>,
+) {
+    let tree = committed_tree(database, seeders, 0).await;
+    let phantom = slot_node(tree.slots_entry().id, fresh_slot_segment().as_ref());
+    let mut unit = database.begin().await.expect("begin");
+    unit.nodes()
+        .create(&phantom)
+        .await
+        .expect("a slot node is written on the unit");
+
+    let committed = unit.commit().await;
+
+    assert!(
+        committed.is_err(),
+        "a slot node without its slot is refused"
+    );
+    let read = store
+        .child(&tree.slots_entry().id, &phantom.segment)
+        .await
+        .expect("a read");
+    assert!(read.is_none(), "the slot node is not kept");
 }

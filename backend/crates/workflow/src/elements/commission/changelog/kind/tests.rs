@@ -69,6 +69,7 @@ fn kind_tokens_are_pinned_literally() {
         "channel_unlinked",
         "renamed",
         "maturity_rated",
+        "slot_declared",
     ];
 
     let tokens: Vec<&'static str> = ChangelogEntryKind::VARIANTS

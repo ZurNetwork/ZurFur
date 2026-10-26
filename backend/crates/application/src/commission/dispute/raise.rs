@@ -96,7 +96,7 @@ impl dispute::Dispute<'_> {
         };
         let command = write::Command {
             actor: actor_id.into(),
-            act: DenAct::Commission(CommissionAct::RaiseDispute(act)),
+            acts: vec![DenAct::Commission(CommissionAct::RaiseDispute(act))],
         };
         Den::from(ports).write(command, now).await?;
         Ok(Output)

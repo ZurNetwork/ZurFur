@@ -366,8 +366,8 @@ pub struct GetCommissionResponse {
     /// `rename` (the owner only), `move_lifecycle`, `raise_dispute`, `clear_dispute`,
     /// `set_direction_status`,
     /// `clear_direction_status`, `set_deadline`, `clear_deadline`, `set_delayed`,
-    /// `clear_delayed`, `set_maturity` (the owner only). Empty for a viewer who holds no role on
-    /// it. An act is listed when
+    /// `clear_delayed`, `set_maturity` (the owner only), `declare_slots` (the owner only). Empty
+    /// for a viewer who holds no role on it. An act is listed when
     /// its call would succeed for some value it takes; a listed call may still answer `204`
     /// with nothing changed.
     #[prost(string, repeated, tag = "12")]
@@ -501,6 +501,41 @@ pub struct SetCommissionMaturityRequest {
 /// `PUT .../maturity` succeeds `204`; there is no body.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SetCommissionMaturityResponse {}
+/// `POST /api/v1/commissions/{id}/slots` — the owner declares Slots. The HTTP body is the
+/// `slots` array itself.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DeclareCommissionSlotsRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// The Slots to declare, in order: at least one and at most 32. The body is this array.
+    #[prost(message, repeated, tag = "2")]
+    pub slots: ::prost::alloc::vec::Vec<DeclareCommissionSlot>,
+}
+/// One Slot of a declare.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeclareCommissionSlot {
+    /// Opaque id of the commission's tab its carrying element sits in.
+    #[prost(string, tag = "1")]
+    pub tab: ::prost::alloc::string::String,
+    /// The surface within that tab.
+    #[prost(string, tag = "2")]
+    pub surface: ::prost::alloc::string::String,
+    /// Required; a title the name rule refuses → 422 with a field error at `#/<i>/title`, `<i>`
+    /// the Slot's place in the array, from 0.
+    #[prost(string, tag = "3")]
+    pub title: ::prost::alloc::string::String,
+    /// Optional freeform notes; trimmed, and blank stored as absent.
+    #[prost(string, optional, tag = "4")]
+    pub notes: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// `POST .../slots` succeeds `201` with each declared Slot's id, in request order.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeclareCommissionSlotsResponse {
+    /// Opaque Slot ids (R6).
+    #[prost(string, repeated, tag = "1")]
+    pub ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
 /// `GET /api/v1/den`: the viewer's own root; the session is the argument.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetDenRootRequest {
