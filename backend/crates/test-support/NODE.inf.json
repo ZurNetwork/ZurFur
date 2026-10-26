@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/test-support",
-  "charted": "2026-10-23",
+  "charted": "2026-10-26",
   "short": "Shared test rig: throwaway PDS, stub PLC, Postgres harness, the PostgreSQL app setup",
   "is": "The shared test rig: a hermetic throwaway PDS with an in-process stub PLC directory, a one-container/template-clone Postgres harness, the app served on PostgreSQL behind an in-process sign-in (`pg_app`) with the den world seeded on it (`pg_app::den_world`), and the cross-adapter PublicRecords conformance suite.",
   "type": "code",
@@ -92,7 +92,7 @@
     },
     {
       "name": "src/node_contract.rs",
-      "role": "the shared node conformance suite: one pub async fn per case over (&dyn Database, &dyn NodeStore, &dyn CommissionSeeder), building 0.2's tree (a commission node, its six entries, Slots under slots), and node_contract_tests!(setup), which writes one #[tokio::test] per case; write_tree binds each tree's commission (its segment a commission id), and every committed commission node is bound; a case deleting a commission node deletes its commission in the same unit; a refusal ends the unit",
+      "role": "the shared node conformance suite: one pub async fn per case over (&dyn Database, &dyn NodeStore, Seeders: the adapter's CommissionSeeder and SlotSeeder), building 0.2's tree (a commission node, its six entries, Slots under slots), and node_contract_tests!(setup), which writes one #[tokio::test] per case; write_tree binds each tree's commission (its segment a commission id), and every committed commission node is bound; committed Slots are written in a second unit, each node keyed by a fresh element id and bound to its Slot through the SlotSeeder, so a slot node no Slot points at lives only inside an uncommitted unit (the bytewise children order and one segment under two parents are read there) and is refused at commit (a_slot_node_without_its_slot_is_refused_at_commit); a case deleting a commission node deletes its commission in the same unit; a refusal ends the unit",
       "node": false
     },
     {
@@ -162,7 +162,7 @@
     },
     {
       "name": "src/seeder.rs",
-      "role": "CommissionSeeder (each adapter's test code mints the capability and calls the port's create; this crate never mints) and the gate's shapes over it: made_up_owner, bind (a commission at a commission node, its id the segment), commission_node, entry_nodes, write_commission, seed_commission",
+      "role": "CommissionSeeder (each adapter's test code mints the capability and calls the port's create; this crate never mints) and SlotSeeder (the port's declare of a Slot bound to a given node, on a committed commission, under an Owner's capability the adapter's test code mints) and the gate's shapes over it: made_up_owner, bind (a commission at a commission node, its id the segment), commission_node, entry_nodes, write_commission, seed_commission",
       "node": false
     },
     {

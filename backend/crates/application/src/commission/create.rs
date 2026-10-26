@@ -120,7 +120,7 @@ impl Commissions<'_> {
         let act = Act { title, chosen };
         let command = write::Command {
             actor: actor_id.into(),
-            act: DenAct::Commission(CommissionAct::Create(act)),
+            acts: vec![DenAct::Commission(CommissionAct::Create(act))],
         };
         let written = Den::from(self.ports()).write(command, now).await?;
         let values = CommissionValues::answered(written, now)?;

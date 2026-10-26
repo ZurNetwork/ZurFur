@@ -5,6 +5,8 @@ use adapter_mem::{
 use chrono::Utc;
 use domain::elements::commission::{CommissionRole, DeadlineStatus};
 
+use crate::commission::slots::declare::{self as declare_slots, SlotBody};
+
 use super::*;
 use crate::{
     commission::{CommissionError, Commissions, archive},
@@ -157,6 +159,8 @@ enum Call {
     Rename(CommissionTitle),
     Move(LifecycleStep),
     Field(FieldCall),
+    /// A declare of one Slot so titled, on the commission's own tab and first surface.
+    Declare(SlotTitle),
 }
 
 /// One real call, and the word of the act it makes.
@@ -183,6 +187,7 @@ fn call_of(act: CommissionAct) -> Call {
         CommissionAct::ClearDeadline(_) => Call::Field(FieldCall::ClearDeadline),
         CommissionAct::SetDelayed(_) => Call::Field(FieldCall::SetDelayed),
         CommissionAct::ClearDelayed(_) => Call::Field(FieldCall::ClearDelayed),
+        CommissionAct::DeclareSlot(declare) => Call::Declare(declare.title),
     }
 }
 
@@ -195,7 +200,8 @@ fn worded(act: CommissionAct) -> WordedCall {
 
 /// The calls of the act of `kind` the list should try, written apart from the list: every
 /// lifecycle step, every direction status, the rename to the shown title, a deadline at `now` as
-/// the set act stores it, each clear and Delayed act once, and no create and no Late mark.
+/// the set act stores it, each clear and Delayed act once, a declare of one Slot titled as the
+/// commission, and no create and no Late mark.
 fn expected_calls(kind: CommissionActKind, now: DateTimeUtc) -> Vec<Call> {
     match kind {
         CommissionActKind::Create | CommissionActKind::MarkLate => Vec::new(),
@@ -219,6 +225,10 @@ fn expected_calls(kind: CommissionActKind, now: DateTimeUtc) -> Vec<Call> {
         CommissionActKind::ClearDeadline => vec![Call::Field(FieldCall::ClearDeadline)],
         CommissionActKind::SetDelayed => vec![Call::Field(FieldCall::SetDelayed)],
         CommissionActKind::ClearDelayed => vec![Call::Field(FieldCall::ClearDelayed)],
+        CommissionActKind::DeclareSlot => {
+            let title = TITLE.parse::<SlotTitle>().expect("a valid title");
+            vec![Call::Declare(title)]
+        }
     }
 }
 
@@ -293,6 +303,26 @@ async fn answered(
                 .map(|_| ())
         }
         Call::Field(field) => field_call(ports, actor, commission, *field, now).await,
+        Call::Declare(title) => {
+            let tabs = world
+                .backend
+                .tabs_of(commission)
+                .await
+                .expect("the tabs read");
+            let tab = tabs.first().expect("a commission has its tab").id;
+            let surface = first_surface().expect("the skeleton declares a surface");
+            let slot = SlotBody {
+                surface: SurfaceAddress::new(tab, surface),
+                title: title.clone(),
+                notes: None,
+            };
+            let command = declare_slots::Command {
+                user_id: actor.clone(),
+                commission_id: commission,
+                slots: vec![slot],
+            };
+            commissions.slots().declare(command, now).await.map(|_| ())
+        }
     };
     if let Err(CommissionError::CommonError(CommonError::Infrastructure(failure))) = &result {
         panic!("{call:?} failed in the store: {failure:?}");
@@ -372,7 +402,7 @@ fn the_list_tries_each_value_of_every_user_act() {
 }
 
 // The list keeps one fixed order: the rename, the move, then the direction, deadline and
-// Delayed acts, each set before its clear.
+// Delayed acts, each set before its clear, then the Slot declare.
 #[tokio::test]
 async fn the_owner_s_acts_come_in_the_contract_s_order() {
     let world = test_world::world().await;
@@ -397,6 +427,7 @@ async fn the_owner_s_acts_come_in_the_contract_s_order() {
         "clear_deadline",
         "set_delayed",
         "clear_delayed",
+        "declare_slots",
     ];
     assert_eq!(words, expected_words);
     let expected_targets = [

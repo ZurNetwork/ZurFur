@@ -224,9 +224,9 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
     // 1. A 0.1 database: two Accounts, their 0.1 custody rows, in-flight sign-in rows.
     let id_1_versions = embedded_versions(|version| version >= CUSTODY_ENVELOPE);
     assert_eq!(
-        id_1_versions,
-        [CUSTODY_ENVELOPE, SIGNIN_ROWS_DELETE],
-        "the custody upgrade's migrations are the newest embedded"
+        id_1_versions.get(..2),
+        Some([CUSTODY_ENVELOPE, SIGNIN_ROWS_DELETE].as_slice()),
+        "the custody upgrade's migrations come first after the parent's"
     );
     let parent_versions = embedded_versions(|version| version < CUSTODY_ENVELOPE);
     let (pool, db) = custody::before_the_envelope().await;

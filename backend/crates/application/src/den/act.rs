@@ -8,8 +8,8 @@ use domain::{
     elements::{
         commission::{
             ChangelogEntryKind, Commission, CommissionId, CommissionRole, DeadlineCleared,
-            DeadlineSet, DelayedCleared, DelayedSet, DirectionCleared, DirectionSet, LateMark,
-            LifecycleMove, NewChangelogEntry,
+            DeadlineSet, DelayedCleared, DelayedSet, DirectionCleared, DirectionSet, ElementId,
+            LateMark, LifecycleMove, NewChangelogEntry, SlotDeclaration,
         },
         level::Level,
         name::NodeName,
@@ -63,6 +63,18 @@ pub(crate) enum ActShape {
         level: Option<Level>,
         /// The entries made inside it.
         entries: Vec<BornEntry>,
+    },
+    /// Makes a new node named `name` in the anchored thing's fixed entry `entry`, keyed by the
+    /// id of the thing it stands for; it is born Private.
+    CreateInEntry {
+        /// The entry it is made in: one of the Den's fixed words, never request text.
+        entry: &'static str,
+        /// The entry's type.
+        entry_type: DenType,
+        /// Its key: the id of the thing it stands for.
+        key: ElementId,
+        /// Its name.
+        name: NodeName,
     },
     /// Gives the anchored thing a new name.
     Rename {
@@ -307,6 +319,19 @@ impl GatedEntry<DelayedCleared> {
     };
 }
 
+impl GatedEntry<SlotDeclaration> {
+    /// A Slot declare's entry: kind `SlotDeclared`, by `NewChangelogEntry::slot_declared`,
+    /// from the declaration the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
+    pub(crate) const SLOT_DECLARED: Self = Self {
+        kinds: &[ChangelogEntryKind::SlotDeclared],
+        constructor: EntryConstructor::Change(NewChangelogEntry::slot_declared),
+    };
+}
+
 impl GatedEntry<LateMark> {
     /// The system's Late entry: kind `Late`, by `NewChangelogEntry::late`, by no actor, from
     /// the mark the act's rule checked.
@@ -364,12 +389,25 @@ impl fmt::Debug for ArmAnswer {
     }
 }
 
-/// Why a type's handler failed: a store failure under it.
+/// Why a handler refused its act on what its lent view read, before its write: a typed
+/// refusal, never a store failure. It carries nothing of the act.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HandlerRefusal {
+    /// The tab the act names is none of the commission's: missing and foreign alike.
+    UnknownTab,
+    /// The tab declares no such surface.
+    UnknownSurface,
+}
+
+/// Why a type's handler failed: a store failure under it, or its typed refusal.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum HandlerError {
     /// A store under the handler failed.
     #[error("a store under the handler failed")]
     Store(#[from] anyhow::Error),
+    /// The handler refused its act on what its view read.
+    #[error("the handler refused the act")]
+    Refused(HandlerRefusal),
 }
 
 #[cfg(test)]

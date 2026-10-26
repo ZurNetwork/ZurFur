@@ -270,7 +270,7 @@
     {
       "page": 2026093001,
       "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
-      "governs": "migrations/20261022052438_create_node.sql: the node table holds each node's key, real parent, segment, type, level and name (D24); a node is never moved or retyped; migrations/20261022132603_fill_commission_nodes.sql: every commission has its node and a commission node its commission, bound by node_id; src/node.rs and queries/node/: the node port over that table; tests/it/node.rs, tests/it/node_backfill.rs and tests/it/commission_fill.rs; queries/commission/create_commission.sql and src/commission.rs: a commission is created at its own node, a top-level commission node whose segment is its id, taking its title and level from it, and its name and level are read from that node"
+      "governs": "migrations/20261022052438_create_node.sql: the node table holds each node's key, real parent, segment, type, level and name (D24); a node is never moved or retyped; migrations/20261022132603_fill_commission_nodes.sql: every commission has its node and a commission node its commission, bound by node_id; migrations/20261026080502_fill_slot_nodes.sql: every Slot has its node under its commission's `slots` entry and a slot node its Slot, bound by node_id, a bad row stopping the fill rather than being repaired (D24 as amended 2026-10-24, ruling 23); src/node.rs and queries/node/: the node port over that table; tests/it/node.rs, tests/it/node_backfill.rs, tests/it/commission_fill.rs and tests/it/slot_fill.rs; queries/commission/create_commission.sql and src/commission.rs: a commission is created at its own node, a top-level commission node whose segment is its id, taking its title and level from it, and its name and level are read from that node; queries/commission/declare_slot_satellite.sql, slots.sql and src/commission.rs: a Slot is declared only at its own node, a `slot` node whose segment is its element id under its commission's `slots` entry, and its name is read from that node"
     },
     {
       "page": 2026100701,
@@ -642,6 +642,11 @@
       "page": 65110018,
       "title": "Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)",
       "governs": "markup.rs and notes.rs are REPLACED by the comment use cases: a pin = a root Comment with a point anchor, replies carry root+parent (same commission, parent.root == root — a domain invariant), thread read by root cursor-paginated, edit author-only, delete = tombstone via the one shared read path; changelog payloads carry comment ids never text; kinds markup_added/comment_added/comment_edited/comment_deleted"
+    },
+    {
+      "page": 2026093001,
+      "title": "The Den — a Tree of Typed Files, Peer Views and Atta",
+      "governs": "slots/declare.rs: a Slot is a directory under its commission's `slots` entry, its name its node's (ruling 23, D24 as amended 2026-10-24); its node is made only by its named act, checked by Atta and applied by the den's write, born Private (rulings 31 to 33)"
     },
     {
       "page": 2026100701,

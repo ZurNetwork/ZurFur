@@ -1,7 +1,8 @@
 //! The node table's guards, on a fully migrated database: the shape a node
 //! takes on its own, what may change after it is written, and how a commission
 //! or Slot row and its node stay bound. Raw SQL. A commission node needs its
-//! commission at commit, so a bare one lives only inside an uncommitted unit;
+//! commission at commit, and a slot node its Slot, so a bare one lives only inside an
+//! uncommitted unit, and a Slot row is inserted with its node in one unit;
 //! the tests of binding a node-less commission row run on a database migrated
 //! only through the node table's migration. Requires a container runtime socket
 //! (DOCKER_HOST honored).
@@ -13,7 +14,7 @@ use sqlx::postgres::PgQueryResult;
 use uuid::Uuid;
 
 use crate::migration_steps::{bare_pool, run_migrations_through};
-use crate::node_backfill::{DEN_1_VERSION, seed_commission, seed_owner, seed_slot};
+use crate::node_backfill::{DEN_1_VERSION, seed_commission, seed_owner};
 
 /// The six fixed entries every commission node holds.
 const ENTRY_WORDS: [&str; 6] = [
@@ -192,18 +193,65 @@ struct BoundSlot {
     node: Uuid,
 }
 
-/// A new Slot of `commission` bound to its own node, committed.
+/// Insert a Slot's carrying element in `commission`'s `main` tab, the tab made first when it
+/// has none. Answers the element's id.
+async fn slot_element(executor: &mut sqlx::PgConnection, commission: Uuid) -> Uuid {
+    sqlx::query(
+        "INSERT INTO commission_tab (id, commission_id, tab) VALUES ($1, $2, 'main')
+         ON CONFLICT (commission_id, tab) DO NOTHING",
+    )
+    .bind(Uuid::now_v7())
+    .bind(commission)
+    .execute(&mut *executor)
+    .await
+    .expect("seed the main tab");
+    let element_id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO commission_element
+             (id, commission_id, tab_id, surface, type, position, created_by, created_at)
+         SELECT $1, $2, t.id, 'characters', 'slot',
+                (SELECT count(*) FROM commission_element e WHERE e.commission_id = $2),
+                $3, now()
+         FROM commission_tab t
+         WHERE t.commission_id = $2 AND t.tab = 'main'",
+    )
+    .bind(element_id)
+    .bind(commission)
+    .bind(crate::node_backfill::OWNER_DID)
+    .execute(&mut *executor)
+    .await
+    .expect("seed a slot's element");
+    element_id
+}
+
+/// Insert the Slot row of `element` in `commission`, pointing at `node`.
+async fn slot_row_at(
+    executor: &mut sqlx::PgConnection,
+    element: Uuid,
+    commission: Uuid,
+    node: Uuid,
+) -> Result<PgQueryResult, sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO commission_slot (element_id, commission_id, title, node_id)
+         VALUES ($1, $2, 'A slot', $3)",
+    )
+    .bind(element)
+    .bind(commission)
+    .bind(node)
+    .execute(&mut *executor)
+    .await
+}
+
+/// A new Slot of `commission` bound to its own node, its element, node and row in one unit,
+/// committed.
 async fn bound_slot(pool: &PgPool, commission: &BoundCommission) -> BoundSlot {
-    let element_id = seed_slot(pool, commission.id, "A slot").await;
-    let node = NewNode::slot(commission.nodes.slots, &element_id.to_string());
     let mut tx = pool.begin().await.expect("begin");
+    let element_id = slot_element(&mut tx, commission.id).await;
+    let node = NewNode::slot(commission.nodes.slots, &element_id.to_string());
     node.insert(&mut *tx).await.expect("insert the slot's node");
-    sqlx::query("UPDATE commission_slot SET node_id = $2 WHERE element_id = $1")
-        .bind(element_id)
-        .bind(node.id)
-        .execute(&mut *tx)
+    slot_row_at(&mut tx, element_id, commission.id, node.id)
         .await
-        .expect("point the slot at its node");
+        .expect("insert the slot at its node");
     tx.commit().await.expect("the bound slot commits");
     BoundSlot {
         element_id,
@@ -350,13 +398,12 @@ async fn deleting_a_commission_node_takes_its_entries() {
 #[tokio::test]
 async fn moving_a_node_is_refused() {
     let (pool, _container) = migrated().await;
-    let first = bound_commission(&pool).await.nodes;
+    let first = bound_commission(&pool).await;
     let second = bound_commission(&pool).await.nodes;
-    let slot = NewNode::slot(first.slots, &Uuid::now_v7().to_string());
-    slot.insert(&pool).await.expect("insert a slot node");
+    let slot = bound_slot(&pool, &first).await;
 
     let moved = sqlx::query("UPDATE node SET parent = $2 WHERE id = $1")
-        .bind(slot.id)
+        .bind(slot.node)
         .bind(second.slots)
         .execute(&pool)
         .await;
@@ -367,12 +414,11 @@ async fn moving_a_node_is_refused() {
 #[tokio::test]
 async fn changing_a_segment_is_refused() {
     let (pool, _container) = migrated().await;
-    let commission = bound_commission(&pool).await.nodes;
-    let slot = NewNode::slot(commission.slots, &Uuid::now_v7().to_string());
-    slot.insert(&pool).await.expect("insert a slot node");
+    let commission = bound_commission(&pool).await;
+    let slot = bound_slot(&pool, &commission).await;
 
     let resegmented = sqlx::query("UPDATE node SET segment = $2 WHERE id = $1")
-        .bind(slot.id)
+        .bind(slot.node)
         .bind(Uuid::now_v7().to_string())
         .execute(&pool)
         .await;
@@ -427,13 +473,17 @@ async fn re_pointing_a_slot_is_refused() {
     let (pool, _container) = migrated().await;
     let commission = bound_commission(&pool).await;
     let slot = bound_slot(&pool, &commission).await;
+    let mut tx = pool.begin().await.expect("begin");
     let other = NewNode::slot(commission.nodes.slots, &Uuid::now_v7().to_string());
-    other.insert(&pool).await.expect("insert another slot node");
+    other
+        .insert(&mut *tx)
+        .await
+        .expect("insert another slot node");
 
     let re_pointed = sqlx::query("UPDATE commission_slot SET node_id = $2 WHERE element_id = $1")
         .bind(slot.element_id)
         .bind(other.id)
-        .execute(&pool)
+        .execute(&mut *tx)
         .await;
 
     assert_refused_saying(re_pointed, "node_id is set once");
@@ -565,11 +615,14 @@ async fn a_segment_of_the_allowed_characters_is_accepted() {
         longest.as_str(),
     ];
 
+    // A slot node commits only with its Slot, so each insert is checked on a unit dropped after.
+    let mut tx = pool.begin().await.expect("begin");
     for segment in accepted {
         let node = NewNode::slot(commission.slots, segment);
-        let inserted = node.insert(&pool).await;
+        let inserted = node.insert(&mut *tx).await;
         assert!(inserted.is_ok(), "{segment:?} is a segment: {inserted:?}");
     }
+    tx.rollback().await.expect("the unit ends");
 }
 
 #[tokio::test]
@@ -758,17 +811,14 @@ async fn a_slot_pointing_at_a_slot_node_under_another_commission_s_slots_is_refu
     let (pool, _container) = migrated().await;
     let own = bound_commission(&pool).await;
     let other = bound_commission(&pool).await;
-    let slot = seed_slot(&pool, own.id, "A slot").await;
     let mut tx = pool.begin().await.expect("begin");
+    let slot = slot_element(&mut tx, own.id).await;
     let elsewhere = NewNode::slot(other.nodes.slots, &slot.to_string());
     elsewhere
         .insert(&mut *tx)
         .await
         .expect("insert a slot node under the other commission");
-    sqlx::query("UPDATE commission_slot SET node_id = $2 WHERE element_id = $1")
-        .bind(slot)
-        .bind(elsewhere.id)
-        .execute(&mut *tx)
+    slot_row_at(&mut tx, slot, own.id, elsewhere.id)
         .await
         .expect("the pointer waits for commit");
 
@@ -781,17 +831,14 @@ async fn a_slot_pointing_at_a_slot_node_under_another_commission_s_slots_is_refu
 async fn a_slot_pointing_at_a_node_with_another_segment_is_refused_at_commit() {
     let (pool, _container) = migrated().await;
     let commission = bound_commission(&pool).await;
-    let slot = seed_slot(&pool, commission.id, "A slot").await;
     let mut tx = pool.begin().await.expect("begin");
+    let slot = slot_element(&mut tx, commission.id).await;
     let misnamed = NewNode::slot(commission.nodes.slots, &Uuid::now_v7().to_string());
     misnamed
         .insert(&mut *tx)
         .await
         .expect("insert a slot node with another segment");
-    sqlx::query("UPDATE commission_slot SET node_id = $2 WHERE element_id = $1")
-        .bind(slot)
-        .bind(misnamed.id)
-        .execute(&mut *tx)
+    slot_row_at(&mut tx, slot, commission.id, misnamed.id)
         .await
         .expect("the pointer waits for commit");
 
@@ -808,21 +855,18 @@ async fn a_slot_pointing_at_a_node_with_another_segment_is_refused_at_commit() {
 async fn a_slot_whose_node_sits_under_a_non_slots_parent_is_refused_at_commit() {
     let (pool, _container) = migrated().await;
     let commission = bound_commission(&pool).await;
-    let slot = seed_slot(&pool, commission.id, "A slot").await;
     let mut tx = pool.begin().await.expect("begin");
     sqlx::query("ALTER TABLE node DISABLE TRIGGER node_fits_its_parent")
         .execute(&mut *tx)
         .await
         .expect("switch off the insert-time fit");
+    let slot = slot_element(&mut tx, commission.id).await;
     let under_brief = NewNode::slot(commission.nodes.brief, &slot.to_string());
     under_brief
         .insert(&mut *tx)
         .await
         .expect("insert a slot node under the brief");
-    sqlx::query("UPDATE commission_slot SET node_id = $2 WHERE element_id = $1")
-        .bind(slot)
-        .bind(under_brief.id)
-        .execute(&mut *tx)
+    slot_row_at(&mut tx, slot, commission.id, under_brief.id)
         .await
         .expect("the pointer waits for commit");
 
@@ -974,23 +1018,25 @@ mod contract {
 
     use adapter_pg::{PgDatabase, PgNodeStore};
     use domain::ports::{Database, NodeStore};
-    use test_support::seeder::CommissionSeeder;
+    use test_support::seeder::{CommissionSeeder, SlotSeeder};
 
-    use crate::seed::MintingSeeder;
+    use crate::seed::{MintingSeeder, MintingSlotSeeder};
 
-    /// A fresh migrated database's unit factory, node store and commission seeder, and the
-    /// database kept alive.
+    /// A fresh migrated database's unit factory, node store, commission seeder and Slot
+    /// seeder, and the database kept alive.
     async fn fresh() -> (
         Arc<dyn Database>,
         Arc<dyn NodeStore>,
         Arc<dyn CommissionSeeder>,
+        Arc<dyn SlotSeeder>,
         impl Sized,
     ) {
         let (pool, db) = test_support::pg::fresh_pool().await;
         let database: Arc<dyn Database> = Arc::new(PgDatabase::new(pool.clone()));
-        let store: Arc<dyn NodeStore> = Arc::new(PgNodeStore::new(pool));
+        let store: Arc<dyn NodeStore> = Arc::new(PgNodeStore::new(pool.clone()));
         let seeder: Arc<dyn CommissionSeeder> = Arc::new(MintingSeeder);
-        (database, store, seeder, db)
+        let slots: Arc<dyn SlotSeeder> = Arc::new(MintingSlotSeeder(pool));
+        (database, store, seeder, slots, db)
     }
 
     test_support::node_contract_tests!(fresh);

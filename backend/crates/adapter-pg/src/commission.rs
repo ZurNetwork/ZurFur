@@ -8,15 +8,15 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            AsParticipant, Band, ChannelPointer, Commission, CommissionBirth,
+            AsOwner, AsParticipant, Band, ChannelPointer, Commission, CommissionBirth,
             CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionRole,
             CommissionStanding, CommissionStart, CommissionSummary, DeadlineChange, DeadlineStatus,
             DelayedChange, DirectionChange, DirectionStatus, ElementId, ElementPayload, ElementRow,
             ElementType, FileKey, FileSummary, GrantLevel, LateKinds, LifecycleMove, LifecycleStep,
             LockedNode, LockedStanding, Markup, MarkupKey, NewCommission, NewElement, NewSeat,
             NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
-            SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
-            declares_surface,
+            SlotBirth, SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode,
+            declared_tabs, declares_surface,
         },
         did::Did,
         invitation::InvitationState,
@@ -334,30 +334,40 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Declares a batch of Slots: per Slot, an ordinary element (typed
-    /// [`ElementType::slot`]) via `insert_element` plus its
-    /// `commission_slot` satellite, all in one transaction.
+    /// Declares one Slot on the capability's commission: its carrying element (typed
+    /// [`ElementType::slot`]) via `insert_element`, then its `commission_slot` satellite bound
+    /// to `birth`'s node, which inserts only when that node is the Slot's own under this
+    /// commission's `slots` entry. Any other count than one row errs and ends the unit.
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()> {
-        for slot in slots {
-            let carrier = NewElement::carrying(
-                slot.id,
-                slot.commission_id,
-                slot.address.clone(),
-                ElementType::slot(),
-                slot.created_by.clone(),
-                slot.created_at,
-            );
-            self.insert_element(&carrier).await?;
+    async fn declare_slot(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        birth: &SlotBirth,
+        slot: &NewSlot,
+    ) -> anyhow::Result<()> {
+        let commission = *capability.thing();
+        let carrier = NewElement::carrying(
+            birth.element,
+            commission,
+            slot.address.clone(),
+            ElementType::slot(),
+            birth.created_by.clone(),
+            birth.created_at,
+        );
+        self.insert_element(&carrier).await?;
 
-            sql::declare_slot_satellite(
-                &mut *self.conn,
-                uuid::Uuid::from(slot.id),
-                uuid::Uuid::from(slot.commission_id),
-                slot.title.as_str(),
-                slot.notes.as_deref(),
-            )
-            .await?;
+        let inserted = sql::declare_slot_satellite(
+            &mut *self.conn,
+            uuid::Uuid::from(birth.element),
+            uuid::Uuid::from(commission),
+            uuid::Uuid::from(birth.node),
+            slot.notes.as_deref(),
+        )
+        .await?;
+        if inserted != 1 {
+            // No statement failed, so the transaction lives on: the latch ends the unit.
+            *self.failed = true;
+            anyhow::bail!("the node is not the slot's own: no slot was stored");
         }
         Ok(())
     }

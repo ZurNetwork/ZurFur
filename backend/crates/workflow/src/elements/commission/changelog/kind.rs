@@ -99,6 +99,9 @@ pub enum ChangelogEntryKind {
     /// The commission was renamed. The entry carries neither the old title nor
     /// the new one.
     Renamed,
+    /// A Slot was declared on the commission. The entry carries its element id, never its
+    /// title or notes.
+    SlotDeclared,
 }
 
 /// The kinds that say whether a Late is still owed: the kind a Late mark records, and the kinds

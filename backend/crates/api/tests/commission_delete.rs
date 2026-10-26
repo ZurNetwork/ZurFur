@@ -30,10 +30,11 @@ use async_trait::async_trait;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
-        AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
-        CommissionMarkup, CommissionTitle, DeadlineChange, DelayedChange, DirectionChange,
-        ElementId, GrantLevel, LateKinds, LifecycleMove, LockedNode, LockedStanding, NewCommission,
-        NewElement, NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId, element::TabRow,
+        AsOwner, AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile,
+        CommissionId, CommissionMarkup, CommissionTitle, DeadlineChange, DelayedChange,
+        DirectionChange, ElementId, GrantLevel, LateKinds, LifecycleMove, LockedNode,
+        LockedStanding, NewCommission, NewElement, NewSeat, NewSlot, SeatInvitation,
+        SeatInvitationId, SlotBirth, TabId, element::TabRow,
     },
     did::Did,
     maturity::Maturity,
@@ -412,8 +413,13 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         self.0.add_markup(markup).await
     }
 
-    async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()> {
-        self.0.declare_slots(slots).await
+    async fn declare_slot(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        birth: &SlotBirth,
+        slot: &NewSlot,
+    ) -> anyhow::Result<()> {
+        self.0.declare_slot(capability, birth, slot).await
     }
 
     async fn delete(&mut self, id: &CommissionId) -> anyhow::Result<()> {

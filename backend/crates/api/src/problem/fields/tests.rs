@@ -32,6 +32,13 @@ fn a_member_pointer_is_written_in_fragment_form() {
 }
 
 #[test]
+fn an_item_member_pointer_names_its_index_then_its_member() {
+    let pointer = FieldPointer::item_member(3, "title");
+
+    assert_eq!(pointer.to_string(), "#/3/title");
+}
+
+#[test]
 fn a_two_word_member_points_at_its_proto_json_name() {
     let response = CreateCommissionResponse {
         title: "A ref sheet".to_owned(),

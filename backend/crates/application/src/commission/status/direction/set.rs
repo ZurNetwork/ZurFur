@@ -103,7 +103,7 @@ impl Direction<'_> {
         };
         let command = write::Command {
             actor: actor_id.into(),
-            act: DenAct::Commission(CommissionAct::SetDirection(act)),
+            acts: vec![DenAct::Commission(CommissionAct::SetDirection(act))],
         };
         Den::from(ports).write(command, now).await?;
         Ok(Output)

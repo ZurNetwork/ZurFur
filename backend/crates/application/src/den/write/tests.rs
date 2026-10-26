@@ -130,7 +130,7 @@ pub(super) async fn write(
 ) -> Result<WriteResult, DenWriteError> {
     let command = Command {
         actor: Actor::User(actor.clone()),
-        act,
+        acts: vec![act],
     };
     Den::from(ports).write(command, Utc::now()).await
 }
@@ -507,7 +507,7 @@ async fn the_rename_lands_on_the_granted_commission() {
     let built_grant = bound_owner_grant(database, &alice(), granted).await;
     let act = rename_act(named, NEW_NAME);
     transaction(database, async move |uow: &mut dyn UnitOfWork| {
-        let result = written(uow, built_grant, act, Utc::now()).await?;
+        let result = written(uow, built_grant, vec![act], Utc::now()).await?;
         Ok(result)
     })
     .await
@@ -707,7 +707,7 @@ async fn the_entry_lands_on_the_granted_commission_with_the_grant_s_actor() {
     let now = Utc::now();
     let command = Command {
         actor: Actor::User(alice()),
-        act: owner_s_rename(),
+        acts: vec![owner_s_rename()],
     };
 
     Den::from(&world.ports)
@@ -970,7 +970,7 @@ async fn a_stale_move_fails(ports: &Ports, actor: &UserId, commission: Commissio
     let act = move_act(commission, LifecycleStep::Completed);
 
     let moved = transaction(database, async move |uow: &mut dyn UnitOfWork| {
-        let result = written(uow, stale, act, Utc::now()).await?;
+        let result = written(uow, stale, vec![act], Utc::now()).await?;
         Ok(result)
     })
     .await;
@@ -1008,7 +1008,7 @@ async fn a_stale_field_act_fails(
     let label = format!("{act:?}");
 
     let written = transaction(database, async move |uow: &mut dyn UnitOfWork| {
-        let result = written(uow, grant, act, Utc::now()).await?;
+        let result = written(uow, grant, vec![act], Utc::now()).await?;
         Ok(result)
     })
     .await;
@@ -1586,7 +1586,7 @@ pub(super) async fn pg_seed(ports: &Ports, owner_did: &str) -> (UserId, Commissi
 }
 
 /// A [`Database`] whose units refuse every changelog append.
-struct RefusingChangelogDatabase(Arc<dyn Database>);
+pub(super) struct RefusingChangelogDatabase(pub(super) Arc<dyn Database>);
 
 #[async_trait]
 impl Database for RefusingChangelogDatabase {

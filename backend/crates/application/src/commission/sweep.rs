@@ -128,7 +128,7 @@ impl Commissions<'_> {
             let act = Act { commission };
             let command = write::Command {
                 actor: Actor::System(SweepToken { _sealed: () }),
-                act: DenAct::Commission(CommissionAct::MarkLate(act)),
+                acts: vec![DenAct::Commission(CommissionAct::MarkLate(act))],
             };
             let written = Den::from(ports).write(command, now).await;
             match marked(written) {

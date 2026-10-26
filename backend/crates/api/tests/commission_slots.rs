@@ -7,10 +7,11 @@
 //! - **AC1** — the owner declares Slots with `POST /commissions/{id}/slots`,
 //!   whose body is an **array** of Slot objects (Slots usually
 //!   arrive several at a time; the batch lands all-or-nothing, an empty array
-//!   is a `422`): each with a required title (trimmed, blank refused with a
-//!   `422`) and optional freeform notes (trimmed; blank normalizes to absent).
+//!   or more than 32 Slots is a `422`): each with a required title (the name
+//!   rule's: stripped, and a refused one a `422` field error at `#/<i>/title`)
+//!   and optional freeform notes (trimmed; blank normalizes to absent).
 //!   Each Slot is carried by an ordinary element in the composition, its
-//!   title/notes riding in the satellite.
+//!   title on its node and its notes riding in the satellite.
 //! - **AC2** — a commission holds zero or more Slots; an empty (unfilled) Slot
 //!   is a valid, permanent state — there is no occupant anywhere to be missing.
 //! - **AC3** — filling is not offered: no fill surface exists on this route (or
@@ -20,8 +21,7 @@
 //!   and byte-identical bodies, so no existence oracle; a fabricated/foreign
 //!   tab is a `tab_not_found` 404; an undeclared surface is a `422`
 //!   `unknown_surface`; a malformed body is a `422`. Declaring a Slot
-//!   appends **no** changelog entry — the frozen changelog-kind taxonomy carries
-//!   `seat_declared` for Seats but no Slot variant.
+//!   appends one `slot_declared` entry naming the Slot alone, never its title.
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
@@ -119,9 +119,9 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
 
 // AC1/AC2 — the owner declares Slots into a declared surface: each lands as an
 // ordinary element (born Total, empty payload, the owner's envelope)
-// whose satellite carries the trimmed title and the notes (present on one,
-// absent on the other) — a commission going from zero Slots to two. No
-// changelog entry is appended (the frozen taxonomy has no Slot variant).
+// titled by its node (the stripped title) with its notes (present on one,
+// absent on the other) — a commission going from zero Slots to two, each with one
+// `slot_declared` entry.
 #[tokio::test]
 async fn the_owner_declares_slots_with_title_and_optional_notes() {
     let served = serve(
@@ -223,17 +223,21 @@ async fn the_owner_declares_slots_with_title_and_optional_notes() {
         .expect("list slots");
     assert_eq!(slots.len(), 2, "the commission holds two declared Slots");
 
-    // Declaring Slots appends NO changelog entry (the taxonomy's seat_declared
-    // is seat-specific; no Slot variant exists): only creation is in the stream.
+    // Each declared Slot appends one `slot_declared` entry after the creation, naming it alone.
     let entries = backend
         .changelog_entries(CommissionId::from(id))
         .await
         .expect("changelog");
-    assert_eq!(
-        entries.len(),
-        1,
-        "slot declaration is not changelog-recorded"
-    );
+    let slot_entries: Vec<String> = entries[1..]
+        .iter()
+        .map(|entry| entry.payload.to_string())
+        .collect();
+    let expected = [
+        format!("{{\"slot\":\"{noted}\"}}"),
+        format!("{{\"slot\":\"{bare}\"}}"),
+    ];
+    assert_eq!(entries.len(), 3, "the creation, then one entry per Slot");
+    assert_eq!(slot_entries, expected);
 }
 
 // AC1 — the title is required: a blank title (and a missing one) is a 422, and
@@ -531,4 +535,107 @@ async fn a_malformed_body_is_rejected() {
         .await
         .expect("POST malformed");
     common::assert_problem(res, 422, "invalid_request").await;
+}
+
+// More than 32 Slots in one declare is a 422, answered before any statement: the same answer on
+// a commission id that names nothing, and nothing lands on a real one.
+#[tokio::test]
+async fn a_declare_over_the_cap_answers_422_before_any_statement() {
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
+    let client = client();
+    sign_in(&client, &base, "artist.bsky.social").await;
+    let id = create_commission(&client, &base, &backend).await;
+    let tab = tab_of(&backend, id).await;
+    let slot = json!({ "tab": tab, "surface": only_surface(), "title": "One too many" });
+    let over_the_cap = serde_json::Value::Array(vec![slot; 33]);
+    let absent_id = uuid::Uuid::now_v7();
+
+    let on_mine = client
+        .post(format!("{base}/commissions/{id}/slots"))
+        .json(&over_the_cap)
+        .send()
+        .await
+        .expect("POST 33 slots");
+    let on_nothing = client
+        .post(format!("{base}/commissions/{absent_id}/slots"))
+        .json(&over_the_cap)
+        .send()
+        .await
+        .expect("POST 33 slots to a made-up id");
+
+    common::assert_problem(on_mine, 422, "invalid_request").await;
+    common::assert_problem(on_nothing, 422, "invalid_request").await;
+    assert!(
+        backend
+            .elements_of(CommissionId::from(id))
+            .await
+            .expect("load elements")
+            .is_empty(),
+        "nothing landed"
+    );
+}
+
+// Each title the name rule refuses is a field error at its own place in the array, every one
+// listed in order, and nothing lands.
+#[tokio::test]
+async fn each_refused_title_is_a_field_error_at_its_place() {
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
+    let client = client();
+    sign_in(&client, &base, "artist.bsky.social").await;
+    let id = create_commission(&client, &base, &backend).await;
+    let tab = tab_of(&backend, id).await;
+    let body = json!([
+        { "tab": tab, "surface": only_surface(), "title": "Fine" },
+        { "tab": tab, "surface": only_surface(), "title": "   " },
+        { "tab": tab, "surface": only_surface(), "title": "a/b" },
+    ]);
+
+    let res = client
+        .post(format!("{base}/commissions/{id}/slots"))
+        .json(&body)
+        .send()
+        .await
+        .expect("POST refused titles");
+
+    assert_eq!(res.status().as_u16(), 422);
+    let problem: serde_json::Value = res.json().await.expect("problem body");
+    let refused: Vec<(String, String)> = problem["errors"]
+        .as_array()
+        .expect("field errors")
+        .iter()
+        .map(|error| {
+            let pointer = error["pointer"].as_str().expect("a pointer").to_owned();
+            let code = error["code"].as_str().expect("a code").to_owned();
+            (pointer, code)
+        })
+        .collect();
+    let expected = [
+        ("#/1/title".to_owned(), "name_empty".to_owned()),
+        ("#/2/title".to_owned(), "name_slash".to_owned()),
+    ];
+    assert_eq!(refused, expected);
+    assert!(
+        backend
+            .slots_of(CommissionId::from(id))
+            .await
+            .expect("list slots")
+            .is_empty(),
+        "nothing landed"
+    );
 }

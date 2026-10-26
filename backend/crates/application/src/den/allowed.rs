@@ -8,8 +8,10 @@ use domain::{
     elements::{
         commission::{
             CommissionDeadline, CommissionId, CommissionStanding, CommissionState, CommissionTitle,
-            DirectionStatus, LifecycleStep,
+            DirectionStatus, LifecycleStep, NewSlot, SKELETON, SlotDeclaration, SlotTitle,
+            SurfaceAddress, SurfaceName, TabId,
         },
+        name::NodeName,
         user::UserId,
     },
 };
@@ -21,6 +23,7 @@ use crate::{
         deadline,
         lifecycle::move_to,
         rename,
+        slots::declare,
         status::direction,
     },
     den::{
@@ -82,9 +85,11 @@ impl Probe<'_> {
 
 /// The values the list tries of the act of `kind` on `commission`, at `now` and given its
 /// `title`: every lifecycle step, every direction status, the rename to `title`, a deadline at
-/// `now`, since the deadline rule refuses by state, never by the time set, and each clear and
-/// Delayed act once. None of a create or of the system's Late mark, which no user takes on a
-/// stored commission. A match over every kind, so a new act fails to compile until it is tried.
+/// `now`, since the deadline rule refuses by state, never by the time set, each clear and
+/// Delayed act once, and a declare of one Slot titled `title` on the skeleton's first surface,
+/// since no rule of the commission's state refuses one and its tab is read only by its write.
+/// None of a create or of the system's Late mark, which no user takes on a stored commission.
+/// A match over every kind, so a new act fails to compile until it is tried.
 fn tried(
     kind: CommissionActKind,
     commission: CommissionId,
@@ -143,7 +148,30 @@ fn tried(
             let act = deadline::status::clear::Act { commission };
             vec![CommissionAct::ClearDelayed(act)]
         }
+        CommissionActKind::DeclareSlot => first_surface()
+            .map(|surface| {
+                let slot = NewSlot {
+                    address: SurfaceAddress::new(TabId::mint(), surface),
+                    notes: None,
+                };
+                let act = declare::Act {
+                    commission,
+                    title: SlotTitle::from(NodeName::from(title.clone())),
+                    declaration: SlotDeclaration::minted(slot),
+                };
+                CommissionAct::DeclareSlot(act)
+            })
+            .into_iter()
+            .collect(),
     }
+}
+
+/// The skeleton's first declared surface, as a surface name.
+fn first_surface() -> Option<SurfaceName> {
+    SKELETON
+        .iter()
+        .flat_map(|declared| declared.surfaces)
+        .find_map(|surface| surface.parse::<SurfaceName>().ok())
 }
 
 /// The step a lifecycle move moves to; `None` for every other act.

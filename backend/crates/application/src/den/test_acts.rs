@@ -4,13 +4,14 @@
 //! Atta's acts built by hand around a real act's body, for the tests that drive the write host
 //! below the den's builder.
 
-use atta::{Act, ActName, Born, Placed, RealPath, Shape};
+use atta::{Act, ActName, Born, Placed, RealPath, Segment, Shape};
 use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
             Commission, CommissionDeadline, CommissionId, CommissionState, DeadlineStatus,
-            DirectionStatus, LifecycleStep, NewCommission,
+            DirectionStatus, LifecycleStep, NewCommission, NewSlot, SlotDeclaration,
+            SurfaceAddress, TabId,
         },
         did::Did,
         name::NodeName,
@@ -22,7 +23,7 @@ use crate::{
     Ports,
     commission::{
         CommissionError, Commissions, act::CommissionAct, create, deadline, den::CommissionPlace,
-        lifecycle::move_to, rename, status::direction, sweep,
+        lifecycle::move_to, rename, slots::declare, status::direction, sweep,
     },
     den::{DenType, Place, act::DenAct, host::type_key, names, write::commission_directory},
 };
@@ -102,6 +103,21 @@ pub(crate) fn clear_delayed_act(commission: CommissionId) -> DenAct {
 pub(crate) fn mark_late_act(commission: CommissionId) -> DenAct {
     let act = sweep::Act { commission };
     DenAct::Commission(CommissionAct::MarkLate(act))
+}
+
+/// The declare of one Slot titled `text` on `commission`, its element on `tab`'s `content`
+/// surface, under a freshly minted element id.
+pub(crate) fn declare_act(commission: CommissionId, text: &str, tab: TabId) -> DenAct {
+    let slot = NewSlot {
+        address: SurfaceAddress::new(tab, "content".parse().expect("a surface name")),
+        notes: None,
+    };
+    let act = declare::Act {
+        commission,
+        title: text.parse().expect("a valid test title"),
+        declaration: SlotDeclaration::minted(slot),
+    };
+    DenAct::Commission(CommissionAct::DeclareSlot(act))
 }
 
 /// The system, acting: what only the sweep may name.
@@ -316,6 +332,41 @@ pub(crate) fn hand_built_create_of(
     Act {
         name: ActName::from("create".to_owned()),
         typ,
+        shape,
+        body,
+    }
+}
+
+/// Atta's act of `act_type` built by hand around `body`, making a node of `den_type` keyed `key`
+/// and named `text`, Private, under the Private node of `parent_type` at `parent`.
+pub(crate) fn hand_built_create_under(
+    parent: RealPath,
+    parent_type: DenType,
+    act_type: DenType,
+    den_type: DenType,
+    key: Segment,
+    text: &str,
+    body: DenAct,
+) -> Act<DenAct> {
+    let parent = Placed {
+        path: parent,
+        typ: type_key(parent_type),
+        level: atta::Level::Private,
+    };
+    let node = Born {
+        key,
+        typ: type_key(den_type),
+        name: names::display_name(&name(text)),
+        level: None,
+    };
+    let shape = Shape::Create {
+        parent,
+        node,
+        entries: Vec::new(),
+    };
+    Act {
+        name: ActName::from("declare_slots".to_owned()),
+        typ: type_key(act_type),
         shape,
         body,
     }

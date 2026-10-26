@@ -8,14 +8,17 @@ use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::{
     commission::{
-        AsParticipant, Commission, CommissionBirth, CommissionDeadline, CommissionId,
-        LifecycleStep, NewCommission,
+        AsOwner, AsParticipant, Commission, CommissionBirth, CommissionDeadline, CommissionId,
+        ElementId, LifecycleStep, NewCommission, NewSlot, SKELETON, SlotBirth, SlotDeclaration,
+        SurfaceAddress, SurfaceName,
     },
     level::Level,
+    node::{NewNode, NodeId, NodeSegment, NodeType},
+    text::StoredText,
     user::UserId,
 };
 use domain::ports::{CommissionStore, Database, New, UnitOfWork, WriteCapability};
-use test_support::seeder::{self, CommissionSeeder};
+use test_support::seeder::{self, CommissionSeeder, SlotSeeder};
 
 /// Creates commission `id` on `unit` through the port, under a capability minted here.
 pub async fn create(
@@ -48,6 +51,128 @@ impl CommissionSeeder for MintingSeeder {
         commission: &NewCommission,
     ) -> anyhow::Result<()> {
         create(unit, id, birth, commission).await
+    }
+}
+
+/// The Owner's capability on `id`, minted here as the den's write gate issues one.
+pub fn owner_on(id: CommissionId) -> WriteCapability<CommissionId, AsOwner> {
+    WriteCapability::gate_issued(id)
+}
+
+/// The committed commission `id`'s one skeleton address: its first tab and surface.
+pub async fn only_address(pool: &PgPool, id: CommissionId) -> anyhow::Result<SurfaceAddress> {
+    let composition = PgCommissionStore::new(pool.clone())
+        .load_composition(&id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("a committed commission composes"))?;
+    let tab = composition
+        .tabs
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("a committed commission has its tab"))?
+        .id;
+    let surface = SKELETON[0].surfaces[0].parse::<SurfaceName>()?;
+    Ok(SurfaceAddress::new(tab, surface))
+}
+
+/// The node of commission `id`'s `slots` entry, read on `unit`.
+pub async fn slots_entry_in(unit: &mut dyn UnitOfWork, id: CommissionId) -> anyhow::Result<NodeId> {
+    let top = NodeSegment::try_from(id.to_string())?;
+    let commission_node = unit
+        .nodes()
+        .at_top(&NodeType::Commission, &top)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("the commission has its node"))?;
+    let word = NodeSegment::try_from("slots")?;
+    let entry = unit
+        .nodes()
+        .child(&commission_node.id, &word)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("the commission has its slots entry"))?;
+    Ok(entry.id)
+}
+
+/// A Slot's node named `title` for `element` under the `slots` entry `parent`.
+pub fn slot_node(parent: NodeId, element: ElementId, title: &str) -> anyhow::Result<NewNode> {
+    let node = NewNode {
+        id: NodeId::mint(),
+        parent: Some(parent),
+        segment: NodeSegment::try_from(element.to_string())?,
+        node_type: NodeType::Slot,
+        level: Level::Private,
+        name: StoredText::from(title.to_owned()),
+    };
+    Ok(node)
+}
+
+/// Declares on `unit` a Slot titled `title` at `address` with `notes` on commission `id`, by
+/// `declarer`, as the den's write gate does: its node under the commission's `slots` entry,
+/// then the port's declare under an Owner's capability minted here. Answers its element id.
+pub async fn declare_in(
+    unit: &mut dyn UnitOfWork,
+    id: CommissionId,
+    declarer: &UserId,
+    address: &SurfaceAddress,
+    title: &str,
+    notes: Option<&str>,
+) -> anyhow::Result<ElementId> {
+    let slot = NewSlot {
+        address: address.clone(),
+        notes: notes.map(str::to_owned),
+    };
+    let declaration = SlotDeclaration::minted(slot);
+    let parent = slots_entry_in(unit, id).await?;
+    let node = slot_node(parent, declaration.element, title)?;
+    unit.nodes().create(&node).await?;
+    let birth = SlotBirth {
+        element: declaration.element,
+        node: node.id,
+        created_by: declarer.clone(),
+        created_at: Utc::now(),
+    };
+    unit.commissions()
+        .declare_slot(&owner_on(id), &birth, &declaration.slot)
+        .await?;
+    Ok(declaration.element)
+}
+
+/// [`declare_in`] in a unit of its own, committed.
+pub async fn declare_committed(
+    pool: &PgPool,
+    id: CommissionId,
+    declarer: &UserId,
+    address: &SurfaceAddress,
+    title: &str,
+    notes: Option<&str>,
+) -> ElementId {
+    let database = PgDatabase::new(pool.clone());
+    let mut unit = database.begin().await.expect("begin");
+    let element = declare_in(&mut *unit, id, declarer, address, title, notes)
+        .await
+        .expect("the Slot is declared");
+    unit.commit().await.expect("commit the Slot");
+    element
+}
+
+/// The shared suites' [`SlotSeeder`]: the port's declare, under an Owner's capability minted
+/// here, at the committed commission's first tab and surface, read from its pool.
+pub struct MintingSlotSeeder(pub PgPool);
+
+#[async_trait]
+impl SlotSeeder for MintingSlotSeeder {
+    async fn declare_slot(
+        &self,
+        unit: &mut dyn UnitOfWork,
+        id: CommissionId,
+        birth: &SlotBirth,
+    ) -> anyhow::Result<()> {
+        let address = only_address(&self.0, id).await?;
+        let slot = NewSlot {
+            address,
+            notes: None,
+        };
+        unit.commissions()
+            .declare_slot(&owner_on(id), birth, &slot)
+            .await
     }
 }
 
