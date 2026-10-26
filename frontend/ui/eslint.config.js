@@ -51,6 +51,9 @@ const GALLERY = ['src/gallery/**'];
 /** The gallery's stores, carved out of its frame: the only files that keep settings in localStorage. */
 const STORAGE = ['src/gallery/skin-store.ts'];
 
+/** Storybook's stories and the frame they render in: the gallery host, beside the routes. */
+const STORIES = ['src/stories/**'];
+
 /** The one place motion libraries may be imported. */
 const MOTION = ['src/lib/motion/**'];
 
@@ -63,18 +66,28 @@ export const fileSets = {
 	routes: { files: ROUTES, ignores: CHECKS },
 	gallery: { files: GALLERY, ignores: [...CHECKS, ...STORAGE] },
 	storage: { files: STORAGE, ignores: CHECKS },
+	stories: { files: STORIES, ignores: CHECKS },
 	motion: { files: MOTION, ignores: CHECKS },
 	lazy: { files: LAZY, ignores: CHECKS },
 	components: {
 		files: CODE,
-		ignores: [...CHECKS, ...ROUTES, ...GALLERY, ...STORAGE, ...MOTION, ...LAZY]
+		ignores: [...CHECKS, ...ROUTES, ...GALLERY, ...STORAGE, ...STORIES, ...MOTION, ...LAZY]
 	}
 };
 
 /** @typedef {keyof typeof fileSets} FileSetName */
 
 /** @type {readonly FileSetName[]} */
-const FILE_SET_NAMES = ['checks', 'routes', 'gallery', 'storage', 'motion', 'lazy', 'components'];
+const FILE_SET_NAMES = [
+	'checks',
+	'routes',
+	'gallery',
+	'storage',
+	'stories',
+	'motion',
+	'lazy',
+	'components'
+];
 
 /**
  * One `files` or `ignores` glob as a regular expression: `**` spans any number
@@ -142,6 +155,7 @@ const TIER_OF_SET = {
 	routes: 'host',
 	gallery: 'host',
 	storage: 'host',
+	stories: 'host',
 	checks: 'checks'
 };
 
@@ -786,6 +800,7 @@ const GALLERY_SYNTAX = [
 	...HOST_STORAGE.syntax
 ];
 const STORE_SYNTAX = [...COMMON_SYNTAX, ...ANY_GLOB, ANY_DYNAMIC_IMPORT, ...STORE_STORAGE.syntax];
+const STORIES_SYNTAX = [...COMMON_SYNTAX, ...ANY_GLOB, ANY_DYNAMIC_IMPORT, ...HOST_STORAGE.syntax];
 
 // ---------------------------------------------------------------------------
 // The package's own rules, for what no built-in rule can see.
@@ -1054,6 +1069,13 @@ export const boundaryRules = {
 		properties: [...STORE_PROPERTIES, ANIMATE_PROPERTY],
 		imports: HOST_IMPORTS,
 		syntax: STORE_SYNTAX
+	},
+	stories: {
+		tier: /** @type {const} */ ('host'),
+		globals: HOST_GLOBALS,
+		properties: [...HOST_PROPERTIES, ANIMATE_PROPERTY],
+		imports: HOST_IMPORTS,
+		syntax: STORIES_SYNTAX
 	}
 };
 
@@ -1108,7 +1130,7 @@ function boundaryBlocks(name) {
 
 /** Every set but the checks: the components, their two carve-outs, the host and its stores. */
 /** @type {readonly (keyof typeof boundaryRules)[]} */
-const SOURCE_SETS = ['components', 'motion', 'lazy', 'routes', 'gallery', 'storage'];
+const SOURCE_SETS = ['components', 'motion', 'lazy', 'routes', 'gallery', 'storage', 'stories'];
 
 export default defineConfig(
 	includeIgnoreFile(gitignorePath),
@@ -1131,6 +1153,25 @@ export default defineConfig(
 		// The package-root config files run in Node and sit outside the TS program.
 		files: ['*.ts', '*.js'],
 		languageOptions: { globals: globals.node }
+	},
+	{
+		name: 'ui/storybook-node-config',
+		// Storybook's main config runs in Node, like the package-root config files.
+		files: ['.storybook/main.ts'],
+		languageOptions: { globals: globals.node }
+	},
+	{
+		name: 'ui/storybook-unused-vars',
+		// The TypeScript-aware twin of no-unused-vars, which reads parameter names
+		// in a function type as unused variables.
+		files: ['.storybook/*.ts'],
+		rules: { 'no-unused-vars': 'off', '@typescript-eslint/no-unused-vars': 'error' }
+	},
+	{
+		name: 'ui/storybook-browser-config',
+		// The manager's, the preview's and the story tests' setup run in the browser.
+		files: ['.storybook/manager.ts', '.storybook/preview.ts', '.storybook/vitest.setup.ts'],
+		languageOptions: { globals: globals.browser }
 	},
 	{
 		name: 'ui/source-globals',

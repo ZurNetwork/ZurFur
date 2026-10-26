@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import ts from 'typescript';
-import config, { galleryPort } from '../../vite.config.ts';
+import config from '../../vite.config.ts';
+import { galleryPort } from '../../gallery-port.ts';
 
 const loopback = '127.0.0.1';
 

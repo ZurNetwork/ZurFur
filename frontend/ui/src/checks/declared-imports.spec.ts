@@ -73,7 +73,8 @@ function kindOf(relative: string): FileKind {
 	const isCheck =
 		posix.startsWith('checks/') || posix.endsWith('.spec.ts') || posix.endsWith('.svelte.spec.ts');
 	if (isCheck) return 'check';
-	if (posix.startsWith('routes/') || posix.startsWith('gallery/')) return 'host';
+	const isHost = ['routes/', 'gallery/', 'stories/'].some((folder) => posix.startsWith(folder));
+	if (isHost) return 'host';
 	return 'component';
 }
 
@@ -126,9 +127,13 @@ function isLooser(target: FileKind, importer: FileKind): boolean {
 const aliasPattern = /^\$(app|env|lib|gallery)(\/|$)/;
 
 /** The files outside src/ that a check may import. */
-const checkImportableFiles = ['vite.config.ts', 'eslint.config.js', 'package.json'].map((file) =>
-	path.join(uiRoot, file)
-);
+const checkImportableFiles = [
+	'vite.config.ts',
+	'eslint.config.js',
+	'package.json',
+	'gallery-port.ts',
+	'.storybook/main.ts'
+].map((file) => path.join(uiRoot, file));
 
 function packageName(specifier: string): string {
 	const parts = specifier.split('/');
@@ -325,6 +330,7 @@ describe('declared imports', () => {
 		['a stray file importing a page', 'foo.ts', "import './routes/x';"],
 		['the frame importing a check', 'gallery/x.ts', "import '../checks/x';"],
 		['a page importing a spec', 'routes/x.ts', "import '../gallery/x.spec';"],
+		['a component importing a story', 'lib/x.ts', "import '../stories/frame/x';"],
 		["a component's script re-exporting a check", 'lib/X.svelte', svelteReexport]
 	])('refuses %s, a relative import into a looser file set', (_label, relative, text) => {
 		expect(refusalsFor(relative, text).map((refusal) => refusal.reason)).toEqual([
@@ -435,6 +441,13 @@ describe('declared imports', () => {
 		['a relative file inside src', 'lib/x.ts', "import { y } from './y';"],
 		['a dev-only package in a spec', 'lib/x.spec.ts', "import { expect } from 'vitest';"],
 		['a dev-only package in the host', 'gallery/x.ts', "import { page } from 'vitest/browser';"],
+		['a dev-only package in a story', 'stories/x.ts', "import { fn } from 'storybook/test';"],
+		[
+			'a check importing the main Storybook config',
+			'checks/x.spec.ts',
+			"import '../../.storybook/main.ts';"
+		],
+		['a check importing the port rule', 'checks/x.spec.ts', "import '../../gallery-port.ts';"],
 		['a Node built-in in a check', 'checks/x.spec.ts', "import path from 'node:path';"],
 		['the package itself', 'routes/x.ts', "import * as ui from '@zurfur/ui';"],
 		['a Kit alias', 'gallery/x.ts', "import { resolve } from '$app/paths';"],
