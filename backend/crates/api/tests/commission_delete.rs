@@ -765,3 +765,75 @@ async fn on_postgres_a_disputed_active_commission_is_refused_and_keeps_its_entri
     let kinds_after = changelog_kinds(&world.alice, &world, &untitled).await;
     assert_eq!(kinds_after, five_kinds, "every entry stays");
 }
+
+/// How many times the race test polls PostgreSQL for the delete's lock wait before failing.
+const LOCK_WAIT_POLLS: u32 = 500;
+
+/// How long the race test waits between two polls.
+const LOCK_WAIT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// Whether a backend other than the polling one, in this test's own database, waits on a lock.
+async fn a_backend_waits_on_a_lock(pool: &sqlx::PgPool) -> bool {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                        WHERE datname = current_database()
+                          AND pid <> pg_backend_pid()
+                          AND wait_event_type = 'Lock')",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("read pg_stat_activity")
+}
+
+/// Polls until another backend waits on a lock, and fails the test if none does within
+/// `LOCK_WAIT_POLLS` polls (about ten seconds).
+async fn wait_until_a_backend_waits_on_a_lock(pool: &sqlx::PgPool) {
+    for _ in 0..LOCK_WAIT_POLLS {
+        if a_backend_waits_on_a_lock(pool).await {
+            return;
+        }
+        tokio::time::sleep(LOCK_WAIT_INTERVAL).await;
+    }
+    panic!("the delete never waited on a lock while the move held the commission's row");
+}
+
+// On PostgreSQL: a move to Active, held uncommitted, locks alice's Draft "Untitled" while her
+// delete reads it in Draft from the pool; the delete waits on the row, the move commits, and the
+// delete, deciding on the step it reads under the lock, answers the 409 `commission_has_facts`.
+// The commission still reads and its changelog is what it was before the race.
+#[tokio::test]
+async fn on_postgres_a_move_committed_while_the_delete_waits_on_the_row_refuses_it() {
+    let world = pg_app::den_world(api::app).await;
+    let base = world.base_url().to_owned();
+    let untitled = world.untitled.id;
+    let untitled_text = untitled.to_string();
+    let kinds_before = changelog_kinds(&world.alice, &world, &untitled_text).await;
+    let pool = world.served.runtime.pool.clone();
+    let mut racing_move = pool.begin().await.expect("begin the racing move");
+    sqlx::query("UPDATE commission SET lifecycle = 'active' WHERE id = $1")
+        .bind(uuid::Uuid::from(untitled))
+        .execute(&mut *racing_move)
+        .await
+        .expect("the racing move");
+
+    let alice = world.alice.clone();
+    let delete_url = format!("{base}/commissions/{untitled_text}");
+    let deleting = tokio::spawn(async move {
+        alice
+            .delete(delete_url)
+            .send()
+            .await
+            .expect("DELETE /commissions/{id}")
+    });
+    wait_until_a_backend_waits_on_a_lock(&pool).await;
+    racing_move.commit().await.expect("commit the racing move");
+    let res = deleting.await.expect("the delete's task");
+
+    common::assert_problem(res, 409, "commission_has_facts").await;
+    let read_path = format!("/commissions/{untitled_text}");
+    let read = get(&world.alice, &base, &read_path).await;
+    let still_reads = reqwest::StatusCode::OK;
+    assert_eq!(read.status(), still_reads, "the commission still reads");
+    let kinds_after = changelog_kinds(&world.alice, &world, &untitled_text).await;
+    assert_eq!(kinds_after, kinds_before, "every entry stays");
+}
