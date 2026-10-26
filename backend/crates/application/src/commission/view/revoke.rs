@@ -3,7 +3,7 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{CommissionId, NewChangelogEntry, OpenKind},
+        commission::{CommissionId, CommissionRole, NewChangelogEntry, OpenKind},
         user::UserId,
     },
 };
@@ -11,8 +11,7 @@ use serde_json::json;
 
 use crate::{
     Ports,
-    commission::{CommissionResult, view::View},
-    common_error::{CommonError, NotFoundEntity},
+    commission::{CommissionResult, require_or_not_found, view::View},
 };
 
 pub struct Command {
@@ -41,18 +40,13 @@ impl View<'_> {
         } = cmd;
 
         // Authority before `provision` — see the twin note on `view::grant`.
-        let commission = ports
-            .commissions
-            .find(&commission_id)
-            .await?
-            .filter(|c| c.is_owned_by(&actor_id))
-            .ok_or(CommonError::NotFound(NotFoundEntity::Commission))?;
+        require_or_not_found(ports, &commission_id, &actor_id, CommissionRole::Owner).await?;
 
         let uow = uow.open().await?;
         let target_user = uow.users().provision(target_user_id.did()).await?;
 
         let entry: NewChangelogEntry = NewChangelogEntry::event(
-            commission.id,
+            commission_id,
             OpenKind::ViewGrantRevoked,
             actor_id,
             json!({
@@ -71,7 +65,7 @@ impl View<'_> {
             reason = "the ungated view-revoke site, held until its slice routes it through the den's write gate"
         )]
         let revoked = commissions
-            .revoke_view(&commission.id, &target_user.id)
+            .revoke_view(&commission_id, &target_user.id)
             .await?;
         drop(commissions);
         if revoked {

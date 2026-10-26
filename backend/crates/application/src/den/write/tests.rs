@@ -647,7 +647,7 @@ async fn a_create_that_picks_a_wider_level_is_refused_in_0_2() {
         assert!(top_row(database, planted).await.is_none(), "{picked:?}");
         let stored = world
             .ports
-            .commissions
+            .commission_rows
             .find(&planted)
             .await
             .expect("the store reads");
@@ -924,7 +924,7 @@ async fn an_archived_commission_refuses_nothing_yet() {
 /// The lifecycle step `commission` holds.
 async fn step_of(ports: &Ports, commission: CommissionId) -> LifecycleStep {
     let stored = ports
-        .commissions
+        .commission_rows
         .find(&commission)
         .await
         .expect("the store reads")

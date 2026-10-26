@@ -4,7 +4,7 @@
 use domain::elements::{
     account::AccountId,
     commission::{
-        CommissionId, CommissionRole, CommissionStanding, CommissionSummary, ElementId, FileKey,
+        CommissionId, CommissionRole, CommissionStanding, ElementId, FileKey, ViewedSummary,
     },
     level::Level,
     user::UserId,
@@ -87,11 +87,12 @@ impl CommissionPlace {
     }
 }
 
-/// The node for a commission's summary: its node's level, standing for a Participant,
-/// archived or live, and its node's name through the name rule.
-fn commission_node(commission: &CommissionSummary, participant: bool) -> Option<Node> {
+/// The node for a commission's summary: its node's level, standing for a viewer who holds a
+/// role, archived or live, and its node's name through the name rule.
+fn commission_node(viewed: &ViewedSummary) -> Option<Node> {
+    let commission = &viewed.summary;
     let name = names::stored_name(commission.title.as_str())?;
-    let lifts = if participant {
+    let lifts = if viewed.role.is_some() {
         vec![STANDING]
     } else {
         Vec::new()
@@ -178,17 +179,19 @@ async fn slots(
     Ok(children)
 }
 
-/// The commission at `/commission/<commission>`, for the session's viewer. Always reads the
-/// commission's summary and then the viewer's participation, both, so an absent commission
-/// and one that isn't the viewer's run the same statements.
+/// The commission at `/commission/<commission>`, for the session's viewer, from one read of
+/// its summary as the viewer sees it: an absent commission and one the viewer can't be shown
+/// run the same statement and answer the same `None`. Any role, the owner's included, lifts it.
 pub(crate) async fn node(
     context: &DenContext<'_>,
     commission: CommissionId,
 ) -> anyhow::Result<Option<Node>> {
-    let store = &context.ports.commissions;
-    let found = store.find_summary(&commission).await?;
-    let participant = store.is_participant(&commission, context.viewer).await?;
-    let node = found.and_then(|found| commission_node(&found, participant));
+    let found = context
+        .ports
+        .commissions
+        .find_summary(&commission, context.viewer)
+        .await?;
+    let node = found.as_ref().and_then(commission_node);
     Ok(node)
 }
 

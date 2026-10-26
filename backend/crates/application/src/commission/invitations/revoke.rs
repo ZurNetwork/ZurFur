@@ -3,14 +3,14 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{CommissionId, element::SeatId},
+        commission::{CommissionId, CommissionRole, element::SeatId},
         user::UserId,
     },
 };
 
 use crate::{
     Ports,
-    commission::{CommissionError, CommissionResult, invitations::Invitations, require_owner},
+    commission::{CommissionError, CommissionResult, invitations::Invitations, require},
 };
 
 pub struct Command {
@@ -41,7 +41,7 @@ impl Invitations<'_> {
             seat_id,
         } = cmd;
 
-        require_owner(ports, &commission_id, &actor_id).await?;
+        require(ports, &commission_id, &actor_id, CommissionRole::Owner).await?;
 
         // No seat-existence gate on purpose: the lookup is already
         // commission-scoped, so a foreign seat id is a bare no-op, never a

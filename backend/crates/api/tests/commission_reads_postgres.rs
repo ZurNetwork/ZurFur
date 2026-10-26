@@ -15,7 +15,8 @@ use test_support::{
     },
     recording::{
         CallLog, NEVER_FOR_A_MISSING_FILE, NEVER_FOR_A_STRANGER, RecordingChangelogStore,
-        RecordingCommissionStore, RecordingFileStore, assert_reads_none_of,
+        RecordingCommissionRows, RecordingCommissionStore, RecordingFileStore,
+        assert_reads_none_of,
     },
 };
 
@@ -248,9 +249,12 @@ async fn a_pair_s_two_causes_make_the_same_reads_and_a_stranger_s_never_read_by_
     let world = pg_app::den_world(move |mut runtime| {
         let commissions =
             RecordingCommissionStore::new(Arc::clone(&runtime.commissions), recorder.clone());
+        let rows =
+            RecordingCommissionRows::new(Arc::clone(&runtime.commission_rows), recorder.clone());
         let files = RecordingFileStore::new(Arc::clone(&runtime.files), recorder.clone());
         let changelog = RecordingChangelogStore::new(Arc::clone(&runtime.changelog), recorder);
         runtime.commissions = Arc::new(commissions);
+        runtime.commission_rows = Arc::new(rows);
         runtime.files = Arc::new(files);
         runtime.changelog = Arc::new(changelog);
         api::app(runtime)
@@ -263,7 +267,7 @@ async fn a_pair_s_two_causes_make_the_same_reads_and_a_stranger_s_never_read_by_
             let label = format!("{visibility}, {}", pair.label);
             let reads = reads_of_each_cause(&log, &world.stranger, &world, &label, &pair).await;
 
-            assert_eq!(reads.absent, ["find_summary", "is_participant"], "{label}");
+            assert_eq!(reads.absent, ["find_summary"], "{label}");
             assert_eq!(reads.not_yours, reads.absent, "{label}");
             assert_reads_none_of(&reads.absent, &NEVER_FOR_A_STRANGER, &label);
         }
@@ -274,7 +278,7 @@ async fn a_pair_s_two_causes_make_the_same_reads_and_a_stranger_s_never_read_by_
         let reads = reads_of_each_cause(&log, &world.stranger, &world, &label, &pair).await;
 
         if code == STRANGER_CODE {
-            assert_eq!(reads.absent, ["find_summary", "is_participant"], "{label}");
+            assert_eq!(reads.absent, ["find_summary"], "{label}");
         }
         assert_eq!(reads.not_yours, reads.absent, "{label}");
         assert_reads_none_of(&reads.absent, &NEVER_FOR_A_STRANGER, &label);

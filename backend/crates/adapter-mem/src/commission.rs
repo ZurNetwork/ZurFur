@@ -19,7 +19,7 @@ use domain::elements::{
         LifecycleStep, LockedNode, LockedStanding, MaturitySet, NewChangelogEntry, NewCommission,
         NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink,
         SeatPrompt, Slot, SlotBirth, SlotTitle, StoredDispute, SurfaceAddress, SurfaceName, TabId,
-        TabName, TabRow, VisibilityMode, declared_tabs, declares_surface,
+        TabName, TabRow, ViewedSummary, VisibilityMode, declared_tabs, declares_surface,
     },
     did::Did,
     invitation::InvitationState,
@@ -31,7 +31,7 @@ use domain::elements::{
     workflow::{Column, ColumnId, LexOrdering, WorkflowId},
 };
 use domain::ports::{
-    ChangelogStore, ChangelogWrites, ColumnStore, CommissionReads, CommissionStore,
+    ChangelogStore, ChangelogWrites, ColumnStore, CommissionReads, CommissionRows, CommissionStore,
     CommissionWrites, Creator, ElementNotFound, New, UnitOfWork, UnknownSurface, UnknownTab,
     WriteCapability,
 };
@@ -1304,15 +1304,16 @@ impl CommissionReads for MemCommissionWrites<'_> {
         Ok(!logged.contains(commission))
     }
 
+    /// Answered from the persisted membership map, never a computed owner-∪-seated union; an
+    /// unknown commission answers `false`. Unaffected by placement or view grants.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn is_participant(
         &mut self,
         commission: &CommissionId,
         user: &UserId,
     ) -> anyhow::Result<bool> {
-        MemCommissionStore(self.0.clone())
-            .is_participant(commission, user)
-            .await
+        let participates = MemCommissionStore(self.0.clone()).participates(commission, user);
+        Ok(participates)
     }
 
     /// The tab row, scoped to `commission`; an absent id and a foreign tab both
@@ -1335,11 +1336,45 @@ impl CommissionReads for MemCommissionWrites<'_> {
     }
 }
 
-/// In-memory [`CommissionStore`] read surface over the shared [`MemBackend`].
+/// In-memory [`CommissionStore`] and [`CommissionRows`] read surfaces over the shared
+/// [`MemBackend`].
 pub struct MemCommissionStore(pub(crate) MemBackend);
 
+impl MemCommissionStore {
+    /// The listing's slim projection of the commission `id` names, its name and level read
+    /// from the node it points at, or `None` when there is no such commission or node.
+    fn summary(&self, id: &CommissionId) -> Option<CommissionSummary> {
+        let id = *id;
+        let (node_id, archived) = self
+            .0
+            .commissions
+            .lock()
+            .expect("MemBackend commissions mutex poisoned")
+            .get(&id)
+            .map(|stored| (stored.node_id, stored.archived_at.is_some()))?;
+        let nodes = self
+            .0
+            .nodes
+            .lock()
+            .expect("MemBackend nodes mutex poisoned");
+        nodes
+            .get(&node_id)
+            .map(|node| summarize(id, archived, node))
+    }
+
+    /// Whether `user` holds a row in the persisted membership map for `commission`, never a
+    /// computed owner-∪-seated union; an unknown commission answers `false`.
+    fn participates(&self, commission: &CommissionId, user: &UserId) -> bool {
+        self.0
+            .participants
+            .lock()
+            .expect("MemBackend participants mutex poisoned")
+            .contains_key(&(*commission, user.clone()))
+    }
+}
+
 #[async_trait]
-impl CommissionStore for MemCommissionStore {
+impl CommissionRows for MemCommissionStore {
     /// Rebuild a [`Commission`] from its stored parts, or `None`.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
@@ -1352,30 +1387,50 @@ impl CommissionStore for MemCommissionStore {
         Ok(commissions.get(&id).map(|stored| stored.rebuild(id)))
     }
 
-    /// The listing's slim projection of the commission `id` names, its name and level read
-    /// from the node it points at, or `None` when there is no such commission or node.
+    /// Scan `commissions` for `owner`'s rows, drop archived ones, and rebuild
+    /// each. Sorted by [`CommissionId`] (UUIDv7, so creation order), since the
+    /// `HashMap` scan has no natural order.
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>> {
-        let id = *id;
-        let found = self
+    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
+        let commissions = self
             .0
             .commissions
             .lock()
-            .expect("MemBackend commissions mutex poisoned")
-            .get(&id)
-            .map(|stored| (stored.node_id, stored.archived_at.is_some()));
-        let Some((node_id, archived)) = found else {
+            .expect("MemBackend commissions mutex poisoned");
+        let mut owned: Vec<Commission> = commissions
+            .iter()
+            .filter(|(_, stored)| &stored.owner_id == owner && stored.archived_at.is_none())
+            .map(|(id, stored)| stored.rebuild(*id))
+            .collect();
+        owned.sort_by_key(|commission| uuid::Uuid::from(commission.id));
+        Ok(owned)
+    }
+}
+
+#[async_trait]
+impl CommissionStore for MemCommissionStore {
+    /// The commission's summary beside `viewer`'s role, read from [`standing`](Self::standing),
+    /// or `None` when there is no such commission or node, or the standing isn't shown.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn find_summary(
+        &self,
+        id: &CommissionId,
+        viewer: &UserId,
+    ) -> anyhow::Result<Option<ViewedSummary>> {
+        let Some(summary) = self.summary(id) else {
             return Ok(None);
         };
-        let nodes = self
-            .0
-            .nodes
-            .lock()
-            .expect("MemBackend nodes mutex poisoned");
-        let summary = nodes
-            .get(&node_id)
-            .map(|node| summarize(id, archived, node));
-        Ok(summary)
+        let Some(standing) = self.standing(id, viewer).await? else {
+            return Ok(None);
+        };
+        if !standing.is_shown() {
+            return Ok(None);
+        }
+        let viewed = ViewedSummary {
+            summary,
+            role: standing.role,
+        };
+        Ok(Some(viewed))
     }
 
     /// The viewer's role, the level of the node the commission points at (Private when
@@ -1408,12 +1463,7 @@ impl CommissionStore for MemCommissionStore {
             .expect("MemBackend nodes mutex poisoned")
             .get(&node_id)
             .map_or(Level::Private, |node| node.level);
-        let participates = self
-            .0
-            .participants
-            .lock()
-            .expect("MemBackend participants mutex poisoned")
-            .contains_key(&(*commission, user.clone()));
+        let participates = self.participates(commission, user);
         let standing = CommissionStanding {
             role: CommissionRole::held(owns, participates),
             level,
@@ -1555,24 +1605,6 @@ impl CommissionStore for MemCommissionStore {
         Ok(Some(composition))
     }
 
-    /// Answered from the persisted membership map, never a computed
-    /// owner-∪-seated union; an unknown commission answers `false`. Unaffected by
-    /// placement or view grants — neither makes an account's members
-    /// Participants.
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn is_participant(
-        &self,
-        commission: &CommissionId,
-        user: &UserId,
-    ) -> anyhow::Result<bool> {
-        let participants = self
-            .0
-            .participants
-            .lock()
-            .expect("MemBackend participants mutex poisoned");
-        Ok(participants.contains_key(&(*commission, user.clone())))
-    }
-
     /// The commission's seat satellites in declaration order (seat ids are
     /// UUIDv7, so id order is declaration order). No seats is the empty list.
     #[tracing::instrument(level = "debug", skip_all)]
@@ -1666,25 +1698,6 @@ impl CommissionStore for MemCommissionStore {
         found.sort_by_key(|markup| markup.id);
 
         Ok(found)
-    }
-
-    /// Scan `commissions` for `owner`'s rows, drop archived ones, and rebuild
-    /// each. Sorted by [`CommissionId`] (UUIDv7, so creation order), since the
-    /// `HashMap` scan has no natural order.
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
-        let commissions = self
-            .0
-            .commissions
-            .lock()
-            .expect("MemBackend commissions mutex poisoned");
-        let mut owned: Vec<Commission> = commissions
-            .iter()
-            .filter(|(_, stored)| &stored.owner_id == owner && stored.archived_at.is_none())
-            .map(|(id, stored)| stored.rebuild(*id))
-            .collect();
-        owned.sort_by_key(|commission| uuid::Uuid::from(commission.id));
-        Ok(owned)
     }
 
     /// Scan the participant map for `user`'s memberships and summarize each
@@ -2096,13 +2109,14 @@ impl MemBackend {
             .collect())
     }
 
-    /// A commission's summary, its name and level read from its node (inspect helper over
-    /// [`CommissionStore::find_summary`]).
+    /// A commission's summary, its name and level read from its node, whoever can be shown
+    /// it (inspect helper).
     pub async fn commission_summary(
         &self,
         id: CommissionId,
     ) -> anyhow::Result<Option<CommissionSummary>> {
-        MemCommissionStore(self.clone()).find_summary(&id).await
+        let summary = MemCommissionStore(self.clone()).summary(&id);
+        Ok(summary)
     }
 
     /// The id of a stored commission whose node is named `title`, or `None` (inspect helper);

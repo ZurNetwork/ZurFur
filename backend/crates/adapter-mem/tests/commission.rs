@@ -15,6 +15,7 @@ use domain::elements::{
     commission::{
         CommissionBirth, CommissionDeadline, CommissionId, CommissionRole, CommissionStanding,
         CommissionStart, CommissionSummary, CommissionTitle, LockedStanding, NewCommission,
+        ViewedSummary,
     },
     did::Did,
     level::Level,
@@ -523,7 +524,10 @@ async fn the_summary_and_standing_read_the_node_s_name_and_level() {
     assert!(renamed, "the node is renamed");
     let store = backend.commission_store();
 
-    let summary = store.find_summary(&seed.id).await.expect("find_summary");
+    let viewed = store
+        .find_summary(&seed.id, &owner)
+        .await
+        .expect("find_summary");
     let listing = store
         .list_participating(&owner)
         .await
@@ -547,7 +551,11 @@ async fn the_summary_and_standing_read_the_node_s_name_and_level() {
         level: Level::Listed,
         archived: false,
     };
-    assert_eq!(summary, Some(expected_summary.clone()));
+    let expected_viewed = ViewedSummary {
+        summary: expected_summary.clone(),
+        role: Some(CommissionRole::Owner),
+    };
+    assert_eq!(viewed, Some(expected_viewed));
     assert_eq!(listing, [expected_summary]);
     let expected_locked = LockedStanding {
         standing: expected_standing,

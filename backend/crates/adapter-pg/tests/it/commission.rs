@@ -23,7 +23,7 @@ use domain::{
         node::{NewNode, NodeId, NodeType},
         user::User,
     },
-    ports::{CommissionStore, Database, UnitOfWork},
+    ports::{CommissionRows, CommissionStore, Database, UnitOfWork},
 };
 use test_support::seeder::{commission_node, entry_nodes, write_commission};
 
@@ -229,8 +229,8 @@ async fn set_archived_round_trips_and_reports_transitions() {
         .await
         .expect("find")
         .expect("the record survives archiving");
-    let summary = store
-        .find_summary(&id)
+    let viewed = store
+        .find_summary(&id, &owner.id)
         .await
         .expect("find_summary")
         .expect("the record survives archiving");
@@ -241,7 +241,7 @@ async fn set_archived_round_trips_and_reports_transitions() {
         "the stamp round-trips (at the column's microsecond precision)",
     );
     assert_eq!(
-        summary.title.as_str(),
+        viewed.summary.title.as_str(),
         "A ref sheet",
         "the record survives intact"
     );
@@ -508,13 +508,17 @@ async fn a_created_commission_is_stored_in_the_domain_s_starting_state() {
     assert_eq!(found.deadline, Some(deadline), "the chosen deadline");
     assert_eq!(found.owner_id, owner.id, "the gate's owner");
     assert_eq!(found.created_at, created_at, "the gate's time");
-    let summary = store
-        .find_summary(&id)
+    let viewed = store
+        .find_summary(&id, &owner.id)
         .await
         .expect("find_summary")
         .expect("the commission is stored");
-    assert_eq!(summary.title.as_str(), "A moonlit piece", "the node's name");
-    assert_eq!(summary.visibility, Level::Listed, "the node's level");
+    assert_eq!(
+        viewed.summary.title.as_str(),
+        "A moonlit piece",
+        "the node's name"
+    );
+    assert_eq!(viewed.summary.visibility, Level::Listed, "the node's level");
     let node_id: Option<uuid::Uuid> =
         sqlx::query_scalar("SELECT node_id FROM commission WHERE id = $1")
             .bind(uuid::Uuid::from(id))

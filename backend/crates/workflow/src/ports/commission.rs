@@ -1,5 +1,5 @@
-//! Commission ports: the canonical [`CommissionStore`] read surface and the
-//! [`CommissionWrites`] write view. Commissions are entirely Index-side —
+//! Commission ports: the canonical [`CommissionStore`] read surface, the
+//! [`CommissionRows`] whole-row reads and the [`CommissionWrites`] write view. Commissions are entirely Index-side —
 //! nothing on these surfaces ever touches atproto.
 
 use async_trait::async_trait;
@@ -11,7 +11,7 @@ use crate::elements::{
         DeadlineChange, DelayedChange, DirectionChange, Dispute, DisputeClear, ElementId, FileKey,
         FileSummary, GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode,
         LockedStanding, MaturitySet, NewCommission, NewElement, NewSeat, NewSlot, Seat,
-        SeatInvitation, SeatInvitationId, Slot, SlotBirth, TabId, TabRow,
+        SeatInvitation, SeatInvitationId, Slot, SlotBirth, TabId, TabRow, ViewedSummary,
     },
     workflow::{Column, ColumnId, WorkflowId},
 };
@@ -25,18 +25,20 @@ pub use super::errors::{ElementNotFound, UnknownSurface, UnknownTab};
 
 /// The **read** surface of Zurfur's record of commissions — pool-backed and
 /// non-transactional. The one canonical commission read port: later work extends
-/// it rather than growing siblings. Authorization is always the caller's, settled
-/// before any of these is reached.
+/// it rather than growing siblings, except the whole-row reads, which live on
+/// [`CommissionRows`] so their callers can be held to a list. Authorization is
+/// always the caller's, settled before any of these is reached.
 #[async_trait]
 pub trait CommissionStore: Send + Sync {
-    /// The commission `id` names, or `None`. An archived commission is still
-    /// found — filtering it out is a listing projection's job.
-    async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
-
-    /// The [`CommissionSummary`] of the commission `id` names, or `None`: its node's name and
-    /// level and whether it is archived, and nothing else of the row. A commission with no
-    /// node reads as absent; an archived one is still found.
-    async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>>;
+    /// The [`ViewedSummary`] of the commission `id` names, as `viewer` reads it, or `None`.
+    /// An absent id, a commission with no node and one `viewer` can't be shown (its standing
+    /// isn't [`is_shown`](CommissionStanding::is_shown)) all answer the same `None`, from
+    /// one statement. An archived commission is still found when it is shown.
+    async fn find_summary(
+        &self,
+        id: &CommissionId,
+        viewer: &UserId,
+    ) -> anyhow::Result<Option<ViewedSummary>>;
 
     /// The [`CommissionStanding`] `user` holds on `commission`, or `None` when no
     /// commission has that id. An absent id and a stranger take the same one-row
@@ -69,17 +71,6 @@ pub trait CommissionStore: Send + Sync {
         commission_id: &CommissionId,
         user_id: &UserId,
     ) -> anyhow::Result<Option<GrantLevel>>;
-
-    /// Whether `user` is a Participant of `commission` — the one authorization
-    /// predicate every "a Participant does X" endpoint consumes. Reads the
-    /// persisted `commission_participant` record, whose owner row is a permanent,
-    /// irremovable floor. An unknown commission answers `false`, so callers
-    /// collapse absent and hidden into one uniform 404.
-    async fn is_participant(
-        &self,
-        commission: &CommissionId,
-        user: &UserId,
-    ) -> anyhow::Result<bool>;
 
     /// The commission's declared [`Seat`]s, keyed by their carrying elements' ids,
     /// in declaration order; empty for an unknown commission. Raw and Total-tier
@@ -126,13 +117,8 @@ pub trait CommissionStore: Send + Sync {
         user: &UserId,
     ) -> anyhow::Result<Option<SeatInvitation>>;
 
-    /// The commissions `owner` owns — owner-POV only, not the participant
-    /// projection. Archived commissions are excluded; ordered by
-    /// [`CommissionId`], unpaginated.
-    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>>;
-
-    /// The commissions `user` is a Participant of, read from the same
-    /// participant record as [`is_participant`](Self::is_participant), each named and
+    /// The commissions `user` is a Participant of, read from the
+    /// `commission_participant` record, each named and
     /// levelled by its node; one with no node is left out. Archived commissions are
     /// included; hiding them is the caller's. Ordered by [`CommissionId`]; empty for a
     /// user who takes part in none.
@@ -158,6 +144,22 @@ pub trait CommissionStore: Send + Sync {
         not_lapsing: &[LifecycleStep],
         late_kinds: &LateKinds,
     ) -> anyhow::Result<Vec<CommissionId>>;
+}
+
+/// The **whole-row** reads of Zurfur's record of commissions — pool-backed and
+/// non-transactional. Kept apart from [`CommissionStore`] and reached through a field of its
+/// own, so the callers that may read a whole row stay countable. Authorization is the
+/// caller's, settled before any of these is reached.
+#[async_trait]
+pub trait CommissionRows: Send + Sync {
+    /// The commission `id` names, or `None`. An archived commission is still
+    /// found — filtering it out is a listing projection's job.
+    async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
+
+    /// The commissions `owner` owns — owner-POV only, not the participant
+    /// projection. Archived commissions are excluded; ordered by
+    /// [`CommissionId`], unpaginated.
+    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>>;
 }
 
 /// The **write** surface of Zurfur's record of commissions — reachable only on an
@@ -370,7 +372,7 @@ pub trait CommissionWrites: Send {
 /// writes and can hold row locks until commit.
 #[async_trait]
 pub trait CommissionReads: Send {
-    /// The commission `id` names, or `None`; as [`CommissionStore::find`].
+    /// The commission `id` names, or `None`; as [`CommissionRows::find`].
     async fn find(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
 
     /// [`find`](Self::find), with the row locked (`FOR NO KEY UPDATE`) for the
@@ -406,8 +408,10 @@ pub trait CommissionReads: Send {
         late_kinds: &LateKinds,
     ) -> anyhow::Result<bool>;
 
-    /// Whether `user` is a Participant of `commission`; as
-    /// [`CommissionStore::is_participant`].
+    /// Whether `user` is a Participant of `commission`, read from the persisted
+    /// `commission_participant` record on the unit's connection, so a caller that locked the
+    /// commission first reads an answer that holds until the unit ends. An unknown commission
+    /// answers `false`.
     async fn is_participant(
         &mut self,
         commission: &CommissionId,

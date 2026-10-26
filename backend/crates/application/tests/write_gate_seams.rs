@@ -5333,6 +5333,12 @@ const UNIT_READS: [&str; 7] = [
     "tab_for_update",
 ];
 
+/// The pool's whole-row reads, apart from the canonical read port.
+const COMMISSION_ROWS: &str = "CommissionRows";
+
+/// The whole-row reads' methods: the two whole-row reads, never a write.
+const ROW_READS: [&str; 2] = ["find", "list_owned_by"];
+
 /// The port file holding the commission unit's views.
 fn commission_port_file() -> PathBuf {
     crates().join("workflow/src/ports/commission.rs")
@@ -5747,8 +5753,8 @@ fn pinned_trait_findings(
 }
 
 /// The side doors around the write view in `file`: the repo a unit vends is exactly the read
-/// view and the write view with nothing of its own, the read view holds only its reads, and
-/// neither view gains a supertrait or a where clause.
+/// view and the write view with nothing of its own, the read view and the pool's whole-row
+/// reads hold only their reads, and none of them gains a supertrait or a where clause.
 fn side_door_findings(file: &syn::File) -> Vec<String> {
     let repo = pinned_trait_findings(
         file,
@@ -5757,11 +5763,16 @@ fn side_door_findings(file: &syn::File) -> Vec<String> {
         &[],
     );
     let reads = pinned_trait_findings(file, COMMISSION_READS, &["Send"], &UNIT_READS);
+    let rows = pinned_trait_findings(file, COMMISSION_ROWS, &["Send", "Sync"], &ROW_READS);
     let write_shape: Vec<String> = traits_named(file, COMMISSION_WRITES)
         .into_iter()
         .flat_map(|tr| trait_shape_findings(tr, COMMISSION_WRITES, &["Send"]))
         .collect();
-    repo.into_iter().chain(reads).chain(write_shape).collect()
+    repo.into_iter()
+        .chain(reads)
+        .chain(rows)
+        .chain(write_shape)
+        .collect()
 }
 
 /// The imports a planted port trait's capability is spelled with, each from its home.
@@ -5882,7 +5893,8 @@ fn the_port_scan_names_each_planted_write() {
     let writes_header = "pub trait CommissionWrites: Send {";
     let reads_header = "pub trait CommissionReads: Send {";
     let repo_header = "pub trait CommissionRepo: CommissionReads + CommissionWrites {}";
-    for header in [writes_header, reads_header, repo_header] {
+    let rows_header = "pub trait CommissionRows: Send + Sync {";
+    for header in [writes_header, reads_header, repo_header, rows_header] {
         assert!(source.contains(header), "the port file holds `{header}`");
     }
     let set_lifecycle = "\n    async fn set_lifecycle(&mut self, id: &CommissionId, step: LifecycleStep) -> anyhow::Result<bool>;\n";
@@ -6155,6 +6167,21 @@ fn the_port_scan_names_each_planted_write() {
             writes_header,
             "pub trait CommissionWrites: Send + CommissionFields {",
             "trait CommissionWrites: supertraits",
+        ),
+        (
+            rows_header,
+            "pub trait CommissionRows: Send + Sync {\n    async fn set_archived(&self, id: &CommissionId) -> anyhow::Result<bool>;\n",
+            "CommissionRows::set_archived is not one of its pinned items",
+        ),
+        (
+            rows_header,
+            "pub trait CommissionRows: Send + Sync + CommissionFields {",
+            "trait CommissionRows: supertraits",
+        ),
+        (
+            rows_header,
+            "pub trait CommissionRows: Send + Sync where Self: CommissionFields {",
+            "trait CommissionRows: generics",
         ),
     ];
     for (header, replacement, expected) in side_doors {
@@ -7445,6 +7472,7 @@ fn the_pg_pin_refuses_each_planted_write() {
     let write_methods = commission_write_methods();
     let column_writes = "impl ColumnWrites for PgColumnWrites<'_> {";
     let store = "impl CommissionStore for PgCommissionStore {";
+    let rows = "impl CommissionRows for PgCommissionStore {";
     let reads = "impl CommissionReads for PgCommissionWrites<'_> {";
     let retire = |body: &str| {
         format!(
@@ -7529,7 +7557,17 @@ fn the_pg_pin_refuses_each_planted_write() {
         ),
         (
             COMMISSION_FILE,
+            rows,
+            "    async fn retire_card(&self, id: &CommissionId) -> anyhow::Result<bool> { Ok(sql::set_archived(&self.pool, uuid::Uuid::from(*id), None).await? == 1) }".to_owned(),
+        ),
+        (
+            COMMISSION_FILE,
             store,
+            "    async fn retire_card(&self, id: &CommissionId) -> anyhow::Result<bool> { Ok(crate::queries::commission::delete(&self.pool, uuid::Uuid::from(*id)).await? == 1) }".to_owned(),
+        ),
+        (
+            COMMISSION_FILE,
+            rows,
             "    async fn retire_card(&self, id: &CommissionId) -> anyhow::Result<bool> { Ok(crate::queries::commission::delete(&self.pool, uuid::Uuid::from(*id)).await? == 1) }".to_owned(),
         ),
         (
@@ -7632,7 +7670,17 @@ fn the_pg_pin_refuses_each_planted_write() {
         ),
         (
             COMMISSION_FILE,
+            rows,
+            "    async fn probe(&self, id: &CommissionId) -> anyhow::Result<bool> { Ok(sql::find(&self.pool, uuid::Uuid::from(*id)).await?.is_some()) }",
+        ),
+        (
+            COMMISSION_FILE,
             store,
+            "    async fn probe(&self, id: &CommissionId) -> anyhow::Result<()> { crate::queries::column::position_in_column(&self.pool, uuid::Uuid::from(*id), uuid::Uuid::nil()).await?; Ok(()) }",
+        ),
+        (
+            COMMISSION_FILE,
+            rows,
             "    async fn probe(&self, id: &CommissionId) -> anyhow::Result<()> { crate::queries::column::position_in_column(&self.pool, uuid::Uuid::from(*id), uuid::Uuid::nil()).await?; Ok(()) }",
         ),
         (
@@ -8217,6 +8265,7 @@ fn the_mem_pin_refuses_each_planted_change() {
     let files = mem_sources();
     let column_writes = "impl ColumnWrites for MemColumnWrites {";
     let store = "impl CommissionStore for MemCommissionStore {";
+    let rows = "impl CommissionRows for MemCommissionStore {";
     let reads = "impl CommissionReads for MemCommissionWrites<'_> {";
     let backend = "impl MemBackend {";
     let lock = ".lock().expect(\"MemBackend commissions mutex poisoned\")";
@@ -8324,6 +8373,13 @@ fn the_mem_pin_refuses_each_planted_change() {
         ),
         (
             COMMISSION_FILE,
+            rows,
+            format!(
+                "    async fn retire_card(&self, id: &CommissionId) -> anyhow::Result<bool> {{ Ok(self.0.commissions{lock}.get_mut(id).is_some()) }}"
+            ),
+        ),
+        (
+            COMMISSION_FILE,
             reads,
             format!(
                 "    async fn retire_card(&mut self, id: &CommissionId) -> anyhow::Result<bool> {{ let mut commissions = self.0.commissions{lock}; Ok(commissions.remove(id).is_some()) }}"
@@ -8358,6 +8414,11 @@ fn the_mem_pin_refuses_each_planted_change() {
             store,
             "    async fn retire_card(&self, id: &CommissionId) -> anyhow::Result<bool> { self.0.seed_lifecycle_step(*id, LifecycleStep::Active); Ok(true) }".to_owned(),
         ),
+        (
+            COMMISSION_FILE,
+            rows,
+            "    async fn retire_card(&self, id: &CommissionId) -> anyhow::Result<bool> { self.0.seed_lifecycle_step(*id, LifecycleStep::Active); Ok(true) }".to_owned(),
+        ),
     ];
     for (file, anchor, addition) in &refused {
         let planted = planted_after(&files, file, anchor, addition);
@@ -8381,7 +8442,21 @@ fn the_mem_pin_refuses_each_planted_change() {
         ),
         (
             COMMISSION_FILE,
+            rows,
+            format!(
+                "    async fn probe(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {{ Ok(self.0.commissions{lock}.get(id).map(|stored| stored.rebuild(*id))) }}"
+            ),
+        ),
+        (
+            COMMISSION_FILE,
             store,
+            format!(
+                "    async fn probe(&self) -> anyhow::Result<usize> {{ let commissions = self.0.commissions{lock}; Ok(commissions.iter().filter(|(_, stored)| stored.archived_at.is_none()).count()) }}"
+            ),
+        ),
+        (
+            COMMISSION_FILE,
+            rows,
             format!(
                 "    async fn probe(&self) -> anyhow::Result<usize> {{ let commissions = self.0.commissions{lock}; Ok(commissions.iter().filter(|(_, stored)| stored.archived_at.is_none()).count()) }}"
             ),
@@ -10913,6 +10988,12 @@ fn each_commission_write_statement_and_change_is_named_only_in_its_method() {
     );
     let kept = planted_after(&mem_files, COMMISSION_FILE, mem_store, &mem_kept);
     assert_eq!(mem_view_changes(&kept), reach_table(&MEM_VIEW_CHANGES));
+    let mem_rows = "impl CommissionRows for MemCommissionStore {";
+    let kept_in_rows = planted_after(&mem_files, COMMISSION_FILE, mem_rows, &mem_kept);
+    assert_eq!(
+        mem_view_changes(&kept_in_rows),
+        reach_table(&MEM_VIEW_CHANGES)
+    );
 }
 
 // `unsafe` is forbidden in every crate.

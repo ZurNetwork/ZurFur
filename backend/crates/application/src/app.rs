@@ -5,9 +5,9 @@
 use std::sync::Arc;
 
 use domain::ports::{
-    AccountStore, BugReportStore, ChangelogStore, ColumnStore, CommissionStore, Database,
-    DidMinter, FileStore, IdentityResolver, ProfileCache, ProfileSource, UserStore, WorkflowStore,
-    character::CharacterStore,
+    AccountStore, BugReportStore, ChangelogStore, ColumnStore, CommissionRows, CommissionStore,
+    Database, DidMinter, FileStore, IdentityResolver, ProfileCache, ProfileSource, UserStore,
+    WorkflowStore, character::CharacterStore,
 };
 
 use crate::{
@@ -26,6 +26,8 @@ pub struct Ports {
     pub users: Arc<dyn UserStore>,
     pub accounts: Arc<dyn AccountStore>,
     pub commissions: Arc<dyn CommissionStore>,
+    /// The whole-row commission reads.
+    pub commission_rows: Arc<dyn CommissionRows>,
     pub changelog: Arc<dyn ChangelogStore>,
     pub profile_source: Arc<dyn ProfileSource>,
     pub profile_cache: Arc<dyn ProfileCache>,

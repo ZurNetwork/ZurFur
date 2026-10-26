@@ -16,7 +16,7 @@ use chrono::{DateTime, Utc};
 use composition::Runtime;
 use domain::elements::commission::{ChangelogEntry, CommissionId, CommissionTitle, LifecycleStep};
 use domain::elements::{did::Did, user::UserId};
-use domain::ports::{ChangelogStore, CommissionStore, UnitOfWork};
+use domain::ports::{ChangelogStore, CommissionRows, UnitOfWork};
 use test_support::runtime::MemRuntime;
 use test_support::store_doubles::{ScriptedStanding, ScriptedStandingDatabase, StandingScript};
 
@@ -107,7 +107,7 @@ async fn dispute(fixture: &MemRuntime, id: CommissionId, owner_did: &str, at: Da
 /// The deadline status of `id` now (Late derived, else the stored flag), as its
 /// stable wire token.
 async fn stored_deadline_status(
-    commissions: &dyn CommissionStore,
+    commissions: &dyn CommissionRows,
     id: CommissionId,
 ) -> Option<&'static str> {
     commissions
@@ -219,20 +219,20 @@ async fn the_sweep_records_every_missed_deadline_once() {
         "both missed deadlines are marked in one sweep"
     );
     assert_eq!(
-        stored_deadline_status(&*runtime.commissions, first).await,
+        stored_deadline_status(&*runtime.commission_rows, first).await,
         Some("late")
     );
     assert_eq!(
-        stored_deadline_status(&*runtime.commissions, second).await,
+        stored_deadline_status(&*runtime.commission_rows, second).await,
         Some("late")
     );
     assert_eq!(
-        stored_deadline_status(&*runtime.commissions, unbothered).await,
+        stored_deadline_status(&*runtime.commission_rows, unbothered).await,
         None,
         "a future deadline is not late"
     );
     assert_eq!(
-        stored_deadline_status(&*runtime.commissions, deadlineless).await,
+        stored_deadline_status(&*runtime.commission_rows, deadlineless).await,
         None,
         "a commission with no deadline never carries a deadline-axis value"
     );
@@ -327,11 +327,11 @@ async fn the_sweeper_skips_terminal_lifecycles() {
         "no closed commission is marked"
     );
     assert_eq!(
-        stored_deadline_status(&*runtime.commissions, completed).await,
+        stored_deadline_status(&*runtime.commission_rows, completed).await,
         None
     );
     assert_eq!(
-        stored_deadline_status(&*runtime.commissions, cancelled).await,
+        stored_deadline_status(&*runtime.commission_rows, cancelled).await,
         None
     );
     assert!(

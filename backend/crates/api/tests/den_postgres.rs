@@ -15,7 +15,9 @@ use test_support::{
         self, DenWorld, MissPair, SignedIn, UNNAMED, absent_commission, den_participant_pairs,
         den_stranger_pairs, den_stranger_targets,
     },
-    recording::{CallLog, RecordingCommissionStore, RecordingWorkflowStore},
+    recording::{
+        CallLog, RecordingCommissionRows, RecordingCommissionStore, RecordingWorkflowStore,
+    },
 };
 use tokio::{io::AsyncWriteExt as _, process::Command};
 
@@ -329,8 +331,11 @@ async fn a_pair_s_two_causes_make_the_same_reads_and_never_read_the_row_by_key()
     let world = pg_app::den_world(move |mut runtime| {
         let commissions =
             RecordingCommissionStore::new(Arc::clone(&runtime.commissions), recorder.clone());
+        let rows =
+            RecordingCommissionRows::new(Arc::clone(&runtime.commission_rows), recorder.clone());
         let workflows = RecordingWorkflowStore::new(Arc::clone(&runtime.workflows), recorder);
         runtime.commissions = Arc::new(commissions);
+        runtime.commission_rows = Arc::new(rows);
         runtime.workflows = Arc::new(workflows);
         api::app(runtime)
     })

@@ -25,8 +25,8 @@ const WHOLE_COMMISSION: &str = "commission/find";
 const WORKFLOW_BY_KEY: &str = "workflow/find";
 
 /// What den's check reads of a commission for a stranger, and all of it: the narrow
-/// projection and the viewer's participant row.
-const STRANGER_CHECK: [&str; 2] = ["commission/find_summary", "commission/is_participant"];
+/// projection as the viewer reads it, their participation probed inside it.
+const STRANGER_CHECK: [&str; 1] = ["commission/find_summary"];
 
 /// What a stranger's causes must never run on commission's reads: the whole row, anything by
 /// key, a file's name or bytes, and the changelog's entries.
@@ -533,12 +533,8 @@ async fn a_stranger_s_rename_and_a_made_up_id_s_run_the_same_statements() {
 }
 
 /// Everything the commission read runs for someone it doesn't open to, and all of it: the
-/// session's load, then den's check, the narrow projection and the viewer's participant row.
-const GET_COMMISSION_MISS: [&str; 3] = [
-    "session/load",
-    "commission/find_summary",
-    "commission/is_participant",
-];
+/// session's load, then den's check, the narrow projection as the viewer reads it.
+const GET_COMMISSION_MISS: [&str; 2] = ["session/load", "commission/find_summary"];
 
 #[tokio::test]
 async fn get_commission_runs_the_check_s_pair_alike_for_a_stranger_and_a_made_up_id() {

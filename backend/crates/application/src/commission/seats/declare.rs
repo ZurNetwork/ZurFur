@@ -4,8 +4,8 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            CommissionId, NewChangelogEntry, NewSeat, OpenKind, SeatKind, SeatLink, SeatPrompt,
-            SurfaceAddress, element::SeatId,
+            CommissionId, CommissionRole, NewChangelogEntry, NewSeat, OpenKind, SeatKind, SeatLink,
+            SeatPrompt, SurfaceAddress, element::SeatId,
         },
         user::UserId,
     },
@@ -14,7 +14,7 @@ use serde_json::json;
 
 use crate::{
     Ports,
-    commission::{CommissionResult, require_owner, seats::Seats},
+    commission::{CommissionResult, require, seats::Seats},
 };
 
 pub struct Command {
@@ -46,10 +46,10 @@ impl Seats<'_> {
             link,
             surface_address,
         } = cmd;
-        let commission = require_owner(ports, &commission_id, &actor_id).await?;
+        require(ports, &commission_id, &actor_id, CommissionRole::Owner).await?;
 
         let seat = NewSeat::contributed_at(
-            commission.id,
+            commission_id,
             surface_address,
             seat_kind,
             prompt,
@@ -60,7 +60,7 @@ impl Seats<'_> {
         let seat_id = seat.id;
 
         let entry: NewChangelogEntry = NewChangelogEntry::event(
-            commission.id,
+            commission_id,
             OpenKind::SeatDeclared,
             actor_id,
             json!({

@@ -1,10 +1,13 @@
 use crate::LazyUnit;
 use crate::use_case;
-use domain::elements::{commission::CommissionId, user::UserId};
+use domain::elements::{
+    commission::{CommissionId, CommissionRole},
+    user::UserId,
+};
 
 use crate::{
     Ports,
-    commission::{CommissionResult, Commissions},
+    commission::{CommissionResult, Commissions, require_or_not_found},
     common_error::{CommonError, NotFoundEntity},
 };
 
@@ -36,12 +39,7 @@ impl Commissions<'_> {
             actor_id,
             commission_id,
         } = cmd;
-        let commission = ports
-            .commissions
-            .find(&commission_id)
-            .await?
-            .filter(|c| c.is_owned_by(&actor_id))
-            .ok_or(CommonError::NotFound(NotFoundEntity::Commission))?;
+        require_or_not_found(ports, &commission_id, &actor_id, CommissionRole::Owner).await?;
 
         // One unit, closed on every branch: the step check, the fact gate and the delete
         // they guard share a transaction over the locked row, or a move between the pool
@@ -49,7 +47,7 @@ impl Commissions<'_> {
         let uow = uow.open().await?;
         let locked = uow
             .commissions()
-            .find_for_update(&commission.id)
+            .find_for_update(&commission_id)
             .await?
             .filter(|c| c.is_owned_by(&actor_id))
             .ok_or(CommonError::NotFound(NotFoundEntity::Commission))?;
@@ -60,14 +58,14 @@ impl Commissions<'_> {
         }
         let has_facts = uow
             .commissions()
-            .commission_has_facts(&commission.id)
+            .commission_has_facts(&commission_id)
             .await?;
         if !has_facts {
             #[expect(
                 clippy::disallowed_methods,
                 reason = "the ungated delete site, frozen until its slice routes it through the den's write gate"
             )]
-            uow.commissions().delete(&commission.id).await?;
+            uow.commissions().delete(&commission_id).await?;
         }
 
         let outcome = if has_facts {

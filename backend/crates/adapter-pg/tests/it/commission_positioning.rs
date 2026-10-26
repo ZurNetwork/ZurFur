@@ -17,7 +17,7 @@ use domain::{
         user::User,
         workflow::{ColumnId, ColumnName, LexOrdering, WorkflowId, WorkflowName},
     },
-    ports::{ColumnStore, CommissionStore, Database, WorkflowStore},
+    ports::{ColumnStore, CommissionRows, CommissionStore, Database, WorkflowStore},
 };
 
 /// A fresh, fully migrated private database — a clone of the shared template
