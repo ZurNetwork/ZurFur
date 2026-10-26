@@ -430,6 +430,60 @@ new_tree
 replace_in_ci '{ print } /^  web:$/ { print "    env:"; print "      '"'"'FOO'"'"': bar" }'
 expect_exit "a quoted key under env: fails" 1 "$quoted_key"
 
+# A tag, an anchor or an alias where a key starts can dress or stand for a
+# `uses` key this reader never sees.
+expect_job "a tag before a quoted job-level key fails" '    !!str "uses": %s\n' \
+    "a tag (!) at a key position, a shape tools-check cannot read"
+expect_job "an anchor before a quoted job-level key fails" '    &a "uses": %s\n' \
+    "an anchor (&) at a key position, a shape tools-check cannot read"
+
+new_tree
+at="$(($(wc -l <"$work/repo/.github/workflows/ci.yml") + 3))"
+printf '  b:\n    name: &k uses\n    *k : %s\n' "$workflow" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "an alias as a job-level key fails" 1 "ci.yml:$at: an alias (*) at a key position"
+
+new_tree
+printf '  b: {name: &k uses, *k : %s}\n' "$workflow" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a flow-style alias key fails" 1 "an alias (*) at a key position"
+
+# A line break awk does not split on hides the line after it, which YAML reads.
+
+# expect_break <name> <bytes> <fragment> — job b holds <bytes> (printf's
+# format) then a quoted `uses` key on what awk reads as the same line.
+expect_break() {
+    new_tree
+    at="$(($(wc -l <"$work/repo/.github/workflows/ci.yml") + 1))"
+    # shellcheck disable=SC2059 # the bytes are the format on purpose
+    printf "  b:$2    \"uses\": %s\n" "$workflow" >>"$work/repo/.github/workflows/ci.yml"
+    expect_exit "$1" 1 "ci.yml:$at: $3, a line break tools-check cannot read"
+}
+
+expect_break "a lone CR before a quoted job-level key fails" '\r' "a lone CR (not a CRLF line end)"
+expect_break "a NEL before a quoted job-level key fails" '\302\205' "a NEL (U+0085)"
+expect_break "an LS before a quoted job-level key fails" '\342\200\250' "an LS (U+2028)"
+expect_break "a PS before a quoted job-level key fails" '\342\200\251' "a PS (U+2029)"
+
+new_tree
+printf '      - run: echo hi\r  npm ci\n' >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a lone CR in a run script fails" 1 "a lone CR (not a CRLF line end)"
+
+new_tree
+printf '      - run: echo hi\r\r\n' >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a CR before a CRLF line end fails" 1 "a lone CR (not a CRLF line end)"
+
+new_tree
+replace_in_ci '{ printf "%s\r\n", $0 }'
+expect_exit "a workflow with CRLF line ends passes" 0
+
+# A tag, an anchor or an alias on a value is not a key.
+new_tree
+replace_in_ci '{ print } /^  web:$/ { print "    env:"; print "      A: &a value"; print "      B: *a"; print "      C: !!str value" }'
+expect_exit "a tag, an anchor and an alias on values pass" 0
+
+new_tree
+replace_in_ci '{ print } /^  web:$/ { print "    if: ${{ !cancelled() && needs.a.outputs.code != '"'"'false'"'"' }}" }'
+expect_exit "a ! inside a \${{ }} expression passes" 0
+
 new_tree
 printf '      - name: x\n        "run": yarn install\n' >>"$work/repo/.github/workflows/ci.yml"
 expect_exit "a quoted run key in a step fails" 1 "$quoted_key"

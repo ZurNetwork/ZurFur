@@ -94,6 +94,7 @@ step_pins() {
         }
         FNR == 1 { close_step() }
         {
+            sub(/\r$/, "")
             line = $0
             if (in_step) {
                 if (line ~ /^ *(#.*)?$/) next
@@ -192,11 +193,31 @@ fi
 #     and no line holds an explicit key (`? uses`, its value on a `:` line):
 #     YAML reads each as the bare key, so a `uses:` or `run:` spelled that
 #     way would slip past the rules above; nor is a quoted scalar left open
-#     at its line's end. Script text in a `run:` or a `shell:` is exempt; a
-#     quoted value (`key: 'x'`, `- 'x'`) is fine.
+#     at its line's end, nor does a tag (`!!str uses:`), an anchor (`&a uses:`)
+#     or an alias (`*a :`) sit where a key starts (a sequence item's `- &a`
+#     included). Script text in a `run:` or a `shell:` is exempt; a quoted
+#     value (`key: 'x'`, `- 'x'`), and a tag, anchor or alias on a value
+#     (`key: &a x`, `key: *a`, `key: !!str x`), are fine;
+#   - no line, script text included, holds a line break this reader does not
+#     split on, which YAML could read as a new line it never sees: a CR that
+#     does not end a CRLF, a NEL (U+0085), an LS (U+2028) or a PS (U+2029).
 # Top level means column 0: GitHub's workflow keys sit there, so any
 # `permissions:` indented under them is a job's (or deeper).
 ci_safety() {
+    # The line breaks awk does not split on, matched as bytes in the C locale
+    # so every awk reads them alike.
+    # shellcheck disable=SC2086 # $workflow_files is a newline list without spaces
+    LC_ALL=C awk '
+        function found(what) { print FILENAME ":" FNR ": " what ", a line break tools-check cannot read" }
+        {
+            s = $0
+            sub(/\r$/, "", s)
+            if (index(s, "\r")) found("a lone CR (not a CRLF line end)")
+            if (index(s, "\302\205")) found("a NEL (U+0085)")
+            if (index(s, "\342\200\250")) found("an LS (U+2028)")
+            if (index(s, "\342\200\251")) found("a PS (U+2029)")
+        }
+    ' $workflow_files
     # shellcheck disable=SC2086 # $workflow_files is a newline list without spaces
     TOOLS_CHECK_INSTALL="$install_command" TOOLS_CHECK_ACTIONS="$allowed_actions" awk -v q="'" '
         function indent(s) { match(s, /^ */); return RLENGTH }
@@ -249,20 +270,37 @@ ci_safety() {
         # otherwise the shape it found: a quoted key (a quoted scalar then
         # `:`) or an explicit key (`?`), each at a key position (the line
         # start, after a `- `, or after a flow `{`, `[` or `,`), outside
-        # quotes and comments; or a quoted scalar left open at the line end,
-        # since the next line could then hide a quoted key from this reader.
-        function key_shape(s,    i, c, len, at_key, prev, j) {
+        # quotes, comments and `${{ … }}` expressions in plain text; a tag
+        # (`!`), an anchor (`&`) or an alias (`*`) at a key position, since
+        # each can stand before or for a key; or a quoted scalar left open at
+        # the line end, since the next line could then hide a quoted key from
+        # this reader.
+        function key_shape(s,    i, c, len, at_key, prev, j, flow) {
             len = length(s)
             at_key = 1
             prev = " "
+            flow = 0
             for (i = 1; i <= len; i++) {
                 c = substr(s, i, 1)
                 if (c == " " || c == "\t") { prev = c; continue }
+                # A `${{ … }}` expression outside a flow collection is plain
+                # text to YAML, its braces, quotes and `!` included.
+                if (c == "$" && flow == 0 && substr(s, i + 1, 2) == "{{") {
+                    j = index(substr(s, i + 3), "}}")
+                    if (j == 0) return ""
+                    i += j + 3
+                    at_key = 0
+                    prev = "}"
+                    continue
+                }
                 if (at_key && (c == "-" || c == "?") && (i == len || substr(s, i + 1, 1) ~ /[ \t]/)) {
                     if (c == "?") return "an explicit key (?)"
                     prev = c
                     continue
                 }
+                if (at_key && c == "!") return "a tag (!) at a key position"
+                if (at_key && c == "&") return "an anchor (&) at a key position"
+                if (at_key && c == "*") return "an alias (*) at a key position"
                 if ((c == q || c == "\"") && prev ~ /[ \t{[,:]/) {
                     j = quoted_end(s, i)
                     if (j == 0) return "a quoted scalar that runs past its line"
@@ -273,6 +311,8 @@ ci_safety() {
                     continue
                 }
                 if (c == "#" && prev ~ /[ \t]/) return ""
+                if (c == "{" || c == "[") flow++
+                if ((c == "}" || c == "]") && flow > 0) flow--
                 at_key = (c == "{" || c == "[" || c == ",")
                 prev = c
             }
