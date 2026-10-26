@@ -7,10 +7,11 @@ describe('the public entry', () => {
 		expect(published).toBe(source);
 	});
 
-	it('exports exactly the paper lists, the environment names, the token model, the icons, the first controls, the link mints and the motion seam', () => {
+	it('exports exactly the paper lists, the environment names, the token model, the icons, the first controls, the link, day and locale mints and the motion seam', () => {
 		expect(Object.keys(published).sort()).toEqual([
 			'Button',
 			'Checkbox',
+			'DateField',
 			'ICON_NAMES',
 			'Icon',
 			'IconButton',
@@ -28,8 +29,10 @@ describe('the public entry', () => {
 			'TextInput',
 			'Toggle',
 			'findToken',
+			'isCalendarDay',
 			'isIconName',
 			'isLinkHref',
+			'isLocaleTag',
 			'isSameOriginPath',
 			'isTokenName',
 			'parseSkin',

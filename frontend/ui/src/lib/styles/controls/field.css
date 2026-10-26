@@ -151,3 +151,40 @@
 	pointer-events: none;
 	color: var(--color-text-muted);
 }
+
+/* The date field: a slip like the text input, its segments in a row, the one in focus picked out. */
+.zf-date {
+	gap: 0;
+	cursor: text;
+	font-size: var(--text-md);
+	line-height: var(--leading-md);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.zf-date__segment {
+	padding: 0 var(--space-half);
+	border-radius: var(--radius-xs);
+	outline-color: transparent;
+	color: var(--color-text);
+	transition:
+		background-color var(--duration-fast) var(--easing-standard),
+		color var(--duration-fast) var(--easing-standard);
+}
+
+.zf-date__segment--empty {
+	color: var(--color-text-muted);
+}
+
+.zf-date__segment:focus {
+	background: var(--color-selected);
+	color: var(--color-accent-text);
+}
+
+.zf-date__literal {
+	color: var(--color-text-muted);
+}
+
+.zf-input--disabled .zf-date__segment {
+	cursor: not-allowed;
+}

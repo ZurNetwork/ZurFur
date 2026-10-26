@@ -42,12 +42,15 @@ export { default as Menu } from './controls/Menu.svelte';
 export { default as TextInput } from './controls/TextInput.svelte';
 export { default as Select } from './controls/Select.svelte';
 export { default as Checkbox } from './controls/Checkbox.svelte';
+export { default as DateField } from './controls/DateField.svelte';
 export {
 	isLinkHref,
 	isSameOriginPath,
 	type LinkHref,
 	type SameOriginPath
 } from './controls/link-href.ts';
+export { isCalendarDay, type CalendarDay } from './controls/calendar-day.ts';
+export { isLocaleTag, type LocaleTag } from './controls/locale-tag.ts';
 export type {
 	ButtonSize,
 	ButtonVariant,
