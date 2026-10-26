@@ -40,7 +40,7 @@
     },
     {
       "name": "gallery/",
-      "role": "the gallery frame: the registry (page discovery), page meta, the nav groups, GalleryNav, GalleryPage and GalleryState; skin-store.ts (the one file that touches storage), boot-script.ts (the pinned hash of the page shell's boot script), SkinSwitch (the header's Skin switch), GallerySkins (a state in Paper dark and Paper light, handing each copy its skin), contrast/ (the contrast arithmetic and the declared pairs), usage-text.ts and UsageText (usage lines as text and code, never HTML) and token-source.ts (the token model for the pages)",
+      "role": "the gallery frame: the registry (page discovery), page meta, the nav groups, GalleryNav, GalleryPage and GalleryState; skin-store.ts (the one file that touches storage), boot-script.ts (the pinned hash of the page shell's boot script), SkinSwitch (the header's Skin switch), GallerySkins (a state in Paper dark and Paper light, handing each copy its skin), contrast/ (the contrast arithmetic and the declared pairs), usage-text.ts and UsageText (usage lines as text and code, never HTML), token-source.ts (the token model for the pages) and the token pages' parts (TokenModelGate, TokenSection, TokenList, ContrastTable, EasingCurve with easing-curve.ts, FontFaces, MoveSheet)",
       "node": false
     },
     {
