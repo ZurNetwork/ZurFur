@@ -34,6 +34,16 @@ ignore = [
     # still open upstream). Used for JOSE/JWK RSA key handling.
     # SECURITY-RELEVANT -- flagged for the Engineer, not silently accepted.
     { id = "RUSTSEC-2023-0071", reason = "rsa 0.9.10 Marvin Attack timing side-channel; transitive via jacquard-oauth -> jose-jwk; advisory itself states no fix is available yet. Flagged for the Engineer -- JOSE/JWK key handling." },
+
+    # Transitive: crypto-bigint 0.5.5 via elliptic-curve 0.13, from atrium-crypto
+    # 0.1.3 and jacquard-common 0.12 (k256 / ecdsa 0.16) and from jacquard-oauth
+    # and jose-jwk (p256 / p384). The fix is 0.7.6+, which only elliptic-curve
+    # 0.14 uses, and no released atrium-crypto or jacquard uses that. Secret keys
+    # pass through it in did:plc signing (secp256k1) and OAuth DPoP proofs (P-256,
+    # a fresh key per sign-in). The advisory covers every version below 0.7.6;
+    # whether 0.5.5 has the listed leaks is unverified. SECURITY-RELEVANT --
+    # flagged for the Engineer; re-check before anything is deployed.
+    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.5 timing variability; transitive via atrium-crypto / jacquard (k256, p256, p384) -> elliptic-curve 0.13; the fix needs elliptic-curve 0.14, which no released upstream uses. Flagged for the Engineer -- did:plc signing and DPoP keys; re-check before deployment." },
 ]
 
 [licenses]
