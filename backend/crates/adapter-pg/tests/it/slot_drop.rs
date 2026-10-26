@@ -17,8 +17,8 @@ use crate::commission_fill::{ledger_records, refusal};
 use crate::migration_steps::{run_migrations_through, try_run_migrations_through};
 use crate::node_backfill::seed_slot;
 use crate::slot_fill::{
-    CANARY_TITLE, SLOT_FILL_VERSION, execute_alone, rename_slot_node, seeded_through_den_1,
-    slot_node, slot_node_id, wait_until_a_lock_on_waits,
+    CANARY_TITLE, SEEDED_SLOT_TITLES, SLOT_FILL_VERSION, execute_alone, rename_slot_node,
+    seeded_through_den_1, slot_node, slot_node_id, wait_until_a_lock_on_waits,
 };
 
 /// The Slot title drop's migration, as sqlx numbers it.
@@ -26,14 +26,6 @@ const DROP_VERSION: i64 = 20261026131355;
 
 /// The name a planted rename sets apart from a Slot's title; no refusal may echo it.
 const CANARY_APART: &str = "A distinctive slot name set apart";
-
-/// The title each seeded Slot carries, in the order `seeded_through_den_1` answers them.
-const SEEDED_TITLES: [&str; 4] = [
-    CANARY_TITLE,
-    "A second Slot from before",
-    CANARY_TITLE,
-    "A second Slot declared since",
-];
 
 /// The title a planted retitle sets apart from a Slot's node's name; no refusal may echo it.
 const TITLE_APART: &str = "A distinctive slot title set apart";
@@ -255,7 +247,7 @@ async fn after_the_drop_title_is_gone_and_node_id_is_not_null() {
         !slot_has_constraint(&pool, "commission_slot_has_its_node").await,
         "the fill's NOT VALID check is gone"
     );
-    for (slot, title) in slots.iter().zip(SEEDED_TITLES) {
+    for (slot, title) in slots.iter().zip(SEEDED_SLOT_TITLES) {
         assert_eq!(
             slot_node(&pool, *slot).await.name,
             title,
@@ -438,7 +430,7 @@ async fn a_seeded_database_runs_the_drop_through_the_real_path() {
     run_migrations_through(&clean, DROP_VERSION).await;
 
     assert!(!slot_has_column(&clean, "title").await);
-    for (slot, title) in clean_slots.iter().zip(SEEDED_TITLES) {
+    for (slot, title) in clean_slots.iter().zip(SEEDED_SLOT_TITLES) {
         assert_eq!(slot_node(&clean, *slot).await.name, title);
     }
 

@@ -26,6 +26,15 @@ pub(crate) const SLOT_FILL_VERSION: i64 = 20261026080502;
 /// A title no refusal may echo.
 pub(crate) const CANARY_TITLE: &str = "Canary slot title 7e3c";
 
+/// The title of each Slot `seeded_through_den_1` seeds, in the order it answers them: two made
+/// before the node table, then two declared since.
+pub(crate) const SEEDED_SLOT_TITLES: [&str; 4] = [
+    CANARY_TITLE,
+    "A second Slot from before",
+    CANARY_TITLE,
+    "A second Slot declared since",
+];
+
 /// How many times a lock test polls `pg_locks` for the fill's wait before failing.
 const LOCK_WAIT_POLLS: u32 = 500;
 
@@ -568,14 +577,15 @@ async fn a_commission_committed_while_the_fill_waits_on_commission_stops_it() {
 /// Answers the commission and every seeded Slot.
 pub(crate) async fn seeded_through_den_1() -> (PgPool, impl Sized, Uuid, Vec<Uuid>) {
     let (pool, container) = just_before_den_1().await;
+    let [first_before, second_before, first_since, second_since] = SEEDED_SLOT_TITLES;
     let commission = seed_commission(&pool, CANARY_TITLE, "private").await;
     let mut slots = vec![
-        seed_slot(&pool, commission, CANARY_TITLE).await,
-        seed_slot(&pool, commission, "A second Slot from before").await,
+        seed_slot(&pool, commission, first_before).await,
+        seed_slot(&pool, commission, second_before).await,
     ];
     run_migrations_through(&pool, DEN_1_VERSION).await;
-    slots.push(seed_slot(&pool, commission, CANARY_TITLE).await);
-    slots.push(seed_slot(&pool, commission, "A second Slot declared since").await);
+    slots.push(seed_slot(&pool, commission, first_since).await);
+    slots.push(seed_slot(&pool, commission, second_since).await);
     run_migrations_before(&pool, SLOT_FILL_VERSION).await;
     (pool, container, commission, slots)
 }
