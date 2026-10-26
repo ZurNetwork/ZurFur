@@ -390,7 +390,7 @@ async fn is_participant_answers_the_owner_arm_only() {
     );
 }
 
-// CommissionStore::find round-trips the aggregate — including the nullable
+// CommissionRows::find round-trips the aggregate — including the nullable
 // linked-channel pointer set and cleared through the write view.
 #[tokio::test]
 async fn find_roundtrips_the_linked_channel() {
@@ -500,7 +500,7 @@ async fn direction_change(
     }
 }
 
-// CommissionStore::find round-trips the nullable direction status set, replaced and cleared
+// CommissionRows::find round-trips the nullable direction status set, replaced and cleared
 // through the write view by compare-and-set: one column, so a set replaces by construction
 // and NULL is the cleared state; a change checked from a status the row no longer holds, or
 // on no commission, matches no row and answers `false`.

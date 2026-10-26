@@ -31,7 +31,7 @@
     },
     {
       "name": "channel.rs",
-      "role": "PUT/DELETE /{id}/channel linked-channel pointer — NOT migrated: no use case exists, so require_owner + an inline UnitOfWork stay (TODO(engineer)); link_channel keeps its #[deprecated]",
+      "role": "PUT/DELETE /{id}/channel linked-channel pointer — NOT migrated: no use case exists, so require_owner + an inline UnitOfWork stay (TODO(engineer)); link_channel keeps its #[deprecated]; the clear reads the row through commission_rows after the owner check",
       "node": false
     },
     {
@@ -91,7 +91,7 @@
     },
     {
       "name": "mod.rs",
-      "role": "router assembly, body limits, the CommissionError→Problem mapping (create, rename, the read, the lifecycle move and the dispute's raise and clear map through it too; CommissionNotDisputed → 409 commission_not_disputed), title_refused (a title the name rule refuses at parse, as a field error at #/title), and require_owner — the last driver-side gate, kept only for the unmigrated channel/elements acts",
+      "role": "router assembly, body limits, the CommissionError→Problem mapping (create, rename, the read, the lifecycle move and the dispute's raise and clear map through it too; CommissionNotDisputed → 409 commission_not_disputed), title_refused (a title the name rule refuses at parse, as a field error at #/title), and require_owner — one standing read, no row; the last driver-side gate, kept only for the unmigrated channel/elements acts",
       "node": false
     },
     {

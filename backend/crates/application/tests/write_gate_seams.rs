@@ -39,9 +39,9 @@ use std::{
 use proc_macro2::{Delimiter, Spacing, TokenStream, TokenTree};
 use quote::ToTokens;
 use seams::{
-    NODE_PORT, crates, declares_under_cfg_test, drivers, drivers_of, fixture_tree, identifiers,
-    item_name, members_of, metadata, under_cfg_test, walk, with_aliases, workspace_production,
-    workspace_sources,
+    NODE_PORT, crates, declares_under_cfg_test, drivers, drivers_of, fixture_tree, ident_at,
+    identifiers, item_name, levels, members_of, metadata, path_separator_at, punct_at,
+    under_cfg_test, walk, with_aliases, workspace_production, workspace_sources,
 };
 use syn::{ImplItem, Item, TraitItem, Type, UseTree, Visibility, ext::IdentExt};
 
@@ -260,41 +260,6 @@ fn pieces(file: &syn::File) -> Vec<Piece> {
     }];
     pieces_in(&file.items, "", &mut out);
     out
-}
-
-/// Each run of sibling token trees in `tokens`, and in every group inside it.
-fn levels(tokens: TokenStream) -> Vec<Vec<TokenTree>> {
-    let level: Vec<TokenTree> = tokens.into_iter().collect();
-    let mut out: Vec<Vec<TokenTree>> = level
-        .iter()
-        .filter_map(|tree| match tree {
-            TokenTree::Group(group) => Some(group.stream()),
-            _ => None,
-        })
-        .flat_map(levels)
-        .collect();
-    out.push(level);
-    out
-}
-
-fn ident_at(level: &[TokenTree], at: usize) -> Option<String> {
-    match level.get(at) {
-        Some(TokenTree::Ident(ident)) => Some(ident.unraw().to_string()),
-        _ => None,
-    }
-}
-
-fn punct_at(level: &[TokenTree], at: usize, character: char) -> bool {
-    matches!(level.get(at), Some(TokenTree::Punct(punct)) if punct.as_char() == character)
-}
-
-/// Whether a `::` starts at `at`.
-fn path_separator_at(level: &[TokenTree], at: usize) -> bool {
-    let joint = matches!(
-        level.get(at),
-        Some(TokenTree::Punct(punct)) if punct.as_char() == ':' && punct.spacing() == Spacing::Joint
-    );
-    joint && punct_at(level, at + 1, ':')
 }
 
 fn parenthesized_at(level: &[TokenTree], at: usize) -> bool {
