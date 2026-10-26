@@ -123,6 +123,32 @@ function isLooser(target: FileKind, importer: FileKind): boolean {
 	return kindsStrictestFirst.indexOf(target) > kindsStrictestFirst.indexOf(importer);
 }
 
+/**
+ * The development tools: Storybook, React, MDX, Testing Library, Playwright
+ * and axe, each by package name. They stay devDependencies, and component code
+ * never imports one, whatever the manifest says.
+ */
+const devToolPackages: ReadonlySet<string> = new Set([
+	'storybook',
+	'react',
+	'react-dom',
+	'playwright',
+	'axe-core'
+]);
+
+/** The scopes whose every package is a development tool. */
+const devToolScopes: readonly string[] = [
+	'@storybook/',
+	'@mdx-js/',
+	'@testing-library/',
+	'@playwright/',
+	'@axe-core/'
+];
+
+function isDevTool(name: string): boolean {
+	return devToolPackages.has(name) || devToolScopes.some((scope) => name.startsWith(scope));
+}
+
 /** Kit's virtual modules and ui's aliases: lint decides who may use them. */
 const aliasPattern = /^\$(app|env|lib|gallery)(\/|$)/;
 
@@ -191,6 +217,7 @@ function refusalOf(file: SourceFile, specifier: string, manifest: Manifest): str
 	}
 	if (aliasPattern.test(specifier)) return undefined;
 	const name = packageName(specifier);
+	if (kind === 'component' && isDevTool(name)) return 'a development tool in component code';
 	if (name === manifest.name) {
 		return manifest.exported.has(specifier) ? undefined : 'a path the package does not export';
 	}
@@ -284,6 +311,90 @@ describe('declared imports', () => {
 
 	it('passes the real tree', () => {
 		expect(importRefusals(realSourceFiles(), manifest)).toEqual([]);
+	});
+
+	describe('the development tools', () => {
+		it('keeps every development tool out of dependencies and peerDependencies', () => {
+			expect([...manifest.runtime].filter(isDevTool)).toEqual([]);
+		});
+
+		it('declares Storybook as a devDependency', () => {
+			expect([...manifest.dev].filter(isDevTool)).toContain('storybook');
+		});
+
+		it.each([
+			['storybook', 'storybook'],
+			['storybook/test', 'storybook'],
+			['@storybook/addon-svelte-csf', '@storybook/addon-svelte-csf'],
+			['react', 'react'],
+			['react/jsx-runtime', 'react'],
+			['react-dom', 'react-dom'],
+			['@mdx-js/react', '@mdx-js/react'],
+			['@testing-library/dom', '@testing-library/dom'],
+			['@playwright/test', '@playwright/test'],
+			['playwright', 'playwright'],
+			['axe-core', 'axe-core'],
+			['@axe-core/playwright', '@axe-core/playwright']
+		])('reads %s as the development tool %s', (specifier, name) => {
+			expect(packageName(specifier)).toBe(name);
+			expect(isDevTool(name)).toBe(true);
+		});
+
+		it.each([['reactive'], ['@vitest/browser-playwright'], ['playwright-core'], ['@zurfur/ui']])(
+			'reads %s as no development tool',
+			(name) => {
+				expect(isDevTool(name)).toBe(false);
+			}
+		);
+
+		it.each([
+			[
+				'storybook/test in a component',
+				'lib/X.svelte',
+				'<script lang="ts">\n\timport { fn } from \'storybook/test\';\n</script>\n'
+			],
+			['storybook/test in a module', 'lib/x.ts', "import { fn } from 'storybook/test';"],
+			['@storybook/svelte in the motion adapter', 'lib/motion/x.ts', "import '@storybook/svelte';"],
+			['react in the lazy loader', 'lib/lazy/x.ts', "export const r = import('react');"],
+			['react-dom in a stray file', 'x.ts', "import 'react-dom';"],
+			['@mdx-js/react', 'lib/x.ts', "export * from '@mdx-js/react';"],
+			['@testing-library/dom', 'lib/x.ts', "import '@testing-library/dom';"],
+			['@playwright/test', 'lib/x.ts', "import '@playwright/test';"],
+			['playwright', 'lib/x.ts', "import 'playwright';"],
+			['axe-core', 'lib/x.ts', "import 'axe-core';"],
+			['@axe-core/playwright', 'lib/x.ts', "import '@axe-core/playwright';"]
+		])('refuses %s', (_label, relative, text) => {
+			expect(refusalsFor(relative, text).map((refusal) => refusal.reason)).toEqual([
+				'a development tool in component code'
+			]);
+		});
+
+		it('refuses storybook/test in a component even when the manifest lists it as a dependency', () => {
+			const forged = manifestOf({
+				name: manifest.name,
+				dependencies: { storybook: '10.6.2' },
+				devDependencies: {}
+			});
+			const file: SourceFile = {
+				relative: 'lib/x.ts',
+				text: "import { fn } from 'storybook/test';"
+			};
+			expect(importRefusals([file], forged).map((refusal) => refusal.reason)).toEqual([
+				'a development tool in component code'
+			]);
+		});
+
+		it.each([
+			[
+				'a stories file',
+				'stories/controls/X.stories.svelte',
+				'<script module lang="ts">\n\timport { fn } from \'storybook/test\';\n</script>\n'
+			],
+			['a stories fixture', 'stories/fixtures/x.ts', "import { fn } from 'storybook/test';"],
+			['a spec', 'lib/X.svelte.spec.ts', "import { fn } from 'storybook/test';"]
+		])('allows storybook/test in %s', (_label, relative, text) => {
+			expect(refusalsFor(relative, text)).toEqual([]);
+		});
 	});
 
 	it.each([

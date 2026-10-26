@@ -30,6 +30,8 @@ const planted = {
 	gallerySvelte: 'src/gallery/X.svelte',
 	routes: 'src/routes/x.ts',
 	routesSvelte: 'src/routes/X.svelte',
+	stories: 'src/stories/x.ts',
+	storiesSvelte: 'src/stories/X.stories.svelte',
 	check: 'src/checks/planted.ts',
 	spec: 'src/lib/planted.spec.ts'
 } as const;
@@ -51,8 +53,18 @@ const plantedPaths = [...Object.values(planted), ...Object.values(plannedOrReal)
 /** Real files a case lints planted text at; the file on disk is never read or touched. */
 const real = {
 	publicEntry: 'src/lib/index.ts',
-	layoutLoad: 'src/routes/+layout.ts'
+	layoutLoad: 'src/routes/+layout.ts',
+	storybookPreview: '.storybook/preview.ts',
+	storybookManager: '.storybook/manager.ts'
 } as const;
+
+/** Storybook's config files, linted as the CLI lints them. */
+const storybookConfigFiles = [
+	'.storybook/main.ts',
+	'.storybook/preview.ts',
+	'.storybook/manager.ts',
+	'.storybook/vitest.setup.ts'
+] as const;
 
 /**
  * The real config, unchanged but for one parser option: the project service
@@ -434,7 +446,8 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 			['the lazy loader', planted.lazySvelte],
 			['a route', planted.routesSvelte],
 			['a gallery page', plannedOrReal.colourPage],
-			['the gallery frame', planted.gallerySvelte]
+			['the gallery frame', planted.gallerySvelte],
+			['a stories file', planted.storiesSvelte]
 		] as const;
 
 		it.each(svelteSets)('refuses {@html x} in %s', async (_label, filePath) => {
@@ -460,6 +473,7 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 			['the lazy loader', 'src/lib/lazy/X.svelte'],
 			['a route', 'src/routes/X.svelte'],
 			['the gallery frame', 'src/gallery/X.svelte'],
+			['a stories file', 'src/stories/X.stories.svelte'],
 			['a check', 'src/checks/X.svelte']
 		])('switches {@html} off nowhere: %s', async (_label, filePath) => {
 			const config = (await realLinter.calculateConfigForFile(filePath)) as Linter.Config;
@@ -703,6 +717,116 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 
 		it.each(routesRefusals)('refuses %s', async (_label, code, ruleId) => {
 			await expectRefused(planted.routes, code, ruleId);
+		});
+	});
+
+	describe('the stories (src/stories)', () => {
+		/** A stories file in Svelte CSF, with `script` in its instance script and `markup` in its body. */
+		const storiesFile = (script: string, markup: string): string =>
+			`<script module lang="ts">\n\timport { defineMeta } from '@storybook/addon-svelte-csf';\n\n\tconst { Story } = defineMeta({ title: 'Planted/X' });\n</script>\n\n<script lang="ts">\n\t${script}\n</script>\n\n<Story name="Planted">${markup}</Story>\n`;
+
+		it.each([
+			...hostAllowed,
+			['storybook/test', "import { fn } from 'storybook/test';\nexport const r = fn();"],
+			[
+				'Svelte CSF',
+				"import { defineMeta } from '@storybook/addon-svelte-csf';\nexport { defineMeta };"
+			]
+		] as const)('allows %s in a stories module', async (_label, code) => {
+			await expectAllowed(planted.stories, code);
+		});
+
+		it('allows a plain Svelte CSF stories file', async () => {
+			await expectAllowed(
+				planted.storiesSvelte,
+				storiesFile('const words = "Send request";', '{words}')
+			);
+		});
+
+		it.each([
+			...routesRefusals,
+			['localStorage', "export const r = localStorage.getItem('x');", GLOBALS],
+			['a remote string', stringModule('https://x/a.png'), REMOTE],
+			['a javascript: string', stringModule('javascript:alert(1)'), SCRIPT_URL],
+			['a dynamic import()', "export const r = import('./y');", SYNTAX],
+			[
+				'an inline handler set as an attribute',
+				"export const r = (e: Element) => {\n\te.setAttribute('onclick', 'x');\n};",
+				SYNTAX
+			]
+		] as const)('refuses %s in a stories module', async (_label, code, ruleId) => {
+			await expectRefused(planted.stories, code, ruleId);
+		});
+
+		it.each([
+			['fetch', "const r = fetch('/x');", '{r}', GLOBALS],
+			['localStorage', "const r = localStorage.getItem('x');", '{r}', GLOBALS],
+			['sessionStorage', "const r = sessionStorage.getItem('x');", '{r}', GLOBALS],
+			['a remote string', "const u = 'https://x/a.png';", '<img src={u} alt="" />', REMOTE],
+			['a remote attribute', 'const r = 1;', '<img src="https://x/a.png" alt="{r}" />', REMOTE],
+			['a javascript: string', "const u = 'javascript:alert(1)';", '<a href={u}>x</a>', SCRIPT_URL],
+			['{@html}', "const x = '<b>x</b>';", '{@html x}', 'svelte/no-at-html-tags'],
+			['a dynamic import()', "const r = import('./y');", '{r}', SYNTAX]
+		] as const)('refuses %s in a stories file', async (_label, script, markup, ruleId) => {
+			await expectRefused(planted.storiesSvelte, storiesFile(script, markup), ruleId);
+		});
+
+		it.each([
+			['a text value', 'const r = 1;', '<button onclick="alert(1)">{r}</button>'],
+			['another letter case', 'const f = (): void => undefined;', '<button onClick={f}>x</button>']
+		] as const)(
+			'refuses an inline handler with %s in a stories file',
+			async (_label, script, markup) => {
+				await expectInlineHandlerRefused(planted.storiesSvelte, storiesFile(script, markup));
+			}
+		);
+
+		it.each([
+			['a stories module', planted.stories, "import { x } from '../checks/x';\nexport { x };"],
+			[
+				'a stories file',
+				planted.storiesSvelte,
+				storiesFile("import { x } from '../checks/x';", '{x}')
+			],
+			['a stories module importing a spec', planted.stories, "import './frame/globals.spec';"]
+		] as const)('refuses a check imported by %s', async (_label, filePath, code) => {
+			await expectRefused(filePath, code, TIERS);
+		});
+	});
+
+	describe("Storybook's browser-side config (.storybook/preview.ts, manager.ts)", () => {
+		it.each([
+			['the preview', real.storybookPreview],
+			['the manager', real.storybookManager]
+		] as const)('refuses fetch in %s', async (_label, filePath) => {
+			await expectRefused(filePath, "export const r = fetch('/x');", GLOBALS);
+		});
+
+		it.each([
+			['the preview', real.storybookPreview],
+			['the manager', real.storybookManager]
+		] as const)('refuses a remote string in %s', async (_label, filePath) => {
+			await expectRefused(filePath, stringModule('https://x/a.js'), REMOTE);
+		});
+
+		it.each([
+			['localStorage', 'export const r = localStorage;', GLOBALS],
+			['sessionStorage', 'export const r = sessionStorage;', GLOBALS],
+			['innerHTML', "export const r = (e: Element) => {\n\te.innerHTML = 'x';\n};", PROPERTIES],
+			['a javascript: string', stringModule('javascript:alert(1)'), SCRIPT_URL],
+			['a dynamic import()', "export const r = import('./x.ts');", SYNTAX],
+			['import.meta.env', 'export const r: unknown = import.meta.env;', SYNTAX],
+			['a check', "import '../src/checks/x';", TIERS],
+			['a file outside src', "import './x.ts';", TIERS]
+		] as const)('refuses %s in the preview', async (_label, code, ruleId) => {
+			await expectRefused(real.storybookPreview, code, ruleId);
+		});
+
+		it('allows the preview its frame and the styles', async () => {
+			await expectAllowed(
+				real.storybookPreview,
+				"import '@zurfur/ui/styles';\nimport StoryFrame from '../src/stories/frame/StoryFrame.svelte';\nexport { StoryFrame };"
+			);
 		});
 	});
 
@@ -1666,7 +1790,13 @@ describe('the file sets', { timeout: 120_000 }, () => {
 		['src/routes/x.ts', 'routes'],
 		['src/routes/components/button/+page.svelte', 'routes'],
 		['src/routes/components/colour/+page.svelte', 'routes'],
-		['src/lib/styles/environment.ts', 'components']
+		['src/lib/styles/environment.ts', 'components'],
+		['src/stories/x.ts', 'stories'],
+		['src/stories/frame/StoryFrame.svelte', 'stories'],
+		['src/stories/controls/Button.stories.svelte', 'stories'],
+		['src/stories/fixtures/people.ts', 'stories'],
+		['.storybook/preview.ts', 'storybookBrowser'],
+		['.storybook/manager.ts', 'storybookBrowser']
 	] as const)('puts %s under the %s rules', async (filePath, name) => {
 		expect(await effectiveBoundary(filePath)).toEqual(expectedBoundary(name));
 	});
@@ -1679,10 +1809,20 @@ describe('the file sets', { timeout: 120_000 }, () => {
 		['src/lib/motion/x.spec.ts'],
 		['src/gallery/x.spec.ts'],
 		['src/gallery/skin-store.spec.ts'],
-		['src/routes/x.svelte.spec.ts']
+		['src/routes/x.svelte.spec.ts'],
+		['src/stories/frame/globals.spec.ts'],
+		['src/stories/X.svelte.spec.ts']
 	])('leaves the check or spec %s free of the boundary rules', async (filePath) => {
 		expect(await effectiveBoundary(filePath)).toEqual(noBoundary);
 	});
+
+	it.each([['.storybook/main.ts'], ['.storybook/vitest.setup.ts']])(
+		"leaves Storybook's Node-side %s free of the boundary rules",
+		async (filePath) => {
+			expect(fileSetOf(filePath)).toBeUndefined();
+			expect(await effectiveBoundary(filePath)).toEqual(noBoundary);
+		}
+	);
 
 	it('lists real code files to classify', () => {
 		expect(realCodeFiles()).toContain('src/lib/index.ts');
@@ -1706,7 +1846,11 @@ describe('the file sets', { timeout: 120_000 }, () => {
 		'src/gallery/other.ts',
 		'src/gallery/skin-store.spec.ts',
 		'src/gallery/skin-store.svelte.ts',
-		'src/gallery/deep/skin-store.ts'
+		'src/gallery/deep/skin-store.ts',
+		'src/stories/deep/X.stories.svelte',
+		'src/stories/skin-store.ts',
+		'.storybook/preview.ts',
+		'.storybook/manager.ts'
 	])("classifies %s as ESLint's own matching does", async (filePath) => {
 		const name = fileSetOf(filePath);
 		expect(name).toBeDefined();
@@ -1728,6 +1872,20 @@ describe('the file sets', { timeout: 120_000 }, () => {
 			)
 		);
 		expect(results.length).toBeGreaterThan(0);
+		expect(problems).toEqual([]);
+	});
+
+	it("lints Storybook's config files clean", async () => {
+		const results = await realLinter.lintFiles([...storybookConfigFiles]);
+		const problems = results.flatMap((result) =>
+			result.messages.map(
+				(message) =>
+					`${result.filePath}:${String(message.line)} ${message.ruleId ?? ''} ${message.message}`
+			)
+		);
+		expect(results.map((result) => path.relative(uiRoot, result.filePath)).sort()).toEqual(
+			[...storybookConfigFiles].sort()
+		);
 		expect(problems).toEqual([]);
 	});
 });
