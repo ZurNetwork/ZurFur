@@ -1353,11 +1353,11 @@ async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
     ] {
         seed(&backend, c).await;
     }
-    // A create is born Draft; the terminal and disputed steps are written onto the rows.
+    // A create is born Draft; the terminal steps are written onto the rows, and the disputed
+    // one with the step it left and when its dispute began.
     let stepped = [
         (completed.id, LifecycleStep::Completed),
         (cancelled.id, LifecycleStep::Cancelled),
-        (disputed.id, LifecycleStep::Disputed),
     ];
     for (id, step) in stepped {
         backend
@@ -1368,6 +1368,16 @@ async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
             .expect("a seeded commission")
             .lifecycle_step = step;
     }
+    let dispute = StoredDispute {
+        left: LifecycleStep::Active,
+        began: past(6),
+    };
+    store_dispute(
+        &backend,
+        disputed.id,
+        LifecycleStep::Disputed,
+        Some(dispute),
+    );
 
     let already_late_stored = backend
         .find_commission(already_late.id)
@@ -2875,4 +2885,56 @@ async fn the_changelog_seeder_stores_a_legacy_row_as_given() {
     assert_eq!(read.actor_id.as_ref(), Some(&created.owner_id));
     assert_eq!(read.payload, legacy_payload);
     assert_eq!(read.note, None);
+}
+
+/// Sets `id`'s stored step and dispute straight on `backend`'s shared state, past every rule.
+fn store_dispute(
+    backend: &MemBackend,
+    id: CommissionId,
+    step: LifecycleStep,
+    dispute: Option<StoredDispute>,
+) {
+    let mut commissions = backend
+        .commissions
+        .lock()
+        .expect("MemBackend commissions mutex poisoned");
+    let stored = commissions.get_mut(&id).expect("the commission is stored");
+    stored.lifecycle_step = step;
+    stored.dispute = dispute;
+}
+
+// At commit, as PostgreSQL's CHECK does, a commission's dispute stands exactly while it is
+// Disputed and left one of the other steps: a Disputed one without its step, a dispute on
+// another step and one that left Disputed are each refused, and a whole dispute is kept.
+#[tokio::test]
+async fn a_commit_refuses_a_dispute_that_does_not_match_its_step() {
+    let backend = MemBackend::new();
+    let created = commission("Disputed", user_id());
+    seed(&backend, &created).await;
+    let began = Utc::now();
+    let from = |left: LifecycleStep| Some(StoredDispute { left, began });
+    let refused = [
+        (LifecycleStep::Disputed, None),
+        (LifecycleStep::Active, from(LifecycleStep::Draft)),
+        (LifecycleStep::Disputed, from(LifecycleStep::Disputed)),
+    ];
+
+    for (step, dispute) in refused {
+        let label = format!("{step} {dispute:?}");
+        store_dispute(&backend, created.id, step, dispute);
+
+        let committed = Box::new(backend.unit()).commit().await;
+
+        assert!(committed.is_err(), "{label}");
+    }
+    store_dispute(
+        &backend,
+        created.id,
+        LifecycleStep::Disputed,
+        from(LifecycleStep::Draft),
+    );
+    Box::new(backend.unit())
+        .commit()
+        .await
+        .expect("a whole dispute is kept");
 }

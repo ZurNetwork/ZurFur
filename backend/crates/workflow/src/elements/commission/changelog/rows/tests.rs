@@ -1,8 +1,8 @@
 use super::*;
 use crate::elements::commission::{
     CommissionState, DeadlineStatus, DirectionStatus, LateFacts, LifecycleStep, clear_deadline,
-    clear_delayed, clear_direction, move_lifecycle, owes_late, schedule_deadline, set_delayed,
-    set_direction, test_commission,
+    clear_delayed, clear_direction, clear_dispute, move_lifecycle, owes_late, raise_dispute,
+    schedule_deadline, set_delayed, set_direction, test_commission,
 };
 use identity::elements::user::UserId;
 use kernel::elements::did::Did;
@@ -59,6 +59,13 @@ fn gated_entries(commission: CommissionId) -> Vec<(NewChangelogEntry, &'static s
         .expect("active → completed passes")
         .expect("a real move");
     let lifecycle_moved = NewChangelogEntry::lifecycle_moved(commission, actor(), &moved, at);
+
+    let from_draft = test_commission::at(LifecycleStep::Draft);
+    let dispute = raise_dispute(&CommissionState::from(&from_draft), at).expect("a raise passes");
+    let disputed = NewChangelogEntry::disputed(commission, actor(), &dispute, at);
+    let held = test_commission::disputed(LifecycleStep::Draft, at, None);
+    let clear = clear_dispute(&CommissionState::from(&held)).expect("a clear passes");
+    let dispute_cleared = NewChangelogEntry::dispute_cleared(commission, actor(), &clear, at);
 
     let first_direction =
         set_direction(&active(None, None, None), DirectionStatus::WaitingForInput)
@@ -123,6 +130,16 @@ fn gated_entries(commission: CommissionId) -> Vec<(NewChangelogEntry, &'static s
             lifecycle_moved,
             "lifecycle_moved",
             json!({ "from": "active", "to": "completed" }),
+        ),
+        (
+            disputed,
+            "lifecycle_moved",
+            json!({ "from": "draft", "to": "disputed" }),
+        ),
+        (
+            dispute_cleared,
+            "lifecycle_moved",
+            json!({ "from": "disputed", "to": "draft" }),
         ),
         (
             direction_first,
@@ -196,18 +213,34 @@ fn each_legacy_kind_s_typed_payload_is_its_stored_shape() {
     }
 }
 
-// A lifecycle move stores its two step tokens and nothing else.
+// A lifecycle move, a dispute raised and a dispute cleared each store their two step tokens and
+// nothing else, as literal JSON.
 #[test]
 fn each_new_kind_s_stored_shape_is_its_literal_json() {
     let moved = move_lifecycle(&active(None, None, None), LifecycleStep::Batched)
         .expect("active → batched passes")
         .expect("a real move");
     let entry = NewChangelogEntry::lifecycle_moved(CommissionId::mint(), actor(), &moved, may());
+    let dispute = raise_dispute(&active(None, None, None), may()).expect("a raise passes");
+    let raised = NewChangelogEntry::disputed(CommissionId::mint(), actor(), &dispute, may());
+    let held = test_commission::disputed(LifecycleStep::Batched, may(), None);
+    let clear = clear_dispute(&CommissionState::from(&held)).expect("a clear passes");
+    let cleared = NewChangelogEntry::dispute_cleared(CommissionId::mint(), actor(), &clear, may());
 
     let lifecycle_moved = json!({ "from": "active", "to": "batched" });
     assert_eq!(entry.kind(), ChangelogEntryKind::LifecycleMoved);
     assert_eq!(entry.payload(), &lifecycle_moved);
     assert_eq!(entry.actor_id(), Some(&actor()));
+    let stored = [
+        (raised, r#"{"from":"active","to":"disputed"}"#),
+        (cleared, r#"{"from":"disputed","to":"batched"}"#),
+    ];
+    for (entry, literal) in stored {
+        assert_eq!(entry.kind(), ChangelogEntryKind::LifecycleMoved);
+        assert_eq!(entry.payload().to_string(), literal);
+        assert_eq!(entry.note_text(), None);
+        assert_eq!(entry.actor_id(), Some(&actor()));
+    }
 }
 
 // No gated entry carries a note, whichever constructor built it.

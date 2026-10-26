@@ -351,8 +351,9 @@ pub struct GetCommissionResponse {
     pub direction_status: ::core::option::Option<::prost::alloc::string::String>,
     /// Deadline axis of the two-dimensional status, if any, at the time of the request
     /// (R8 vocabulary): `late` once the deadline has passed on a step that isn't
-    /// `completed` or `cancelled`, else `delayed` when a Participant raised it. Absent
-    /// with no deadline.
+    /// `completed` or `cancelled`, else `delayed` when a Participant raised it. While
+    /// `disputed`, the clock stands at the dispute's start: `late` only when the deadline
+    /// had passed by then. Absent with no deadline.
     #[prost(string, optional, tag = "8")]
     pub deadline_status: ::core::option::Option<::prost::alloc::string::String>,
     /// When the commission was created.
@@ -362,7 +363,8 @@ pub struct GetCommissionResponse {
     #[prost(bool, tag = "11")]
     pub archived: bool,
     /// What the viewer may do to it now, by each call's act word, in this order when present:
-    /// `rename` (the owner only), `move_lifecycle`, `set_direction_status`,
+    /// `rename` (the owner only), `move_lifecycle`, `raise_dispute`, `clear_dispute`,
+    /// `set_direction_status`,
     /// `clear_direction_status`, `set_deadline`, `clear_deadline`, `set_delayed`,
     /// `clear_delayed`. Empty for a viewer who holds no role on it. An act is listed when
     /// its call would succeed for some value it takes; a listed call may still answer `204`
@@ -388,6 +390,27 @@ pub struct MoveCommissionLifecycleRequest {
 /// `PUT .../lifecycle` succeeds `204`; there is no body.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MoveCommissionLifecycleResponse {}
+/// `PUT /api/v1/commissions/{id}/dispute` — a Participant raises a dispute. There is no body.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RaiseCommissionDisputeRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+}
+/// `PUT .../dispute` succeeds `204`; there is no body.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RaiseCommissionDisputeResponse {}
+/// `DELETE /api/v1/commissions/{id}/dispute` — a Participant clears the dispute, returning
+/// the commission to the step it left. It takes no step.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClearCommissionDisputeRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+}
+/// `DELETE .../dispute` succeeds `204`; there is no body.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClearCommissionDisputeResponse {}
 /// `PUT /api/v1/commissions/{id}/status/direction` — a Participant sets the direction status.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SetCommissionDirectionStatusRequest {

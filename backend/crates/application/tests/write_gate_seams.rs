@@ -1194,12 +1194,14 @@ const ENTRY_RULE_VARIANTS: [&str; 2] = ["Always", "OnChange"];
 const HANDLER_TRAIT: &str = "trait Handler";
 
 /// The gated entries today's acts name, each by its file.
-const NAMED_GATED_ENTRIES: [(&str, &str); 10] = [
+const NAMED_GATED_ENTRIES: [(&str, &str); 12] = [
     ("commission/create.rs", "CREATED"),
     ("commission/deadline/clear.rs", "DEADLINE_CLEARED"),
     ("commission/deadline/set.rs", "DEADLINE_SET"),
     ("commission/deadline/status/clear.rs", "DELAYED_CLEARED"),
     ("commission/deadline/status/set.rs", "DELAYED_SET"),
+    ("commission/dispute/clear.rs", "DISPUTE_CLEARED"),
+    ("commission/dispute/raise.rs", "DISPUTED"),
     ("commission/lifecycle/move_to.rs", "LIFECYCLE_MOVED"),
     ("commission/rename.rs", "RENAMED"),
     ("commission/status/direction/clear.rs", "STATUS_CLEARED"),
@@ -1530,7 +1532,7 @@ fn each_act_names_one_gated_entry_and_constructors_are_unique() {
         .iter()
         .map(|(file, name)| ((*file).to_owned(), (*name).to_owned()))
         .collect();
-    assert_eq!(named, expected, "the scan reads today's ten acts");
+    assert_eq!(named, expected, "the scan reads today's twelve acts");
     let act_source =
         std::fs::read_to_string(application_src().join(ACT_FILE)).expect("the act file reads");
     let shares_a_constructor = act_source.replacen(
@@ -1932,9 +1934,11 @@ const LENT_READ: &str = "lent";
 
 /// Each act with a write, as the gate file writes its type, and the one write its view holds,
 /// which calls the commission repo's method of the same name and nothing else.
-const ACT_WRITES: [(&str, &str); 8] = [
+const ACT_WRITES: [(&str, &str); 10] = [
     ("create::Act", "create"),
     ("move_to::Act", "set_lifecycle"),
+    ("dispute::raise::Act", "set_dispute"),
+    ("dispute::clear::Act", "clear_dispute"),
     ("direction::set::Act", "set_direction_status"),
     ("direction::clear::Act", "set_direction_status"),
     ("deadline::set::Act", "set_deadline"),
@@ -1945,9 +1949,10 @@ const ACT_WRITES: [(&str, &str); 8] = [
 
 /// The modules the gate file must import each act's module from, so `create::Act`,
 /// `move_to::Act`, `direction::set::Act` and `deadline::set::Act` name the acts they say.
-const ACT_MODULE_HOMES: [(&str, &str); 4] = [
+const ACT_MODULE_HOMES: [(&str, &str); 5] = [
     ("create", "crate::commission"),
     ("move_to", "crate::commission::lifecycle"),
+    ("dispute", "crate::commission"),
     ("direction", "crate::commission::status"),
     ("deadline", "crate::commission"),
 ];
@@ -2221,6 +2226,8 @@ fn each_lent_view_holds_its_act_s_one_write() {
     let expected: Vec<(String, String)> = [
         ("create", "create::Act"),
         ("set_lifecycle", "move_to::Act"),
+        ("set_dispute", "dispute::raise::Act"),
+        ("clear_dispute", "dispute::clear::Act"),
         ("set_direction_status", "direction::set::Act"),
         ("set_direction_status", "direction::clear::Act"),
         ("set_deadline", "deadline::set::Act"),
@@ -2267,12 +2274,12 @@ fn each_lent_view_holds_its_act_s_one_write() {
         ),
         ("impl Lent<'_, move_to::Act> {", "impl Lent<'_, Move> {"),
         (
-            "    commission::{\n        act::CommissionAct, create, deadline, lifecycle::move_to, rename, status::direction,\n    },",
-            "    commission::{\n        act::CommissionAct, create as move_to, deadline, lifecycle::move_to as create, rename,\n        status::direction,\n    },",
+            "    commission::{\n        act::CommissionAct, create, deadline, dispute, lifecycle::move_to, rename,\n        status::direction,\n    },",
+            "    commission::{\n        act::CommissionAct, create as move_to, deadline, dispute, lifecycle::move_to as create,\n        rename, status::direction,\n    },",
         ),
         (
-            "    commission::{\n        act::CommissionAct, create, deadline, lifecycle::move_to, rename, status::direction,\n    },",
-            "    commission::{\n        act::CommissionAct, create, deadline as direction, lifecycle::move_to, rename,\n        status::direction as deadline,\n    },",
+            "    commission::{\n        act::CommissionAct, create, deadline, dispute, lifecycle::move_to, rename,\n        status::direction,\n    },",
+            "    commission::{\n        act::CommissionAct, create, deadline as direction, dispute, lifecycle::move_to, rename,\n        status::direction as deadline,\n    },",
         ),
         (
             "impl Lent<'_, direction::set::Act> {",
@@ -2510,12 +2517,14 @@ fn each_view_write_calls_its_own_port_method() {
     let writes: Vec<(String, String)> = view_methods(&gate, &views);
     assert_eq!(
         writes.len(),
-        9,
+        11,
         "the scan reads every view method: {writes:?}"
     );
     let source =
         std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
     let move_call = "self.repo.set_lifecycle(&self.capability, change)";
+    let raise_call = "self.repo.set_dispute(&self.capability, change)";
+    let clear_call = "self.repo.clear_dispute(&self.capability, change)";
     let create_call = ".create(&self.capability, &birth, commission)";
     let direction_call =
         ".set_direction_status(&self.capability, &DirectionChange::from(change.clone()))";
@@ -2566,6 +2575,14 @@ fn each_view_write_calls_its_own_port_method() {
             "        let change = &forged;\n        self.wrote = Some(Wrote::Missed);\n        let landed",
         ),
         (create_call, ".set_lifecycle(&self.capability, commission)"),
+        (
+            raise_call,
+            "self.repo.set_lifecycle(&self.capability, change)",
+        ),
+        (
+            clear_call,
+            "self.repo.set_dispute(&self.capability, change)",
+        ),
         (
             "impl View<'_, move_to::Act> {",
             "impl View<'_, rename::Act> {",
@@ -2658,7 +2675,7 @@ fn every_lent_method_goes_through_the_latch() {
 
     assert_eq!(unlatched, Vec::<String>::new());
     let (methods, _) = lent_surface(&gate);
-    assert_eq!(methods.len(), 9, "the scan reads all nine lent methods");
+    assert_eq!(methods.len(), 11, "the scan reads all eleven lent methods");
     let source =
         std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
     let widened = format!("{WIDENED_MODULE}{AFTER_THE_LENT_VIEW}");
@@ -5651,16 +5668,18 @@ fn every_commission_write_takes_a_capability_or_is_named() {
         sorted.capped,
         BTreeSet::from(
             [
+                "clear_dispute",
                 "create",
                 "set_deadline",
                 "set_deadline_status",
                 "set_direction_status",
+                "set_dispute",
                 "set_lifecycle",
             ]
             .map(str::to_owned)
         ),
-        "create takes the gate's create capability, and the lifecycle, direction, deadline and \
-         Delayed writes a Participant's, each in place of the id"
+        "create takes the gate's create capability, and the lifecycle, dispute, direction, \
+         deadline and Delayed writes a Participant's, each in place of the id"
     );
     let (held, homes) = held_names(&file);
     assert_eq!(homes, Vec::<String>::new());
@@ -6014,10 +6033,12 @@ fn the_port_scan_names_each_planted_write() {
 
 /// The values a capped write may take beside its capability, each by its bare name behind at
 /// most one shared reference: a create's birth and start, and each act's checked change.
-const CAPPED_VALUES: [&str; 6] = [
+const CAPPED_VALUES: [&str; 8] = [
     "CommissionBirth",
     "NewCommission",
     "LifecycleMove",
+    "Dispute",
+    "DisputeClear",
     "DirectionChange",
     "DeadlineChange",
     "DelayedChange",
@@ -9184,7 +9205,7 @@ const ENTRY_BUILDERS: [&str; 5] = [
 ];
 
 /// The gated constructors, as the domain defines them today.
-const GATED_CONSTRUCTORS: [&str; 10] = [
+const GATED_CONSTRUCTORS: [&str; 12] = [
     "created",
     "deadline_cleared",
     "deadline_set",
@@ -9192,6 +9213,8 @@ const GATED_CONSTRUCTORS: [&str; 10] = [
     "delayed_set",
     "direction_cleared",
     "direction_set",
+    "dispute_cleared",
+    "disputed",
     "late",
     "lifecycle_moved",
     "renamed",
@@ -10249,10 +10272,11 @@ impl NewChangelogEntry {
 /// What each method of the PostgreSQL write view reaches: each generated commission write
 /// statement (`statement f`), write helper (`helper h`) and write-view method (`method m`) it
 /// names, by method. A new statement, or one named in a second method, fails until it is here.
-const PG_VIEW_REACHES: [(&str, &str); 25] = [
+const PG_VIEW_REACHES: [(&str, &str); 27] = [
     ("add_element", "helper insert_element"),
     ("add_file", "statement add_file"),
     ("add_markup", "statement add_markup"),
+    ("clear_dispute", "statement clear_dispute"),
     ("create", "statement add_participant"),
     ("create", "statement create_commission"),
     ("create", "statement create_tab"),
@@ -10272,6 +10296,7 @@ const PG_VIEW_REACHES: [(&str, &str); 25] = [
     ("set_deadline", "statement set_deadline"),
     ("set_deadline_status", "statement set_deadline_status"),
     ("set_direction_status", "statement set_direction_status"),
+    ("set_dispute", "statement set_dispute"),
     ("set_lifecycle", "statement set_lifecycle"),
     ("set_linked_channel", "statement set_linked_channel"),
     ("set_maturity", "statement set_maturity"),
@@ -10281,7 +10306,7 @@ const PG_VIEW_REACHES: [(&str, &str); 25] = [
 /// commission map (`map m`, `map handed on`), each write to a stored commission's field
 /// (`row f`), each call of the insert path (`calls insert_commission`) and each write-view
 /// method called on the view (`method m`), by piece.
-const MEM_VIEW_CHANGES: [(&str, &str); 21] = [
+const MEM_VIEW_CHANGES: [(&str, &str); 27] = [
     (
         "commission.rs: MemBackend::seed_bound_commission",
         "calls insert_commission",
@@ -10292,6 +10317,18 @@ const MEM_VIEW_CHANGES: [(&str, &str); 21] = [
     ),
     (
         "commission.rs: MemBackend::seed_lifecycle_step",
+        "row lifecycle_step",
+    ),
+    (
+        "commission.rs: MemCommissionWrites::clear_dispute",
+        "map get_mut",
+    ),
+    (
+        "commission.rs: MemCommissionWrites::clear_dispute",
+        "row dispute",
+    ),
+    (
+        "commission.rs: MemCommissionWrites::clear_dispute",
         "row lifecycle_step",
     ),
     (
@@ -10330,6 +10367,18 @@ const MEM_VIEW_CHANGES: [(&str, &str); 21] = [
     (
         "commission.rs: MemCommissionWrites::set_direction_status",
         "row direction_status",
+    ),
+    (
+        "commission.rs: MemCommissionWrites::set_dispute",
+        "map get_mut",
+    ),
+    (
+        "commission.rs: MemCommissionWrites::set_dispute",
+        "row dispute",
+    ),
+    (
+        "commission.rs: MemCommissionWrites::set_dispute",
+        "row lifecycle_step",
     ),
     (
         "commission.rs: MemCommissionWrites::set_lifecycle",

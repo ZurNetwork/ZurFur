@@ -18,7 +18,7 @@ use crate::{
     Ports,
     commission::{
         act::{CommissionAct, CommissionActKind},
-        deadline,
+        deadline, dispute,
         lifecycle::move_to,
         rename,
         status::direction,
@@ -82,8 +82,8 @@ impl Probe<'_> {
 
 /// The values the list tries of the act of `kind` on `commission`, at `now` and given its
 /// `title`: every lifecycle step, every direction status, the rename to `title`, a deadline at
-/// `now`, since the deadline rule refuses by state, never by the time set, and each clear and
-/// Delayed act once. None of a create or of the system's Late mark, which no user takes on a
+/// `now`, since the deadline rule refuses by state, never by the time set, and the dispute's
+/// raise and clear, each clear and each Delayed act once. None of a create or of the system's Late mark, which no user takes on a
 /// stored commission. A match over every kind, so a new act fails to compile until it is tried.
 fn tried(
     kind: CommissionActKind,
@@ -110,6 +110,14 @@ fn tried(
                 CommissionAct::MoveLifecycle(act)
             })
             .collect(),
+        CommissionActKind::RaiseDispute => {
+            let act = dispute::raise::Act { commission };
+            vec![CommissionAct::RaiseDispute(act)]
+        }
+        CommissionActKind::ClearDispute => {
+            let act = dispute::clear::Act { commission };
+            vec![CommissionAct::ClearDispute(act)]
+        }
         CommissionActKind::SetDirection => DirectionStatus::VARIANTS
             .iter()
             .map(|status| {

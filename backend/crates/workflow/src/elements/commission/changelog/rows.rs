@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use super::{ChangelogEntryKind, OpenKind};
 use crate::elements::commission::{
     CommissionId, DeadlineCleared, DeadlineSet, DelayedCleared, DelayedSet, DirectionCleared,
-    DirectionSet, LateMark, LifecycleMove,
+    DirectionSet, Dispute, DisputeClear, LateMark, LifecycleMove, LifecycleStep,
 };
 use identity::elements::user::UserId;
 use kernel::datetime::DateTimeUtc;
@@ -137,6 +137,48 @@ impl NewChangelogEntry {
         let payload = json!({
             "from": <&'static str>::from(moved.before()),
             "to": <&'static str>::from(moved.after()),
+        });
+        Self::by(
+            commission,
+            ChangelogEntryKind::LifecycleMoved,
+            actor,
+            payload,
+            at,
+        )
+    }
+
+    /// A dispute raised: kind [`LifecycleMoved`](ChangelogEntryKind::LifecycleMoved),
+    /// `{"from", "to": "disputed"}`, `from` the step it left.
+    pub fn disputed(
+        commission: CommissionId,
+        actor: UserId,
+        raised: &Dispute,
+        at: DateTimeUtc,
+    ) -> Self {
+        let payload = json!({
+            "from": <&'static str>::from(raised.before()),
+            "to": <&'static str>::from(&LifecycleStep::Disputed),
+        });
+        Self::by(
+            commission,
+            ChangelogEntryKind::LifecycleMoved,
+            actor,
+            payload,
+            at,
+        )
+    }
+
+    /// A dispute cleared: kind [`LifecycleMoved`](ChangelogEntryKind::LifecycleMoved),
+    /// `{"from": "disputed", "to"}`, `to` the step it returns to.
+    pub fn dispute_cleared(
+        commission: CommissionId,
+        actor: UserId,
+        cleared: &DisputeClear,
+        at: DateTimeUtc,
+    ) -> Self {
+        let payload = json!({
+            "from": <&'static str>::from(&LifecycleStep::Disputed),
+            "to": <&'static str>::from(cleared.after()),
         });
         Self::by(
             commission,

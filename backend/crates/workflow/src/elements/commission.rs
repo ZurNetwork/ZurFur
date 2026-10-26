@@ -18,6 +18,7 @@ pub mod slot;
 mod commission_role;
 mod deadline;
 mod direction;
+mod dispute;
 mod entity;
 mod errors;
 mod grant_level;
@@ -46,6 +47,7 @@ pub use direction::{
     DirectionChange, DirectionCleared, DirectionSet, DirectionStatus, clear_direction,
     set_direction,
 };
+pub use dispute::{Dispute, DisputeClear, StoredDispute, clear_dispute, raise_dispute};
 pub use element::{
     Band, CommissionComposition, CompositionLabel, CompositionLabelError, DeclaredTab, ElementId,
     ElementPayload, ElementRow, ElementType, LABEL_MAX_CHARS, NewElement, SKELETON, SeatId,

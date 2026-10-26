@@ -22,7 +22,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file zurfur/api/v1/commission.proto.
  */
 export const file_zurfur_api_v1_commission: GenFile = /*@__PURE__*/
-  fileDesc("Ch56dXJmdXIvYXBpL3YxL2NvbW1pc3Npb24ucHJvdG8SDXp1cmZ1ci5hcGkudjEinwMKGENyZWF0ZUNvbW1pc3Npb25SZXNwb25zZRIKCgJpZBgBIAEoCRINCgV0aXRsZRgCIAEoCRIRCglsaWZlY3ljbGUYAyABKAkSEgoKdmlzaWJpbGl0eRgEIAEoCRIxCghkZWFkbGluZRgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBIAIgBARIuCghtYXR1cml0eRgGIAEoCzIXLnp1cmZ1ci5hcGkudjEuTWF0dXJpdHlIAYgBARIdChBkaXJlY3Rpb25fc3RhdHVzGAcgASgJSAKIAQESHAoPZGVhZGxpbmVfc3RhdHVzGAggASgJSAOIAQESGwoObGlua2VkX2NoYW5uZWwYCSABKAlIBIgBARIuCgpjcmVhdGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEILCglfZGVhZGxpbmVCCwoJX21hdHVyaXR5QhMKEV9kaXJlY3Rpb25fc3RhdHVzQhIKEF9kZWFkbGluZV9zdGF0dXNCEQoPX2xpbmtlZF9jaGFubmVsIisKCE1hdHVyaXR5Eg4KBnJhdGluZxgBIAEoCRIPCgdncmFwaGljGAIgASgIIqUBChdDcmVhdGVDb21taXNzaW9uUmVxdWVzdBINCgV0aXRsZRgBIAEoCRIxCghkZWFkbGluZRgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBIAIgBARIuCghtYXR1cml0eRgDIAEoCzIXLnp1cmZ1ci5hcGkudjEuTWF0dXJpdHlIAYgBAUILCglfZGVhZGxpbmVCCwoJX21hdHVyaXR5IjQKF1JlbmFtZUNvbW1pc3Npb25SZXF1ZXN0EgoKAmlkGAEgASgJEg0KBXRpdGxlGAIgASgJIp8DChhSZW5hbWVDb21taXNzaW9uUmVzcG9uc2USCgoCaWQYASABKAkSDQoFdGl0bGUYAiABKAkSEQoJbGlmZWN5Y2xlGAMgASgJEhIKCnZpc2liaWxpdHkYBCABKAkSMQoIZGVhZGxpbmUYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wSACIAQESLgoIbWF0dXJpdHkYBiABKAsyFy56dXJmdXIuYXBpLnYxLk1hdHVyaXR5SAGIAQESHQoQZGlyZWN0aW9uX3N0YXR1cxgHIAEoCUgCiAEBEhwKD2RlYWRsaW5lX3N0YXR1cxgIIAEoCUgDiAEBEhsKDmxpbmtlZF9jaGFubmVsGAkgASgJSASIAQESLgoKY3JlYXRlZF9hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCCwoJX2RlYWRsaW5lQgsKCV9tYXR1cml0eUITChFfZGlyZWN0aW9uX3N0YXR1c0ISChBfZGVhZGxpbmVfc3RhdHVzQhEKD19saW5rZWRfY2hhbm5lbCIiChRHZXRDb21taXNzaW9uUmVxdWVzdBIKCgJpZBgBIAEoCSK9AwoVR2V0Q29tbWlzc2lvblJlc3BvbnNlEgoKAmlkGAEgASgJEg0KBXRpdGxlGAIgASgJEhEKCWxpZmVjeWNsZRgDIAEoCRISCgp2aXNpYmlsaXR5GAQgASgJEjEKCGRlYWRsaW5lGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEgAiAEBEi4KCG1hdHVyaXR5GAYgASgLMhcuenVyZnVyLmFwaS52MS5NYXR1cml0eUgBiAEBEh0KEGRpcmVjdGlvbl9zdGF0dXMYByABKAlIAogBARIcCg9kZWFkbGluZV9zdGF0dXMYCCABKAlIA4gBARIuCgpjcmVhdGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIQCghhcmNoaXZlZBgLIAEoCBIMCgRhY3RzGAwgAygJEhkKEWxpZmVjeWNsZV90YXJnZXRzGA0gAygJQgsKCV9kZWFkbGluZUILCglfbWF0dXJpdHlCEwoRX2RpcmVjdGlvbl9zdGF0dXNCEgoQX2RlYWRsaW5lX3N0YXR1c0oECAkQClIObGlua2VkX2NoYW5uZWwiOAoeTW92ZUNvbW1pc3Npb25MaWZlY3ljbGVSZXF1ZXN0EgoKAmlkGAEgASgJEgoKAnRvGAIgASgJIiEKH01vdmVDb21taXNzaW9uTGlmZWN5Y2xlUmVzcG9uc2UiQQojU2V0Q29tbWlzc2lvbkRpcmVjdGlvblN0YXR1c1JlcXVlc3QSCgoCaWQYASABKAkSDgoGc3RhdHVzGAIgASgJIiYKJFNldENvbW1pc3Npb25EaXJlY3Rpb25TdGF0dXNSZXNwb25zZSIzCiVDbGVhckNvbW1pc3Npb25EaXJlY3Rpb25TdGF0dXNSZXF1ZXN0EgoKAmlkGAEgASgJIigKJkNsZWFyQ29tbWlzc2lvbkRpcmVjdGlvblN0YXR1c1Jlc3BvbnNlIlgKHFNldENvbW1pc3Npb25EZWFkbGluZVJlcXVlc3QSCgoCaWQYASABKAkSLAoIZGVhZGxpbmUYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIh8KHVNldENvbW1pc3Npb25EZWFkbGluZVJlc3BvbnNlIiwKHkNsZWFyQ29tbWlzc2lvbkRlYWRsaW5lUmVxdWVzdBIKCgJpZBgBIAEoCSIhCh9DbGVhckNvbW1pc3Npb25EZWFkbGluZVJlc3BvbnNlIkAKIlNldENvbW1pc3Npb25EZWFkbGluZVN0YXR1c1JlcXVlc3QSCgoCaWQYASABKAkSDgoGc3RhdHVzGAIgASgJIiUKI1NldENvbW1pc3Npb25EZWFkbGluZVN0YXR1c1Jlc3BvbnNlIjIKJENsZWFyQ29tbWlzc2lvbkRlYWRsaW5lU3RhdHVzUmVxdWVzdBIKCgJpZBgBIAEoCSInCiVDbGVhckNvbW1pc3Npb25EZWFkbGluZVN0YXR1c1Jlc3BvbnNlMpkNChFDb21taXNzaW9uU2VydmljZRKDAQoQQ3JlYXRlQ29tbWlzc2lvbhImLnp1cmZ1ci5hcGkudjEuQ3JlYXRlQ29tbWlzc2lvblJlcXVlc3QaJy56dXJmdXIuYXBpLnYxLkNyZWF0ZUNvbW1pc3Npb25SZXNwb25zZSIegtPkkwIYOgEqIhMvYXBpL3YxL2NvbW1pc3Npb25zEo4BChBSZW5hbWVDb21taXNzaW9uEiYuenVyZnVyLmFwaS52MS5SZW5hbWVDb21taXNzaW9uUmVxdWVzdBonLnp1cmZ1ci5hcGkudjEuUmVuYW1lQ29tbWlzc2lvblJlc3BvbnNlIimC0+STAiM6ASoyHi9hcGkvdjEvY29tbWlzc2lvbnMve2lkfS90aXRsZRJ8Cg1HZXRDb21taXNzaW9uEiMuenVyZnVyLmFwaS52MS5HZXRDb21taXNzaW9uUmVxdWVzdBokLnp1cmZ1ci5hcGkudjEuR2V0Q29tbWlzc2lvblJlc3BvbnNlIiCC0+STAhoSGC9hcGkvdjEvY29tbWlzc2lvbnMve2lkfRKnAQoXTW92ZUNvbW1pc3Npb25MaWZlY3ljbGUSLS56dXJmdXIuYXBpLnYxLk1vdmVDb21taXNzaW9uTGlmZWN5Y2xlUmVxdWVzdBouLnp1cmZ1ci5hcGkudjEuTW92ZUNvbW1pc3Npb25MaWZlY3ljbGVSZXNwb25zZSItgtPkkwInOgEqGiIvYXBpL3YxL2NvbW1pc3Npb25zL3tpZH0vbGlmZWN5Y2xlEr0BChxTZXRDb21taXNzaW9uRGlyZWN0aW9uU3RhdHVzEjIuenVyZnVyLmFwaS52MS5TZXRDb21taXNzaW9uRGlyZWN0aW9uU3RhdHVzUmVxdWVzdBozLnp1cmZ1ci5hcGkudjEuU2V0Q29tbWlzc2lvbkRpcmVjdGlvblN0YXR1c1Jlc3BvbnNlIjSC0+STAi46ASoaKS9hcGkvdjEvY29tbWlzc2lvbnMve2lkfS9zdGF0dXMvZGlyZWN0aW9uEsABCh5DbGVhckNvbW1pc3Npb25EaXJlY3Rpb25TdGF0dXMSNC56dXJmdXIuYXBpLnYxLkNsZWFyQ29tbWlzc2lvbkRpcmVjdGlvblN0YXR1c1JlcXVlc3QaNS56dXJmdXIuYXBpLnYxLkNsZWFyQ29tbWlzc2lvbkRpcmVjdGlvblN0YXR1c1Jlc3BvbnNlIjGC0+STAisqKS9hcGkvdjEvY29tbWlzc2lvbnMve2lkfS9zdGF0dXMvZGlyZWN0aW9uEqABChVTZXRDb21taXNzaW9uRGVhZGxpbmUSKy56dXJmdXIuYXBpLnYxLlNldENvbW1pc3Npb25EZWFkbGluZVJlcXVlc3QaLC56dXJmdXIuYXBpLnYxLlNldENvbW1pc3Npb25EZWFkbGluZVJlc3BvbnNlIiyC0+STAiY6ASoaIS9hcGkvdjEvY29tbWlzc2lvbnMve2lkfS9kZWFkbGluZRKjAQoXQ2xlYXJDb21taXNzaW9uRGVhZGxpbmUSLS56dXJmdXIuYXBpLnYxLkNsZWFyQ29tbWlzc2lvbkRlYWRsaW5lUmVxdWVzdBouLnp1cmZ1ci5hcGkudjEuQ2xlYXJDb21taXNzaW9uRGVhZGxpbmVSZXNwb25zZSIpgtPkkwIjKiEvYXBpL3YxL2NvbW1pc3Npb25zL3tpZH0vZGVhZGxpbmUSuQEKG1NldENvbW1pc3Npb25EZWFkbGluZVN0YXR1cxIxLnp1cmZ1ci5hcGkudjEuU2V0Q29tbWlzc2lvbkRlYWRsaW5lU3RhdHVzUmVxdWVzdBoyLnp1cmZ1ci5hcGkudjEuU2V0Q29tbWlzc2lvbkRlYWRsaW5lU3RhdHVzUmVzcG9uc2UiM4LT5JMCLToBKhooL2FwaS92MS9jb21taXNzaW9ucy97aWR9L3N0YXR1cy9kZWFkbGluZRK8AQodQ2xlYXJDb21taXNzaW9uRGVhZGxpbmVTdGF0dXMSMy56dXJmdXIuYXBpLnYxLkNsZWFyQ29tbWlzc2lvbkRlYWRsaW5lU3RhdHVzUmVxdWVzdBo0Lnp1cmZ1ci5hcGkudjEuQ2xlYXJDb21taXNzaW9uRGVhZGxpbmVTdGF0dXNSZXNwb25zZSIwgtPkkwIqKigvYXBpL3YxL2NvbW1pc3Npb25zL3tpZH0vc3RhdHVzL2RlYWRsaW5lYgZwcm90bzM", [file_google_api_annotations, file_google_protobuf_timestamp]);
+  fileDesc("Ch56dXJmdXIvYXBpL3YxL2NvbW1pc3Npb24ucHJvdG8SDXp1cmZ1ci5hcGkudjEinwMKGENyZWF0ZUNvbW1pc3Npb25SZXNwb25zZRIKCgJpZBgBIAEoCRINCgV0aXRsZRgCIAEoCRIRCglsaWZlY3ljbGUYAyABKAkSEgoKdmlzaWJpbGl0eRgEIAEoCRIxCghkZWFkbGluZRgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBIAIgBARIuCghtYXR1cml0eRgGIAEoCzIXLnp1cmZ1ci5hcGkudjEuTWF0dXJpdHlIAYgBARIdChBkaXJlY3Rpb25fc3RhdHVzGAcgASgJSAKIAQESHAoPZGVhZGxpbmVfc3RhdHVzGAggASgJSAOIAQESGwoObGlua2VkX2NoYW5uZWwYCSABKAlIBIgBARIuCgpjcmVhdGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEILCglfZGVhZGxpbmVCCwoJX21hdHVyaXR5QhMKEV9kaXJlY3Rpb25fc3RhdHVzQhIKEF9kZWFkbGluZV9zdGF0dXNCEQoPX2xpbmtlZF9jaGFubmVsIisKCE1hdHVyaXR5Eg4KBnJhdGluZxgBIAEoCRIPCgdncmFwaGljGAIgASgIIqUBChdDcmVhdGVDb21taXNzaW9uUmVxdWVzdBINCgV0aXRsZRgBIAEoCRIxCghkZWFkbGluZRgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBIAIgBARIuCghtYXR1cml0eRgDIAEoCzIXLnp1cmZ1ci5hcGkudjEuTWF0dXJpdHlIAYgBAUILCglfZGVhZGxpbmVCCwoJX21hdHVyaXR5IjQKF1JlbmFtZUNvbW1pc3Npb25SZXF1ZXN0EgoKAmlkGAEgASgJEg0KBXRpdGxlGAIgASgJIp8DChhSZW5hbWVDb21taXNzaW9uUmVzcG9uc2USCgoCaWQYASABKAkSDQoFdGl0bGUYAiABKAkSEQoJbGlmZWN5Y2xlGAMgASgJEhIKCnZpc2liaWxpdHkYBCABKAkSMQoIZGVhZGxpbmUYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wSACIAQESLgoIbWF0dXJpdHkYBiABKAsyFy56dXJmdXIuYXBpLnYxLk1hdHVyaXR5SAGIAQESHQoQZGlyZWN0aW9uX3N0YXR1cxgHIAEoCUgCiAEBEhwKD2RlYWRsaW5lX3N0YXR1cxgIIAEoCUgDiAEBEhsKDmxpbmtlZF9jaGFubmVsGAkgASgJSASIAQESLgoKY3JlYXRlZF9hdBgKIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCCwoJX2RlYWRsaW5lQgsKCV9tYXR1cml0eUITChFfZGlyZWN0aW9uX3N0YXR1c0ISChBfZGVhZGxpbmVfc3RhdHVzQhEKD19saW5rZWRfY2hhbm5lbCIiChRHZXRDb21taXNzaW9uUmVxdWVzdBIKCgJpZBgBIAEoCSK9AwoVR2V0Q29tbWlzc2lvblJlc3BvbnNlEgoKAmlkGAEgASgJEg0KBXRpdGxlGAIgASgJEhEKCWxpZmVjeWNsZRgDIAEoCRISCgp2aXNpYmlsaXR5GAQgASgJEjEKCGRlYWRsaW5lGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEgAiAEBEi4KCG1hdHVyaXR5GAYgASgLMhcuenVyZnVyLmFwaS52MS5NYXR1cml0eUgBiAEBEh0KEGRpcmVjdGlvbl9zdGF0dXMYByABKAlIAogBARIcCg9kZWFkbGluZV9zdGF0dXMYCCABKAlIA4gBARIuCgpjcmVhdGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIQCghhcmNoaXZlZBgLIAEoCBIMCgRhY3RzGAwgAygJEhkKEWxpZmVjeWNsZV90YXJnZXRzGA0gAygJQgsKCV9kZWFkbGluZUILCglfbWF0dXJpdHlCEwoRX2RpcmVjdGlvbl9zdGF0dXNCEgoQX2RlYWRsaW5lX3N0YXR1c0oECAkQClIObGlua2VkX2NoYW5uZWwiOAoeTW92ZUNvbW1pc3Npb25MaWZlY3ljbGVSZXF1ZXN0EgoKAmlkGAEgASgJEgoKAnRvGAIgASgJIiEKH01vdmVDb21taXNzaW9uTGlmZWN5Y2xlUmVzcG9uc2UiKwodUmFpc2VDb21taXNzaW9uRGlzcHV0ZVJlcXVlc3QSCgoCaWQYASABKAkiIAoeUmFpc2VDb21taXNzaW9uRGlzcHV0ZVJlc3BvbnNlIisKHUNsZWFyQ29tbWlzc2lvbkRpc3B1dGVSZXF1ZXN0EgoKAmlkGAEgASgJIiAKHkNsZWFyQ29tbWlzc2lvbkRpc3B1dGVSZXNwb25zZSJBCiNTZXRDb21taXNzaW9uRGlyZWN0aW9uU3RhdHVzUmVxdWVzdBIKCgJpZBgBIAEoCRIOCgZzdGF0dXMYAiABKAkiJgokU2V0Q29tbWlzc2lvbkRpcmVjdGlvblN0YXR1c1Jlc3BvbnNlIjMKJUNsZWFyQ29tbWlzc2lvbkRpcmVjdGlvblN0YXR1c1JlcXVlc3QSCgoCaWQYASABKAkiKAomQ2xlYXJDb21taXNzaW9uRGlyZWN0aW9uU3RhdHVzUmVzcG9uc2UiWAocU2V0Q29tbWlzc2lvbkRlYWRsaW5lUmVxdWVzdBIKCgJpZBgBIAEoCRIsCghkZWFkbGluZRgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiHwodU2V0Q29tbWlzc2lvbkRlYWRsaW5lUmVzcG9uc2UiLAoeQ2xlYXJDb21taXNzaW9uRGVhZGxpbmVSZXF1ZXN0EgoKAmlkGAEgASgJIiEKH0NsZWFyQ29tbWlzc2lvbkRlYWRsaW5lUmVzcG9uc2UiQAoiU2V0Q29tbWlzc2lvbkRlYWRsaW5lU3RhdHVzUmVxdWVzdBIKCgJpZBgBIAEoCRIOCgZzdGF0dXMYAiABKAkiJQojU2V0Q29tbWlzc2lvbkRlYWRsaW5lU3RhdHVzUmVzcG9uc2UiMgokQ2xlYXJDb21taXNzaW9uRGVhZGxpbmVTdGF0dXNSZXF1ZXN0EgoKAmlkGAEgASgJIicKJUNsZWFyQ29tbWlzc2lvbkRlYWRsaW5lU3RhdHVzUmVzcG9uc2Uy3Q8KEUNvbW1pc3Npb25TZXJ2aWNlEoMBChBDcmVhdGVDb21taXNzaW9uEiYuenVyZnVyLmFwaS52MS5DcmVhdGVDb21taXNzaW9uUmVxdWVzdBonLnp1cmZ1ci5hcGkudjEuQ3JlYXRlQ29tbWlzc2lvblJlc3BvbnNlIh6C0+STAhg6ASoiEy9hcGkvdjEvY29tbWlzc2lvbnMSjgEKEFJlbmFtZUNvbW1pc3Npb24SJi56dXJmdXIuYXBpLnYxLlJlbmFtZUNvbW1pc3Npb25SZXF1ZXN0GicuenVyZnVyLmFwaS52MS5SZW5hbWVDb21taXNzaW9uUmVzcG9uc2UiKYLT5JMCIzoBKjIeL2FwaS92MS9jb21taXNzaW9ucy97aWR9L3RpdGxlEnwKDUdldENvbW1pc3Npb24SIy56dXJmdXIuYXBpLnYxLkdldENvbW1pc3Npb25SZXF1ZXN0GiQuenVyZnVyLmFwaS52MS5HZXRDb21taXNzaW9uUmVzcG9uc2UiIILT5JMCGhIYL2FwaS92MS9jb21taXNzaW9ucy97aWR9EqcBChdNb3ZlQ29tbWlzc2lvbkxpZmVjeWNsZRItLnp1cmZ1ci5hcGkudjEuTW92ZUNvbW1pc3Npb25MaWZlY3ljbGVSZXF1ZXN0Gi4uenVyZnVyLmFwaS52MS5Nb3ZlQ29tbWlzc2lvbkxpZmVjeWNsZVJlc3BvbnNlIi2C0+STAic6ASoaIi9hcGkvdjEvY29tbWlzc2lvbnMve2lkfS9saWZlY3ljbGUSnwEKFlJhaXNlQ29tbWlzc2lvbkRpc3B1dGUSLC56dXJmdXIuYXBpLnYxLlJhaXNlQ29tbWlzc2lvbkRpc3B1dGVSZXF1ZXN0Gi0uenVyZnVyLmFwaS52MS5SYWlzZUNvbW1pc3Npb25EaXNwdXRlUmVzcG9uc2UiKILT5JMCIhogL2FwaS92MS9jb21taXNzaW9ucy97aWR9L2Rpc3B1dGUSnwEKFkNsZWFyQ29tbWlzc2lvbkRpc3B1dGUSLC56dXJmdXIuYXBpLnYxLkNsZWFyQ29tbWlzc2lvbkRpc3B1dGVSZXF1ZXN0Gi0uenVyZnVyLmFwaS52MS5DbGVhckNvbW1pc3Npb25EaXNwdXRlUmVzcG9uc2UiKILT5JMCIiogL2FwaS92MS9jb21taXNzaW9ucy97aWR9L2Rpc3B1dGUSvQEKHFNldENvbW1pc3Npb25EaXJlY3Rpb25TdGF0dXMSMi56dXJmdXIuYXBpLnYxLlNldENvbW1pc3Npb25EaXJlY3Rpb25TdGF0dXNSZXF1ZXN0GjMuenVyZnVyLmFwaS52MS5TZXRDb21taXNzaW9uRGlyZWN0aW9uU3RhdHVzUmVzcG9uc2UiNILT5JMCLjoBKhopL2FwaS92MS9jb21taXNzaW9ucy97aWR9L3N0YXR1cy9kaXJlY3Rpb24SwAEKHkNsZWFyQ29tbWlzc2lvbkRpcmVjdGlvblN0YXR1cxI0Lnp1cmZ1ci5hcGkudjEuQ2xlYXJDb21taXNzaW9uRGlyZWN0aW9uU3RhdHVzUmVxdWVzdBo1Lnp1cmZ1ci5hcGkudjEuQ2xlYXJDb21taXNzaW9uRGlyZWN0aW9uU3RhdHVzUmVzcG9uc2UiMYLT5JMCKyopL2FwaS92MS9jb21taXNzaW9ucy97aWR9L3N0YXR1cy9kaXJlY3Rpb24SoAEKFVNldENvbW1pc3Npb25EZWFkbGluZRIrLnp1cmZ1ci5hcGkudjEuU2V0Q29tbWlzc2lvbkRlYWRsaW5lUmVxdWVzdBosLnp1cmZ1ci5hcGkudjEuU2V0Q29tbWlzc2lvbkRlYWRsaW5lUmVzcG9uc2UiLILT5JMCJjoBKhohL2FwaS92MS9jb21taXNzaW9ucy97aWR9L2RlYWRsaW5lEqMBChdDbGVhckNvbW1pc3Npb25EZWFkbGluZRItLnp1cmZ1ci5hcGkudjEuQ2xlYXJDb21taXNzaW9uRGVhZGxpbmVSZXF1ZXN0Gi4uenVyZnVyLmFwaS52MS5DbGVhckNvbW1pc3Npb25EZWFkbGluZVJlc3BvbnNlIimC0+STAiMqIS9hcGkvdjEvY29tbWlzc2lvbnMve2lkfS9kZWFkbGluZRK5AQobU2V0Q29tbWlzc2lvbkRlYWRsaW5lU3RhdHVzEjEuenVyZnVyLmFwaS52MS5TZXRDb21taXNzaW9uRGVhZGxpbmVTdGF0dXNSZXF1ZXN0GjIuenVyZnVyLmFwaS52MS5TZXRDb21taXNzaW9uRGVhZGxpbmVTdGF0dXNSZXNwb25zZSIzgtPkkwItOgEqGigvYXBpL3YxL2NvbW1pc3Npb25zL3tpZH0vc3RhdHVzL2RlYWRsaW5lErwBCh1DbGVhckNvbW1pc3Npb25EZWFkbGluZVN0YXR1cxIzLnp1cmZ1ci5hcGkudjEuQ2xlYXJDb21taXNzaW9uRGVhZGxpbmVTdGF0dXNSZXF1ZXN0GjQuenVyZnVyLmFwaS52MS5DbGVhckNvbW1pc3Npb25EZWFkbGluZVN0YXR1c1Jlc3BvbnNlIjCC0+STAioqKC9hcGkvdjEvY29tbWlzc2lvbnMve2lkfS9zdGF0dXMvZGVhZGxpbmViBnByb3RvMw", [file_google_api_annotations, file_google_protobuf_timestamp]);
 
 /**
  * `POST /api/v1/commissions` succeeds `201` with the created commission —
@@ -384,8 +384,9 @@ export type GetCommissionResponse = Message<"zurfur.api.v1.GetCommissionResponse
   /**
    * Deadline axis of the two-dimensional status, if any, at the time of the request
    * (R8 vocabulary): `late` once the deadline has passed on a step that isn't
-   * `completed` or `cancelled`, else `delayed` when a Participant raised it. Absent
-   * with no deadline.
+   * `completed` or `cancelled`, else `delayed` when a Participant raised it. While
+   * `disputed`, the clock stands at the dispute's start: `late` only when the deadline
+   * had passed by then. Absent with no deadline.
    *
    * @generated from field: optional string deadline_status = 8;
    */
@@ -407,7 +408,8 @@ export type GetCommissionResponse = Message<"zurfur.api.v1.GetCommissionResponse
 
   /**
    * What the viewer may do to it now, by each call's act word, in this order when present:
-   * `rename` (the owner only), `move_lifecycle`, `set_direction_status`,
+   * `rename` (the owner only), `move_lifecycle`, `raise_dispute`, `clear_dispute`,
+   * `set_direction_status`,
    * `clear_direction_status`, `set_deadline`, `clear_deadline`, `set_delayed`,
    * `clear_delayed`. Empty for a viewer who holds no role on it. An act is listed when
    * its call would succeed for some value it takes; a listed call may still answer `204`
@@ -478,6 +480,79 @@ export const MoveCommissionLifecycleResponseSchema: GenMessage<MoveCommissionLif
   messageDesc(file_zurfur_api_v1_commission, 8);
 
 /**
+ * `PUT /api/v1/commissions/{id}/dispute` — a Participant raises a dispute. There is no body.
+ *
+ * @generated from message zurfur.api.v1.RaiseCommissionDisputeRequest
+ */
+export type RaiseCommissionDisputeRequest = Message<"zurfur.api.v1.RaiseCommissionDisputeRequest"> & {
+  /**
+   * Opaque commission id, from the path.
+   *
+   * @generated from field: string id = 1;
+   */
+  id: string;
+};
+
+/**
+ * Describes the message zurfur.api.v1.RaiseCommissionDisputeRequest.
+ * Use `create(RaiseCommissionDisputeRequestSchema)` to create a new message.
+ */
+export const RaiseCommissionDisputeRequestSchema: GenMessage<RaiseCommissionDisputeRequest> = /*@__PURE__*/
+  messageDesc(file_zurfur_api_v1_commission, 9);
+
+/**
+ * `PUT .../dispute` succeeds `204`; there is no body.
+ *
+ * @generated from message zurfur.api.v1.RaiseCommissionDisputeResponse
+ */
+export type RaiseCommissionDisputeResponse = Message<"zurfur.api.v1.RaiseCommissionDisputeResponse"> & {
+};
+
+/**
+ * Describes the message zurfur.api.v1.RaiseCommissionDisputeResponse.
+ * Use `create(RaiseCommissionDisputeResponseSchema)` to create a new message.
+ */
+export const RaiseCommissionDisputeResponseSchema: GenMessage<RaiseCommissionDisputeResponse> = /*@__PURE__*/
+  messageDesc(file_zurfur_api_v1_commission, 10);
+
+/**
+ * `DELETE /api/v1/commissions/{id}/dispute` — a Participant clears the dispute, returning
+ * the commission to the step it left. It takes no step.
+ *
+ * @generated from message zurfur.api.v1.ClearCommissionDisputeRequest
+ */
+export type ClearCommissionDisputeRequest = Message<"zurfur.api.v1.ClearCommissionDisputeRequest"> & {
+  /**
+   * Opaque commission id, from the path.
+   *
+   * @generated from field: string id = 1;
+   */
+  id: string;
+};
+
+/**
+ * Describes the message zurfur.api.v1.ClearCommissionDisputeRequest.
+ * Use `create(ClearCommissionDisputeRequestSchema)` to create a new message.
+ */
+export const ClearCommissionDisputeRequestSchema: GenMessage<ClearCommissionDisputeRequest> = /*@__PURE__*/
+  messageDesc(file_zurfur_api_v1_commission, 11);
+
+/**
+ * `DELETE .../dispute` succeeds `204`; there is no body.
+ *
+ * @generated from message zurfur.api.v1.ClearCommissionDisputeResponse
+ */
+export type ClearCommissionDisputeResponse = Message<"zurfur.api.v1.ClearCommissionDisputeResponse"> & {
+};
+
+/**
+ * Describes the message zurfur.api.v1.ClearCommissionDisputeResponse.
+ * Use `create(ClearCommissionDisputeResponseSchema)` to create a new message.
+ */
+export const ClearCommissionDisputeResponseSchema: GenMessage<ClearCommissionDisputeResponse> = /*@__PURE__*/
+  messageDesc(file_zurfur_api_v1_commission, 12);
+
+/**
  * `PUT /api/v1/commissions/{id}/status/direction` — a Participant sets the direction status.
  *
  * @generated from message zurfur.api.v1.SetCommissionDirectionStatusRequest
@@ -504,7 +579,7 @@ export type SetCommissionDirectionStatusRequest = Message<"zurfur.api.v1.SetComm
  * Use `create(SetCommissionDirectionStatusRequestSchema)` to create a new message.
  */
 export const SetCommissionDirectionStatusRequestSchema: GenMessage<SetCommissionDirectionStatusRequest> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 9);
+  messageDesc(file_zurfur_api_v1_commission, 13);
 
 /**
  * `PUT .../status/direction` succeeds `204`; there is no body.
@@ -519,7 +594,7 @@ export type SetCommissionDirectionStatusResponse = Message<"zurfur.api.v1.SetCom
  * Use `create(SetCommissionDirectionStatusResponseSchema)` to create a new message.
  */
 export const SetCommissionDirectionStatusResponseSchema: GenMessage<SetCommissionDirectionStatusResponse> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 10);
+  messageDesc(file_zurfur_api_v1_commission, 14);
 
 /**
  * `DELETE /api/v1/commissions/{id}/status/direction` — a Participant clears the direction
@@ -541,7 +616,7 @@ export type ClearCommissionDirectionStatusRequest = Message<"zurfur.api.v1.Clear
  * Use `create(ClearCommissionDirectionStatusRequestSchema)` to create a new message.
  */
 export const ClearCommissionDirectionStatusRequestSchema: GenMessage<ClearCommissionDirectionStatusRequest> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 11);
+  messageDesc(file_zurfur_api_v1_commission, 15);
 
 /**
  * `DELETE .../status/direction` succeeds `204`; there is no body.
@@ -556,7 +631,7 @@ export type ClearCommissionDirectionStatusResponse = Message<"zurfur.api.v1.Clea
  * Use `create(ClearCommissionDirectionStatusResponseSchema)` to create a new message.
  */
 export const ClearCommissionDirectionStatusResponseSchema: GenMessage<ClearCommissionDirectionStatusResponse> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 12);
+  messageDesc(file_zurfur_api_v1_commission, 16);
 
 /**
  * `PUT /api/v1/commissions/{id}/deadline` — a Participant sets or moves the deadline.
@@ -584,7 +659,7 @@ export type SetCommissionDeadlineRequest = Message<"zurfur.api.v1.SetCommissionD
  * Use `create(SetCommissionDeadlineRequestSchema)` to create a new message.
  */
 export const SetCommissionDeadlineRequestSchema: GenMessage<SetCommissionDeadlineRequest> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 13);
+  messageDesc(file_zurfur_api_v1_commission, 17);
 
 /**
  * `PUT .../deadline` succeeds `204`; there is no body.
@@ -599,7 +674,7 @@ export type SetCommissionDeadlineResponse = Message<"zurfur.api.v1.SetCommission
  * Use `create(SetCommissionDeadlineResponseSchema)` to create a new message.
  */
 export const SetCommissionDeadlineResponseSchema: GenMessage<SetCommissionDeadlineResponse> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 14);
+  messageDesc(file_zurfur_api_v1_commission, 18);
 
 /**
  * `DELETE /api/v1/commissions/{id}/deadline` — a Participant clears the deadline.
@@ -620,7 +695,7 @@ export type ClearCommissionDeadlineRequest = Message<"zurfur.api.v1.ClearCommiss
  * Use `create(ClearCommissionDeadlineRequestSchema)` to create a new message.
  */
 export const ClearCommissionDeadlineRequestSchema: GenMessage<ClearCommissionDeadlineRequest> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 15);
+  messageDesc(file_zurfur_api_v1_commission, 19);
 
 /**
  * `DELETE .../deadline` succeeds `204`; there is no body.
@@ -635,7 +710,7 @@ export type ClearCommissionDeadlineResponse = Message<"zurfur.api.v1.ClearCommis
  * Use `create(ClearCommissionDeadlineResponseSchema)` to create a new message.
  */
 export const ClearCommissionDeadlineResponseSchema: GenMessage<ClearCommissionDeadlineResponse> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 16);
+  messageDesc(file_zurfur_api_v1_commission, 20);
 
 /**
  * `PUT /api/v1/commissions/{id}/status/deadline` — a Participant raises the Delayed flag.
@@ -663,7 +738,7 @@ export type SetCommissionDeadlineStatusRequest = Message<"zurfur.api.v1.SetCommi
  * Use `create(SetCommissionDeadlineStatusRequestSchema)` to create a new message.
  */
 export const SetCommissionDeadlineStatusRequestSchema: GenMessage<SetCommissionDeadlineStatusRequest> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 17);
+  messageDesc(file_zurfur_api_v1_commission, 21);
 
 /**
  * `PUT .../status/deadline` succeeds `204`; there is no body.
@@ -678,7 +753,7 @@ export type SetCommissionDeadlineStatusResponse = Message<"zurfur.api.v1.SetComm
  * Use `create(SetCommissionDeadlineStatusResponseSchema)` to create a new message.
  */
 export const SetCommissionDeadlineStatusResponseSchema: GenMessage<SetCommissionDeadlineStatusResponse> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 18);
+  messageDesc(file_zurfur_api_v1_commission, 22);
 
 /**
  * `DELETE /api/v1/commissions/{id}/status/deadline` — a Participant takes the Delayed flag
@@ -700,7 +775,7 @@ export type ClearCommissionDeadlineStatusRequest = Message<"zurfur.api.v1.ClearC
  * Use `create(ClearCommissionDeadlineStatusRequestSchema)` to create a new message.
  */
 export const ClearCommissionDeadlineStatusRequestSchema: GenMessage<ClearCommissionDeadlineStatusRequest> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 19);
+  messageDesc(file_zurfur_api_v1_commission, 23);
 
 /**
  * `DELETE .../status/deadline` succeeds `204`; there is no body.
@@ -715,7 +790,7 @@ export type ClearCommissionDeadlineStatusResponse = Message<"zurfur.api.v1.Clear
  * Use `create(ClearCommissionDeadlineStatusResponseSchema)` to create a new message.
  */
 export const ClearCommissionDeadlineStatusResponseSchema: GenMessage<ClearCommissionDeadlineStatusResponse> = /*@__PURE__*/
-  messageDesc(file_zurfur_api_v1_commission, 20);
+  messageDesc(file_zurfur_api_v1_commission, 24);
 
 /**
  * The commissions service. Session-gated: signed out, every call answers `401`.
@@ -773,6 +848,31 @@ export const CommissionService: GenService<{
     methodKind: "unary";
     input: typeof MoveCommissionLifecycleRequestSchema;
     output: typeof MoveCommissionLifecycleResponseSchema;
+  },
+  /**
+   * Any Participant raises a dispute, from whatever step it holds, `draft` included: it stands
+   * `disputed`, keeping the step it left. `204`. `404` for anyone who holds no role on it,
+   * alike for an id that names nothing. `409 commission_disputed` while it is already
+   * disputed.
+   *
+   * @generated from rpc zurfur.api.v1.CommissionService.RaiseCommissionDispute
+   */
+  raiseCommissionDispute: {
+    methodKind: "unary";
+    input: typeof RaiseCommissionDisputeRequestSchema;
+    output: typeof RaiseCommissionDisputeResponseSchema;
+  },
+  /**
+   * Any Participant clears the dispute: the commission returns to exactly the step it left.
+   * `204`. `404` for anyone who holds no role on it, alike for an id that names nothing.
+   * `409 commission_not_disputed` when it isn't disputed.
+   *
+   * @generated from rpc zurfur.api.v1.CommissionService.ClearCommissionDispute
+   */
+  clearCommissionDispute: {
+    methodKind: "unary";
+    input: typeof ClearCommissionDisputeRequestSchema;
+    output: typeof ClearCommissionDisputeResponseSchema;
   },
   /**
    * Any Participant sets the direction status. `204`, with nothing changed when it already

@@ -8,10 +8,10 @@ use crate::elements::{
     commission::{
         AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
         CommissionFile, CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary,
-        DeadlineChange, DelayedChange, DirectionChange, ElementId, FileKey, FileSummary,
-        GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode, LockedStanding,
-        NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot,
-        TabId, TabRow,
+        DeadlineChange, DelayedChange, DirectionChange, Dispute, DisputeClear, ElementId, FileKey,
+        FileSummary, GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode,
+        LockedStanding, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
+        SeatInvitationId, Slot, TabId, TabRow,
     },
     workflow::{Column, ColumnId, WorkflowId},
 };
@@ -164,8 +164,8 @@ pub trait CommissionStore: Send + Sync {
 /// The **write** surface of Zurfur's record of commissions — reachable only on an
 /// open `UnitOfWork` (`uow.commissions()`). A create's authority is the den's write
 /// gate's create [`WriteCapability`], which [`create`](Self::create) takes; a lifecycle move's,
-/// a direction status's, a deadline's and a Delayed flag's is a Participant's, which their
-/// writes take. Every other method's authority, and the commission's own existence, are the
+/// a dispute's raise and clear, a direction status's, a deadline's and a Delayed flag's is a
+/// Participant's, which their writes take. Every other method's authority, and the commission's own existence, are the
 /// caller's checks, settled before it is reached.
 #[async_trait]
 pub trait CommissionWrites: Send {
@@ -188,6 +188,25 @@ pub trait CommissionWrites: Send {
         &mut self,
         capability: &WriteCapability<CommissionId, AsParticipant>,
         change: &LifecycleMove,
+    ) -> anyhow::Result<bool>;
+
+    /// Put the commission `capability` was issued for into Disputed from `dispute`'s held step,
+    /// storing that step and when the dispute began, by compare-and-set: the row changes only
+    /// while it still holds the held step. Answers `true` only when exactly one row changed.
+    async fn set_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        dispute: &Dispute,
+    ) -> anyhow::Result<bool>;
+
+    /// Return the commission `capability` was issued for from Disputed to the step its dispute
+    /// left, which must be `clear`'s, and forget the dispute, by compare-and-set: the row
+    /// changes only while it is still Disputed from that step. Answers `true` only when exactly
+    /// one row changed.
+    async fn clear_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        clear: &DisputeClear,
     ) -> anyhow::Result<bool>;
 
     /// Declare a [`NewSeat`] into a declared surface, as one element plus one

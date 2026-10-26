@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::{
-    commission::{create, deadline, lifecycle::move_to, rename, status::direction, sweep},
+    commission::{create, deadline, dispute, lifecycle::move_to, rename, status::direction, sweep},
     den::act::ActSpec,
 };
 
@@ -22,6 +22,10 @@ pub(crate) enum CommissionAct {
     Rename(rename::Act),
     /// Moves a commission's lifecycle step.
     MoveLifecycle(move_to::Act),
+    /// Raises a dispute on a commission.
+    RaiseDispute(dispute::raise::Act),
+    /// Clears a commission's dispute.
+    ClearDispute(dispute::clear::Act),
     /// Sets a commission's direction status.
     SetDirection(direction::set::Act),
     /// Clears a commission's direction status.
@@ -45,6 +49,8 @@ impl CommissionAct {
             CommissionAct::Create(act) => act.spec(),
             CommissionAct::Rename(act) => act.spec(),
             CommissionAct::MoveLifecycle(act) => act.spec(),
+            CommissionAct::RaiseDispute(act) => act.spec(),
+            CommissionAct::ClearDispute(act) => act.spec(),
             CommissionAct::SetDirection(act) => act.spec(),
             CommissionAct::ClearDirection(act) => act.spec(),
             CommissionAct::SetDeadline(act) => act.spec(),
@@ -63,6 +69,8 @@ impl fmt::Debug for CommissionAct {
             CommissionAct::Create(_) => "Create",
             CommissionAct::Rename(_) => "Rename",
             CommissionAct::MoveLifecycle(_) => "MoveLifecycle",
+            CommissionAct::RaiseDispute(_) => "RaiseDispute",
+            CommissionAct::ClearDispute(_) => "ClearDispute",
             CommissionAct::SetDirection(_) => "SetDirection",
             CommissionAct::ClearDirection(_) => "ClearDirection",
             CommissionAct::SetDeadline(_) => "SetDeadline",

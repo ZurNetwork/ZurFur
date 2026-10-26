@@ -24,6 +24,7 @@ pub mod create;
 pub mod deadline;
 pub mod delete;
 pub(crate) mod den;
+pub mod dispute;
 pub mod files;
 pub mod get;
 pub mod invitations;
@@ -136,6 +137,9 @@ pub enum CommissionError {
     /// The commission is Disputed, which holds what the act would change.
     #[error("Commission is disputed")]
     CommissionDisputed,
+    /// A dispute's clear on a commission that isn't Disputed.
+    #[error("Commission is not disputed")]
+    CommissionNotDisputed,
     /// The annotation failed [`Markup`](domain::elements::commission::Markup)'s
     /// numeric gate.
     #[error("Invalid markup")]
@@ -156,6 +160,7 @@ impl From<CommissionRefusal> for CommissionError {
             CommissionRefusal::CommissionLate => Self::CommissionLate,
             CommissionRefusal::LifecycleMoveRefused => Self::LifecycleMoveRefused,
             CommissionRefusal::CommissionDisputed => Self::CommissionDisputed,
+            CommissionRefusal::CommissionNotDisputed => Self::CommissionNotDisputed,
             CommissionRefusal::NothingOwed => {
                 CommonError::Infrastructure(anyhow::Error::new(refusal)).into()
             }

@@ -39,10 +39,12 @@ enum Deadline {
     Past,
 }
 
-/// One state of a probed commission, and who probes it.
+/// One state of a probed commission, and who probes it: the step it holds, or left when
+/// disputed.
 #[derive(Debug, Clone)]
 struct Case {
     step: LifecycleStep,
+    disputed: bool,
     deadline: Deadline,
     delayed: bool,
     role: CommissionRole,
@@ -58,21 +60,27 @@ impl Case {
     }
 }
 
-/// Every lifecycle step, each deadline, the Delayed flag stored or not, for the Owner and for
-/// a Participant.
+/// Every lifecycle step but Disputed, disputed from it or not, each deadline, the Delayed flag
+/// stored or not, for the Owner and for a Participant.
 fn every_case() -> Vec<Case> {
     let mut cases = Vec::new();
-    for step in LifecycleStep::VARIANTS {
-        for deadline in Deadline::VARIANTS {
-            for delayed in [false, true] {
-                for role in CommissionRole::VARIANTS {
-                    let case = Case {
-                        step: step.clone(),
-                        deadline: *deadline,
-                        delayed,
-                        role: *role,
-                    };
-                    cases.push(case);
+    let steps = LifecycleStep::VARIANTS
+        .iter()
+        .filter(|step| **step != LifecycleStep::Disputed);
+    for step in steps {
+        for disputed in [false, true] {
+            for deadline in Deadline::VARIANTS {
+                for delayed in [false, true] {
+                    for role in CommissionRole::VARIANTS {
+                        let case = Case {
+                            step: step.clone(),
+                            disputed,
+                            deadline: *deadline,
+                            delayed,
+                            role: *role,
+                        };
+                        cases.push(case);
+                    }
                 }
             }
         }
@@ -81,7 +89,8 @@ fn every_case() -> Vec<Case> {
 }
 
 /// A fresh commission in `world` at `case`'s state, owned by alice, bob a Participant: seeded
-/// at Draft, its deadline and flag set through the field acts, then moved to its step.
+/// at Draft, its deadline and flag set through the field acts, moved to its step, then, when
+/// the case is disputed, disputed from it through the raise at `now`.
 async fn seeded(world: &World, case: &Case, now: DateTimeUtc) -> CommissionId {
     let title = TITLE.parse::<CommissionTitle>().expect("a valid title");
     let mut seed = CommissionSeed::private(title, alice());
@@ -116,6 +125,11 @@ async fn seeded(world: &World, case: &Case, now: DateTimeUtc) -> CommissionId {
     world
         .backend
         .seed_lifecycle_step(commission, case.step.clone());
+    if case.disputed {
+        field_call(ports, &alice(), commission, FieldCall::RaiseDispute, now)
+            .await
+            .expect("the dispute is raised");
+    }
 
     let state = fields_of(ports, commission).await;
     let stored_flag = state.delayed_flag() == Some(DeadlineStatus::Delayed);
@@ -124,7 +138,14 @@ async fn seeded(world: &World, case: &Case, now: DateTimeUtc) -> CommissionId {
         Deadline::Future => Some(future()),
         Deadline::Past => Some(past()),
     };
-    assert_eq!(state.lifecycle_step(), &case.step, "{case:?}");
+    let held_step = if case.disputed {
+        LifecycleStep::Disputed
+    } else {
+        case.step.clone()
+    };
+    let left = state.dispute().map(|dispute| dispute.left.clone());
+    assert_eq!(state.lifecycle_step(), &held_step, "{case:?}");
+    assert_eq!(left, case.disputed.then(|| case.step.clone()), "{case:?}");
     assert_eq!(state.deadline(), expected_deadline, "{case:?}");
     assert_eq!(stored_flag, case.delayed, "{case:?}");
     commission
@@ -174,6 +195,8 @@ fn call_of(act: CommissionAct) -> Call {
         }
         CommissionAct::Rename(rename) => Call::Rename(rename.title),
         CommissionAct::MoveLifecycle(move_to) => Call::Move(move_to.to),
+        CommissionAct::RaiseDispute(_) => Call::Field(FieldCall::RaiseDispute),
+        CommissionAct::ClearDispute(_) => Call::Field(FieldCall::ClearDispute),
         CommissionAct::SetDirection(set) => Call::Field(FieldCall::SetDirection(set.to)),
         CommissionAct::ClearDirection(_) => Call::Field(FieldCall::ClearDirection),
         CommissionAct::SetDeadline(set) => {
@@ -195,7 +218,8 @@ fn worded(act: CommissionAct) -> WordedCall {
 
 /// The calls of the act of `kind` the list should try, written apart from the list: every
 /// lifecycle step, every direction status, the rename to the shown title, a deadline at `now` as
-/// the set act stores it, each clear and Delayed act once, and no create and no Late mark.
+/// the set act stores it, the dispute's raise and clear, each clear and Delayed act once, and no
+/// create and no Late mark.
 fn expected_calls(kind: CommissionActKind, now: DateTimeUtc) -> Vec<Call> {
     match kind {
         CommissionActKind::Create | CommissionActKind::MarkLate => Vec::new(),
@@ -207,6 +231,8 @@ fn expected_calls(kind: CommissionActKind, now: DateTimeUtc) -> Vec<Call> {
             .iter()
             .map(|step| Call::Move(step.clone()))
             .collect(),
+        CommissionActKind::RaiseDispute => vec![Call::Field(FieldCall::RaiseDispute)],
+        CommissionActKind::ClearDispute => vec![Call::Field(FieldCall::ClearDispute)],
         CommissionActKind::SetDirection => DirectionStatus::VARIANTS
             .iter()
             .map(|status| Call::Field(FieldCall::SetDirection(*status)))
@@ -222,12 +248,19 @@ fn expected_calls(kind: CommissionActKind, now: DateTimeUtc) -> Vec<Call> {
     }
 }
 
-/// How many acts a user may take on a stored commission: each kind the list should try.
-fn user_acts(now: DateTimeUtc) -> usize {
-    CommissionActKind::VARIANTS
+/// The words of the acts a user may take on a stored commission: each kind the list should
+/// try, sorted.
+fn user_acts(now: DateTimeUtc) -> Vec<&'static str> {
+    let commission = CommissionId::mint();
+    let title = TITLE.parse::<CommissionTitle>().expect("a valid title");
+    let mut words: Vec<&'static str> = CommissionActKind::VARIANTS
         .iter()
         .filter(|kind| !expected_calls(**kind, now).is_empty())
-        .count()
+        .filter_map(|kind| tried(*kind, commission, &title, now).into_iter().next())
+        .map(|act| act.spec().word)
+        .collect();
+    words.sort_unstable();
+    words
 }
 
 /// Every call the list tries on `commission` at `now`, and a deadline ahead and one past
@@ -310,15 +343,16 @@ async fn answered(
     }
 }
 
-// On every lifecycle step, with no deadline, one ahead or one past, the Delayed flag stored or
-// not, for the Owner and for a Participant: an act is listed exactly when some real call of it
-// lands, each on a fresh commission at that state, and a step is a target exactly when the real
-// move to it lands and records a change. Disputed is simply the Disputed step.
+// On every lifecycle step, disputed from it or not, with no deadline, one ahead or one past,
+// the Delayed flag stored or not, for the Owner and for a Participant: an act is listed exactly
+// when some real call of it lands, each on a fresh commission at that state, and a step is a
+// target exactly when the real move to it lands and records a change. Every user act is listed
+// on some state; the raise and the clear never on the same one.
 #[tokio::test]
 async fn the_acts_list_and_the_gate_agree_on_every_state() {
     let now = Utc::now();
     let user_acts = user_acts(now);
-    let mut lists_every_act = false;
+    let mut listed_somewhere: Vec<&'static str> = Vec::new();
 
     for case in every_case() {
         let world = test_world::world().await;
@@ -348,9 +382,23 @@ async fn the_acts_list_and_the_gate_agree_on_every_state() {
             !allowed.lifecycle_targets.contains(&case.step),
             "the held step is no target: {case:?}"
         );
-        lists_every_act |= listed.len() == user_acts;
+        let both = listed.contains(&"raise_dispute") && listed.contains(&"clear_dispute");
+        assert!(!both, "a raise and a clear listed together: {case:?}");
+        for word in listed_sorted {
+            let word = user_acts
+                .iter()
+                .find(|known| **known == word)
+                .unwrap_or_else(|| panic!("an act no user takes is listed: {word}"));
+            if !listed_somewhere.contains(word) {
+                listed_somewhere.push(word);
+            }
+        }
     }
-    assert!(lists_every_act, "no state lists every act");
+    listed_somewhere.sort_unstable();
+    assert_eq!(
+        listed_somewhere, user_acts,
+        "some act is listed on no state"
+    );
 }
 
 // The list tries each value of every act a user takes, as written apart from it, and nothing
@@ -371,14 +419,15 @@ fn the_list_tries_each_value_of_every_user_act() {
     }
 }
 
-// The list keeps one fixed order: the rename, the move, then the direction, deadline and
-// Delayed acts, each set before its clear.
+// The list keeps one fixed order: the rename, the move, the dispute's raise and clear, then the
+// direction, deadline and Delayed acts, each set before its clear.
 #[tokio::test]
 async fn the_owner_s_acts_come_in_the_contract_s_order() {
     let world = test_world::world().await;
     let now = Utc::now();
     let case = Case {
         step: LifecycleStep::Active,
+        disputed: false,
         deadline: Deadline::Future,
         delayed: true,
         role: CommissionRole::Owner,
@@ -391,6 +440,7 @@ async fn the_owner_s_acts_come_in_the_contract_s_order() {
     let expected_words = [
         "rename",
         "move_lifecycle",
+        "raise_dispute",
         "set_direction_status",
         "clear_direction_status",
         "set_deadline",
@@ -414,6 +464,7 @@ async fn no_role_lists_nothing() {
     let now = Utc::now();
     let case = Case {
         step: LifecycleStep::Active,
+        disputed: false,
         deadline: Deadline::Future,
         delayed: false,
         role: CommissionRole::Owner,
@@ -454,6 +505,7 @@ async fn archiving_changes_nothing_in_the_list() {
     let now = Utc::now();
     let case = Case {
         step: LifecycleStep::Active,
+        disputed: false,
         deadline: Deadline::Future,
         delayed: false,
         role: CommissionRole::Owner,

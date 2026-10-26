@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/api/src/routes/commissions",
-  "charted": "2026-10-23",
+  "charted": "2026-10-26",
   "short": "The commission JSON API, one file per act",
   "is": "The user-scoped commission API, one file per act, all behind a uniform closed-door 404 for non-participants — each act a thin driver over the matching `application::commission::*` use case.",
   "type": "code",
@@ -50,6 +50,11 @@
       "node": false
     },
     {
+      "name": "dispute.rs",
+      "role": "PUT /{id}/dispute → commission::dispute::raise and DELETE /{id}/dispute → commission::dispute::clear, each answering 204 and taking no body (a raise's body is ignored); 409 commission_disputed for a second raise and commission_not_disputed for a clear when not Disputed",
+      "node": false
+    },
+    {
       "name": "elements.rs",
       "role": "POST/DELETE elements, the flat composition write surface — NOT migrated: no use case exists, so require_owner + an inline UnitOfWork stay (TODO(engineer))",
       "node": false
@@ -86,7 +91,7 @@
     },
     {
       "name": "mod.rs",
-      "role": "router assembly, body limits, the CommissionError→Problem mapping (create, rename, the read and the lifecycle move map through it too), title_refused (a title the name rule refuses at parse, as a field error at #/title), and require_owner — the last driver-side gate, kept only for the unmigrated channel/elements acts",
+      "role": "router assembly, body limits, the CommissionError→Problem mapping (create, rename, the read, the lifecycle move and the dispute's raise and clear map through it too; CommissionNotDisputed → 409 commission_not_disputed), title_refused (a title the name rule refuses at parse, as a field error at #/title), and require_owner — the last driver-side gate, kept only for the unmigrated channel/elements acts",
       "node": false
     },
     {

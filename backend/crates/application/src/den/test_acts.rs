@@ -1,4 +1,4 @@
-//! Test-only acts: the real create, rename, field and Late acts as the den carries them, the
+//! Test-only acts: the real create, rename, dispute, field and Late acts as the den carries them, the
 //! system as an actor, each field act's typed use case called by one value, a commission's
 //! stored state at any step and with any field (and its entries and fields read back), and
 //! Atta's acts built by hand around a real act's body, for the tests that drive the write host
@@ -10,7 +10,7 @@ use domain::{
     elements::{
         commission::{
             Commission, CommissionDeadline, CommissionId, CommissionState, DeadlineStatus,
-            DirectionStatus, LifecycleStep, NewCommission,
+            DirectionStatus, LifecycleStep, NewCommission, StoredDispute,
         },
         did::Did,
         name::NodeName,
@@ -22,7 +22,7 @@ use crate::{
     Ports,
     commission::{
         CommissionError, Commissions, act::CommissionAct, create, deadline, den::CommissionPlace,
-        lifecycle::move_to, rename, status::direction, sweep,
+        dispute, lifecycle::move_to, rename, status::direction, sweep,
     },
     den::{DenType, Place, act::DenAct, host::type_key, names, write::commission_directory},
 };
@@ -57,6 +57,18 @@ pub(crate) fn rename_act(commission: CommissionId, text: &str) -> DenAct {
 pub(crate) fn move_act(commission: CommissionId, to: LifecycleStep) -> DenAct {
     let act = move_to::Act { commission, to };
     DenAct::Commission(CommissionAct::MoveLifecycle(act))
+}
+
+/// The dispute raised on the commission `commission`.
+pub(crate) fn raise_dispute_act(commission: CommissionId) -> DenAct {
+    let act = dispute::raise::Act { commission };
+    DenAct::Commission(CommissionAct::RaiseDispute(act))
+}
+
+/// The dispute on the commission `commission` cleared.
+pub(crate) fn clear_dispute_act(commission: CommissionId) -> DenAct {
+    let act = dispute::clear::Act { commission };
+    DenAct::Commission(CommissionAct::ClearDispute(act))
 }
 
 /// The direction set of the commission `commission` to `to`.
@@ -112,6 +124,10 @@ pub(crate) fn the_system() -> crate::den::write::Actor {
 /// One call of a field act's typed use case, by what it carries.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum FieldCall {
+    /// Raises a dispute.
+    RaiseDispute,
+    /// Clears the dispute.
+    ClearDispute,
     /// Sets the direction status.
     SetDirection(DirectionStatus),
     /// Clears the direction status.
@@ -137,6 +153,20 @@ pub(crate) async fn field_call(
     let actor_id = actor.clone();
     let commissions = Commissions::new(ports);
     match call {
+        FieldCall::RaiseDispute => {
+            let command = dispute::raise::Command {
+                actor_id,
+                commission_id: commission,
+            };
+            commissions.dispute().raise(command, now).await?;
+        }
+        FieldCall::ClearDispute => {
+            let command = dispute::clear::Command {
+                actor_id,
+                commission_id: commission,
+            };
+            commissions.dispute().clear(command, now).await?;
+        }
         FieldCall::SetDirection(to) => {
             let command = direction::set::Command {
                 actor_id,
@@ -214,21 +244,48 @@ pub(crate) fn state_at(step: LifecycleStep) -> CommissionState {
 }
 
 /// A stored commission's state at `step`, with `deadline`, the stored Delayed `flag` and the
-/// direction `status`, and no rating.
+/// direction `status`, and no rating; at Disputed, disputed from Active since it was made.
 pub(crate) fn state_with(
     step: LifecycleStep,
     deadline: Option<DateTimeUtc>,
     flag: Option<DeadlineStatus>,
     status: Option<DirectionStatus>,
 ) -> CommissionState {
+    let created_at = chrono::Utc::now();
+    let dispute = (step == LifecycleStep::Disputed).then_some(StoredDispute {
+        left: LifecycleStep::Active,
+        began: created_at,
+    });
     let commission = Commission {
         id: CommissionId::mint(),
         owner_id: UserId::from(Did::from("did:plc:state-owner".to_owned())),
         lifecycle_step: step,
+        dispute,
         deadline,
         maturity: None,
         direction_status: status,
         delayed_flag: flag,
+        linked_channel: None,
+        archived_at: None,
+        created_at,
+    };
+    CommissionState::from(&commission)
+}
+
+/// A stored commission's state disputed from `left`, with no deadline, flag, status or rating.
+pub(crate) fn state_disputed_from(left: LifecycleStep) -> CommissionState {
+    let commission = Commission {
+        id: CommissionId::mint(),
+        owner_id: UserId::from(Did::from("did:plc:state-owner".to_owned())),
+        lifecycle_step: LifecycleStep::Disputed,
+        dispute: Some(StoredDispute {
+            left,
+            began: chrono::Utc::now(),
+        }),
+        deadline: None,
+        maturity: None,
+        direction_status: None,
+        delayed_flag: None,
         linked_channel: None,
         archived_at: None,
         created_at: chrono::Utc::now(),

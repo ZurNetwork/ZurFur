@@ -64,8 +64,8 @@ pub async fn seed_stored(pool: &PgPool, owner: &UserId, title: &str) -> Commissi
 }
 
 /// Seeds, committed, a Private commission titled `title` and owned by `owner`, with the
-/// chosen `deadline`, and (when given) staged into `step` by a test-side update. Answers it
-/// as the store holds it.
+/// chosen `deadline`, and (when given) staged into `step` by a test-side update; staged into
+/// Disputed, it is disputed from Active since now. Answers it as the store holds it.
 pub async fn seed_chosen(
     pool: &PgPool,
     owner: &UserId,
@@ -101,12 +101,17 @@ pub async fn seed_chosen(
         .expect("create the commission");
     unit.commit().await.expect("commit the commission");
     if let Some(step) = step {
-        sqlx::query("UPDATE commission SET lifecycle = $2 WHERE id = $1")
-            .bind(uuid::Uuid::from(id))
-            .bind(<&'static str>::from(&step))
-            .execute(pool)
-            .await
-            .expect("stage the lifecycle step");
+        sqlx::query(
+            "UPDATE commission SET lifecycle = $2,
+                 disputed_from = CASE WHEN $2 = 'disputed' THEN 'active' END,
+                 disputed_at = CASE WHEN $2 = 'disputed' THEN now() END
+             WHERE id = $1",
+        )
+        .bind(uuid::Uuid::from(id))
+        .bind(<&'static str>::from(&step))
+        .execute(pool)
+        .await
+        .expect("stage the lifecycle step");
     }
     stored(pool, id).await
 }

@@ -18,10 +18,10 @@ use domain::elements::{
     commission::{
         AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
         CommissionFile, CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary,
-        DeadlineChange, DelayedChange, DirectionChange, ElementId, FileKey, FileSummary,
-        GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode, LockedStanding,
-        NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot,
-        TabId, TabRow,
+        DeadlineChange, DelayedChange, DirectionChange, Dispute, DisputeClear, ElementId, FileKey,
+        FileSummary, GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode,
+        LockedStanding, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
+        SeatInvitationId, Slot, TabId, TabRow,
     },
     did::Did,
     handle::Handle,
@@ -727,6 +727,22 @@ impl CommissionWrites for ScriptedStandingRepo<'_> {
         change: &LifecycleMove,
     ) -> anyhow::Result<bool> {
         self.inner.set_lifecycle(capability, change).await
+    }
+
+    async fn set_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        dispute: &Dispute,
+    ) -> anyhow::Result<bool> {
+        self.inner.set_dispute(capability, dispute).await
+    }
+
+    async fn clear_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        clear: &DisputeClear,
+    ) -> anyhow::Result<bool> {
+        self.inner.clear_dispute(capability, clear).await
     }
 
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {

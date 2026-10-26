@@ -197,8 +197,8 @@ impl DenWorld {
         self.store_level(commission, UNPARSABLE_LEVEL).await;
     }
 
-    /// Puts `commission` at the lifecycle `step`, a test-only update: no route moves it into
-    /// Disputed.
+    /// Puts `commission` at the undisputed lifecycle `step`, a test-only update past the moves'
+    /// rules; the dispute CHECK refuses Disputed, which only the dispute's raise enters.
     pub async fn set_lifecycle_step(&self, commission: CommissionId, step: LifecycleStep) {
         let updated = sqlx::query("UPDATE commission SET lifecycle = $1 WHERE id = $2")
             .bind(step.to_string())

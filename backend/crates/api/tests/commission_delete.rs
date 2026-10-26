@@ -31,9 +31,10 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
         AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
-        CommissionMarkup, CommissionTitle, DeadlineChange, DelayedChange, DirectionChange,
-        ElementId, GrantLevel, LateKinds, LifecycleMove, LockedNode, LockedStanding, NewCommission,
-        NewElement, NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId, element::TabRow,
+        CommissionMarkup, CommissionTitle, DeadlineChange, DelayedChange, DirectionChange, Dispute,
+        DisputeClear, ElementId, GrantLevel, LateKinds, LifecycleMove, LockedNode, LockedStanding,
+        NewCommission, NewElement, NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId,
+        element::TabRow,
     },
     did::Did,
     maturity::Maturity,
@@ -375,6 +376,22 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         change: &LifecycleMove,
     ) -> anyhow::Result<bool> {
         self.0.set_lifecycle(capability, change).await
+    }
+
+    async fn set_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        dispute: &Dispute,
+    ) -> anyhow::Result<bool> {
+        self.0.set_dispute(capability, dispute).await
+    }
+
+    async fn clear_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        clear: &DisputeClear,
+    ) -> anyhow::Result<bool> {
+        self.0.clear_dispute(capability, clear).await
     }
 
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {

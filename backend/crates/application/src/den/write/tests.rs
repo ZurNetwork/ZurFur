@@ -14,6 +14,7 @@ use domain::{
         commission::{
             ChangelogEntry, ChangelogEntryKind, CommissionId, CommissionRole, CommissionStanding,
             CommissionState, DeadlineStatus, DirectionStatus, LifecycleStep, LockedStanding,
+            StoredDispute,
         },
         did::Did,
         level::Level,
@@ -38,10 +39,11 @@ use crate::{
         authority::{GrantKind, MINT_AS},
         gate::{DenApplied, DenRefusal},
         test_acts::{
-            FieldCall, clear_deadline_act, clear_delayed_act, clear_direction_act, commission_path,
-            create_act, field_call, fields_of, hand_built_create, hand_built_create_of,
-            hand_built_rename, hand_built_rename_of, move_act, rename_act, set_deadline_act,
-            set_delayed_act, set_direction_act, state_at, state_with,
+            FieldCall, clear_deadline_act, clear_delayed_act, clear_direction_act,
+            clear_dispute_act, commission_path, create_act, field_call, fields_of,
+            hand_built_create, hand_built_create_of, hand_built_rename, hand_built_rename_of,
+            move_act, raise_dispute_act, rename_act, set_deadline_act, set_delayed_act,
+            set_direction_act, state_at, state_disputed_from, state_with,
         },
     },
     test_world, transaction,
@@ -1084,9 +1086,63 @@ async fn each_stale_field_act_fails(ports: &Ports, actor: &UserId, commission: C
     .await;
 }
 
+/// Each stale dispute act on `commission`, `actor`'s, held at Active: a raise checked from Draft
+/// and a clear checked as Disputed while the row isn't; then, the dispute raised for real, a
+/// raise checked from Active and a clear checked back to Draft while the row is Disputed from
+/// Active. Each matches no row and fails; the real clear lands it back at Active.
+async fn each_stale_dispute_act_fails(ports: &Ports, actor: &UserId, commission: CommissionId) {
+    assert_eq!(step_of(ports, commission).await, LifecycleStep::Active);
+    let undisputed = [
+        (
+            state_at(LifecycleStep::Draft),
+            raise_dispute_act(commission),
+        ),
+        (
+            state_disputed_from(LifecycleStep::Active),
+            clear_dispute_act(commission),
+        ),
+    ];
+    for (stale, act) in undisputed {
+        a_stale_field_act_fails(ports, actor, commission, stale, act).await;
+    }
+    field_call(
+        ports,
+        actor,
+        commission,
+        FieldCall::RaiseDispute,
+        Utc::now(),
+    )
+    .await
+    .expect("the dispute is raised");
+    let disputed = [
+        (
+            state_at(LifecycleStep::Active),
+            raise_dispute_act(commission),
+        ),
+        (
+            state_disputed_from(LifecycleStep::Draft),
+            clear_dispute_act(commission),
+        ),
+    ];
+    for (stale, act) in disputed {
+        a_stale_field_act_fails(ports, actor, commission, stale, act).await;
+    }
+    field_call(
+        ports,
+        actor,
+        commission,
+        FieldCall::ClearDispute,
+        Utc::now(),
+    )
+    .await
+    .expect("the dispute clears");
+    assert_eq!(step_of(ports, commission).await, LifecycleStep::Active);
+}
+
 // A grant whose state is stale checks a change from a value the row no longer holds: the
 // compare-and-set matches no row, so the act fails and nothing lands. So for the lifecycle
-// move, and for each field write: the direction status, the deadline and the Delayed flag.
+// move, the dispute's raise and clear, and for each field write: the direction status, the
+// deadline and the Delayed flag.
 #[tokio::test]
 async fn a_stale_from_matches_no_row_and_fails_the_act() {
     let world = world().await;
@@ -1095,6 +1151,7 @@ async fn a_stale_from_matches_no_row_and_fails_the_act() {
         .seed_lifecycle_step(untitled(), LifecycleStep::Active);
 
     a_stale_move_fails(&world.ports, &alice(), untitled()).await;
+    each_stale_dispute_act_fails(&world.ports, &alice(), untitled()).await;
     each_stale_field_act_fails(&world.ports, &alice(), untitled()).await;
 }
 
@@ -1108,6 +1165,7 @@ async fn a_stale_from_matches_no_row_and_fails_the_act_on_postgres() {
         .expect("the owner moves it to Active");
 
     a_stale_move_fails(&ports, &owner, commission).await;
+    each_stale_dispute_act_fails(&ports, &owner, commission).await;
     each_stale_field_act_fails(&ports, &owner, commission).await;
 }
 
@@ -1130,11 +1188,22 @@ async fn one_entry_in_the_move_s_unit(ports: &mut Ports, actor: &UserId, commiss
     assert_eq!(step_of(ports, commission).await, LifecycleStep::Active);
 }
 
-/// Each field act but the move, in order, on a commission that holds no status, deadline or
-/// flag, with the kind and the literal payload of the one entry each writes.
-fn field_acts_and_their_entries() -> [(FieldCall, ChangelogEntryKind, serde_json::Value); 7] {
+/// Each field act but the move, in order, on an Active commission that holds no status,
+/// deadline or flag, with the kind and the literal payload of the one entry each writes: the
+/// dispute raised and cleared, then each direction, deadline and Delayed act.
+fn field_acts_and_their_entries() -> [(FieldCall, ChangelogEntryKind, serde_json::Value); 9] {
     let waiting = DirectionStatus::WaitingForInput;
     [
+        (
+            FieldCall::RaiseDispute,
+            ChangelogEntryKind::LifecycleMoved,
+            serde_json::json!({ "from": "active", "to": "disputed" }),
+        ),
+        (
+            FieldCall::ClearDispute,
+            ChangelogEntryKind::LifecycleMoved,
+            serde_json::json!({ "from": "disputed", "to": "active" }),
+        ),
         (
             FieldCall::SetDirection(waiting),
             ChangelogEntryKind::StatusChanged,
@@ -1205,17 +1274,20 @@ async fn one_entry_in_each_field_act_s_unit(
         assert_eq!(log.events()[units..], ["begin", "commit"], "{call:?}");
         assert_eq!(entry.kind, kind, "{call:?}");
         assert_eq!(entry.payload, payload, "{call:?}");
+        assert_eq!(entry.payload.to_string(), payload.to_string(), "{call:?}");
         assert_eq!(entry.actor_id.as_ref(), Some(actor), "{call:?}");
         assert_eq!(entry.note, None, "{call:?}");
     }
     let left = fields_of(ports, commission).await;
+    assert_eq!(left.lifecycle_step(), &LifecycleStep::Active);
+    assert_eq!(left.dispute(), None);
     assert_eq!(left.direction_status(), None);
     assert_eq!(left.deadline(), None);
     assert_eq!(left.delayed_flag(), None);
 }
 
-// A field act's write and its one entry land in the act's one unit: the lifecycle move, then
-// each direction, deadline and Delayed act.
+// A field act's write and its one entry land in the act's one unit: the lifecycle move, the
+// dispute's raise and clear, then each direction, deadline and Delayed act.
 #[tokio::test]
 async fn each_field_act_writes_one_entry_in_its_unit() {
     let mut world = world().await;
@@ -1234,21 +1306,122 @@ async fn each_field_act_writes_one_entry_in_its_unit_on_postgres() {
     one_entry_in_each_field_act_s_unit(&mut ports, &owner, commission).await;
 }
 
-// The move's entry can't be appended: the act's unit rolls back whole, so the step isn't moved.
+/// Untitled's world with every changelog append refused from here on, and the database that
+/// lands them, to hand back.
+async fn refusing_world() -> (test_world::World, Arc<dyn Database>) {
+    let mut world = world().await;
+    let landing = world.ports.database.clone();
+    world.ports.database = Arc::new(RefusingChangelogDatabase(landing.clone()));
+    (world, landing)
+}
+
+/// Whether `call` by bob on Untitled in `world`, whose appends are refused, fails and leaves the
+/// fields as they were; `label` names it in the answer when it doesn't.
+async fn stays_unwritten(
+    world: &test_world::World,
+    call: FieldCall,
+    label: &'static str,
+) -> Option<&'static str> {
+    let before = fields_of(&world.ports, untitled()).await;
+    let called = field_call(&world.ports, &bob(), untitled(), call, Utc::now()).await;
+    let after = fields_of(&world.ports, untitled()).await;
+    (called.is_ok() || after != before).then_some(label)
+}
+
+// An act's entry can't be appended: the act's unit rolls back whole, so its field isn't
+// written. So for the lifecycle move, which leaves the step at Draft; the dispute's raise, which
+// leaves no dispute stored; and its clear, which leaves the commission Disputed.
 #[tokio::test]
 async fn a_refused_append_leaves_the_field_unwritten() {
-    let mut world = world().await;
-    let refusing = RefusingChangelogDatabase(world.ports.database.clone());
-    world.ports.database = Arc::new(refusing);
+    let mut landed = Vec::new();
 
+    let (moving, _) = refusing_world().await;
     let moved =
-        move_through_the_use_case(&world.ports, &bob(), untitled(), LifecycleStep::Active).await;
+        move_through_the_use_case(&moving.ports, &bob(), untitled(), LifecycleStep::Active).await;
+    let unmoved = step_of(&moving.ports, untitled()).await == LifecycleStep::Draft;
+    if moved.is_ok() || !unmoved {
+        landed.push("the move");
+    }
+    let (raising, _) = refusing_world().await;
+    landed.extend(stays_unwritten(&raising, FieldCall::RaiseDispute, "the raise").await);
+    let (mut clearing, landing) = refusing_world().await;
+    let refusing = clearing.ports.database.clone();
+    clearing.ports.database = landing;
+    field_call(
+        &clearing.ports,
+        &bob(),
+        untitled(),
+        FieldCall::RaiseDispute,
+        Utc::now(),
+    )
+    .await
+    .expect("the dispute is raised");
+    clearing.ports.database = refusing;
+    landed.extend(stays_unwritten(&clearing, FieldCall::ClearDispute, "the clear").await);
 
-    assert!(moved.is_err(), "{moved:?}");
     assert_eq!(
-        step_of(&world.ports, untitled()).await,
-        LifecycleStep::Draft
+        landed,
+        Vec::<&str>::new(),
+        "a refused append left these written"
     );
+    let disputed = fields_of(&clearing.ports, untitled()).await;
+    assert_eq!(disputed.lifecycle_step(), &LifecycleStep::Disputed);
+}
+
+/// `actor`'s dispute on `commission`, held at Draft, raised at `raised_at` and then cleared:
+/// Disputed from Draft since then, then Draft again with no dispute stored.
+async fn a_dispute_from_draft_clears_back(ports: &Ports, actor: &UserId, commission: CommissionId) {
+    assert_eq!(step_of(ports, commission).await, LifecycleStep::Draft);
+    let raised_at = Utc::now();
+
+    field_call(ports, actor, commission, FieldCall::RaiseDispute, raised_at)
+        .await
+        .expect("the dispute is raised");
+
+    let disputed = fields_of(ports, commission).await;
+    let held = disputed
+        .dispute()
+        .cloned()
+        .expect("a Disputed commission keeps its dispute");
+    assert_eq!(disputed.lifecycle_step(), &LifecycleStep::Disputed);
+    assert_eq!(held.left, LifecycleStep::Draft);
+    let began_gap = (held.began - raised_at).num_microseconds().map(i64::abs);
+    assert!(
+        began_gap.is_some_and(|gap| gap < 1),
+        "the dispute began when it was raised, to the store's microsecond: {held:?}"
+    );
+
+    field_call(
+        ports,
+        actor,
+        commission,
+        FieldCall::ClearDispute,
+        Utc::now(),
+    )
+    .await
+    .expect("the dispute clears");
+
+    let cleared = fields_of(ports, commission).await;
+    assert_eq!(cleared.lifecycle_step(), &LifecycleStep::Draft);
+    assert_eq!(cleared.dispute(), None::<&StoredDispute>);
+}
+
+// A dispute raised on a Draft commission clears back to Draft: the step it left, stored beside
+// when it began, and forgotten once cleared.
+#[tokio::test]
+async fn a_dispute_from_draft_clears_back_to_draft() {
+    let world = world().await;
+
+    a_dispute_from_draft_clears_back(&world.ports, &bob(), untitled()).await;
+}
+
+#[tokio::test]
+async fn a_dispute_from_draft_clears_back_to_draft_on_postgres() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let (owner, commission) = pg_seed(&ports, "did:plc:den-write-pg-dispute-draft").await;
+
+    a_dispute_from_draft_clears_back(&ports, &owner, commission).await;
 }
 
 /// The field acts that change nothing on a commission holding no status, deadline or flag:

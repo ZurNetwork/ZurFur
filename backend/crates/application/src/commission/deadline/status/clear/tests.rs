@@ -2,7 +2,7 @@ use adapter_mem::fixture::{bob, untitled};
 use chrono::Utc;
 use domain::{
     datetime::DateTimeUtc,
-    elements::commission::{ChangelogEntryKind, DeadlineStatus, LifecycleStep},
+    elements::commission::{ChangelogEntryKind, DeadlineStatus},
 };
 
 use crate::{
@@ -30,9 +30,15 @@ async fn delayed_is_taken_down_while_disputed() {
             .await
             .expect("bob raises the flag");
     }
-    world
-        .backend
-        .seed_lifecycle_step(untitled(), LifecycleStep::Disputed);
+    field_call(
+        &world.ports,
+        &bob(),
+        untitled(),
+        FieldCall::RaiseDispute,
+        Utc::now(),
+    )
+    .await
+    .expect("bob raises a dispute");
     let before = entries_of(&world.ports, untitled()).await.len();
 
     field_call(

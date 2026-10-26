@@ -10,9 +10,10 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
         AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
-        CommissionMarkup, DeadlineChange, DelayedChange, DirectionChange, ElementId, GrantLevel,
-        LateKinds, LifecycleMove, LockedNode, LockedStanding, NewChangelogEntry, NewCommission,
-        NewElement, NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId, TabRow,
+        CommissionMarkup, DeadlineChange, DelayedChange, DirectionChange, Dispute, DisputeClear,
+        ElementId, GrantLevel, LateKinds, LifecycleMove, LockedNode, LockedStanding,
+        NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot, SeatInvitation,
+        SeatInvitationId, TabId, TabRow,
     },
     maturity::Maturity,
     user::UserId,
@@ -286,6 +287,24 @@ impl CommissionWrites for SpyRepo<'_> {
         self.spy.record("set_lifecycle");
         let landed = self.inner.set_lifecycle(capability, change).await?;
         Ok(landed || self.spy.lifecycle_lands)
+    }
+
+    async fn set_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        dispute: &Dispute,
+    ) -> anyhow::Result<bool> {
+        self.spy.record("set_dispute");
+        self.inner.set_dispute(capability, dispute).await
+    }
+
+    async fn clear_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        clear: &DisputeClear,
+    ) -> anyhow::Result<bool> {
+        self.spy.record("clear_dispute");
+        self.inner.clear_dispute(capability, clear).await
     }
 
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {

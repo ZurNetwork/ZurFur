@@ -8,8 +8,8 @@ use domain::{
     elements::{
         commission::{
             ChangelogEntryKind, Commission, CommissionId, CommissionRole, DeadlineCleared,
-            DeadlineSet, DelayedCleared, DelayedSet, DirectionCleared, DirectionSet, LateMark,
-            LifecycleMove, NewChangelogEntry,
+            DeadlineSet, DelayedCleared, DelayedSet, DirectionCleared, DirectionSet, Dispute,
+            DisputeClear, LateMark, LifecycleMove, NewChangelogEntry,
         },
         level::Level,
         name::NodeName,
@@ -223,6 +223,32 @@ impl GatedEntry<LifecycleMove> {
     pub(crate) const LIFECYCLE_MOVED: Self = Self {
         kinds: &[ChangelogEntryKind::LifecycleMoved],
         constructor: EntryConstructor::Change(NewChangelogEntry::lifecycle_moved),
+    };
+}
+
+impl GatedEntry<Dispute> {
+    /// A dispute's raise entry: kind `LifecycleMoved`, by `NewChangelogEntry::disputed`, from
+    /// the dispute the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
+    pub(crate) const DISPUTED: Self = Self {
+        kinds: &[ChangelogEntryKind::LifecycleMoved],
+        constructor: EntryConstructor::Change(NewChangelogEntry::disputed),
+    };
+}
+
+impl GatedEntry<DisputeClear> {
+    /// A dispute's clear entry: kind `LifecycleMoved`, by `NewChangelogEntry::dispute_cleared`,
+    /// from the clear the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
+    pub(crate) const DISPUTE_CLEARED: Self = Self {
+        kinds: &[ChangelogEntryKind::LifecycleMoved],
+        constructor: EntryConstructor::Change(NewChangelogEntry::dispute_cleared),
     };
 }
 

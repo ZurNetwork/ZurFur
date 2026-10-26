@@ -606,7 +606,7 @@
     {
       "page": 3276807,
       "title": "Commission",
-      "governs": "den.rs: a commission's stored visibility is its own Den level (Private, Listed, Public)"
+      "governs": "den.rs: a commission's stored visibility is its own Den level (Private, Listed, Public); dispute/raise.rs and dispute/clear.rs: any Participant raises or clears Disputed, a plain move in the alpha (Dispute handling, amended 2026-10-24)"
     },
     {
       "page": 24150017,
@@ -1060,7 +1060,7 @@
     {
       "page": 3276807,
       "title": "Commission",
-      "governs": "commission.rs"
+      "governs": "commission.rs; commission/dispute.rs, deadline.rs and lifecycle.rs: Disputed is a plain move in the alpha, raised from any step and cleared back to the step it left by any Participant, and it freezes the deadline (Dispute handling, amended 2026-10-24)"
     },
     {
       "page": 5931025,

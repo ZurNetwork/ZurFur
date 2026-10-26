@@ -170,20 +170,34 @@ async fn a_stranger_and_a_made_up_id_get_the_same_404() {
     assert_eq!(lifecycle_of(&world.alice, &world, &untitled).await, "draft");
 }
 
-// While Disputed no move is made, the held step's included: 409 `commission_disputed`.
+// No move enters Disputed, whatever step it holds: 409 `lifecycle_move_refused`. While Disputed,
+// raised through its own call, no move is made, out of it or to the held step: 409
+// `commission_disputed`.
 #[tokio::test]
 async fn a_disputed_commission_answers_its_code() {
     let world = pg_app::den_world(api::app).await;
     let untitled = world.untitled.id.to_string();
-    world
-        .set_lifecycle_step(
-            world.untitled.id,
-            domain::elements::commission::LifecycleStep::Disputed,
-        )
-        .await;
-    let to_active = json!({ "to": "active" });
+    let to_disputed = json!({ "to": "disputed" });
+    let into = put_lifecycle(&world.bob, &world, &untitled, &to_disputed).await;
+    common::assert_problem(into, 409, "lifecycle_move_refused").await;
+    let raised = world
+        .bob
+        .put(format!(
+            "{}/commissions/{untitled}/dispute",
+            world.base_url()
+        ))
+        .send()
+        .await
+        .expect("PUT …/dispute is answered");
+    assert_eq!(raised.status(), 204);
 
-    let refused = put_lifecycle(&world.bob, &world, &untitled, &to_active).await;
+    for to in [json!({ "to": "active" }), to_disputed] {
+        let refused = put_lifecycle(&world.bob, &world, &untitled, &to).await;
 
-    common::assert_problem(refused, 409, "commission_disputed").await;
+        common::assert_problem(refused, 409, "commission_disputed").await;
+    }
+    assert_eq!(
+        lifecycle_of(&world.bob, &world, &untitled).await,
+        "disputed"
+    );
 }

@@ -196,6 +196,43 @@ fn late_is_derived_at_the_given_time() {
     assert_eq!(unflagged.delayed_flag(), None, "Late is never stored");
 }
 
+// While Disputed, Late is read at the dispute's start: a deadline missed before the raise reads
+// Late all through the dispute; one passing after it doesn't, until the clear lets the clock
+// run again.
+#[test]
+fn late_freezes_at_the_dispute_s_start() {
+    let missed_before = crate::elements::commission::test_commission::disputed(
+        LifecycleStep::Active,
+        april(),
+        Some(march()),
+    );
+    let passing_after = crate::elements::commission::test_commission::disputed(
+        LifecycleStep::Active,
+        february(),
+        Some(march()),
+    );
+    let cleared = state(LifecycleStep::Active, Some(march()), None);
+
+    assert_eq!(
+        CommissionState::from(&missed_before).deadline_status_at(may()),
+        Some(DeadlineStatus::Late)
+    );
+    assert_eq!(
+        missed_before.deadline_status_at(may()),
+        Some(DeadlineStatus::Late)
+    );
+    assert_eq!(
+        CommissionState::from(&passing_after).deadline_status_at(may()),
+        None
+    );
+    assert_eq!(passing_after.deadline_status_at(may()), None);
+    assert_eq!(
+        cleared.deadline_status_at(may()),
+        Some(DeadlineStatus::Late),
+        "the clear resumes the clock"
+    );
+}
+
 // While Late (derived, the stored flag empty) the Delayed flag can be neither raised nor
 // taken down.
 #[test]

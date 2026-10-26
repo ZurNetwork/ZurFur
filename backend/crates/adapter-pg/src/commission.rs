@@ -11,12 +11,12 @@ use domain::{
             AsParticipant, Band, ChannelPointer, Commission, CommissionBirth,
             CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionRole,
             CommissionStanding, CommissionStart, CommissionSummary, DeadlineChange, DeadlineStatus,
-            DelayedChange, DirectionChange, DirectionStatus, ElementId, ElementPayload, ElementRow,
-            ElementType, FileKey, FileSummary, GrantLevel, LateKinds, LifecycleMove, LifecycleStep,
-            LockedNode, LockedStanding, Markup, MarkupKey, NewCommission, NewElement, NewSeat,
-            NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
-            SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
-            declares_surface,
+            DelayedChange, DirectionChange, DirectionStatus, Dispute, DisputeClear, ElementId,
+            ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel, LateKinds,
+            LifecycleMove, LifecycleStep, LockedNode, LockedStanding, Markup, MarkupKey,
+            NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId,
+            SeatKind, SeatLink, SeatPrompt, Slot, StoredDispute, SurfaceAddress, SurfaceName,
+            TabId, TabName, TabRow, VisibilityMode, declared_tabs, declares_surface,
         },
         did::Did,
         invitation::InvitationState,
@@ -177,6 +177,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         // No `..`: a field the start gains fails to compile here until it is stored.
         let CommissionStart {
             lifecycle_step,
+            dispute: None,
             direction_status: None,
             delayed_flag: None,
             linked_channel: None,
@@ -186,8 +187,8 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             // The insert leaves these at NULL, so a start that sets one is refused, not dropped.
             *self.failed = true;
             anyhow::bail!(
-                "the starting state sets a status, a linked channel or an archive time, \
-                 which the insert can't store: no commission was stored"
+                "the starting state sets a dispute, a status, a linked channel or an archive \
+                 time, which the insert can't store: no commission was stored"
             );
         };
         let id = *capability.thing().as_ref();
@@ -243,6 +244,43 @@ impl CommissionWrites for PgCommissionWrites<'_> {
             uuid::Uuid::from(*capability.thing()),
             <&'static str>::from(change.after()),
             <&'static str>::from(change.before()),
+        )
+        .await?;
+        Ok(affected == 1)
+    }
+
+    /// Puts `commission.lifecycle` at Disputed, storing the step it left and when the dispute
+    /// began, only while the row still holds that step; `true` only when exactly one row
+    /// changed.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn set_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        dispute: &Dispute,
+    ) -> anyhow::Result<bool> {
+        let affected = sql::set_dispute(
+            &mut *self.conn,
+            uuid::Uuid::from(*capability.thing()),
+            <&'static str>::from(dispute.before()),
+            dispute.began(),
+        )
+        .await?;
+        Ok(affected == 1)
+    }
+
+    /// Returns `commission.lifecycle` to the step the row's dispute left and empties both
+    /// dispute columns, only while the row is Disputed from `clear`'s step; `true` only when
+    /// exactly one row changed.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn clear_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        clear: &DisputeClear,
+    ) -> anyhow::Result<bool> {
+        let affected = sql::clear_dispute(
+            &mut *self.conn,
+            uuid::Uuid::from(*capability.thing()),
+            <&'static str>::from(clear.after()),
         )
         .await?;
         Ok(affected == 1)
@@ -647,6 +685,11 @@ struct CommissionFields {
     owner_id: String,
     /// The stored [`LifecycleStep`] token.
     lifecycle: String,
+    /// The stored token of the step a Disputed commission left, or `None` (both-or-neither
+    /// with `disputed_at`).
+    disputed_from: Option<String>,
+    /// When a Disputed commission's dispute began; see `disputed_from`.
+    disputed_at: Option<DateTimeUtc>,
     /// The nullable deadline.
     deadline: Option<DateTimeUtc>,
     /// The stored [`MaturityRating`] token, or `None` while unrated (both-or-neither with `graphic`).
@@ -671,6 +714,8 @@ impl From<sql::FindRow> for CommissionFields {
         Self {
             owner_id: row.owner_id,
             lifecycle: row.lifecycle,
+            disputed_from: row.disputed_from,
+            disputed_at: row.disputed_at,
             deadline: row.deadline,
             maturity: row.maturity,
             graphic: row.graphic,
@@ -690,6 +735,8 @@ impl From<sql::FindForUpdateRow> for CommissionFields {
         Self {
             owner_id: row.owner_id,
             lifecycle: row.lifecycle,
+            disputed_from: row.disputed_from,
+            disputed_at: row.disputed_at,
             deadline: row.deadline,
             maturity: row.maturity,
             graphic: row.graphic,
@@ -709,6 +756,8 @@ impl From<sql::ListOwnedByRow> for CommissionFields {
         Self {
             owner_id: row.owner_id,
             lifecycle: row.lifecycle,
+            disputed_from: row.disputed_from,
+            disputed_at: row.disputed_at,
             deadline: row.deadline,
             maturity: row.maturity,
             graphic: row.graphic,
@@ -755,6 +804,30 @@ fn to_standing(
     }
 }
 
+/// Rebuilds a commission's dispute from its two columns, as the dispute CHECK holds them: both
+/// set exactly while it is Disputed, the step left one of the other five. Anything else is an
+/// `Err`, never a dispute guessed at.
+fn to_dispute(
+    lifecycle_step: &LifecycleStep,
+    disputed_from: Option<String>,
+    disputed_at: Option<DateTimeUtc>,
+) -> anyhow::Result<Option<StoredDispute>> {
+    let disputed = *lifecycle_step == LifecycleStep::Disputed;
+    match (disputed, disputed_from, disputed_at) {
+        (false, None, None) => Ok(None),
+        (true, Some(token), Some(began)) => {
+            let left = LifecycleStep::try_from(token.as_str())
+                .ok()
+                .filter(|left| *left != LifecycleStep::Disputed)
+                .ok_or_else(|| anyhow::anyhow!("unknown disputed_from token {token:?}"))?;
+            Ok(Some(StoredDispute { left, began }))
+        }
+        (disputed, from, began) => anyhow::bail!(
+            "a dispute that doesn't match its step (disputed {disputed}, from {from:?}, began {began:?})"
+        ),
+    }
+}
+
 /// Rebuilds the [`Commission`] from its persisted fields, re-validating each
 /// stored token through its domain gate; a value outside its vocabulary
 /// surfaces as an `Err`, never a panic or silent default.
@@ -772,6 +845,7 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
     };
     let lifecycle_step = LifecycleStep::try_from(fields.lifecycle.as_str())
         .map_err(|_| anyhow::anyhow!("unknown lifecycle token {:?}", fields.lifecycle))?;
+    let dispute = to_dispute(&lifecycle_step, fields.disputed_from, fields.disputed_at)?;
     // The stored value is the manual `Delayed` flag only; Late is derived by whoever asks,
     // at the time they ask.
     let delayed_flag = fields
@@ -786,6 +860,7 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
         id,
         owner_id: UserId::from(Did::from(fields.owner_id)),
         lifecycle_step,
+        dispute,
         deadline: fields.deadline,
         maturity,
         direction_status: fields

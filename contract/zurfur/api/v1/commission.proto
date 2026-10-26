@@ -137,15 +137,17 @@ message GetCommissionResponse {
   optional string direction_status = 7;
   // Deadline axis of the two-dimensional status, if any, at the time of the request
   // (R8 vocabulary): `late` once the deadline has passed on a step that isn't
-  // `completed` or `cancelled`, else `delayed` when a Participant raised it. Absent
-  // with no deadline.
+  // `completed` or `cancelled`, else `delayed` when a Participant raised it. While
+  // `disputed`, the clock stands at the dispute's start: `late` only when the deadline
+  // had passed by then. Absent with no deadline.
   optional string deadline_status = 8;
   // When the commission was created.
   google.protobuf.Timestamp created_at = 10;
   // Whether the commission is archived.
   bool archived = 11;
   // What the viewer may do to it now, by each call's act word, in this order when present:
-  // `rename` (the owner only), `move_lifecycle`, `set_direction_status`,
+  // `rename` (the owner only), `move_lifecycle`, `raise_dispute`, `clear_dispute`,
+  // `set_direction_status`,
   // `clear_direction_status`, `set_deadline`, `clear_deadline`, `set_delayed`,
   // `clear_delayed`. Empty for a viewer who holds no role on it. An act is listed when
   // its call would succeed for some value it takes; a listed call may still answer `204`
@@ -167,6 +169,25 @@ message MoveCommissionLifecycleRequest {
 
 // `PUT .../lifecycle` succeeds `204`; there is no body.
 message MoveCommissionLifecycleResponse {}
+
+// `PUT /api/v1/commissions/{id}/dispute` — a Participant raises a dispute. There is no body.
+message RaiseCommissionDisputeRequest {
+  // Opaque commission id, from the path.
+  string id = 1;
+}
+
+// `PUT .../dispute` succeeds `204`; there is no body.
+message RaiseCommissionDisputeResponse {}
+
+// `DELETE /api/v1/commissions/{id}/dispute` — a Participant clears the dispute, returning
+// the commission to the step it left. It takes no step.
+message ClearCommissionDisputeRequest {
+  // Opaque commission id, from the path.
+  string id = 1;
+}
+
+// `DELETE .../dispute` succeeds `204`; there is no body.
+message ClearCommissionDisputeResponse {}
 
 // `PUT /api/v1/commissions/{id}/status/direction` — a Participant sets the direction status.
 message SetCommissionDirectionStatusRequest {
@@ -272,6 +293,25 @@ service CommissionService {
     option (google.api.http) = {
       put: "/api/v1/commissions/{id}/lifecycle"
       body: "*"
+    };
+  }
+
+  // Any Participant raises a dispute, from whatever step it holds, `draft` included: it stands
+  // `disputed`, keeping the step it left. `204`. `404` for anyone who holds no role on it,
+  // alike for an id that names nothing. `409 commission_disputed` while it is already
+  // disputed.
+  rpc RaiseCommissionDispute(RaiseCommissionDisputeRequest) returns (RaiseCommissionDisputeResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/commissions/{id}/dispute"
+    };
+  }
+
+  // Any Participant clears the dispute: the commission returns to exactly the step it left.
+  // `204`. `404` for anyone who holds no role on it, alike for an id that names nothing.
+  // `409 commission_not_disputed` when it isn't disputed.
+  rpc ClearCommissionDispute(ClearCommissionDisputeRequest) returns (ClearCommissionDisputeResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/commissions/{id}/dispute"
     };
   }
 

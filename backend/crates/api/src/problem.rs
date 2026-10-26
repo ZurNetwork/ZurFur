@@ -341,6 +341,17 @@ impl Problem {
         )
     }
 
+    /// `409` — a dispute's clear on a commission that isn't Disputed.
+    pub fn commission_not_disputed() -> Self {
+        Self::new(
+            "urn:zurfur:error:commission-not-disputed",
+            "commission_not_disputed",
+            "Commission is not disputed",
+            409,
+            "The commission isn't Disputed, so there is no dispute to clear.",
+        )
+    }
+
     /// `409` — the sole Owner tried to leave; transfer ownership or delete the
     /// account first.
     pub fn owner_cannot_leave() -> Self {

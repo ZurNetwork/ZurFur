@@ -33,7 +33,8 @@ use crate::commission::den::{Verdict, verdict};
 use crate::commission::sweep;
 use crate::{
     commission::{
-        act::CommissionAct, create, deadline, lifecycle::move_to, rename, status::direction,
+        act::CommissionAct, create, deadline, dispute, lifecycle::move_to, rename,
+        status::direction,
     },
     den::{
         act::{ArmAnswer, DenAct, EntryRule, Handled, HandlerError, Needs},
@@ -407,6 +408,8 @@ pub(in crate::den) fn judge_act(
         CommissionAct::Create(_) | CommissionAct::MarkLate(_) => Judgement::Refused,
         CommissionAct::Rename(rename) => judge(rename, standing, state, now),
         CommissionAct::MoveLifecycle(move_to) => judge(move_to, standing, state, now),
+        CommissionAct::RaiseDispute(raise) => judge(raise, standing, state, now),
+        CommissionAct::ClearDispute(clear) => judge(clear, standing, state, now),
         CommissionAct::SetDirection(set) => judge(set, standing, state, now),
         CommissionAct::ClearDirection(clear) => judge(clear, standing, state, now),
         CommissionAct::SetDeadline(set) => judge(set, standing, state, now),
@@ -654,6 +657,10 @@ enum Prepared {
     Rename(Passed<rename::Act>),
     /// A commission's lifecycle move.
     MoveLifecycle(Passed<move_to::Act>),
+    /// A commission's dispute raised.
+    RaiseDispute(Passed<dispute::raise::Act>),
+    /// A commission's dispute cleared.
+    ClearDispute(Passed<dispute::clear::Act>),
     /// A commission's direction status set.
     SetDirection(Passed<direction::set::Act>),
     /// A commission's direction status clear.
@@ -696,6 +703,12 @@ fn prepare(act: DenAct, grant: &Grant, now: DateTimeUtc) -> Result<Prepared, Den
         }
         DenAct::Commission(CommissionAct::MoveLifecycle(move_to)) => {
             passed(move_to, grant, now).map(Prepared::MoveLifecycle)
+        }
+        DenAct::Commission(CommissionAct::RaiseDispute(raise)) => {
+            passed(raise, grant, now).map(Prepared::RaiseDispute)
+        }
+        DenAct::Commission(CommissionAct::ClearDispute(clear)) => {
+            passed(clear, grant, now).map(Prepared::ClearDispute)
         }
         DenAct::Commission(CommissionAct::SetDirection(set)) => {
             passed(set, grant, now).map(Prepared::SetDirection)
@@ -819,6 +832,48 @@ impl View<'_, move_to::Act> {
         let landed = self.repo.set_lifecycle(&self.capability, change).await?;
         if !landed {
             return Err(facts_lied("the lifecycle move matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
+impl View<'_, dispute::raise::Act> {
+    /// Puts the capability's commission into Disputed as the rule checked, by compare-and-set,
+    /// once; a raise that matches no row fails.
+    async fn set_dispute(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self.repo.set_dispute(&self.capability, change).await?;
+        if !landed {
+            return Err(facts_lied("the dispute's raise matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
+impl View<'_, dispute::clear::Act> {
+    /// Returns the capability's commission from Disputed to the step the rule checked, by
+    /// compare-and-set, once; a clear that matches no row fails.
+    async fn clear_dispute(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self.repo.clear_dispute(&self.capability, change).await?;
+        if !landed {
+            return Err(facts_lied("the dispute's clear matched no row"));
         }
         self.wrote = Some(Wrote::Landed);
         Ok(())
@@ -1003,6 +1058,20 @@ impl Lent<'_, move_to::Act> {
     }
 }
 
+impl Lent<'_, dispute::raise::Act> {
+    /// Puts the commission into Disputed as the rule checked: once.
+    pub(crate) async fn set_dispute(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_dispute().await)
+    }
+}
+
+impl Lent<'_, dispute::clear::Act> {
+    /// Returns the commission to the step its dispute left, as the rule checked: once.
+    pub(crate) async fn clear_dispute(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.clear_dispute().await)
+    }
+}
+
 impl Lent<'_, direction::set::Act> {
     /// Sets the commission's direction status as the rule checked: once, and only a real set.
     pub(crate) async fn set_direction_status(&mut self) -> anyhow::Result<()> {
@@ -1171,6 +1240,8 @@ async fn lend(
         Prepared::Create(create) => lend_as(create, grant, unit, written, now).await,
         Prepared::Rename(rename) => lend_as(rename, grant, unit, written, now).await,
         Prepared::MoveLifecycle(move_to) => lend_as(move_to, grant, unit, written, now).await,
+        Prepared::RaiseDispute(raise) => lend_as(raise, grant, unit, written, now).await,
+        Prepared::ClearDispute(clear) => lend_as(clear, grant, unit, written, now).await,
         Prepared::SetDirection(set) => lend_as(set, grant, unit, written, now).await,
         Prepared::ClearDirection(clear) => lend_as(clear, grant, unit, written, now).await,
         Prepared::SetDeadline(set) => lend_as(set, grant, unit, written, now).await,

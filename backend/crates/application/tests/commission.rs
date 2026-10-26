@@ -88,6 +88,22 @@ async fn flag(fixture: &MemRuntime, id: CommissionId, owner_did: &str, at: DateT
         .expect("flag the deadline axis");
 }
 
+/// Raises a dispute on `id` as `owner_did`, a Participant, at `at`: through the use case.
+async fn dispute(fixture: &MemRuntime, id: CommissionId, owner_did: &str, at: DateTime<Utc>) {
+    let command = application::commission::dispute::raise::Command {
+        actor_id: UserId::from(Did::from(owner_did.to_owned())),
+        commission_id: id,
+    };
+    fixture
+        .runtime
+        .app()
+        .commissions()
+        .dispute()
+        .raise(command, at)
+        .await
+        .expect("raise the dispute");
+}
+
 /// The deadline status of `id` now (Late derived, else the stored flag), as its
 /// stable wire token.
 async fn stored_deadline_status(
@@ -329,7 +345,8 @@ async fn the_sweeper_skips_terminal_lifecycles() {
 }
 
 // The Late rule skips a Disputed commission: it is not terminal, yet its missed
-// deadline records no `late` entry, while a working one beside it is marked.
+// deadline records no `late` entry, while a working one beside it is marked. Its dispute is
+// raised for real, after the deadline passed.
 #[tokio::test]
 async fn a_disputed_commission_is_not_swept() {
     let fixture = test_support::runtime::mem(&Did::from("did:plc:sweeper".to_string())).build();
@@ -340,9 +357,10 @@ async fn a_disputed_commission_is_not_swept() {
         owner,
         "Staged",
         Some(past()),
-        LifecycleStep::Disputed,
+        LifecycleStep::Active,
     )
     .await;
+    dispute(&fixture, disputed, owner, after_past()).await;
     let active = seed(
         &fixture,
         owner,
@@ -357,9 +375,15 @@ async fn a_disputed_commission_is_not_swept() {
         1,
         "only the working commission is marked"
     );
-    assert!(
-        entries(&*runtime.changelog, disputed).await.is_empty(),
-        "nothing was appended to the disputed commission's stream"
+    let disputed_kinds: Vec<&'static str> = entries(&*runtime.changelog, disputed)
+        .await
+        .iter()
+        .map(|entry| <&'static str>::from(entry.kind))
+        .collect();
+    assert_eq!(
+        disputed_kinds,
+        ["lifecycle_moved"],
+        "the disputed commission's stream holds its raise and no late entry"
     );
     let marked = entries(&*runtime.changelog, active).await;
     assert_eq!(marked.len(), 1, "the working commission's Late entry");

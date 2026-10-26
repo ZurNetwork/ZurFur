@@ -30,6 +30,9 @@ pub enum CommissionRefusal {
     /// The commission is Disputed, which holds what the act would change.
     #[error("the commission is disputed")]
     CommissionDisputed,
+    /// A dispute's clear on a commission that isn't Disputed.
+    #[error("the commission is not disputed")]
+    CommissionNotDisputed,
     /// A deadline-axis act on a commission with no deadline.
     #[error("the commission has no deadline")]
     NoDeadline,
