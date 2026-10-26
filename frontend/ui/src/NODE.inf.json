@@ -12,11 +12,13 @@
     "Specs sit beside the code they test (`*.spec.ts` in node, `*.svelte.spec.ts` in real Chromium); `expect.requireAssertions` is on.",
     "A gallery page registers itself with a `meta.ts` under `routes/components/<slug>/` exporting `meta` (a title and one of the groups in `gallery/groups.ts`); the registry finds it by glob and turns away, rather than throws on, a malformed, duplicate or misplaced one.",
     "The gallery's user-visible words live in `gallery/groups.ts` and the frame; the frame is imported through the `$gallery` alias.",
-    "Reserved inside `lib/`: `motion/` (the one place motion libraries may be imported), `lazy/` (the one place heavy libraries load, by dynamic import only) and `styles/tokens.css` (the style scan's one exempt file). None exists yet.",
-    "The library exports nothing yet; `lib/index.ts` is the whole public surface."
+    "Reserved inside `lib/`: `motion/` (the one place motion libraries may be imported), `lazy/` (the one place heavy libraries load, by dynamic import only) and `styles/tokens.css` (the style scan's one exempt file). `motion/` and `styles/` exist today; `lazy/` does not.",
+    "`lib/index.ts` is the whole public surface of the code: the paper lists (`PAPER_MOVES`, `PAPER_CLASSES`), the environment names and `parseSkin`, and the token model. The styles are a separate side-effect entry, `@zurfur/ui/styles` (`lib/styles/index.ts`), and the host may also import `@zurfur/ui/tokens.json` and `@zurfur/ui/tokens.additions.json`.",
+    "Only `gallery/skin-store.ts` touches storage, and `localStorage` alone; every other file refuses all storage and `cookie`. `app.html` holds the gallery's one boot script, pinned by the hash in `gallery/boot-script.ts` and kept out of prettier."
   ],
   "entry_points": [
     "lib/index.ts",
+    "lib/styles/index.ts",
     "routes/+layout.svelte",
     "gallery/registry.ts"
   ],
@@ -28,27 +30,32 @@
     },
     {
       "name": "app.html",
-      "role": "the page shell",
+      "role": "the page shell, holding the gallery's one boot script (pinned by hash in gallery/boot-script.ts; kept out of prettier)",
       "node": false
     },
     {
       "name": "checks/",
-      "role": "specs over the package itself: the lint boundary rules and the import tiers, declared imports, forbidden files (only plain files and real folders, read without following links; server-side, hooks, service-worker and node_modules names tested in every folder of the path, JSX, and any extension off the list .ts, .svelte, .css, except NODE.inf.json in any folder and app.html at the root), the style and network scans (scan/), serve config (loopback serving, and Kit's inline options read so no file renaming, service worker or svelte config file gets in), tsconfig parity with web, workspace shape and the public entry",
+      "role": "specs over the package itself: the lint boundary rules and the import tiers, declared imports, forbidden files (only plain files and real folders, read without following links; server-side, hooks, service-worker and node_modules names tested in every folder of the path, JSX, and any extension off the list .ts, .svelte, .css, except NODE.inf.json in any folder, app.html at the root and the two token JSON files by exact path), the style and network scans (scan/), serve config (loopback serving, and Kit's inline options read so no file renaming, service worker or svelte config file gets in), tsconfig parity with web, workspace shape and the public entry; the tokens (tokens/: the copy step, the generator, the writer behind `yarn tokens` and their specs), the contrast, fonts, paper and boot-script specs, and the media spec (its own Vitest project, client-media, run after every other, using the narrow emulateMedia command in media-command.ts); built-output.ts, run by the gate and CI after every ui build: it refuses remote URLs in the built CSS and HTML (exit 0 clean, 1 findings, 2 unreadable)",
       "node": false
     },
     {
       "name": "gallery/",
-      "role": "the gallery frame: the registry (page discovery), page meta, the nav groups, GalleryNav, GalleryPage and GalleryState",
+      "role": "the gallery frame: the registry (page discovery), page meta, the nav groups, GalleryNav, GalleryPage and GalleryState; skin-store.ts (the one file that touches storage), boot-script.ts (the pinned hash of the page shell's boot script), SkinSwitch (the header's Skin switch), GallerySkins (a state in Paper dark and Paper light, handing each copy its skin), contrast/ (the contrast arithmetic and the declared pairs), usage-text.ts and UsageText (usage lines as text and code, never HTML) and token-source.ts (the token model for the pages)",
       "node": false
     },
     {
       "name": "lib/",
-      "role": "the public entry (index.ts)",
+      "role": "the public entry (index.ts) and motion/: paper-moves.css (the paper moves' keyframes and classes, the motion adapter's CSS half) and paper-moves.ts (PAPER_MOVES); only a later adapter applies the move classes",
       "node": false
     },
     {
+      "name": "lib/styles/",
+      "role": "design tokens, the two skins and the paper look; the styles entry",
+      "node": true
+    },
+    {
       "name": "routes/",
-      "role": "the gallery host: the layout (header, nav, main), the index and, later, components/<slug>/ pages",
+      "role": "the gallery host: the layout (header, nav, main), the index and components/<slug>/ pages, among them the six Tokens and paper pages (colour, type, space-and-shape, shadows, motion-and-sound, paper)",
       "node": false
     }
   ],

@@ -1146,6 +1146,18 @@
       "governs": "the package's place in the client tier: plain SvelteKit, nothing server-side"
     }
   ],
+  "frontend/ui/src/lib/styles": [
+    {
+      "page": 39944194,
+      "title": "Frontend Stack — Server-Only Effect & the Runes Seam",
+      "governs": "plain SvelteKit styles: tokens as CSS custom properties"
+    },
+    {
+      "page": 2026102301,
+      "title": "The Front Door and the Voice — Sections over the Tree, the One-Page Commission and an Interface That Feels Alive",
+      "governs": "decisions 9 to 11: motion and sound that feel alive, with the Still and reduced-motion stops"
+    }
+  ],
   "frontend/web/src/lib/server": [
     {
       "page": 23592962,
