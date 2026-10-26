@@ -76,6 +76,7 @@
 - 2026102304 decided — Plugins on Screens and Page Configs — Tabs, the Dashed Frame and Plugins' Read-Only Files
 - 2026102305 decided — Invoices, Batches and Boards — Split-Off Invoices, Commission Batches and the Batch-Tag Filter
 - 2026102306 decided — Posting — a Pipeline of Stages and a Browser PostyBirb
+- 2026102501 decided — Tags as the Base of Search — Typed Tags, Aliases, Implications and Named Batches
 
 ## entities/
 - 786439 current — User
