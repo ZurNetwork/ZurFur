@@ -52,6 +52,32 @@ function kindOf(relative: string): FileKind {
 	return 'component';
 }
 
+/** The kinds, strictest first: a file never imports from a looser kind. */
+const kindsStrictestFirst: readonly FileKind[] = ['component', 'host', 'check'];
+
+const codeExtensions = ['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs', '.svelte'] as const;
+
+/**
+ * The loosest kind a relative import of `relative` can land on: the path as
+ * written, with each code extension added (a TypeScript `.js` read as `.ts`
+ * too), and as a folder's index.
+ */
+function loosestKindOf(relative: string): FileKind {
+	const asTypeScript = relative.replace(/\.([mc]?)js$/, '.$1ts');
+	const candidates = [
+		relative,
+		asTypeScript,
+		...codeExtensions.map((extension) => `${relative}${extension}`),
+		...codeExtensions.map((extension) => path.join(relative, `index${extension}`))
+	];
+	const ranks = candidates.map((candidate) => kindsStrictestFirst.indexOf(kindOf(candidate)));
+	return kindsStrictestFirst[Math.max(...ranks)] ?? 'check';
+}
+
+function isLooser(target: FileKind, importer: FileKind): boolean {
+	return kindsStrictestFirst.indexOf(target) > kindsStrictestFirst.indexOf(importer);
+}
+
 /** Kit's virtual modules and ui's aliases: lint decides who may use them. */
 const aliasPattern = /^\$(app|env|lib|gallery)(\/|$)/;
 
@@ -93,9 +119,14 @@ function refusalOf(file: SourceFile, specifier: string, manifest: Manifest): str
 	const kind = kindOf(file.relative);
 	if (specifier.startsWith('/')) return 'a path starting with /';
 	if (specifier.startsWith('.')) {
-		const resolved = path.resolve(srcRoot, path.dirname(file.relative), specifier);
+		// Vite drops the query and the hash before it resolves a path.
+		const bare = specifier.replace(/[?#].*$/s, '');
+		const resolved = path.resolve(srcRoot, path.dirname(file.relative), bare);
 		const insideSrc = resolved.startsWith(srcRoot + path.sep);
-		if (insideSrc) return undefined;
+		if (insideSrc) {
+			const target = loosestKindOf(path.relative(srcRoot, resolved));
+			return isLooser(target, kind) ? 'a relative import into a looser file set' : undefined;
+		}
 		if (kind === 'check' && isCheckImportable(resolved)) return undefined;
 		return 'a relative path outside src';
 	}
@@ -193,6 +224,54 @@ describe('declared imports', () => {
 		['a Node built-in named without node:', 'checks/x.spec.ts', "import fs from 'fs';"]
 	])('refuses %s', (_label, relative, text) => {
 		expect(refusalsFor(relative, text)).toHaveLength(1);
+	});
+
+	const svelteReexport =
+		'<script lang="ts" module>\n\texport { styleFindings } from \'../checks/scan/style\';\n</script>\n';
+
+	it.each([
+		[
+			"the public entry's export * of a check",
+			'lib/index.ts',
+			"export * from '../checks/scan/style';"
+		],
+		[
+			"the public entry's named re-export of a check",
+			'lib/index.ts',
+			"export { styleFindings } from '../checks/scan/style';"
+		],
+		['a component importing a page', 'lib/x.ts', "import '../routes/+layout';"],
+		['a component importing the frame', 'lib/x.ts', "import '../gallery/registry';"],
+		['a component importing a spec', 'lib/x.ts', "export { y } from './x.spec';"],
+		['a type-only import of a check', 'lib/x.ts', "import type { T } from '../checks/x';"],
+		['a dynamic import of a page', 'lib/x.ts', "export const r = import('../routes/x');"],
+		['a type query of a check', 'lib/x.ts', "export type T = typeof import('../checks/x');"],
+		['a check by folder', 'lib/x.ts', "import '../checks';"],
+		['a check with a query', 'lib/x.ts', "import text from '../checks/x.ts?raw';"],
+		['a spec named with .js', 'lib/x.ts', "import './x.spec.js';"],
+		['the motion adapter importing a page', 'lib/motion/x.ts', "import '../../routes/x';"],
+		['a stray file importing a page', 'foo.ts', "import './routes/x';"],
+		['the frame importing a check', 'gallery/x.ts', "import '../checks/x';"],
+		['a page importing a spec', 'routes/x.ts', "import '../gallery/x.spec';"],
+		["a component's script re-exporting a check", 'lib/X.svelte', svelteReexport]
+	])('refuses %s, a relative import into a looser file set', (_label, relative, text) => {
+		expect(refusalsFor(relative, text).map((refusal) => refusal.reason)).toEqual([
+			'a relative import into a looser file set'
+		]);
+	});
+
+	it.each([
+		['a component importing the motion adapter', 'lib/x.ts', "import { x } from './motion/x';"],
+		['a component importing the lazy loader', 'lib/x.ts', "import { x } from './lazy/x';"],
+		['the motion adapter importing a component', 'lib/motion/x.ts', "import { x } from '../x';"],
+		['a page importing a component', 'routes/x.ts', "import { x } from '../lib/x';"],
+		['a page importing the frame', 'routes/x.ts', "import { x } from '../gallery/x';"],
+		['the frame importing a page', 'gallery/x.ts', "import { x } from '../routes/x';"],
+		['a check importing a component', 'checks/x.ts', "import { x } from '../lib/x';"],
+		['a spec importing its sibling', 'lib/x.spec.ts', "import { x } from './x';"],
+		['a component importing a raw text file', 'lib/x.ts', "import text from './a.txt?raw';"]
+	])('allows %s', (_label, relative, text) => {
+		expect(refusalsFor(relative, text)).toEqual([]);
 	});
 
 	it('refuses an undeclared package in a svelte script', () => {

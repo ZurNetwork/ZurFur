@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { ESLint, type Linter } from 'eslint';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { boundaryRules } from '../../eslint.config.js';
+import { boundaryRules, fileSetOf } from '../../eslint.config.js';
+import { isRemote } from './scan/network';
 
 const uiRoot = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -14,20 +16,33 @@ const planted = {
 	motion: 'src/lib/motion/x.ts',
 	lazy: 'src/lib/lazy/x.ts',
 	gallery: 'src/gallery/x.ts',
-	routes: 'src/routes/x.ts'
+	routes: 'src/routes/x.ts',
+	check: 'src/checks/planted.ts',
+	spec: 'src/lib/planted.spec.ts'
 } as const;
 
 const plantedPaths = Object.values(planted);
 
+/** Real files a case lints planted text at; the file on disk is never read or touched. */
+const real = {
+	publicEntry: 'src/lib/index.ts',
+	layoutLoad: 'src/routes/+layout.ts'
+} as const;
+
 /**
  * The real config, unchanged but for one parser option: the project service
  * refuses a file that isn't on disk, so the planted paths parse against the
- * package's tsconfig as a default project instead.
+ * package's tsconfig as a default project instead, all of them at once.
  */
 const plantedOverride: Linter.Config = {
 	languageOptions: {
 		parserOptions: {
-			projectService: { allowDefaultProject: plantedPaths, defaultProject: 'tsconfig.json' }
+			projectService: {
+				allowDefaultProject: plantedPaths,
+				defaultProject: 'tsconfig.json',
+				// The parser caps the default project at 8 files unless told otherwise.
+				maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: plantedPaths.length
+			}
 		}
 	}
 };
@@ -47,7 +62,9 @@ const boundaryRuleIds: ReadonlySet<string> = new Set([
 	'no-new-func',
 	'@typescript-eslint/no-implied-eval',
 	'@typescript-eslint/consistent-type-assertions',
-	'svelte/no-at-html-tags'
+	'svelte/no-at-html-tags',
+	'ui/import-tiers',
+	'ui/no-remote-string'
 ]);
 
 async function lintPlanted(filePath: string, code: string): Promise<readonly Linter.LintMessage[]> {
@@ -79,6 +96,48 @@ const GLOBALS = 'no-restricted-globals';
 const PROPERTIES = 'no-restricted-properties';
 const IMPORTS = 'no-restricted-imports';
 const SYNTAX = 'no-restricted-syntax';
+const TIERS = 'ui/import-tiers';
+const REMOTE = 'ui/no-remote-string';
+
+type PathCase = readonly [label: string, filePath: string, code: string];
+
+/** A module that exports one string, as source text. */
+function stringModule(text: string): string {
+	return `export const r = ${JSON.stringify(text)};`;
+}
+
+/** Strings a browser reads as remote, and as local, when it meets them as a URL. */
+const remoteSamples: readonly string[] = [
+	'https://x/a.png',
+	'http://x/a.png',
+	'HTTPS://x',
+	'HtTp://x',
+	' https://x',
+	'\t\n https://x',
+	'\u0001https://x',
+	'ht\ttps://x',
+	'h\nttp://x',
+	'https:x',
+	'http:',
+	'//x/a.png',
+	'\\\\x/a',
+	'/\\x',
+	'\\/x'
+];
+
+const localSamples: readonly string[] = [
+	'/a.png',
+	'./a.png',
+	'../a.png',
+	'data:image/png;base64,AAAA',
+	'a.png',
+	'x https://y',
+	'httpx://x',
+	'ftp://x',
+	'mailto:a@b',
+	'/ /x',
+	''
+];
 
 const componentRefusals: readonly Case[] = [
 	// Network and code loading.
@@ -141,6 +200,14 @@ const componentRefusals: readonly Case[] = [
 	['a path through node_modules', "import '../../node_modules/web/src/lib/server/x';", IMPORTS],
 	['a path into web', "import '../../../web/src/lib/server/api/generated/x';", IMPORTS],
 	['a deep import of the package', "import '@zurfur/ui/src/lib/x';", IMPORTS],
+	// Code Vite turns into a Worker or a WebAssembly loader.
+	['?worker', "import W from './w.ts?worker';\nexport { W };", IMPORTS],
+	['?sharedworker', "import W from './w.ts?sharedworker';\nexport { W };", IMPORTS],
+	['?worker&inline', "import W from './w.ts?worker&inline';\nexport { W };", IMPORTS],
+	['?worker&url', "import W from './w.ts?worker&url';\nexport { W };", IMPORTS],
+	['?url&worker', "import W from './w.ts?url&worker';\nexport { W };", IMPORTS],
+	['?sharedworker&inline', "import W from './w.ts?sharedworker&inline';\nexport { W };", IMPORTS],
+	['.wasm?init', "import init from './a.wasm?init';\nexport { init };", IMPORTS],
 	// Motion outside the adapter.
 	['gsap', "import { gsap } from 'gsap';\nexport { gsap };", IMPORTS],
 	["export { gsap } from 'gsap'", "export { gsap } from 'gsap';", IMPORTS],
@@ -166,6 +233,11 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 		expect(onDisk).toEqual([]);
 	});
 
+	it('plants over real paths only where the file is on disk', () => {
+		const missing = Object.values(real).filter((relative) => !existsSync(`${uiRoot}${relative}`));
+		expect(missing).toEqual([]);
+	});
+
 	describe('the components (src/lib)', () => {
 		it.each(componentRefusals)('refuses %s', async (_label, code, ruleId) => {
 			await expectRefused(planted.component, code, ruleId);
@@ -174,7 +246,9 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 		it.each([
 			['a peer dependency', "import { untrack } from 'svelte';\nexport { untrack };"],
 			['a relative import', "import { y } from './y';\nexport { y };"],
-			['as const', "export const r = ['a'] as const;"]
+			['as const', "export const r = ['a'] as const;"],
+			['?raw', "import text from './a.txt?raw';\nexport { text };"],
+			['?url', "import href from './a.png?url';\nexport { href };"]
 		])('allows %s', async (_label, code) => {
 			await expectAllowed(planted.component, code);
 		});
@@ -287,7 +361,8 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 		['localStorage', "export const r = localStorage.getItem('x');"],
 		['$app/paths', "import { resolve } from '$app/paths';\nexport { resolve };"],
 		['@zurfur/ui', "import * as ui from '@zurfur/ui';\nexport { ui };"],
-		['$gallery/…', "import { groupNames } from '$gallery/groups';\nexport { groupNames };"]
+		['$gallery/…', "import { groupNames } from '$gallery/groups';\nexport { groupNames };"],
+		['?raw', "import text from './a.txt?raw';\nexport { text };"]
 	];
 
 	const hostRefusals: readonly Case[] = [
@@ -298,6 +373,10 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 		['process.env', 'export const r = process.env.X;', GLOBALS],
 		['import.meta.env', 'export const r: unknown = import.meta.env;', SYNTAX],
 		['$lib/y', "import { x } from '$lib/y';\nexport { x };", IMPORTS],
+		['?worker', "import W from './w.ts?worker';\nexport { W };", IMPORTS],
+		['?sharedworker', "import W from './w.ts?sharedworker';\nexport { W };", IMPORTS],
+		['?worker&inline', "import W from './w.ts?worker&inline';\nexport { W };", IMPORTS],
+		['.wasm?init', "import init from './a.wasm?init';\nexport { init };", IMPORTS],
 		['a deep import of the package', "import '@zurfur/ui/src/lib/x';", IMPORTS],
 		[
 			'$env/static/public',
@@ -373,6 +452,218 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 			await expectRefused(planted.routes, code, ruleId);
 		});
 	});
+
+	describe('a relative import never reaches a looser file set', () => {
+		const svelteReexport =
+			'<script lang="ts" module>\n\texport { styleFindings } from \'../checks/scan/style\';\n</script>\n';
+		const refused: readonly PathCase[] = [
+			[
+				"the public entry's export * of a check",
+				real.publicEntry,
+				"export * from '../checks/scan/style';"
+			],
+			[
+				"the public entry's named re-export of a check",
+				real.publicEntry,
+				"export { styleFindings } from '../checks/scan/style';"
+			],
+			['a component importing a page', planted.component, "import '../routes/+layout';"],
+			['a component importing the frame', planted.component, "import '../gallery/registry';"],
+			['a component importing a spec', planted.component, "export { y } from './x.spec';"],
+			[
+				'a type-only import of a check',
+				planted.component,
+				"import type { T } from '../checks/x';\nexport type { T };"
+			],
+			['a dynamic import of a page', planted.component, "export const r = import('../routes/x');"],
+			[
+				'a type query of a check',
+				planted.component,
+				"export type T = typeof import('../checks/x');"
+			],
+			['a check by folder', planted.component, "import '../checks';"],
+			[
+				'a check with a query',
+				planted.component,
+				"import text from '../checks/x.ts?raw';\nexport { text };"
+			],
+			['a spec named with .js', planted.component, "import './x.spec.js';"],
+			['a file outside src', planted.component, "import '../../vite.config';"],
+			['the motion adapter importing a page', planted.motion, "import '../../routes/x';"],
+			['a stray file importing a page', planted.stray, "import './routes/x';"],
+			['the frame importing a check', planted.gallery, "import '../checks/x';"],
+			['a page importing a spec', planted.routes, "import '../gallery/x.spec';"],
+			['a page importing outside src', planted.routes, "import '../../package.json';"],
+			["a component's script re-exporting a check", planted.componentSvelte, svelteReexport]
+		];
+
+		it.each(refused)('refuses %s', async (_label, filePath, code) => {
+			await expectRefused(filePath, code, TIERS);
+		});
+
+		// Each allowed import names a file no case plants: two planted files
+		// re-exporting each other hang the type-aware rules.
+		const allowed: readonly PathCase[] = [
+			[
+				'a component importing the motion adapter',
+				planted.component,
+				"import { y } from './motion/y';\nexport { y };"
+			],
+			[
+				'a component importing the lazy loader',
+				planted.component,
+				"import { y } from './lazy/y';\nexport { y };"
+			],
+			[
+				'the motion adapter importing a component',
+				planted.motion,
+				"import { y } from '../y';\nexport { y };"
+			],
+			[
+				'a page importing a component',
+				planted.routes,
+				"import { y } from '../lib/y';\nexport { y };"
+			],
+			[
+				'a page importing the frame',
+				planted.routes,
+				"import { y } from '../gallery/y';\nexport { y };"
+			],
+			[
+				'the frame importing a page',
+				planted.gallery,
+				"import { y } from '../routes/y';\nexport { y };"
+			],
+			[
+				'a check importing a component',
+				planted.check,
+				"import { y } from '../lib/y';\nexport { y };"
+			],
+			[
+				'a spec importing its sibling',
+				planted.spec,
+				"import { y } from './planted';\nexport { y };"
+			]
+		];
+
+		it.each(allowed)('allows %s', async (_label, filePath, code) => {
+			await expectAllowed(filePath, code);
+		});
+	});
+
+	describe('no source file names fetch', () => {
+		const loadWithFetch =
+			"export const load = async ({ fetch }: { readonly fetch: typeof globalThis.fetch }) => {\n\tawait fetch('/x');\n};";
+		const refused: readonly PathCase[] = [
+			[
+				"Mongoose's load({ fetch }) in the layout",
+				real.layoutLoad,
+				"import type { LayoutLoad } from './$types';\nexport const load: LayoutLoad = async ({ fetch }) => {\n\tawait fetch('https://x.invalid/');\n};"
+			],
+			['load({ fetch }) in a page', planted.routes, loadWithFetch],
+			['load({ fetch }) in the frame', planted.gallery, loadWithFetch],
+			['load({ fetch }) in a component', planted.component, loadWithFetch],
+			[
+				'a fetch prop',
+				planted.componentSvelte,
+				'<script lang="ts">\n\tinterface Props {\n\t\treadonly fetch: () => void;\n\t}\n\tlet { fetch }: Props = $props();\n</script>\n\n<button onclick={fetch}>x</button>\n'
+			],
+			[
+				'a fetch member in an interface',
+				planted.component,
+				'export interface P {\n\treadonly fetch: () => void;\n}'
+			],
+			[
+				"x['fetch']",
+				planted.component,
+				"export const r = (x: Readonly<Record<string, unknown>>) => x['fetch'];"
+			],
+			['{ fetch: f }', planted.component, 'export const r = (f: () => void) => ({ fetch: f });'],
+			[
+				"{ 'fetch': f }",
+				planted.component,
+				"export const r = (f: () => void) => ({ 'fetch': f });"
+			],
+			[
+				'a fetch attribute',
+				planted.componentSvelte,
+				'<script lang="ts">\n\timport Y from \'./Y.svelte\';\n\tconst f = (): void => undefined;\n</script>\n\n<Y fetch={f} />\n'
+			],
+			[
+				'a bind:fetch directive',
+				planted.componentSvelte,
+				'<script lang="ts">\n\timport Y from \'./Y.svelte\';\n\tlet f = $state(0);\n</script>\n\n<Y bind:fetch={f} />\n'
+			]
+		];
+
+		it.each(refused)('refuses %s', async (_label, filePath, code) => {
+			await expectRefused(filePath, code, SYNTAX);
+		});
+
+		it.each([
+			['a check', planted.check],
+			['a spec', planted.spec]
+		])('allows load({ fetch }) in %s', async (_label, filePath) => {
+			await expectAllowed(filePath, loadWithFetch);
+		});
+	});
+
+	describe('no source file holds a remote URL in a string', () => {
+		const refused: readonly PathCase[] = [
+			[
+				'a constant later used as an img src',
+				planted.componentSvelte,
+				'<script lang="ts">\n\tconst u = \'https://x/a.png\';\n</script>\n\n<img src={u} alt="" />\n'
+			],
+			[
+				'a remote value passed to a component',
+				planted.componentSvelte,
+				'<script lang="ts">\n\timport Y from \'./Y.svelte\';\n</script>\n\n<Y url="https://x/a.png" />\n'
+			],
+			[
+				'a template literal',
+				planted.component,
+				"const h = 'x';\nexport const r = `https://${h}/a`;"
+			],
+			['an import from a URL', planted.component, "import 'https://x/a.js';"],
+			['a page', planted.routes, stringModule('https://x/a.png')],
+			['the frame', planted.gallery, stringModule('//x/a.png')],
+			['the motion adapter', planted.motion, stringModule('https://x/a.png')],
+			['the lazy loader', planted.lazy, stringModule('https://x/a.png')]
+		];
+
+		it.each(refused)('refuses %s', async (_label, filePath, code) => {
+			await expectRefused(filePath, code, REMOTE);
+		});
+
+		const hostPaths = [planted.component, planted.routes, planted.gallery];
+
+		it.each(
+			hostPaths.flatMap((filePath) => remoteSamples.map((text) => [filePath, text] as const))
+		)('refuses in %s the string %j', async (filePath, text) => {
+			await expectRefused(filePath, stringModule(text), REMOTE);
+		});
+
+		it.each(localSamples)('allows the local string %j', async (text) => {
+			await expectAllowed(planted.component, stringModule(text));
+		});
+
+		it.each([
+			['a check', planted.check],
+			['a spec', planted.spec]
+		])('allows a remote string in %s', async (_label, filePath) => {
+			await expectAllowed(filePath, stringModule('https://x/a.png'));
+		});
+
+		it.each([...remoteSamples, ...localSamples])(
+			'agrees with the network scan on %j',
+			async (text) => {
+				const messages = await lintPlanted(planted.component, stringModule(text));
+				const refusedByLint = messages.some((message) => message.ruleId === REMOTE);
+				expect(refusedByLint).toBe(isRemote(text));
+			}
+		);
+	});
 });
 
 type RuleEntry = Linter.RuleEntry | undefined;
@@ -382,6 +673,8 @@ interface BoundaryOptions {
 	readonly properties: RuleEntry;
 	readonly imports: RuleEntry;
 	readonly syntax: RuleEntry;
+	readonly tiers: RuleEntry;
+	readonly remote: RuleEntry;
 }
 
 async function effectiveBoundary(filePath: string): Promise<BoundaryOptions> {
@@ -391,7 +684,9 @@ async function effectiveBoundary(filePath: string): Promise<BoundaryOptions> {
 		globals: rules['no-restricted-globals'],
 		properties: rules['no-restricted-properties'],
 		imports: rules['no-restricted-imports'],
-		syntax: rules['no-restricted-syntax']
+		syntax: rules['no-restricted-syntax'],
+		tiers: rules[TIERS],
+		remote: rules[REMOTE]
 	};
 }
 
@@ -403,7 +698,9 @@ function expectedBoundary(name: SetName): BoundaryOptions {
 		globals: [2, { globals: rules.globals, checkGlobalObject: true }],
 		properties: [2, ...rules.properties],
 		imports: [2, { patterns: rules.imports }],
-		syntax: [2, ...rules.syntax]
+		syntax: [2, ...rules.syntax],
+		tiers: [2, { tier: rules.tier }],
+		remote: [2]
 	};
 }
 
@@ -411,8 +708,23 @@ const noBoundary: BoundaryOptions = {
 	globals: undefined,
 	properties: undefined,
 	imports: undefined,
-	syntax: undefined
+	syntax: undefined,
+	tiers: undefined,
+	remote: undefined
 };
+
+/** What ESLint's own matching makes of one path: the set's rules, or none for a check. */
+function boundaryOf(name: SetName | 'checks'): BoundaryOptions {
+	return name === 'checks' ? noBoundary : expectedBoundary(name);
+}
+
+const codePattern = /\.(ts|mts|cts|js|mjs|cjs|svelte)$/;
+
+function realCodeFiles(): readonly string[] {
+	return readdirSync(`${uiRoot}src`, { recursive: true, encoding: 'utf8' })
+		.filter((relative) => codePattern.test(relative))
+		.map((relative) => `src/${relative.split(path.sep).join('/')}`);
+}
 
 describe('the file sets', { timeout: 120_000 }, () => {
 	it.each([
@@ -442,6 +754,31 @@ describe('the file sets', { timeout: 120_000 }, () => {
 		['src/routes/x.svelte.spec.ts']
 	])('leaves the check or spec %s free of the boundary rules', async (filePath) => {
 		expect(await effectiveBoundary(filePath)).toEqual(noBoundary);
+	});
+
+	it('lists real code files to classify', () => {
+		expect(realCodeFiles()).toContain('src/lib/index.ts');
+	});
+
+	it.each([
+		...realCodeFiles(),
+		...plantedPaths,
+		'src/foo.ts',
+		'src/lib/deep/X.svelte',
+		'src/lib/x.svelte.ts',
+		'src/lib/motion/deep/X.svelte',
+		'src/lib/lazy/deep/x.js',
+		'src/routes/components/button/+page.svelte',
+		'src/checks/deep/x.svelte',
+		'src/lib/X.svelte.spec.ts',
+		'src/routes/x.svelte.spec.ts',
+		'src/x.mjs',
+		'src/gallery/x.cts'
+	])("classifies %s as ESLint's own matching does", async (filePath) => {
+		const name = fileSetOf(filePath);
+		expect(name).toBeDefined();
+		if (name === undefined) return;
+		expect(await effectiveBoundary(filePath)).toEqual(boundaryOf(name));
 	});
 
 	it('ignores every inline config comment', async () => {

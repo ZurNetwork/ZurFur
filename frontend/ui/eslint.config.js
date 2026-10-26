@@ -33,16 +33,11 @@ const typeCheckedRules = (configs) => {
 // every file no other set names, so a new file can never land in none.
 // ---------------------------------------------------------------------------
 
+/** Every file kind ESLint lints under src/, by extension. */
+const CODE_EXTENSIONS = ['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs', '.svelte'];
+
 /** Every file kind ESLint lints under src/. */
-const CODE = [
-	'src/**/*.ts',
-	'src/**/*.mts',
-	'src/**/*.cts',
-	'src/**/*.js',
-	'src/**/*.mjs',
-	'src/**/*.cjs',
-	'src/**/*.svelte'
-];
+const CODE = CODE_EXTENSIONS.map((extension) => `src/**/*${extension}`);
 
 /** The checks and every spec: Node globals, and they may throw. */
 const CHECKS = ['src/checks/**', 'src/**/*.spec.ts', 'src/**/*.svelte.spec.ts'];
@@ -68,6 +63,107 @@ export const fileSets = {
 	lazy: { files: LAZY, ignores: CHECKS },
 	components: { files: CODE, ignores: [...CHECKS, ...ROUTES, ...GALLERY, ...MOTION, ...LAZY] }
 };
+
+/** @typedef {keyof typeof fileSets} FileSetName */
+
+/** @type {readonly FileSetName[]} */
+const FILE_SET_NAMES = ['checks', 'routes', 'gallery', 'motion', 'lazy', 'components'];
+
+/**
+ * One `files` or `ignores` glob as a regular expression: `**` spans any number
+ * of folders and `*` anything within one segment, dots included, as ESLint
+ * reads them. Any other glob syntax is refused, so a pattern ESLint would read
+ * differently can never be read here quietly.
+ *
+ * @param {string} glob
+ * @returns {RegExp}
+ */
+function globPattern(glob) {
+	if (/[?[\]{}!()+@\\]/.test(glob)) throw new Error(`unsupported glob syntax in ${glob}`);
+	const segments = glob.split('/');
+	const source = segments
+		.map((segment, index) => {
+			const isLast = index === segments.length - 1;
+			if (segment === '**') return isLast ? '.*' : '(?:[^/]+/)*';
+			const text = segment.replace(/[.^$|]/g, '\\$&').replaceAll('*', '[^/]*');
+			return isLast ? text : `${text}/`;
+		})
+		.join('');
+	return new RegExp(`^${source}$`);
+}
+
+/**
+ * @param {readonly string[]} globs
+ * @param {string} relative
+ */
+const matchesAny = (globs, relative) => globs.some((glob) => globPattern(glob).test(relative));
+
+/**
+ * The file set a path lands in, read from `fileSets` as ESLint reads it; the
+ * path is relative to this package, with forward slashes. Undefined for a path
+ * no set names (outside src/, or not a code file).
+ *
+ * @param {string} relative
+ * @returns {FileSetName | undefined}
+ */
+export function fileSetOf(relative) {
+	return FILE_SET_NAMES.find((name) => {
+		const { files, ignores } = fileSets[name];
+		return matchesAny(files, relative) && !matchesAny(ignores, relative);
+	});
+}
+
+// ---------------------------------------------------------------------------
+// The tiers. The sets form three tiers, strictest first: what ships (the
+// components and their two carve-outs), the gallery host, and the checks. A
+// relative import never reaches from one tier into a looser one, so no file
+// can launder a looser set's freedoms through a re-export.
+// ---------------------------------------------------------------------------
+
+/** @typedef {'shipped' | 'host' | 'checks'} Tier */
+
+/** @type {readonly Tier[]} */
+const TIERS_STRICTEST_FIRST = ['shipped', 'host', 'checks'];
+
+/** @type {Readonly<Record<FileSetName, Tier>>} */
+const TIER_OF_SET = {
+	components: 'shipped',
+	motion: 'shipped',
+	lazy: 'shipped',
+	routes: 'host',
+	gallery: 'host',
+	checks: 'checks'
+};
+
+/** @type {Readonly<Record<Tier, string>>} */
+const TIER_LABEL = {
+	shipped: 'a component',
+	host: 'the gallery host',
+	checks: 'a check or a spec'
+};
+
+/**
+ * The loosest tier an import of `relative` can land in: the path as written,
+ * with each code extension added (a TypeScript `.js` read as `.ts` too), and
+ * as a folder's index. Every path inside src/ lands in some tier.
+ *
+ * @param {string} relative a path under src/, relative to this package
+ * @returns {Tier}
+ */
+function loosestTierOf(relative) {
+	const asTypeScript = relative.replace(/\.([mc]?)js$/, '.$1ts');
+	const candidates = [
+		relative,
+		asTypeScript,
+		...CODE_EXTENSIONS.map((extension) => `${relative}${extension}`),
+		...CODE_EXTENSIONS.map((extension) => `${relative}/index${extension}`)
+	];
+	const ranks = candidates.flatMap((candidate) => {
+		const name = fileSetOf(candidate);
+		return name === undefined ? [] : [TIERS_STRICTEST_FIRST.indexOf(TIER_OF_SET[name])];
+	});
+	return TIERS_STRICTEST_FIRST[Math.max(...ranks)] ?? 'checks';
+}
 
 // ---------------------------------------------------------------------------
 // The bans, as entries the per-set arrays below merge.
@@ -212,8 +308,21 @@ const HEAVY_IMPORTS = [
 	}
 ];
 
+/** Imports Vite turns into a Worker or a WebAssembly loader, read as Vite reads them. */
+const VITE_CODE_LOADING_IMPORTS = [
+	{ regex: '[?&](worker|sharedworker)(&|$)', message: CODE_LOADING_MESSAGE },
+	{ regex: '\\.wasm\\?init', message: CODE_LOADING_MESSAGE }
+];
+
 /** What every source set refuses as an import, before its own additions. */
-const COMMON_IMPORTS = [ROOT_IMPORT, ENV_IMPORT, LIB_IMPORT, DEEP_SELF_IMPORT, ...SERVER_IMPORTS];
+const COMMON_IMPORTS = [
+	ROOT_IMPORT,
+	ENV_IMPORT,
+	LIB_IMPORT,
+	DEEP_SELF_IMPORT,
+	...SERVER_IMPORTS,
+	...VITE_CODE_LOADING_IMPORTS
+];
 
 const COMPONENT_IMPORTS = [
 	...COMMON_IMPORTS,
@@ -293,44 +402,245 @@ const DYNAMIC_IMPORT_EXCEPT_HEAVY = {
 	message: "src/lib/lazy loads only import('three') and import('lottie-web'), by literal name."
 };
 
-const COMMON_SYNTAX = [...RULEBOOK_SYNTAX, IMPORT_META_ENV, IMPORT_META_ENV_COMPUTED];
+const FETCH_MESSAGE =
+	'No source file names fetch, a load({ fetch }) parameter and a fetcher prop included: take the data as a prop and let the app fetch it.';
+
+/** Any name `fetch`: a parameter, a prop, a key, a member or a markup attribute. */
+const FETCH_NAMES = [
+	{ selector: "Identifier[name='fetch']", message: FETCH_MESSAGE },
+	{
+		selector:
+			":matches(Property, PropertyDefinition, MethodDefinition, AccessorProperty, TSPropertySignature, TSMethodSignature, TSAbstractPropertyDefinition, TSAbstractMethodDefinition) > Literal.key[value='fetch']",
+		message: FETCH_MESSAGE
+	},
+	{ selector: "MemberExpression > Literal.property[value='fetch']", message: FETCH_MESSAGE },
+	{
+		selector:
+			"MemberExpression > TemplateLiteral.property[expressions.length=0][quasis.0.value.cooked='fetch']",
+		message: FETCH_MESSAGE
+	},
+	{
+		selector: ":matches(ImportSpecifier, ExportSpecifier) > Literal[value='fetch']",
+		message: FETCH_MESSAGE
+	},
+	{ selector: "SvelteAttribute[key.name='fetch']", message: FETCH_MESSAGE },
+	{ selector: "SvelteDirective[key.name.name='fetch']", message: FETCH_MESSAGE }
+];
+
+const COMMON_SYNTAX = [
+	...RULEBOOK_SYNTAX,
+	IMPORT_META_ENV,
+	IMPORT_META_ENV_COMPUTED,
+	...FETCH_NAMES
+];
 
 const COMPONENT_SYNTAX = [...COMMON_SYNTAX, ...ANY_GLOB, ANY_DYNAMIC_IMPORT];
 const LAZY_SYNTAX = [...COMMON_SYNTAX, ...ANY_GLOB, DYNAMIC_IMPORT_EXCEPT_HEAVY];
 const ROUTES_SYNTAX = [...COMMON_SYNTAX, ...ANY_GLOB, ANY_DYNAMIC_IMPORT];
 const GALLERY_SYNTAX = [...COMMON_SYNTAX, ...GLOB_EXCEPT_PAGE_METAS, ANY_DYNAMIC_IMPORT];
 
+// ---------------------------------------------------------------------------
+// The package's own rules, for what no built-in rule can see.
+// ---------------------------------------------------------------------------
+
+const PACKAGE_ROOT = import.meta.dirname;
+
 /**
- * Each source set's options for the four restricted rules. A later flat-config
- * block replaces an earlier one's options for the same rule, so each set gets
- * one block per rule holding every entry it needs.
+ * One property of an AST node, of any parser's node type.
+ *
+ * @param {unknown} node
+ * @param {string} key
+ * @returns {unknown}
+ */
+const fieldOf = (node, key) => (Object(node) === node ? Reflect.get(Object(node), key) : undefined);
+
+/**
+ * The text of a string literal, or of a template literal with no expressions.
+ *
+ * @param {unknown} node
+ * @returns {string | undefined}
+ */
+function staticTextOf(node) {
+	const type = fieldOf(node, 'type');
+	if (type === 'Literal') {
+		const value = fieldOf(node, 'value');
+		return typeof value === 'string' ? value : undefined;
+	}
+	if (type !== 'TemplateLiteral') return undefined;
+	const expressions = fieldOf(node, 'expressions');
+	const quasis = fieldOf(node, 'quasis');
+	if (!Array.isArray(expressions) || expressions.length > 0 || !Array.isArray(quasis)) {
+		return undefined;
+	}
+	const cooked = fieldOf(fieldOf(quasis[0], 'value'), 'cooked');
+	return typeof cooked === 'string' ? cooked : undefined;
+}
+
+/** @type {import('eslint').Rule.RuleModule} */
+const importTiersRule = {
+	meta: {
+		type: 'problem',
+		docs: { description: 'A relative import never reaches a looser file set, nor leaves src/.' },
+		schema: [
+			{
+				type: 'object',
+				properties: { tier: { enum: ['shipped', 'host'] } },
+				required: ['tier'],
+				additionalProperties: false
+			}
+		],
+		messages: {
+			looser:
+				'{{importer}} never imports {{target}} ({{specifier}}): those files answer to looser rules.',
+			outside: 'A relative import never leaves src/ ({{specifier}}): import a package by its name.'
+		}
+	},
+	create(context) {
+		const option = fieldOf(context.options[0], 'tier');
+		const importer = TIERS_STRICTEST_FIRST.find((tier) => tier === option) ?? 'shipped';
+		const importerRank = TIERS_STRICTEST_FIRST.indexOf(importer);
+		const folder = path.dirname(context.filename);
+
+		/** @param {import('eslint').Rule.Node} node @param {unknown} source */
+		function check(node, source) {
+			const specifier = staticTextOf(source);
+			if (specifier === undefined || !specifier.startsWith('.')) return;
+			// Vite drops the query and the hash before it resolves a path.
+			const bare = specifier.replace(/[?#].*$/s, '');
+			const target = path
+				.relative(PACKAGE_ROOT, path.resolve(folder, bare))
+				.split(path.sep)
+				.join('/');
+			if (!target.startsWith('src/')) {
+				context.report({ node, messageId: 'outside', data: { specifier } });
+				return;
+			}
+			const tier = loosestTierOf(target);
+			if (TIERS_STRICTEST_FIRST.indexOf(tier) <= importerRank) return;
+			const label = TIER_LABEL[importer];
+			context.report({
+				node,
+				messageId: 'looser',
+				data: {
+					importer: `${label.charAt(0).toUpperCase()}${label.slice(1)}`,
+					target: TIER_LABEL[tier],
+					specifier
+				}
+			});
+		}
+
+		/** @param {import('eslint').Rule.Node} node */
+		const checkSource = (node) => {
+			check(node, fieldOf(node, 'source'));
+		};
+
+		return {
+			ImportDeclaration: checkSource,
+			ExportAllDeclaration: checkSource,
+			ExportNamedDeclaration: checkSource,
+			ImportExpression: checkSource,
+			/** @param {import('eslint').Rule.Node} node */
+			TSImportType(node) {
+				check(node, fieldOf(fieldOf(node, 'argument'), 'literal'));
+			},
+			/** @param {import('eslint').Rule.Node} node */
+			TSExternalModuleReference(node) {
+				check(node, fieldOf(node, 'expression'));
+			}
+		};
+	}
+};
+
+/**
+ * True when a browser would read `text` as a URL on another origin: `http:`,
+ * `https:` or protocol-relative, with tabs and newlines dropped, leading
+ * controls and spaces trimmed and `\` read as `/`, as the network scan reads it.
+ *
+ * @param {string} text
+ */
+function readsAsRemote(text) {
+	const unbroken = text.replace(/[\t\n\r]/g, '');
+	let start = 0;
+	while (start < unbroken.length && unbroken.charCodeAt(start) <= 0x20) start += 1;
+	const read = unbroken.slice(start).toLowerCase();
+	return read.startsWith('http:') || read.startsWith('https:') || /^[/\\]{2}/.test(read);
+}
+
+/** @type {import('eslint').Rule.RuleModule} */
+const noRemoteStringRule = {
+	meta: {
+		type: 'problem',
+		docs: { description: 'No string holds a URL a browser would fetch from another origin.' },
+		schema: [],
+		messages: {
+			remote:
+				'No remote URL in source ({{text}}): nothing here reaches the network; take the URL as a prop.'
+		}
+	},
+	create(context) {
+		/** @param {import('eslint').Rule.Node} node @param {unknown} text */
+		function check(node, text) {
+			if (typeof text !== 'string' || !readsAsRemote(text)) return;
+			context.report({ node, messageId: 'remote', data: { text: text.trim().slice(0, 40) } });
+		}
+
+		return {
+			Literal(node) {
+				check(node, node.value);
+			},
+			TemplateElement(node) {
+				check(node, node.value.cooked ?? node.value.raw);
+			},
+			/** @param {import('eslint').Rule.Node} node */
+			SvelteLiteral(node) {
+				check(node, fieldOf(node, 'value'));
+			}
+		};
+	}
+};
+
+/** The package's own rules, as an inline plugin. */
+const uiPlugin = {
+	meta: { name: 'ui' },
+	rules: { 'import-tiers': importTiersRule, 'no-remote-string': noRemoteStringRule }
+};
+
+/**
+ * Each source set's tier and its options for the four restricted rules. A
+ * later flat-config block replaces an earlier one's options for the same rule,
+ * so each set gets one block per rule holding every entry it needs.
  */
 export const boundaryRules = {
 	components: {
+		tier: /** @type {const} */ ('shipped'),
 		globals: COMPONENT_GLOBALS,
 		properties: [...NETWORK_PROPERTIES, ANIMATE_PROPERTY],
 		imports: COMPONENT_IMPORTS,
 		syntax: COMPONENT_SYNTAX
 	},
 	motion: {
+		tier: /** @type {const} */ ('shipped'),
 		globals: COMPONENT_GLOBALS,
 		properties: NETWORK_PROPERTIES,
 		imports: MOTION_IMPORTS,
 		syntax: COMPONENT_SYNTAX
 	},
 	lazy: {
+		tier: /** @type {const} */ ('shipped'),
 		globals: COMPONENT_GLOBALS,
 		properties: [...NETWORK_PROPERTIES, ANIMATE_PROPERTY],
 		imports: LAZY_IMPORTS,
 		syntax: LAZY_SYNTAX
 	},
 	routes: {
+		tier: /** @type {const} */ ('host'),
 		globals: HOST_GLOBALS,
 		properties: [...NETWORK_PROPERTIES, ANIMATE_PROPERTY],
 		imports: HOST_IMPORTS,
 		syntax: ROUTES_SYNTAX
 	},
 	gallery: {
+		tier: /** @type {const} */ ('host'),
 		globals: HOST_GLOBALS,
 		properties: [...NETWORK_PROPERTIES, ANIMATE_PROPERTY],
 		imports: HOST_IMPORTS,
@@ -339,7 +649,7 @@ export const boundaryRules = {
 };
 
 /**
- * The four restricted-rule blocks for one source set.
+ * The four restricted-rule blocks and the package-rules block for one source set.
  *
  * @param {keyof typeof boundaryRules} name
  * @returns {import('eslint').Linter.Config[]}
@@ -373,6 +683,15 @@ function boundaryBlocks(name) {
 			files,
 			ignores,
 			rules: { 'no-restricted-syntax': ['error', ...rules.syntax] }
+		},
+		{
+			name: `ui/${name}/package-rules`,
+			files,
+			ignores,
+			rules: {
+				'ui/import-tiers': ['error', { tier: rules.tier }],
+				'ui/no-remote-string': 'error'
+			}
 		}
 	];
 }
@@ -383,6 +702,10 @@ const SOURCE_SETS = ['components', 'motion', 'lazy', 'routes', 'gallery'];
 
 export default defineConfig(
 	includeIgnoreFile(gitignorePath),
+	{
+		name: 'ui/plugin',
+		plugins: { ui: uiPlugin }
+	},
 	{
 		name: 'ui/inline-config',
 		// An inline comment can never switch a rule off: the config is the only word.

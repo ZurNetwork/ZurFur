@@ -5,12 +5,16 @@ import { fileURLToPath } from 'node:url';
 
 const srcRoot = fileURLToPath(new URL('../', import.meta.url));
 
-/** A file name that runs outside the static pages, or ships a server route. */
+/**
+ * A file name that runs outside the static pages, ships a server route, or is
+ * JSX, which no lint set, scan or tsconfig here reads.
+ */
 const forbiddenNames: readonly RegExp[] = [
 	/^\+server\./,
 	/\.server\./,
 	/^hooks\./,
-	/^service-worker\./
+	/^service-worker\./,
+	/\.[jt]sx$/i
 ];
 
 /** A folder SvelteKit treats as the service worker, or that holds the server half. */
@@ -56,7 +60,11 @@ describe('forbidden files', () => {
 		['a service worker in JavaScript', 'service-worker.js'],
 		['a service worker folder', 'service-worker/index.ts'],
 		['a server folder', 'lib/server/x.ts'],
-		['a nested server folder', 'lib/a/server/b/x.svelte']
+		['a nested server folder', 'lib/a/server/b/x.svelte'],
+		['a TSX file', 'lib/x.tsx'],
+		['a JSX file', 'lib/X.jsx'],
+		['a TSX page', 'routes/+page.tsx'],
+		['a JSX file in upper case', 'lib/X.JSX']
 	])('refuses %s', (_label, relative) => {
 		expect(forbiddenFiles([relative])).toEqual([relative]);
 	});

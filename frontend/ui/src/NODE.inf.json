@@ -33,7 +33,7 @@
     },
     {
       "name": "checks/",
-      "role": "specs over the package itself: the lint boundary rules, declared imports, forbidden server-side files, the style and network scans (scan/), serve config, tsconfig parity with web, workspace shape and the public entry",
+      "role": "specs over the package itself: the lint boundary rules and the import tiers, declared imports, forbidden server-side and JSX files, the style and network scans (scan/), serve config, tsconfig parity with web, workspace shape and the public entry",
       "node": false
     },
     {
