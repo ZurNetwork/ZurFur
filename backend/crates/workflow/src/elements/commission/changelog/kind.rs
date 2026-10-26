@@ -99,6 +99,9 @@ pub enum ChangelogEntryKind {
     /// The commission was renamed. The entry carries neither the old title nor
     /// the new one.
     Renamed,
+    /// The owner rated the commission or changed its rating: the rating and the
+    /// Graphic flag it now carries.
+    MaturityRated,
 }
 
 /// The kinds that say whether a Late is still owed: the kind a Late mark records, and the kinds

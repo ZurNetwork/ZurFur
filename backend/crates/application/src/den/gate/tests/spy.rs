@@ -9,13 +9,12 @@ use async_trait::async_trait;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
-        AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
-        CommissionMarkup, DeadlineChange, DelayedChange, DirectionChange, Dispute, DisputeClear,
-        ElementId, GrantLevel, LateKinds, LifecycleMove, LockedNode, LockedStanding,
-        NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot, SeatInvitation,
-        SeatInvitationId, TabId, TabRow,
+        AsOwner, AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile,
+        CommissionId, CommissionMarkup, DeadlineChange, DelayedChange, DirectionChange, Dispute,
+        DisputeClear, ElementId, GrantLevel, LateKinds, LifecycleMove, LockedNode, LockedStanding,
+        MaturitySet, NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot,
+        SeatInvitation, SeatInvitationId, TabId, TabRow,
     },
-    maturity::Maturity,
     user::UserId,
 };
 use domain::ports::{
@@ -362,8 +361,12 @@ impl CommissionWrites for SpyRepo<'_> {
         self.inner.set_archived(id, archived_at).await
     }
 
-    async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
-        self.inner.set_maturity(id, maturity).await
+    async fn set_maturity(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        change: &MaturitySet,
+    ) -> anyhow::Result<bool> {
+        self.inner.set_maturity(capability, change).await
     }
 
     async fn set_linked_channel(

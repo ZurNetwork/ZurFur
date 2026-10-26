@@ -1,4 +1,4 @@
-//! Test-only acts: the real create, rename, dispute, field and Late acts as the den carries them, the
+//! Test-only acts: the real create, rename, dispute, field, rating and Late acts as the den carries them, the
 //! system as an actor, each field act's typed use case called by one value, a commission's
 //! stored state at any step and with any field (and its entries and fields read back), and
 //! Atta's acts built by hand around a real act's body, for the tests that drive the write host
@@ -13,6 +13,7 @@ use domain::{
             DirectionStatus, LifecycleStep, NewCommission, StoredDispute,
         },
         did::Did,
+        maturity::Maturity,
         name::NodeName,
         user::UserId,
     },
@@ -22,7 +23,7 @@ use crate::{
     Ports,
     commission::{
         CommissionError, Commissions, act::CommissionAct, create, deadline, den::CommissionPlace,
-        dispute, lifecycle::move_to, rename, status::direction, sweep,
+        dispute, lifecycle::move_to, maturity, rename, status::direction, sweep,
     },
     den::{DenType, Place, act::DenAct, host::type_key, names, write::commission_directory},
 };
@@ -110,6 +111,12 @@ pub(crate) fn clear_delayed_act(commission: CommissionId) -> DenAct {
     DenAct::Commission(CommissionAct::ClearDelayed(act))
 }
 
+/// The rating of the commission `commission` to `to`.
+pub(crate) fn set_maturity_act(commission: CommissionId, to: Maturity) -> DenAct {
+    let act = maturity::set::Act { commission, to };
+    DenAct::Commission(CommissionAct::SetMaturity(act))
+}
+
 /// The system's Late mark on the commission `commission`.
 pub(crate) fn mark_late_act(commission: CommissionId) -> DenAct {
     let act = sweep::Act { commission };
@@ -140,6 +147,8 @@ pub(crate) enum FieldCall {
     SetDelayed,
     /// Takes the Delayed flag down.
     ClearDelayed,
+    /// Rates the commission, an Owner's act.
+    SetMaturity(Maturity),
 }
 
 /// `actor`'s `call` on `commission` at `now`, through its typed use case.
@@ -210,6 +219,15 @@ pub(crate) async fn field_call(
                 commission_id: commission,
             };
             commissions.deadline().status().clear(command, now).await?;
+        }
+        FieldCall::SetMaturity(to) => {
+            let command = maturity::set::Command {
+                actor_id,
+                commission_id: commission,
+                maturity_rating: to.rating,
+                graphic: to.graphic,
+            };
+            commissions.maturity().run(command, now).await?;
         }
     }
     Ok(())

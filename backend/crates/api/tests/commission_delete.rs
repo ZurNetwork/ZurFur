@@ -30,14 +30,13 @@ use async_trait::async_trait;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
-        AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
-        CommissionMarkup, CommissionTitle, DeadlineChange, DelayedChange, DirectionChange, Dispute,
-        DisputeClear, ElementId, GrantLevel, LateKinds, LifecycleMove, LockedNode, LockedStanding,
-        NewCommission, NewElement, NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId,
-        element::TabRow,
+        AsOwner, AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile,
+        CommissionId, CommissionMarkup, CommissionTitle, DeadlineChange, DelayedChange,
+        DirectionChange, Dispute, DisputeClear, ElementId, GrantLevel, LateKinds, LifecycleMove,
+        LockedNode, LockedStanding, MaturitySet, NewCommission, NewElement, NewSeat, NewSlot,
+        SeatInvitation, SeatInvitationId, TabId, element::TabRow,
     },
     did::Did,
-    maturity::Maturity,
     profile::Profile,
     user::UserId,
 };
@@ -445,8 +444,12 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         self.0.set_archived(id, archived_at).await
     }
 
-    async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
-        self.0.set_maturity(id, maturity).await
+    async fn set_maturity(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        change: &MaturitySet,
+    ) -> anyhow::Result<bool> {
+        self.0.set_maturity(capability, change).await
     }
 
     async fn set_linked_channel(

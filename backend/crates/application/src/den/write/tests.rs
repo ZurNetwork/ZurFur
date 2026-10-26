@@ -18,6 +18,7 @@ use domain::{
         },
         did::Did,
         level::Level,
+        maturity::{Maturity, MaturityRating},
         node::{NodeId, NodeRow, NodeSegment, NodeType},
     },
     ports::{
@@ -43,7 +44,7 @@ use crate::{
             clear_dispute_act, commission_path, create_act, field_call, fields_of,
             hand_built_create, hand_built_create_of, hand_built_rename, hand_built_rename_of,
             move_act, raise_dispute_act, rename_act, set_deadline_act, set_delayed_act,
-            set_direction_act, state_at, state_disputed_from, state_with,
+            set_direction_act, set_maturity_act, state_at, state_disputed_from, state_with,
         },
     },
     test_world, transaction,
@@ -1020,14 +1021,24 @@ async fn a_stale_field_act_fails(
     assert_eq!(entries(ports, commission).await.len(), logged, "{label}");
 }
 
-/// Each field act's stale act on `commission`, `actor`'s: a direction set from no status and a
-/// clear of another status than the row holds; a deadline set from no deadline and a clear of
-/// another deadline than the row holds; a Delayed flag raised from no stored flag while the row
-/// holds one, and taken down while the row holds none.
+/// A rating that isn't graphic.
+fn rated(rating: MaturityRating) -> Maturity {
+    Maturity {
+        rating,
+        graphic: false,
+    }
+}
+
+/// Each field act's stale act on `commission`, `actor`'s, the owner's: a direction set from no
+/// status and a clear of another status than the row holds; a deadline set from no deadline and
+/// a clear of another deadline than the row holds; a rating from unrated while the row holds
+/// one; a Delayed flag raised from no stored flag while the row holds one, and taken down while
+/// the row holds none.
 async fn each_stale_field_act_fails(ports: &Ports, actor: &UserId, commission: CommissionId) {
     let held = [
         FieldCall::SetDirection(DirectionStatus::WaitingForInput),
         FieldCall::SetDeadline(ahead()),
+        FieldCall::SetMaturity(rated(MaturityRating::Suggestive)),
         FieldCall::SetDelayed,
     ];
     for call in held {
@@ -1057,6 +1068,10 @@ async fn each_stale_field_act_fails(ports: &Ports, actor: &UserId, commission: C
         (
             state_with(step.clone(), Some(further_ahead()), None, None),
             clear_deadline_act(commission),
+        ),
+        (
+            state_with(step.clone(), None, None, None),
+            set_maturity_act(commission, rated(MaturityRating::Adult)),
         ),
         (
             state_with(step.clone(), Some(ahead()), None, None),
@@ -1142,7 +1157,7 @@ async fn each_stale_dispute_act_fails(ports: &Ports, actor: &UserId, commission:
 // A grant whose state is stale checks a change from a value the row no longer holds: the
 // compare-and-set matches no row, so the act fails and nothing lands. So for the lifecycle
 // move, the dispute's raise and clear, and for each field write: the direction status, the
-// deadline and the Delayed flag.
+// deadline, the rating and the Delayed flag.
 #[tokio::test]
 async fn a_stale_from_matches_no_row_and_fails_the_act() {
     let world = world().await;
@@ -1286,14 +1301,66 @@ async fn one_entry_in_each_field_act_s_unit(
     assert_eq!(left.delayed_flag(), None);
 }
 
+/// `owner`'s ratings of `commission`, unrated, through the rating's typed use case on `ports`,
+/// its units recorded: a first rating, then the same rating made graphic. Each is one unit,
+/// committed, holding exactly one `maturity_rated` entry by `owner` with its literal payload,
+/// and the rating stands as the last one left it.
+async fn one_entry_in_each_rating_s_unit(
+    ports: &mut Ports,
+    owner: &UserId,
+    commission: CommissionId,
+) {
+    let log = record_units(ports);
+    let graphic_nudity = Maturity {
+        rating: MaturityRating::Nudity,
+        graphic: true,
+    };
+    let ratings = [
+        (
+            rated(MaturityRating::Nudity),
+            serde_json::json!({ "rating": "nudity", "graphic": false }),
+        ),
+        (
+            graphic_nudity,
+            serde_json::json!({ "rating": "nudity", "graphic": true }),
+        ),
+    ];
+    assert_eq!(fields_of(ports, commission).await.maturity(), None);
+    for (to, payload) in ratings {
+        let call = FieldCall::SetMaturity(to);
+        let before = entries(ports, commission).await.len();
+        let units = log.events().len();
+
+        field_call(ports, owner, commission, call, Utc::now())
+            .await
+            .unwrap_or_else(|error| panic!("{call:?} lands: {error:?}"));
+
+        let stream = entries(ports, commission).await;
+        let [entry] = &stream[before..] else {
+            panic!("{call:?}: one entry, {} of them", stream.len() - before);
+        };
+        assert_eq!(log.events()[units..], ["begin", "commit"], "{call:?}");
+        assert_eq!(entry.kind, ChangelogEntryKind::MaturityRated, "{call:?}");
+        assert_eq!(entry.payload, payload, "{call:?}");
+        assert_eq!(entry.actor_id.as_ref(), Some(owner), "{call:?}");
+        assert_eq!(entry.note, None, "{call:?}");
+    }
+    assert_eq!(
+        fields_of(ports, commission).await.maturity(),
+        Some(graphic_nudity)
+    );
+}
+
 // A field act's write and its one entry land in the act's one unit: the lifecycle move, the
-// dispute's raise and clear, then each direction, deadline and Delayed act.
+// dispute's raise and clear, then each direction, deadline and Delayed act, and the owner's
+// ratings.
 #[tokio::test]
 async fn each_field_act_writes_one_entry_in_its_unit() {
     let mut world = world().await;
 
     one_entry_in_the_move_s_unit(&mut world.ports, &bob(), untitled()).await;
     one_entry_in_each_field_act_s_unit(&mut world.ports, &bob(), untitled()).await;
+    one_entry_in_each_rating_s_unit(&mut world.ports, &alice(), untitled()).await;
 }
 
 #[tokio::test]
@@ -1304,6 +1371,7 @@ async fn each_field_act_writes_one_entry_in_its_unit_on_postgres() {
 
     one_entry_in_the_move_s_unit(&mut ports, &owner, commission).await;
     one_entry_in_each_field_act_s_unit(&mut ports, &owner, commission).await;
+    one_entry_in_each_rating_s_unit(&mut ports, &owner, commission).await;
 }
 
 /// Untitled's world with every changelog append refused from here on, and the database that
@@ -1315,22 +1383,24 @@ async fn refusing_world() -> (test_world::World, Arc<dyn Database>) {
     (world, landing)
 }
 
-/// Whether `call` by bob on Untitled in `world`, whose appends are refused, fails and leaves the
-/// fields as they were; `label` names it in the answer when it doesn't.
+/// Whether `call` by `actor` on Untitled in `world`, whose appends are refused, fails and leaves
+/// the fields as they were; `label` names it in the answer when it doesn't.
 async fn stays_unwritten(
     world: &test_world::World,
+    actor: &UserId,
     call: FieldCall,
     label: &'static str,
 ) -> Option<&'static str> {
     let before = fields_of(&world.ports, untitled()).await;
-    let called = field_call(&world.ports, &bob(), untitled(), call, Utc::now()).await;
+    let called = field_call(&world.ports, actor, untitled(), call, Utc::now()).await;
     let after = fields_of(&world.ports, untitled()).await;
     (called.is_ok() || after != before).then_some(label)
 }
 
 // An act's entry can't be appended: the act's unit rolls back whole, so its field isn't
 // written. So for the lifecycle move, which leaves the step at Draft; the dispute's raise, which
-// leaves no dispute stored; and its clear, which leaves the commission Disputed.
+// leaves no dispute stored; its clear, which leaves the commission Disputed; and the owner's
+// rating, which leaves it unrated.
 #[tokio::test]
 async fn a_refused_append_leaves_the_field_unwritten() {
     let mut landed = Vec::new();
@@ -1343,7 +1413,7 @@ async fn a_refused_append_leaves_the_field_unwritten() {
         landed.push("the move");
     }
     let (raising, _) = refusing_world().await;
-    landed.extend(stays_unwritten(&raising, FieldCall::RaiseDispute, "the raise").await);
+    landed.extend(stays_unwritten(&raising, &bob(), FieldCall::RaiseDispute, "the raise").await);
     let (mut clearing, landing) = refusing_world().await;
     let refusing = clearing.ports.database.clone();
     clearing.ports.database = landing;
@@ -1357,7 +1427,10 @@ async fn a_refused_append_leaves_the_field_unwritten() {
     .await
     .expect("the dispute is raised");
     clearing.ports.database = refusing;
-    landed.extend(stays_unwritten(&clearing, FieldCall::ClearDispute, "the clear").await);
+    landed.extend(stays_unwritten(&clearing, &bob(), FieldCall::ClearDispute, "the clear").await);
+    let (rating, _) = refusing_world().await;
+    let safe = FieldCall::SetMaturity(rated(MaturityRating::Safe));
+    landed.extend(stays_unwritten(&rating, &alice(), safe, "the rating").await);
 
     assert_eq!(
         landed,
@@ -1472,9 +1545,14 @@ async fn each_lands(ports: &Ports, actor: &UserId, commission: CommissionId, cal
     }
 }
 
+/// A rating that is then the one held: giving it again changes nothing.
+fn rating_held() -> [FieldCall; 1] {
+    [FieldCall::SetMaturity(rated(MaturityRating::Adult))]
+}
+
 // A move to the step the commission holds lands, writes nothing and records nothing; so does
 // each clear of nothing held, and each set of the value held: the direction status, the
-// deadline, the Delayed flag already raised.
+// deadline, the Delayed flag already raised, and the owner's rating, its Graphic flag alike.
 #[tokio::test]
 async fn an_unchanged_value_writes_no_entry() {
     let world = world().await;
@@ -1493,10 +1571,12 @@ async fn an_unchanged_value_writes_no_entry() {
     let sets = sets_of_what_is_held();
     each_lands(&world.ports, &bob(), untitled(), &sets).await;
     each_changes_nothing(&world.ports, &bob(), untitled(), &sets).await;
+    each_lands(&world.ports, &alice(), untitled(), &rating_held()).await;
+    each_changes_nothing(&world.ports, &alice(), untitled(), &rating_held()).await;
 }
 
 // On PostgreSQL, a move to the held step runs no lifecycle write and appends nothing; nor does
-// a clear of nothing held, nor a set of the value held.
+// a clear of nothing held, nor a set of the value held, the rating held included.
 #[tokio::test]
 async fn an_unchanged_value_writes_no_entry_on_postgres() {
     let statements = StatementLog::default();
@@ -1526,6 +1606,13 @@ async fn an_unchanged_value_writes_no_entry_on_postgres() {
     let again = statements.mark();
     each_changes_nothing(&ports, &owner, commission, &sets).await;
     assert_eq!(field_writes_since(&statements, again), Vec::<String>::new());
+    each_lands(&ports, &owner, commission, &rating_held()).await;
+    let rated_again = statements.mark();
+    each_changes_nothing(&ports, &owner, commission, &rating_held()).await;
+    assert_eq!(
+        field_writes_since(&statements, rated_again),
+        Vec::<String>::new()
+    );
 }
 
 /// The field writes and changelog appends `statements` saw since `mark`, by query name; the
@@ -1536,6 +1623,7 @@ fn field_writes_since(statements: &StatementLog, mark: usize) -> Vec<String> {
         "commission/set_direction_status",
         "commission/set_deadline",
         "commission/set_deadline_status",
+        "commission/set_maturity",
         "changelog/append",
     ];
     statements

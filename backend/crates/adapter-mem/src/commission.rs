@@ -10,16 +10,16 @@ use async_trait::async_trait;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
-        AsParticipant, Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer, Commission,
-        CommissionBirth, CommissionComposition, CommissionDeadline, CommissionFile, CommissionId,
-        CommissionMarkup, CommissionRole, CommissionStanding, CommissionStart, CommissionSummary,
-        CommissionTitle, DeadlineChange, DeadlineStatus, DelayedChange, DirectionChange,
-        DirectionStatus, Dispute, DisputeClear, ElementId, ElementPayload, ElementRow, ElementType,
-        FileKey, FileSummary, GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode,
-        LockedStanding, NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot, Seat,
-        SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, StoredDispute,
-        SurfaceAddress, SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs,
-        declares_surface,
+        AsOwner, AsParticipant, Band, ChangelogEntry, ChangelogEntryKind, ChannelPointer,
+        Commission, CommissionBirth, CommissionComposition, CommissionDeadline, CommissionFile,
+        CommissionId, CommissionMarkup, CommissionRole, CommissionStanding, CommissionStart,
+        CommissionSummary, CommissionTitle, DeadlineChange, DeadlineStatus, DelayedChange,
+        DirectionChange, DirectionStatus, Dispute, DisputeClear, ElementId, ElementPayload,
+        ElementRow, ElementType, FileKey, FileSummary, GrantLevel, LateKinds, LifecycleMove,
+        LifecycleStep, LockedNode, LockedStanding, MaturitySet, NewChangelogEntry, NewCommission,
+        NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink,
+        SeatPrompt, Slot, StoredDispute, SurfaceAddress, SurfaceName, TabId, TabName, TabRow,
+        VisibilityMode, declared_tabs, declares_surface,
     },
     did::Did,
     invitation::InvitationState,
@@ -832,22 +832,29 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         Ok(true)
     }
 
-    /// Write the maturity posture — the mem mirror of the pg
-    /// `UPDATE commission SET maturity, graphic`. Replace-only by
-    /// signature (no clear arm exists); an absent commission is a no-op, per
-    /// the port contract (existence is the caller's check).
+    /// Rates the commission by compare-and-set: only while the stored rating, Graphic flag
+    /// included, is `change`'s held one (none while unrated), the mem mirror of the pg write.
+    /// Otherwise, or with no such commission, it changes nothing and answers `false`.
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
-        let id = *id;
+    async fn set_maturity(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        change: &MaturitySet,
+    ) -> anyhow::Result<bool> {
+        let id = *capability.thing();
         let mut commissions = self
             .0
             .commissions
             .lock()
             .expect("MemBackend commissions mutex poisoned");
-        if let Some(stored) = commissions.get_mut(&id) {
-            stored.maturity = Some(maturity);
+        let Some(stored) = commissions.get_mut(&id) else {
+            return Ok(false);
+        };
+        if stored.maturity != change.before() {
+            return Ok(false);
         }
-        Ok(())
+        stored.maturity = Some(change.after());
+        Ok(true)
     }
     /// Declare a seat: behind the shared address gate, one `StoredElement`
     /// and one `StoredSeat` land under the same [`ElementId`], so both halves

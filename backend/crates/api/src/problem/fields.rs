@@ -102,6 +102,10 @@ impl From<FieldRefusal> for FieldError {
 /// The detail of every field refusal problem; each field error says why itself.
 const INVALID_FIELDS_DETAIL: &str = "Some fields need changing; each one says why.";
 
+/// The detail of a refused rating: the vocabulary, never the token sent.
+const UNKNOWN_RATING_DETAIL: &str =
+    "That isn't a maturity rating; choose one of: safe, suggestive, nudity, adult.";
+
 impl Problem {
     /// `422`, code `invalid_request` — the request's fields need changing.
     /// It is [`Problem::invalid_request`] with a fixed detail, plus `errors`,
@@ -118,6 +122,21 @@ impl Problem {
         Self {
             errors,
             ..invalid_request
+        }
+    }
+
+    /// `422`, code `unknown_maturity_rating` — the rating at `pointer` is outside the
+    /// vocabulary. Its detail is fixed and its one field error is `unknown_value` at `pointer`,
+    /// so it never echoes the token sent.
+    pub fn unknown_maturity_rating_at(pointer: FieldPointer) -> Self {
+        let refusal = FieldRefusal {
+            pointer,
+            code: FieldCode::UnknownValue,
+        };
+        let unknown = Self::unknown_maturity_rating(UNKNOWN_RATING_DETAIL);
+        Self {
+            errors: vec![FieldError::from(refusal)],
+            ..unknown
         }
     }
 }

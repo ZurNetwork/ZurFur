@@ -1,8 +1,8 @@
 //! The RFC 9457 problem-document type served as `application/problem+json` for
 //! every JSON API error; success responses stay bare resources with the status
 //! line as outcome. Construct via the named registry below, never field-by-field.
-//! A `422` that refuses request fields names them in `errors`, built only by
-//! [`Problem::invalid_fields`].
+//! A `422` that refuses request fields names them in `errors`, built only in the
+//! field registry: [`Problem::invalid_fields`] and [`Problem::unknown_maturity_rating_at`].
 
 use axum::{
     Json,

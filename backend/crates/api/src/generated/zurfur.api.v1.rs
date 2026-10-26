@@ -366,7 +366,8 @@ pub struct GetCommissionResponse {
     /// `rename` (the owner only), `move_lifecycle`, `raise_dispute`, `clear_dispute`,
     /// `set_direction_status`,
     /// `clear_direction_status`, `set_deadline`, `clear_deadline`, `set_delayed`,
-    /// `clear_delayed`. Empty for a viewer who holds no role on it. An act is listed when
+    /// `clear_delayed`, `set_maturity` (the owner only). Empty for a viewer who holds no role on
+    /// it. An act is listed when
     /// its call would succeed for some value it takes; a listed call may still answer `204`
     /// with nothing changed.
     #[prost(string, repeated, tag = "12")]
@@ -483,6 +484,23 @@ pub struct ClearCommissionDeadlineStatusRequest {
 /// `DELETE .../status/deadline` succeeds `204`; there is no body.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClearCommissionDeadlineStatusResponse {}
+/// `PUT /api/v1/commissions/{id}/maturity` — the owner rates the commission.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetCommissionMaturityRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// The rating, in the vocabulary of `Maturity.rating`. A token outside it → 422
+    /// `unknown_maturity_rating` with a field error at `#/rating`.
+    #[prost(string, tag = "2")]
+    pub rating: ::prost::alloc::string::String,
+    /// The orthogonal Graphic flag; absent means not graphic.
+    #[prost(bool, tag = "3")]
+    pub graphic: bool,
+}
+/// `PUT .../maturity` succeeds `204`; there is no body.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetCommissionMaturityResponse {}
 /// `GET /api/v1/den`: the viewer's own root; the session is the argument.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetDenRootRequest {

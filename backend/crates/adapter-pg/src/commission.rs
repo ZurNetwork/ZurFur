@@ -8,15 +8,15 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            AsParticipant, Band, ChannelPointer, Commission, CommissionBirth,
+            AsOwner, AsParticipant, Band, ChannelPointer, Commission, CommissionBirth,
             CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionRole,
             CommissionStanding, CommissionStart, CommissionSummary, DeadlineChange, DeadlineStatus,
             DelayedChange, DirectionChange, DirectionStatus, Dispute, DisputeClear, ElementId,
             ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel, LateKinds,
             LifecycleMove, LifecycleStep, LockedNode, LockedStanding, Markup, MarkupKey,
-            NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId,
-            SeatKind, SeatLink, SeatPrompt, Slot, StoredDispute, SurfaceAddress, SurfaceName,
-            TabId, TabName, TabRow, VisibilityMode, declared_tabs, declares_surface,
+            MaturitySet, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
+            SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, StoredDispute, SurfaceAddress,
+            SurfaceName, TabId, TabName, TabRow, VisibilityMode, declared_tabs, declares_surface,
         },
         did::Did,
         invitation::InvitationState,
@@ -482,18 +482,27 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(affected > 0)
     }
 
-    /// Writes `maturity` and `graphic` together; the schema's both-or-neither
-    /// CHECK makes a half-set pair unrepresentable.
+    /// Writes `commission.maturity` and `graphic` together by compare-and-set, matching the held
+    /// pair (both NULL while unrated); the schema's both-or-neither CHECK makes a half-set pair
+    /// unrepresentable. `true` only when exactly one row changed.
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
-        sql::set_maturity(
+    async fn set_maturity(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        change: &MaturitySet,
+    ) -> anyhow::Result<bool> {
+        let given = change.after();
+        let held = change.before();
+        let affected = sql::set_maturity(
             &mut *self.conn,
-            uuid::Uuid::from(*id),
-            Some(<&'static str>::from(maturity.rating)),
-            Some(maturity.graphic),
+            uuid::Uuid::from(*capability.thing()),
+            Some(<&'static str>::from(given.rating)),
+            Some(given.graphic),
+            held.map(|held| <&'static str>::from(held.rating)),
+            held.map(|held| held.graphic),
         )
         .await?;
-        Ok(())
+        Ok(affected == 1)
     }
 
     /// Declares a seat: an ordinary element (typed [`ElementType::seat`]) via the

@@ -288,6 +288,20 @@ async fn out_of_vocabulary_ratings_are_refused_server_side() {
         let res = put_maturity(&client, &base, id, json!({ "rating": bad })).await;
         common::assert_problem(res, 422, "unknown_maturity_rating").await;
     }
+    // The refusal names the field and says the vocabulary in words fixed by the code, never
+    // the token sent.
+    let res = put_maturity(&client, &base, id, json!({ "rating": "questionable" })).await;
+    let refused: serde_json::Value = res.json().await.expect("problem body");
+    let field_errors = json!([{
+        "pointer": "#/rating",
+        "code": "unknown_value",
+        "detail": "Choose one of the listed values.",
+    }]);
+    assert_eq!(refused["errors"], field_errors);
+    assert_eq!(
+        refused["detail"],
+        "That isn't a maturity rating; choose one of: safe, suggestive, nudity, adult."
+    );
     // A malformed body (no rating at all) is a 422 too.
     let res = put_maturity(&client, &base, id, json!({ "graphic": true })).await;
     assert_eq!(res.status(), 422, "a body without a rating is refused");

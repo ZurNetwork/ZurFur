@@ -10,6 +10,7 @@ use domain::{
             CommissionDeadline, CommissionId, CommissionStanding, CommissionState, CommissionTitle,
             DirectionStatus, LifecycleStep,
         },
+        maturity::{Maturity, MaturityRating},
         user::UserId,
     },
 };
@@ -20,7 +21,7 @@ use crate::{
         act::{CommissionAct, CommissionActKind},
         deadline, dispute,
         lifecycle::move_to,
-        rename,
+        maturity, rename,
         status::direction,
     },
     den::{
@@ -82,8 +83,9 @@ impl Probe<'_> {
 
 /// The values the list tries of the act of `kind` on `commission`, at `now` and given its
 /// `title`: every lifecycle step, every direction status, the rename to `title`, a deadline at
-/// `now`, since the deadline rule refuses by state, never by the time set, and the dispute's
-/// raise and clear, each clear and each Delayed act once. None of a create or of the system's Late mark, which no user takes on a
+/// `now`, since the deadline rule refuses by state, never by the time set, a Safe rating, since
+/// the rating rule refuses nothing, and the dispute's raise and clear, each clear and each
+/// Delayed act once. None of a create or of the system's Late mark, which no user takes on a
 /// stored commission. A match over every kind, so a new act fails to compile until it is tried.
 fn tried(
     kind: CommissionActKind,
@@ -150,6 +152,17 @@ fn tried(
         CommissionActKind::ClearDelayed => {
             let act = deadline::status::clear::Act { commission };
             vec![CommissionAct::ClearDelayed(act)]
+        }
+        CommissionActKind::SetMaturity => {
+            let safe = Maturity {
+                rating: MaturityRating::Safe,
+                graphic: false,
+            };
+            let act = maturity::set::Act {
+                commission,
+                to: safe,
+            };
+            vec![CommissionAct::SetMaturity(act)]
         }
     }
 }

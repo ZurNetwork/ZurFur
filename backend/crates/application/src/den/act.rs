@@ -9,7 +9,7 @@ use domain::{
         commission::{
             ChangelogEntryKind, Commission, CommissionId, CommissionRole, DeadlineCleared,
             DeadlineSet, DelayedCleared, DelayedSet, DirectionCleared, DirectionSet, Dispute,
-            DisputeClear, LateMark, LifecycleMove, NewChangelogEntry,
+            DisputeClear, LateMark, LifecycleMove, MaturitySet, NewChangelogEntry,
         },
         level::Level,
         name::NodeName,
@@ -330,6 +330,19 @@ impl GatedEntry<DelayedCleared> {
     pub(crate) const DELAYED_CLEARED: Self = Self {
         kinds: &[ChangelogEntryKind::Delayed],
         constructor: EntryConstructor::Change(NewChangelogEntry::delayed_cleared),
+    };
+}
+
+impl GatedEntry<MaturitySet> {
+    /// A rating's entry: kind `MaturityRated`, by `NewChangelogEntry::maturity_rated`, from the
+    /// rating the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
+    pub(crate) const MATURITY_RATED: Self = Self {
+        kinds: &[ChangelogEntryKind::MaturityRated],
+        constructor: EntryConstructor::Change(NewChangelogEntry::maturity_rated),
     };
 }
 

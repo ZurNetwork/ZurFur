@@ -5,8 +5,8 @@
 //! above, no name anywhere, and nothing of PostgreSQL's detail. The field acts the first test
 //! leaves out (the direction set and clear, the Delayed raise and take-down, the deadline clear)
 //! log the same, a stranger's of them included; so do the dispute's raise and clear, landed,
-//! refused by their rule and a stranger's. The system's Late mark logs no DID and no name at any
-//! level.
+//! refused by their rule and a stranger's; and so does the owner's rating, landed, unchanged and
+//! a stranger's. The system's Late mark logs no DID and no name at any level.
 
 use std::sync::Arc;
 
@@ -16,6 +16,7 @@ use domain::elements::{
     },
     did::Did,
     level::Level,
+    maturity::{Maturity, MaturityRating},
 };
 use test_support::{
     log_capture::CapturedLog,
@@ -270,6 +271,64 @@ async fn the_dispute_acts_log_no_identity_and_no_name() {
         for leak in [
             DISPUTE_OWNER,
             DISPUTE_STRANGER,
+            "did:plc:",
+            PG_TITLE,
+            "DETAIL",
+            "Key (",
+        ] {
+            assert!(!line.contains(leak), "a line carries {leak}: {line}");
+        }
+    }
+}
+
+/// The owner of the rated commission.
+const RATING_OWNER: &str = "did:plc:den-write-log-rating-owner";
+
+/// A stranger to the rated commission.
+const RATING_STRANGER: &str = "did:plc:den-write-log-rating-stranger";
+
+// The owner's rating, through its typed use case, lands, then lands again changing nothing, and
+// a stranger's misses; no line at any level carries a DID, and no line carries the commission's
+// name.
+#[tokio::test]
+async fn the_rating_logs_no_identity_and_no_name() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let (owner, commission) = pg_seed(&ports, RATING_OWNER).await;
+    let stranger = provision(&*ports.database, RATING_STRANGER).await;
+    let adult = Maturity {
+        rating: MaturityRating::Adult,
+        graphic: true,
+    };
+    let rate = FieldCall::SetMaturity(adult);
+    let now = chrono::Utc::now();
+    let (log, _guard) = capture_at_trace();
+
+    let rated = field_call(&ports, &owner, commission, rate, now).await;
+    let rated_again = field_call(&ports, &owner, commission, rate, now).await;
+    let unseen = field_call(&ports, &stranger, commission, rate, now).await;
+
+    for landed in [&rated, &rated_again] {
+        assert!(landed.is_ok(), "{landed:?}");
+    }
+    assert!(
+        matches!(
+            unseen,
+            Err(CommissionError::CommonError(CommonError::NotFound(
+                NotFoundEntity::Commission
+            )))
+        ),
+        "{unseen:?}"
+    );
+    let text = log.text();
+    assert!(
+        text.contains("use case finished"),
+        "the capture saw nothing: {text}"
+    );
+    for line in text.lines() {
+        for leak in [
+            RATING_OWNER,
+            RATING_STRANGER,
             "did:plc:",
             PG_TITLE,
             "DETAIL",

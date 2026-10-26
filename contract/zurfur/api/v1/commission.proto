@@ -149,7 +149,8 @@ message GetCommissionResponse {
   // `rename` (the owner only), `move_lifecycle`, `raise_dispute`, `clear_dispute`,
   // `set_direction_status`,
   // `clear_direction_status`, `set_deadline`, `clear_deadline`, `set_delayed`,
-  // `clear_delayed`. Empty for a viewer who holds no role on it. An act is listed when
+  // `clear_delayed`, `set_maturity` (the owner only). Empty for a viewer who holds no role on
+  // it. An act is listed when
   // its call would succeed for some value it takes; a listed call may still answer `204`
   // with nothing changed.
   repeated string acts = 12;
@@ -251,6 +252,20 @@ message ClearCommissionDeadlineStatusRequest {
 
 // `DELETE .../status/deadline` succeeds `204`; there is no body.
 message ClearCommissionDeadlineStatusResponse {}
+
+// `PUT /api/v1/commissions/{id}/maturity` — the owner rates the commission.
+message SetCommissionMaturityRequest {
+  // Opaque commission id, from the path.
+  string id = 1;
+  // The rating, in the vocabulary of `Maturity.rating`. A token outside it → 422
+  // `unknown_maturity_rating` with a field error at `#/rating`.
+  string rating = 2;
+  // The orthogonal Graphic flag; absent means not graphic.
+  bool graphic = 3;
+}
+
+// `PUT .../maturity` succeeds `204`; there is no body.
+message SetCommissionMaturityResponse {}
 
 // The commissions service. Session-gated: signed out, every call answers `401`.
 // Problems per problem.proto. Someone who may not open a commission gets the same `404`
@@ -371,6 +386,18 @@ service CommissionService {
   rpc ClearCommissionDeadlineStatus(ClearCommissionDeadlineStatusRequest) returns (ClearCommissionDeadlineStatusResponse) {
     option (google.api.http) = {
       delete: "/api/v1/commissions/{id}/status/deadline"
+    };
+  }
+
+  // The owner rates the commission. Replace-only: no call clears a rating. `204`, with nothing
+  // changed when it already holds the rating and the Graphic flag. `422
+  // unknown_maturity_rating` with a field error at `#/rating` for a rating outside the
+  // vocabulary, before anyone's standing is checked. `404` for anyone who holds no role on it,
+  // alike for an id that names nothing; a Participant who isn't the owner gets `403`.
+  rpc SetCommissionMaturity(SetCommissionMaturityRequest) returns (SetCommissionMaturityResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/commissions/{id}/maturity"
+      body: "*"
     };
   }
 }

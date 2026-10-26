@@ -3,8 +3,8 @@ use domain::elements::account::AccountId;
 use domain::elements::commission::{
     CommissionDeadline, CommissionState, CommissionTitle, DirectionStatus, FileName, LateFacts,
     LateKinds, NewSlot, SKELETON, SeatInvitation, SeatKind, SlotTitle, clear_deadline,
-    clear_delayed, clear_direction, move_lifecycle, owes_late, schedule_deadline, set_delayed,
-    set_direction,
+    clear_delayed, clear_direction, move_lifecycle, owes_late, rate_maturity, schedule_deadline,
+    set_delayed, set_direction,
 };
 use domain::elements::did::Did;
 use domain::elements::workflow::{ColumnName, WorkflowName};
@@ -1607,25 +1607,42 @@ async fn commission_store_answers_participant_and_channel_reads() {
     );
 }
 
-// ZMVP-31 (store layer) — a fresh commission is unrated (the birth
-// invariant); set_maturity round-trips every axis/graphic pairing and a
-// later write REPLACES the posture (replace-only — no clear exists);
-// the write is unit-of-work-scoped (a dropped unit rates nothing); an
-// absent commission is a no-op, per the port contract.
+/// The Owner's capability on `id`, minted here as the den's write gate issues one.
+fn owner_on(id: CommissionId) -> WriteCapability<CommissionId, AsOwner> {
+    WriteCapability::gate_issued(id)
+}
+
+/// The rating `to` on what `backend` holds for `id`, as its rule checks it.
+async fn rating_of(backend: &MemBackend, id: CommissionId, to: Maturity) -> MaturitySet {
+    let state = state_of(backend, id).await;
+    rate_maturity(&state, to).expect("a real rating")
+}
+
+// A fresh commission is unrated; a rating round-trips every rating and Graphic pairing and each
+// one replaces the last, by compare-and-set through the unit. A dropped unit rates nothing, and
+// a rating checked from one the row no longer holds, or on no commission, changes nothing and
+// answers `false`.
 #[tokio::test]
-async fn set_maturity_round_trips_replaces_and_respects_the_unit() {
+async fn set_maturity_rates_and_replaces_by_compare_and_set() {
     use domain::elements::maturity::MaturityRating;
     use strum::VariantArray;
 
     let backend = MemBackend::new();
     let database = backend.database();
-    let owner = user_id();
-    let created = commission("Rated", owner);
+    let created = commission("Rated", user_id());
     let id = created.id;
     seed(&backend, &created).await;
-
-    let unrated = backend.find_commission(id).await.unwrap().expect("exists");
-    assert_eq!(unrated.maturity, None, "born unrated (the invariant)");
+    let capability = owner_on(id);
+    let rating_held = async |backend: &MemBackend| state_of(backend, id).await.maturity();
+    assert_eq!(rating_held(&backend).await, None, "born unrated");
+    let from_unrated = rate_maturity(
+        &state_of(&backend, id).await,
+        Maturity {
+            rating: MaturityRating::Safe,
+            graphic: false,
+        },
+    )
+    .expect("a real rating");
 
     for rating in MaturityRating::VARIANTS {
         for graphic in [true, false] {
@@ -1633,65 +1650,63 @@ async fn set_maturity_round_trips_replaces_and_respects_the_unit() {
                 rating: *rating,
                 graphic,
             };
+            let change = rating_of(&backend, id, posture).await;
             let mut uow = database.begin().await.unwrap();
-            uow.commissions().set_maturity(&id, posture).await.unwrap();
+            let landed = uow
+                .commissions()
+                .set_maturity(&capability, &change)
+                .await
+                .unwrap();
             uow.commit().await.unwrap();
+            assert!(landed, "{posture:?}");
             assert_eq!(
-                backend
-                    .find_commission(id)
-                    .await
-                    .unwrap()
-                    .expect("exists")
-                    .maturity,
+                rating_held(&backend).await,
                 Some(posture),
-                "each write replaces the whole posture",
+                "each rating replaces the whole posture"
             );
         }
     }
+    let last = Maturity {
+        rating: MaturityRating::Adult,
+        graphic: false,
+    };
 
-    // A dropped unit's write is discarded — the last committed posture holds.
+    let suggestive = Maturity {
+        rating: MaturityRating::Suggestive,
+        graphic: true,
+    };
+    let dropped = rating_of(&backend, id, suggestive).await;
     {
         let mut uow = database.begin().await.unwrap();
         uow.commissions()
-            .set_maturity(
-                &id,
-                Maturity {
-                    rating: MaturityRating::Suggestive,
-                    graphic: true,
-                },
-            )
+            .set_maturity(&capability, &dropped)
             .await
             .unwrap();
-        // `uow` drops here without `commit` → the staged write is discarded.
     }
     assert_eq!(
-        backend
-            .find_commission(id)
-            .await
-            .unwrap()
-            .expect("exists")
-            .maturity,
-        Some(Maturity {
-            rating: MaturityRating::Adult,
-            graphic: false,
-        }),
-        "a dropped unit of work changes nothing — the loop's last committed posture holds",
+        rating_held(&backend).await,
+        Some(last),
+        "a dropped unit changes nothing"
     );
 
-    // An absent commission is a no-op, not an error (existence is the
-    // caller's check).
     let mut uow = database.begin().await.unwrap();
-    uow.commissions()
+    let stale = uow
+        .commissions()
+        .set_maturity(&capability, &from_unrated)
+        .await
+        .unwrap();
+    let absent = uow
+        .commissions()
         .set_maturity(
-            &CommissionId::from(uuid::Uuid::now_v7()),
-            Maturity {
-                rating: MaturityRating::Adult,
-                graphic: false,
-            },
+            &owner_on(CommissionId::from(uuid::Uuid::now_v7())),
+            &dropped,
         )
         .await
         .unwrap();
     uow.commit().await.unwrap();
+    assert!(!stale, "a rating checked from unrated matches no rated row");
+    assert!(!absent, "no commission, no row");
+    assert_eq!(rating_held(&backend).await, Some(last));
 }
 
 /// Seeds a committed commission and returns `(its id, its only address)` —
@@ -2781,13 +2796,20 @@ fn typed_entries(commission: &mut Commission) -> Vec<(NewChangelogEntry, Value)>
     let lowered = clear_delayed(&flagged, before_march)
         .expect("passes")
         .expect("a real clear");
-    let delayed_cleared = NewChangelogEntry::delayed_cleared(id, owner, &lowered, at);
+    let delayed_cleared = NewChangelogEntry::delayed_cleared(id, owner.clone(), &lowered, at);
     let late_facts = LateFacts {
         state: flagged,
         owed: true,
     };
     let mark = owes_late(&late_facts, at).expect("a late entry is owed");
     let late = NewChangelogEntry::late(id, &mark, at);
+    let suggestive = Maturity {
+        rating: domain::elements::maturity::MaturityRating::Suggestive,
+        graphic: true,
+    };
+    let unrated = CommissionState::from(&*commission);
+    let rating = rate_maturity(&unrated, suggestive).expect("a real rating");
+    let maturity_rated = NewChangelogEntry::maturity_rated(id, owner, &rating, at);
 
     vec![
         (
@@ -2826,11 +2848,15 @@ fn typed_entries(commission: &mut Commission) -> Vec<(NewChangelogEntry, Value)>
             late,
             json!({ "deadline": "2026-03-01T12:00:00Z", "from": "delayed" }),
         ),
+        (
+            maturity_rated,
+            json!({ "rating": "suggestive", "graphic": true }),
+        ),
     ]
 }
 
-// Each typed entry, the new `lifecycle_moved` among them, reads back with its kind and the
-// literal JSON its constructor wrote, and no note.
+// Each typed entry, the new `lifecycle_moved` and `maturity_rated` among them, reads back with
+// its kind and the literal JSON its constructor wrote, and no note.
 #[tokio::test]
 async fn each_new_kind_s_stored_shape_is_its_literal_json() {
     let backend = MemBackend::new();

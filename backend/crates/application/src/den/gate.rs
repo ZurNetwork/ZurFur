@@ -33,7 +33,7 @@ use crate::commission::den::{Verdict, verdict};
 use crate::commission::sweep;
 use crate::{
     commission::{
-        act::CommissionAct, create, deadline, dispute, lifecycle::move_to, rename,
+        act::CommissionAct, create, deadline, dispute, lifecycle::move_to, maturity, rename,
         status::direction,
     },
     den::{
@@ -416,6 +416,7 @@ pub(in crate::den) fn judge_act(
         CommissionAct::ClearDeadline(clear) => judge(clear, standing, state, now),
         CommissionAct::SetDelayed(set) => judge(set, standing, state, now),
         CommissionAct::ClearDelayed(clear) => judge(clear, standing, state, now),
+        CommissionAct::SetMaturity(set) => judge(set, standing, state, now),
     }
 }
 
@@ -673,6 +674,8 @@ enum Prepared {
     SetDelayed(Passed<deadline::status::set::Act>),
     /// A commission's Delayed flag taken down.
     ClearDelayed(Passed<deadline::status::clear::Act>),
+    /// A commission's rating.
+    SetMaturity(Passed<maturity::set::Act>),
     /// The system's Late mark on a commission.
     MarkLate(Passed<sweep::Act>),
 }
@@ -727,6 +730,9 @@ fn prepare(act: DenAct, grant: &Grant, now: DateTimeUtc) -> Result<Prepared, Den
         }
         DenAct::Commission(CommissionAct::ClearDelayed(clear)) => {
             passed(clear, grant, now).map(Prepared::ClearDelayed)
+        }
+        DenAct::Commission(CommissionAct::SetMaturity(set)) => {
+            passed(set, grant, now).map(Prepared::SetMaturity)
         }
         DenAct::Commission(CommissionAct::MarkLate(mark)) => {
             passed(mark, grant, now).map(Prepared::MarkLate)
@@ -1024,6 +1030,27 @@ impl View<'_, deadline::status::clear::Act> {
     }
 }
 
+impl View<'_, maturity::set::Act> {
+    /// Rates the capability's commission as the rule checked, by compare-and-set on the held
+    /// rating, once; a rating that matches no row fails.
+    async fn set_maturity(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self.repo.set_maturity(&self.capability, change).await?;
+        if !landed {
+            return Err(facts_lied("the rating matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
 impl<H: Handler> View<'_, H> {
     /// The capability's commission as the unit holds it; no row is a failure.
     async fn lent(&mut self) -> anyhow::Result<Commission> {
@@ -1111,6 +1138,13 @@ impl Lent<'_, deadline::status::clear::Act> {
     /// Takes the commission's Delayed flag down as the rule checked: once, and only a real clear.
     pub(crate) async fn set_deadline_status(&mut self) -> anyhow::Result<()> {
         self.latch.pass(self.view.set_deadline_status().await)
+    }
+}
+
+impl Lent<'_, maturity::set::Act> {
+    /// Rates the commission as the rule checked: once, and only a real rating.
+    pub(crate) async fn set_maturity(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_maturity().await)
     }
 }
 
@@ -1248,6 +1282,7 @@ async fn lend(
         Prepared::ClearDeadline(clear) => lend_as(clear, grant, unit, written, now).await,
         Prepared::SetDelayed(set) => lend_as(set, grant, unit, written, now).await,
         Prepared::ClearDelayed(clear) => lend_as(clear, grant, unit, written, now).await,
+        Prepared::SetMaturity(set) => lend_as(set, grant, unit, written, now).await,
         Prepared::MarkLate(mark) => lend_as(mark, grant, unit, written, now).await,
     }
 }

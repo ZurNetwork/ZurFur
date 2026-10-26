@@ -269,8 +269,8 @@ async fn agrees(
 }
 
 // Through a run of states, Draft to Active, with no deadline, one ahead, one past, then
-// Disputed through its raise and back through its clear, every act bob and alice could call is
-// listed exactly when the call succeeds.
+// Disputed through its raise and back through its clear, every act bob and alice could call,
+// the owner's rating among them, is listed exactly when the call succeeds.
 #[tokio::test]
 async fn the_acts_equal_the_gate_s_verdicts() {
     let world = pg_app::den_world(api::app).await;
@@ -335,6 +335,14 @@ async fn the_acts_equal_the_gate_s_verdicts() {
     let move_lifecycle = || call("move_lifecycle", reqwest::Method::PUT, "/lifecycle", None);
     let raise_dispute = || call("raise_dispute", reqwest::Method::PUT, "/dispute", None);
     let clear_dispute = || call("clear_dispute", reqwest::Method::DELETE, "/dispute", None);
+    let rate = || {
+        call(
+            "set_maturity",
+            reqwest::Method::PUT,
+            "/maturity",
+            Some(json!({ "rating": "suggestive", "graphic": true })),
+        )
+    };
 
     let (bob, alice) = (&world.bob, &world.alice);
     let run = [
@@ -342,6 +350,8 @@ async fn the_acts_equal_the_gate_s_verdicts() {
         (bob, clear_delayed(), "draft, no deadline"),
         (bob, rename(), "a Participant's rename"),
         (alice, rename(), "the owner's rename"),
+        (bob, rate(), "a Participant's rating"),
+        (alice, rate(), "the owner's rating"),
         (bob, clear_deadline(), "draft, no deadline"),
         (bob, set_future(), "draft, no deadline"),
         (bob, set_delayed(), "draft, a deadline ahead"),
@@ -370,6 +380,7 @@ async fn the_acts_equal_the_gate_s_verdicts() {
         (bob, set_delayed(), "disputed, a deadline ahead"),
         (bob, clear_delayed(), "disputed, the flag raised"),
         (alice, rename(), "disputed, the owner's rename"),
+        (alice, rate(), "disputed, the owner's rating"),
         (alice, clear_dispute(), "disputed, the owner's clear"),
     ];
     for (client, the_call, label) in disputed {

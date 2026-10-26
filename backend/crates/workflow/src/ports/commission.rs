@@ -6,19 +6,18 @@ use async_trait::async_trait;
 
 use crate::elements::{
     commission::{
-        AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
+        AsOwner, AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
         CommissionFile, CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary,
         DeadlineChange, DelayedChange, DirectionChange, Dispute, DisputeClear, ElementId, FileKey,
         FileSummary, GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode,
-        LockedStanding, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
-        SeatInvitationId, Slot, TabId, TabRow,
+        LockedStanding, MaturitySet, NewCommission, NewElement, NewSeat, NewSlot, Seat,
+        SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
     },
     workflow::{Column, ColumnId, WorkflowId},
 };
 use identity::elements::user::UserId;
 use kernel::{
     datetime::DateTimeUtc,
-    elements::maturity::Maturity,
     ports::{Creator, New, WriteCapability},
 };
 
@@ -165,8 +164,9 @@ pub trait CommissionStore: Send + Sync {
 /// open `UnitOfWork` (`uow.commissions()`). A create's authority is the den's write
 /// gate's create [`WriteCapability`], which [`create`](Self::create) takes; a lifecycle move's,
 /// a dispute's raise and clear, a direction status's, a deadline's and a Delayed flag's is a
-/// Participant's, which their writes take. Every other method's authority, and the commission's own existence, are the
-/// caller's checks, settled before it is reached.
+/// Participant's, and a rating's the Owner's, which their writes take. Every other method's
+/// authority, and the commission's own existence, are the caller's checks, settled before it
+/// is reached.
 #[async_trait]
 pub trait CommissionWrites: Send {
     /// Persist a new commission under the id `capability` was issued for, at `birth`'s
@@ -290,11 +290,15 @@ pub trait CommissionWrites: Send {
         archived_at: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool>;
 
-    /// Set or replace the commission's maturity posture. Replace-only by
-    /// signature: taking a [`Maturity`] rather than an `Option` means no call site
-    /// can clear a rating back to unrated. A no-op write on an absent commission.
-    ///
-    async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()>;
+    /// Rate the commission `capability` was issued for, from `change`'s held rating (none while
+    /// unrated) to its new one, by compare-and-set: the row changes only while it still holds
+    /// the held rating and Graphic flag. Replace-only: the change always carries a rating.
+    /// Answers `true` only when exactly one row changed.
+    async fn set_maturity(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        change: &MaturitySet,
+    ) -> anyhow::Result<bool>;
 
     /// Set (`Some`) or clear (`None`) the commission's external linked-channel
     /// pointer. Returns whether the stored value actually changed, so the caller

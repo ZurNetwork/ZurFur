@@ -156,6 +156,7 @@ fn every_declared_route_is_served() {
         ("DELETE", "/commissions/{id}/deadline"),
         ("PUT", "/commissions/{id}/status/deadline"),
         ("DELETE", "/commissions/{id}/status/deadline"),
+        ("PUT", "/commissions/{id}/maturity"),
         ("GET", "/den"),
         ("GET", "/den/{*path}"),
         ("POST", "/bug-reports"),
@@ -180,15 +181,15 @@ fn every_declared_route_is_served() {
         );
     }
 
-    // And the declared set covers the whole v1 surface — twenty-two endpoints.
+    // And the declared set covers the whole v1 surface — twenty-three endpoints.
     assert_eq!(
         declared.len(),
-        22,
-        "the v1 corpus declares twenty-two endpoints: eight after the owner's commission \
+        23,
+        "the v1 corpus declares twenty-three endpoints: eight after the owner's commission \
          list retired, the two den reads, the commission rename, filing a bug report, \
-         the commission read, the lifecycle move, raising and clearing the dispute, and \
-         setting and clearing the direction status, the deadline and the Delayed flag; \
-         got {declared:?}"
+         the commission read, the lifecycle move, raising and clearing the dispute, \
+         setting and clearing the direction status, the deadline and the Delayed flag, and \
+         the owner's rating; got {declared:?}"
     );
 }
 

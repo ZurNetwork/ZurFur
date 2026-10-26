@@ -9,13 +9,14 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use chrono::Utc;
 use domain::elements::maturity::MaturityRating;
 use serde::Deserialize;
 
 use crate::{
     AppState,
     extract::{CallingUser, CommissionPath},
-    problem::Problem,
+    problem::{FieldPointer, Problem},
 };
 
 /// The `PUT /commissions/{id}/maturity` request body: the rating token, plus
@@ -28,8 +29,9 @@ pub(super) struct SetMaturityBody {
 }
 
 /// Rates (or re-rates) the commission. Owner-only; `422
-/// unknown_maturity_rating` for a token outside the vocabulary. Returns
-/// `204 No Content`.
+/// unknown_maturity_rating` at `#/rating` for a token outside the vocabulary,
+/// before anyone's standing is checked; idempotent on an unchanged rating.
+/// Returns `204 No Content`.
 pub(super) async fn set_maturity(
     State(state): State<AppState>,
     CallingUser(actor_id): CallingUser,
@@ -38,10 +40,8 @@ pub(super) async fn set_maturity(
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
     let rating = body.rating.parse::<MaturityRating>().map_err(|_| {
-        Problem::unknown_maturity_rating(format!(
-            "{:?} is not a maturity rating; expected one of: safe, suggestive, nudity, adult.",
-            body.rating,
-        ))
+        let pointer = FieldPointer::member("rating");
+        Problem::unknown_maturity_rating_at(pointer)
     })?;
     let command = set::Command {
         actor_id,
@@ -50,7 +50,12 @@ pub(super) async fn set_maturity(
         maturity_rating: rating,
     };
 
-    state.app().commissions().maturity().run(command).await?;
+    state
+        .app()
+        .commissions()
+        .maturity()
+        .run(command, Utc::now())
+        .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

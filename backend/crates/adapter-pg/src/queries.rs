@@ -2164,16 +2164,24 @@ pub mod commission {
     }
 
     /// `queries/commission/set_maturity.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Rate a commission by compare-and-set: the row changes only while it still holds the rating
+    /// and Graphic flag the change was checked from (both NULL while unrated), so a stale change
+    /// matches no row. The schema's both-or-neither CHECK keeps the pair whole.
     pub async fn set_maturity(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
         maturity: Option<&str>,
         graphic: Option<bool>,
+        held_maturity: Option<&str>,
+        held_graphic: Option<bool>,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/commission/set_maturity.sql"))
             .bind(id)
             .bind(maturity)
             .bind(graphic)
+            .bind(held_maturity)
+            .bind(held_graphic)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())

@@ -86,7 +86,7 @@
     },
     {
       "name": "maturity.rs",
-      "role": "PUT /{id}/maturity (replace-only) → commission::maturity::set",
+      "role": "PUT /{id}/maturity (replace-only) → commission::maturity::set, through the Den's write: 204, Owner-only (a Participant 403, a stranger the made-up id's 404), a rating outside the vocabulary a 422 unknown_maturity_rating with a field error at #/rating before any standing, from the field registry, echoing nothing",
       "node": false
     },
     {

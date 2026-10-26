@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use domain::elements::{
     commission::{
-        AsParticipant, Commission, CommissionBirth, CommissionDeadline, CommissionId,
+        AsOwner, AsParticipant, Commission, CommissionBirth, CommissionDeadline, CommissionId,
         LifecycleStep, NewCommission,
     },
     level::Level,
@@ -32,6 +32,11 @@ pub async fn create(
 
 /// A Participant's capability on `id`, minted here as the den's write gate issues one.
 pub fn participant_on(id: CommissionId) -> WriteCapability<CommissionId, AsParticipant> {
+    WriteCapability::gate_issued(id)
+}
+
+/// The Owner's capability on `id`, minted here as the den's write gate issues one.
+pub fn owner_on(id: CommissionId) -> WriteCapability<CommissionId, AsOwner> {
     WriteCapability::gate_issued(id)
 }
 

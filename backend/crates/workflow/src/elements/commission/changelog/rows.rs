@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use super::{ChangelogEntryKind, OpenKind};
 use crate::elements::commission::{
     CommissionId, DeadlineCleared, DeadlineSet, DelayedCleared, DelayedSet, DirectionCleared,
-    DirectionSet, Dispute, DisputeClear, LateMark, LifecycleMove, LifecycleStep,
+    DirectionSet, Dispute, DisputeClear, LateMark, LifecycleMove, LifecycleStep, MaturitySet,
 };
 use identity::elements::user::UserId;
 use kernel::datetime::DateTimeUtc;
@@ -183,6 +183,28 @@ impl NewChangelogEntry {
         Self::by(
             commission,
             ChangelogEntryKind::LifecycleMoved,
+            actor,
+            payload,
+            at,
+        )
+    }
+
+    /// A rating given: kind [`MaturityRated`](ChangelogEntryKind::MaturityRated),
+    /// `{"rating", "graphic"}`, the rating token and the Graphic flag it now carries.
+    pub fn maturity_rated(
+        commission: CommissionId,
+        actor: UserId,
+        rated: &MaturitySet,
+        at: DateTimeUtc,
+    ) -> Self {
+        let given = rated.after();
+        let payload = json!({
+            "rating": <&'static str>::from(given.rating),
+            "graphic": given.graphic,
+        });
+        Self::by(
+            commission,
+            ChangelogEntryKind::MaturityRated,
             actor,
             payload,
             at,

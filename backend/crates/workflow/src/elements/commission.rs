@@ -24,6 +24,7 @@ mod errors;
 mod grant_level;
 mod id;
 mod lifecycle;
+mod rating;
 mod role_marker;
 mod rows;
 mod standing;
@@ -66,6 +67,7 @@ pub use grant_level::GrantLevel;
 pub use id::CommissionId;
 pub use lifecycle::{LifecycleMove, LifecycleStep, move_lifecycle};
 pub use markup::{CommissionMarkup, Markup, MarkupError, MarkupKey, MarkupShape};
+pub use rating::{MaturitySet, rate_maturity};
 pub use role_marker::{AsOwner, AsParticipant, AsSystem};
 pub use rows::{CommissionBirth, CommissionSummary, NewCommission};
 pub use seat::{

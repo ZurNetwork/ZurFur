@@ -206,6 +206,7 @@ fn call_of(act: CommissionAct) -> Call {
         CommissionAct::ClearDeadline(_) => Call::Field(FieldCall::ClearDeadline),
         CommissionAct::SetDelayed(_) => Call::Field(FieldCall::SetDelayed),
         CommissionAct::ClearDelayed(_) => Call::Field(FieldCall::ClearDelayed),
+        CommissionAct::SetMaturity(set) => Call::Field(FieldCall::SetMaturity(set.to)),
     }
 }
 
@@ -218,8 +219,8 @@ fn worded(act: CommissionAct) -> WordedCall {
 
 /// The calls of the act of `kind` the list should try, written apart from the list: every
 /// lifecycle step, every direction status, the rename to the shown title, a deadline at `now` as
-/// the set act stores it, the dispute's raise and clear, each clear and Delayed act once, and no
-/// create and no Late mark.
+/// the set act stores it, a Safe rating that isn't graphic, the dispute's raise and clear, each
+/// clear and Delayed act once, and no create and no Late mark.
 fn expected_calls(kind: CommissionActKind, now: DateTimeUtc) -> Vec<Call> {
     match kind {
         CommissionActKind::Create | CommissionActKind::MarkLate => Vec::new(),
@@ -245,6 +246,13 @@ fn expected_calls(kind: CommissionActKind, now: DateTimeUtc) -> Vec<Call> {
         CommissionActKind::ClearDeadline => vec![Call::Field(FieldCall::ClearDeadline)],
         CommissionActKind::SetDelayed => vec![Call::Field(FieldCall::SetDelayed)],
         CommissionActKind::ClearDelayed => vec![Call::Field(FieldCall::ClearDelayed)],
+        CommissionActKind::SetMaturity => {
+            let safe = Maturity {
+                rating: MaturityRating::Safe,
+                graphic: false,
+            };
+            vec![Call::Field(FieldCall::SetMaturity(safe))]
+        }
     }
 }
 
@@ -420,7 +428,7 @@ fn the_list_tries_each_value_of_every_user_act() {
 }
 
 // The list keeps one fixed order: the rename, the move, the dispute's raise and clear, then the
-// direction, deadline and Delayed acts, each set before its clear.
+// direction, deadline and Delayed acts, each set before its clear, then the rating.
 #[tokio::test]
 async fn the_owner_s_acts_come_in_the_contract_s_order() {
     let world = test_world::world().await;
@@ -447,6 +455,7 @@ async fn the_owner_s_acts_come_in_the_contract_s_order() {
         "clear_deadline",
         "set_delayed",
         "clear_delayed",
+        "set_maturity",
     ];
     assert_eq!(words, expected_words);
     let expected_targets = [

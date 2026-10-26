@@ -85,12 +85,7 @@ const COMMISSION_REPOS: [&str; 2] = ["commissions", "changelog"];
 /// The commission repo's field writes the gate doesn't hold yet, by name, each call site in
 /// `application` frozen whether it has one today or not. Each leaves when its method takes a
 /// write capability, until the list is empty.
-const FIELD_WRITES: [&str; 4] = [
-    "set_archived",
-    "set_maturity",
-    "declare_slots",
-    "set_linked_channel",
-];
+const FIELD_WRITES: [&str; 3] = ["set_archived", "declare_slots", "set_linked_channel"];
 
 /// The commission repo's writes counted only on a commission repo: their names are common.
 /// Through any other receiver in `application`, a create needs the gate's capability, and
@@ -111,18 +106,13 @@ const NODE_TABLE: &str = "node";
 
 /// The ungated commission field writes in `application`, by file, function and method: each
 /// leaves this list when the den's write gate takes it over, until the list is empty.
-const FROZEN_FIELD_WRITES: [(&str, &str, &str); 5] = [
+const FROZEN_FIELD_WRITES: [(&str, &str, &str); 4] = [
     (
         "commission/archive.rs",
         "Commissions::archive",
         "set_archived",
     ),
     ("commission/delete.rs", "Commissions::delete", "delete"),
-    (
-        "commission/maturity/set.rs",
-        "Maturity::run",
-        "set_maturity",
-    ),
     (
         "commission/slots/declare.rs",
         "Slots::declare",
@@ -1194,7 +1184,7 @@ const ENTRY_RULE_VARIANTS: [&str; 2] = ["Always", "OnChange"];
 const HANDLER_TRAIT: &str = "trait Handler";
 
 /// The gated entries today's acts name, each by its file.
-const NAMED_GATED_ENTRIES: [(&str, &str); 12] = [
+const NAMED_GATED_ENTRIES: [(&str, &str); 13] = [
     ("commission/create.rs", "CREATED"),
     ("commission/deadline/clear.rs", "DEADLINE_CLEARED"),
     ("commission/deadline/set.rs", "DEADLINE_SET"),
@@ -1203,6 +1193,7 @@ const NAMED_GATED_ENTRIES: [(&str, &str); 12] = [
     ("commission/dispute/clear.rs", "DISPUTE_CLEARED"),
     ("commission/dispute/raise.rs", "DISPUTED"),
     ("commission/lifecycle/move_to.rs", "LIFECYCLE_MOVED"),
+    ("commission/maturity/set.rs", "MATURITY_RATED"),
     ("commission/rename.rs", "RENAMED"),
     ("commission/status/direction/clear.rs", "STATUS_CLEARED"),
     ("commission/status/direction/set.rs", "STATUS_SET"),
@@ -1532,7 +1523,7 @@ fn each_act_names_one_gated_entry_and_constructors_are_unique() {
         .iter()
         .map(|(file, name)| ((*file).to_owned(), (*name).to_owned()))
         .collect();
-    assert_eq!(named, expected, "the scan reads today's twelve acts");
+    assert_eq!(named, expected, "the scan reads today's thirteen acts");
     let act_source =
         std::fs::read_to_string(application_src().join(ACT_FILE)).expect("the act file reads");
     let shares_a_constructor = act_source.replacen(
@@ -1934,7 +1925,7 @@ const LENT_READ: &str = "lent";
 
 /// Each act with a write, as the gate file writes its type, and the one write its view holds,
 /// which calls the commission repo's method of the same name and nothing else.
-const ACT_WRITES: [(&str, &str); 10] = [
+const ACT_WRITES: [(&str, &str); 11] = [
     ("create::Act", "create"),
     ("move_to::Act", "set_lifecycle"),
     ("dispute::raise::Act", "set_dispute"),
@@ -1945,16 +1936,18 @@ const ACT_WRITES: [(&str, &str); 10] = [
     ("deadline::clear::Act", "set_deadline"),
     ("deadline::status::set::Act", "set_deadline_status"),
     ("deadline::status::clear::Act", "set_deadline_status"),
+    ("maturity::set::Act", "set_maturity"),
 ];
 
 /// The modules the gate file must import each act's module from, so `create::Act`,
 /// `move_to::Act`, `direction::set::Act` and `deadline::set::Act` name the acts they say.
-const ACT_MODULE_HOMES: [(&str, &str); 5] = [
+const ACT_MODULE_HOMES: [(&str, &str); 6] = [
     ("create", "crate::commission"),
     ("move_to", "crate::commission::lifecycle"),
     ("dispute", "crate::commission"),
     ("direction", "crate::commission::status"),
     ("deadline", "crate::commission"),
+    ("maturity", "crate::commission"),
 ];
 
 /// A type as written, its path's segments joined by `::`, generic arguments left out:
@@ -2234,6 +2227,7 @@ fn each_lent_view_holds_its_act_s_one_write() {
         ("set_deadline", "deadline::clear::Act"),
         ("set_deadline_status", "deadline::status::set::Act"),
         ("set_deadline_status", "deadline::status::clear::Act"),
+        ("set_maturity", "maturity::set::Act"),
         (LENT_READ, EVERY_ACT),
     ]
     .iter()
@@ -2274,12 +2268,12 @@ fn each_lent_view_holds_its_act_s_one_write() {
         ),
         ("impl Lent<'_, move_to::Act> {", "impl Lent<'_, Move> {"),
         (
-            "    commission::{\n        act::CommissionAct, create, deadline, dispute, lifecycle::move_to, rename,\n        status::direction,\n    },",
-            "    commission::{\n        act::CommissionAct, create as move_to, deadline, dispute, lifecycle::move_to as create,\n        rename, status::direction,\n    },",
+            "    commission::{\n        act::CommissionAct, create, deadline, dispute, lifecycle::move_to, maturity, rename,\n        status::direction,\n    },",
+            "    commission::{\n        act::CommissionAct, create as move_to, deadline, dispute, lifecycle::move_to as create,\n        maturity, rename, status::direction,\n    },",
         ),
         (
-            "    commission::{\n        act::CommissionAct, create, deadline, dispute, lifecycle::move_to, rename,\n        status::direction,\n    },",
-            "    commission::{\n        act::CommissionAct, create, deadline as direction, dispute, lifecycle::move_to, rename,\n        status::direction as deadline,\n    },",
+            "    commission::{\n        act::CommissionAct, create, deadline, dispute, lifecycle::move_to, maturity, rename,\n        status::direction,\n    },",
+            "    commission::{\n        act::CommissionAct, create, deadline as direction, dispute, lifecycle::move_to, maturity,\n        rename, status::direction as deadline,\n    },",
         ),
         (
             "impl Lent<'_, direction::set::Act> {",
@@ -2517,7 +2511,7 @@ fn each_view_write_calls_its_own_port_method() {
     let writes: Vec<(String, String)> = view_methods(&gate, &views);
     assert_eq!(
         writes.len(),
-        11,
+        12,
         "the scan reads every view method: {writes:?}"
     );
     let source =
@@ -2525,6 +2519,7 @@ fn each_view_write_calls_its_own_port_method() {
     let move_call = "self.repo.set_lifecycle(&self.capability, change)";
     let raise_call = "self.repo.set_dispute(&self.capability, change)";
     let clear_call = "self.repo.clear_dispute(&self.capability, change)";
+    let rate_call = "self.repo.set_maturity(&self.capability, change)";
     let create_call = ".create(&self.capability, &birth, commission)";
     let direction_call =
         ".set_direction_status(&self.capability, &DirectionChange::from(change.clone()))";
@@ -2583,6 +2578,11 @@ fn each_view_write_calls_its_own_port_method() {
             clear_call,
             "self.repo.set_dispute(&self.capability, change)",
         ),
+        (
+            rate_call,
+            "self.repo.set_direction_status(&self.capability, change)",
+        ),
+        (rate_call, "self.repo.set_maturity(&forged, change)"),
         (
             "impl View<'_, move_to::Act> {",
             "impl View<'_, rename::Act> {",
@@ -2675,7 +2675,7 @@ fn every_lent_method_goes_through_the_latch() {
 
     assert_eq!(unlatched, Vec::<String>::new());
     let (methods, _) = lent_surface(&gate);
-    assert_eq!(methods.len(), 11, "the scan reads all eleven lent methods");
+    assert_eq!(methods.len(), 12, "the scan reads all twelve lent methods");
     let source =
         std::fs::read_to_string(application_src().join(GATE_FILE)).expect("the gate reads");
     let widened = format!("{WIDENED_MODULE}{AFTER_THE_LENT_VIEW}");
@@ -4897,7 +4897,7 @@ fn the_ungated_field_writes_are_exactly_these() {
         "async fn copy(uow: Unit<'_>) { let mut repo = uow.commissions(); repo.create(&commission).await?; }",
         "async fn purge(uow: Unit<'_>) { UnitOfWork::commissions(uow).delete(&id).await?; }",
         "async fn purge(uow: Unit<'_>) { let repo = uow.commissions(); (*repo).delete(&id).await?; }",
-        "fn setter() { let set = CommissionRepo::set_maturity; }",
+        "fn setter() { let set = CommissionRepo::set_archived; }",
         "async fn extend(uow: Unit<'_>) { tokio::join!(async { uow.commissions().declare_slots(&slots).await }); }",
     ];
     for source in new_sites {
@@ -4911,7 +4911,7 @@ fn the_ungated_field_writes_are_exactly_these() {
         "async fn upload(ports: &Ports, key: FileKey) { ports.files.delete(key).await?; }",
         "async fn open(uow: Unit<'_>) { uow.accounts().create(&account, &owner).await?; }",
         "fn make() -> Commission { Commission::create(title, owner, now, None) }",
-        "trait Repo { async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity); }",
+        "trait Repo { async fn set_archived(&mut self, id: &CommissionId, at: Option<DateTimeUtc>); }",
     ];
     for source in not_field_writes {
         let file = syn::parse_file(source).expect("the planted source parses");
@@ -5675,11 +5675,12 @@ fn every_commission_write_takes_a_capability_or_is_named() {
                 "set_direction_status",
                 "set_dispute",
                 "set_lifecycle",
+                "set_maturity",
             ]
             .map(str::to_owned)
         ),
-        "create takes the gate's create capability, and the lifecycle, dispute, direction, \
-         deadline and Delayed writes a Participant's, each in place of the id"
+        "create takes the gate's create capability, the lifecycle, dispute, direction, deadline \
+         and Delayed writes a Participant's, and the rating the Owner's, each in place of the id"
     );
     let (held, homes) = held_names(&file);
     assert_eq!(homes, Vec::<String>::new());
@@ -5688,6 +5689,7 @@ fn every_commission_write_takes_a_capability_or_is_named() {
         NEW,
         CREATOR,
         COMMISSION_ID,
+        AS_OWNER,
         AS_PARTICIPANT,
     ] {
         assert!(
@@ -5752,13 +5754,7 @@ fn the_port_scan_names_each_planted_write() {
     let unlisted_lifecycle =
         "CommissionWrites::set_lifecycle takes no write capability and is on no list";
     let lifecycle_by_owner = "\n    async fn set_lifecycle(&mut self, capability: &WriteCapability<CommissionId, AsOwner>, step: LifecycleStep) -> anyhow::Result<bool>;\n";
-    let errors_line = "pub use super::errors";
-    assert!(
-        source.contains(errors_line),
-        "the port file holds `{errors_line}`"
-    );
-    let owner_import = format!("use crate::elements::commission::AsOwner;\n\n{errors_line}");
-    let owner_planted = source.replacen(errors_line, &owner_import, 1).replacen(
+    let owner_planted = source.replacen(
         writes_header,
         &format!("{writes_header}{lifecycle_by_owner}"),
         1,
@@ -6033,7 +6029,7 @@ fn the_port_scan_names_each_planted_write() {
 
 /// The values a capped write may take beside its capability, each by its bare name behind at
 /// most one shared reference: a create's birth and start, and each act's checked change.
-const CAPPED_VALUES: [&str; 8] = [
+const CAPPED_VALUES: [&str; 9] = [
     "CommissionBirth",
     "NewCommission",
     "LifecycleMove",
@@ -6042,6 +6038,7 @@ const CAPPED_VALUES: [&str; 8] = [
     "DirectionChange",
     "DeadlineChange",
     "DelayedChange",
+    "MaturitySet",
 ];
 
 /// The module the port file imports each of [`CAPPED_VALUES`] from.
@@ -9205,7 +9202,7 @@ const ENTRY_BUILDERS: [&str; 5] = [
 ];
 
 /// The gated constructors, as the domain defines them today.
-const GATED_CONSTRUCTORS: [&str; 12] = [
+const GATED_CONSTRUCTORS: [&str; 13] = [
     "created",
     "deadline_cleared",
     "deadline_set",
@@ -9217,6 +9214,7 @@ const GATED_CONSTRUCTORS: [&str; 12] = [
     "disputed",
     "late",
     "lifecycle_moved",
+    "maturity_rated",
     "renamed",
 ];
 
@@ -10700,7 +10698,7 @@ fn each_commission_write_statement_and_change_is_named_only_in_its_method() {
     }
     let mem_markup =
         "    async fn add_markup(&mut self, markup: &CommissionMarkup) -> anyhow::Result<()> {";
-    let mem_maturity = "            stored.maturity = Some(maturity);";
+    let mem_maturity = "        stored.maturity = Some(change.after());";
     let lock = ".lock().expect(\"MemBackend commissions mutex poisoned\")";
     let markup_context = "commission.rs: MemCommissionWrites::add_markup";
     let mem_refused = [
@@ -10732,7 +10730,7 @@ fn each_commission_write_statement_and_change_is_named_only_in_its_method() {
         ),
         (
             mem_maturity,
-            "            stored.archived_at = None;".to_owned(),
+            "        stored.archived_at = None;".to_owned(),
             (
                 "commission.rs: MemCommissionWrites::set_maturity",
                 "row archived_at",

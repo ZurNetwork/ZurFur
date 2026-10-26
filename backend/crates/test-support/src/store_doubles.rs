@@ -16,17 +16,16 @@ use domain::datetime::DateTimeUtc;
 use domain::elements::{
     account::{Account, AccountId, AccountMembership, ListingScope},
     commission::{
-        AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
+        AsOwner, AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
         CommissionFile, CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary,
         DeadlineChange, DelayedChange, DirectionChange, Dispute, DisputeClear, ElementId, FileKey,
         FileSummary, GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode,
-        LockedStanding, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
-        SeatInvitationId, Slot, TabId, TabRow,
+        LockedStanding, MaturitySet, NewCommission, NewElement, NewSeat, NewSlot, Seat,
+        SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
     },
     did::Did,
     handle::Handle,
     invitation::{Invitation, InvitationId},
-    maturity::Maturity,
     role::Role,
     user::{User, UserId},
     workflow::{Column, ColumnId, WorkflowId},
@@ -800,8 +799,12 @@ impl CommissionWrites for ScriptedStandingRepo<'_> {
         self.inner.set_archived(id, archived_at).await
     }
 
-    async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
-        self.inner.set_maturity(id, maturity).await
+    async fn set_maturity(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        change: &MaturitySet,
+    ) -> anyhow::Result<bool> {
+        self.inner.set_maturity(capability, change).await
     }
 
     async fn set_linked_channel(
