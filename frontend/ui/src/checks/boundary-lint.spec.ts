@@ -3,7 +3,12 @@ import { ESLint, type Linter } from 'eslint';
 import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { boundaryRules, fileSetOf, scriptMarkupMessage } from '../../eslint.config.js';
+import {
+	boundaryRules,
+	fileSetOf,
+	inlineHandlerMessage,
+	scriptMarkupMessage
+} from '../../eslint.config.js';
 import { isRemote } from './scan/network';
 
 const uiRoot = fileURLToPath(new URL('../../', import.meta.url));
@@ -68,7 +73,8 @@ const boundaryRuleIds: ReadonlySet<string> = new Set([
 	'@typescript-eslint/consistent-type-assertions',
 	'svelte/no-at-html-tags',
 	'ui/import-tiers',
-	'ui/no-remote-string'
+	'ui/no-remote-string',
+	'ui/no-script-url'
 ]);
 
 async function lintPlanted(filePath: string, code: string): Promise<readonly Linter.LintMessage[]> {
@@ -84,14 +90,27 @@ async function expectRefused(filePath: string, code: string, ruleId: string): Pr
 	expect(messages.map((message) => message.ruleId)).toContain(ruleId);
 }
 
+/** Refused by the syntax entry that carries `syntaxMessage`, not by any other. */
+async function expectSyntaxMessage(
+	filePath: string,
+	code: string,
+	syntaxMessage: string
+): Promise<void> {
+	const messages = await lintPlanted(filePath, code);
+	const matching = messages.filter(
+		(message) => message.ruleId === 'no-restricted-syntax' && message.message === syntaxMessage
+	);
+	expect(matching).not.toEqual([]);
+}
+
 /** Refused by the markup ban itself, not by any other syntax entry. */
 async function expectScriptMarkupRefused(filePath: string, code: string): Promise<void> {
-	const messages = await lintPlanted(filePath, code);
-	const markup = messages.filter(
-		(message) =>
-			message.ruleId === 'no-restricted-syntax' && message.message === scriptMarkupMessage
-	);
-	expect(markup).not.toEqual([]);
+	await expectSyntaxMessage(filePath, code, scriptMarkupMessage);
+}
+
+/** Refused by the inline-handler ban itself, not by any other syntax entry. */
+async function expectInlineHandlerRefused(filePath: string, code: string): Promise<void> {
+	await expectSyntaxMessage(filePath, code, inlineHandlerMessage);
 }
 
 async function expectAllowed(filePath: string, code: string): Promise<void> {
@@ -112,6 +131,7 @@ const IMPORTS = 'no-restricted-imports';
 const SYNTAX = 'no-restricted-syntax';
 const TIERS = 'ui/import-tiers';
 const REMOTE = 'ui/no-remote-string';
+const SCRIPT_URL = 'ui/no-script-url';
 
 type PathCase = readonly [label: string, filePath: string, code: string];
 
@@ -745,6 +765,108 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 		});
 	});
 
+	describe('no markup carries an inline event handler', () => {
+		/** A component whose script declares a string `s` and a function `handler`, then `markup`. */
+		const component = (markup: string): string =>
+			`<script lang="ts">\n\tconst s = 'x';\n\tconst handler = (): void => undefined;\n</script>\n\n${markup}\n`;
+
+		/** A component whose script declares `name` as a string, then `markup`. */
+		const declaring = (name: string, markup: string): string =>
+			`<script lang="ts">\n\tconst ${name} = 'x';\n</script>\n\n${markup}\n`;
+
+		const refused: readonly Allowed[] = [
+			['ONERROR text on an img', component(`<img alt={s} src="./a.png" ONERROR="fetch('/z')" />`)],
+			['ONCLICK with a string expression', component('<div ONCLICK={s}>x</div>')],
+			['ONCLICK with a string literal', component(`<div ONCLICK={"fetch('/x')"}>x</div>`)],
+			['a shorthand {ONERROR}', declaring('ONERROR', '<img alt="" src="./a.png" {ONERROR} />')],
+			['a shorthand {OnError}', declaring('OnError', '<img alt="" src="./a.png" {OnError} />')],
+			['OnError', component('<img alt={s} src="./a.png" OnError="x" />')],
+			['oNcLiCk', component('<div oNcLiCk="x">{s}</div>')],
+			['onClick with a function', component('<button onClick={handler}>{s}</button>')],
+			['a lowercase onclick with text', component('<div onclick="x">{s}</div>')],
+			[
+				'a lowercase onclick with text around an expression',
+				component('<div onclick="x{s}">x</div>')
+			],
+			['a lowercase onclick with no value', component('<div onclick>{s}</div>')],
+			[
+				'ONCLICK on svelte:element with a static tag',
+				component(`<svelte:element this="div" ONCLICK="fetch('/x')">{s}</svelte:element>`)
+			],
+			[
+				'OnClick on svelte:element with a dynamic tag',
+				component('<svelte:element this={s} OnClick={s}>x</svelte:element>')
+			],
+			['ONCLICK on a custom element', component('<my-el ONCLICK="x">{s}</my-el>')],
+			['ONLOAD in an svg', component('<svg viewBox="0 0 1 1" ONLOAD="x"><title>{s}</title></svg>')],
+			[
+				'ONLOAD in svelte:head',
+				component('<svelte:head><meta name="x" content={s} ONLOAD="x" /></svelte:head>')
+			]
+		];
+
+		it.each(refused)('refuses %s in a component', async (_label, code) => {
+			await expectInlineHandlerRefused(planted.componentSvelte, code);
+		});
+
+		const elsewhere: readonly PathCase[] = [
+			planted.motionSvelte,
+			planted.lazySvelte,
+			planted.routesSvelte,
+			planted.gallerySvelte
+		].flatMap(
+			(filePath) =>
+				[
+					[
+						`ONERROR text in ${filePath}`,
+						filePath,
+						component('<img alt={s} src="./a.png" ONERROR="x" />')
+					],
+					[`ONCLICK={s} in ${filePath}`, filePath, component('<div ONCLICK={s}>x</div>')],
+					[
+						`a shorthand {ONERROR} in ${filePath}`,
+						filePath,
+						declaring('ONERROR', '<img alt="" src="./a.png" {ONERROR} />')
+					]
+				] as const
+		);
+
+		it.each(elsewhere)('refuses %s', async (_label, filePath, code) => {
+			await expectInlineHandlerRefused(filePath, code);
+		});
+
+		const allowed: readonly Allowed[] = [
+			['onclick={handler}', component('<button onclick={handler}>{s}</button>')],
+			['onclick={() => …}', component('<button onclick={() => handler()}>{s}</button>')],
+			[
+				'onclick="{handler}", one quoted expression',
+				component('<button onclick="{handler}">{s}</button>')
+			],
+			[
+				'a lowercase shorthand {onclick} holding a function',
+				'<script lang="ts">\n\tconst onclick = (): void => undefined;\n</script>\n\n<button {onclick}>x</button>\n'
+			],
+			[
+				"a component's capitalised on… props",
+				'<script lang="ts">\n\timport Wizard from \'./Wizard.svelte\';\n\timport Button from \'./Button.svelte\';\n</script>\n\n<Wizard onboarding="x" />\n<Button ONCLICK="x" />\n'
+			],
+			[
+				'svelte:window onkeydown={handler}',
+				component('<svelte:window onkeydown={handler} />\n<p>{s}</p>')
+			],
+			[
+				'attributes that merely hold "on"',
+				component(
+					'<div data-on="x" title="online" class="button">onclick and ONERROR as words {s}</div>'
+				)
+			]
+		];
+
+		it.each(allowed)('allows %s', async (_label, code) => {
+			await expectAllowed(planted.componentSvelte, code);
+		});
+	});
+
 	describe('no source file holds a remote URL in a string', () => {
 		const refused: readonly PathCase[] = [
 			[
@@ -801,6 +923,74 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 			}
 		);
 	});
+
+	describe('no source file holds a javascript: URL', () => {
+		const scriptUrlSamples: readonly string[] = [
+			'javascript:x',
+			' JAVASCRIPT:x',
+			'JaVaScRiPt:void(0)',
+			'java\tscript:x',
+			'java\nscript:x',
+			'\u0001javascript:x',
+			'\t\n javascript:x'
+		];
+
+		const refused: readonly PathCase[] = [
+			[
+				'an href in markup',
+				planted.componentSvelte,
+				'<script lang="ts">\n\tconst s = \'x\';\n</script>\n\n<a href="javascript:fetch(\'/y\')">{s}</a>\n'
+			],
+			[
+				'an href written with a character reference',
+				planted.componentSvelte,
+				'<script lang="ts">\n\tconst s = \'x\';\n</script>\n\n<a href="&#106;avascript:x">{s}</a>\n'
+			],
+			[
+				'an href expression',
+				planted.componentSvelte,
+				"<script lang=\"ts\">\n\tconst s = 'x';\n</script>\n\n<a href={'JavaScript:x'}>{s}</a>\n"
+			],
+			[
+				'a template literal',
+				planted.component,
+				"const h = 'x';\nexport const r = `javascript:${h}`;"
+			],
+			['the motion adapter', planted.motion, stringModule(' JAVASCRIPT:fetch(1)')],
+			['the lazy loader', planted.lazy, stringModule(' JAVASCRIPT:fetch(1)')],
+			['a page', planted.routes, stringModule(' JAVASCRIPT:fetch(1)')],
+			['the frame', planted.gallery, stringModule(' JAVASCRIPT:fetch(1)')]
+		];
+
+		it.each(refused)('refuses %s', async (_label, filePath, code) => {
+			await expectRefused(filePath, code, SCRIPT_URL);
+		});
+
+		it.each(scriptUrlSamples)('refuses the string %j', async (text) => {
+			await expectRefused(planted.component, stringModule(text), SCRIPT_URL);
+		});
+
+		it.each(['./a', 'javascript', 'javascript is a language', 'x javascript:y', 'javascripts:x'])(
+			'allows the string %j',
+			async (text) => {
+				await expectAllowed(planted.component, stringModule(text));
+			}
+		);
+
+		it('allows a plain href and the word in markup text', async () => {
+			await expectAllowed(
+				planted.componentSvelte,
+				'<script lang="ts">\n\tconst s = \'x\';\n</script>\n\n<a href="./a">{s}</a>\n<p>javascript: the language</p>\n'
+			);
+		});
+
+		it.each([
+			['a check', planted.check],
+			['a spec', planted.spec]
+		])('allows a javascript: string in %s', async (_label, filePath) => {
+			await expectAllowed(filePath, stringModule('javascript:x'));
+		});
+	});
 });
 
 type RuleEntry = Linter.RuleEntry | undefined;
@@ -812,6 +1002,7 @@ interface BoundaryOptions {
 	readonly syntax: RuleEntry;
 	readonly tiers: RuleEntry;
 	readonly remote: RuleEntry;
+	readonly scriptUrl: RuleEntry;
 }
 
 async function effectiveBoundary(filePath: string): Promise<BoundaryOptions> {
@@ -823,7 +1014,8 @@ async function effectiveBoundary(filePath: string): Promise<BoundaryOptions> {
 		imports: rules['no-restricted-imports'],
 		syntax: rules['no-restricted-syntax'],
 		tiers: rules[TIERS],
-		remote: rules[REMOTE]
+		remote: rules[REMOTE],
+		scriptUrl: rules[SCRIPT_URL]
 	};
 }
 
@@ -837,7 +1029,8 @@ function expectedBoundary(name: SetName): BoundaryOptions {
 		imports: [2, { patterns: rules.imports }],
 		syntax: [2, ...rules.syntax],
 		tiers: [2, { tier: rules.tier }],
-		remote: [2]
+		remote: [2],
+		scriptUrl: [2]
 	};
 }
 
@@ -847,7 +1040,8 @@ const noBoundary: BoundaryOptions = {
 	imports: undefined,
 	syntax: undefined,
 	tiers: undefined,
-	remote: undefined
+	remote: undefined,
+	scriptUrl: undefined
 };
 
 /** What ESLint's own matching makes of one path: the set's rules, or none for a check. */

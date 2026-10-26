@@ -487,12 +487,39 @@ const SCRIPT_MARKUP = [
 	}
 ];
 
+/** Why markup never carries an inline event handler. */
+export const inlineHandlerMessage =
+	'An inline event-handler attribute runs its text as script: take a function as a prop and attach it with a lowercase on…={handler}, never an on… attribute in another letter case or with text in its value.';
+
+/** The start tag of an element markup renders as written: an HTML element or <svelte:element>. */
+const RENDERED_START_TAG =
+	":matches(SvelteElement[kind='html'], SvelteElement[name.name='svelte:element']) > SvelteStartTag";
+
+/**
+ * Inline event handlers. Svelte attaches an attribute as a listener only when
+ * its name starts with a lowercase `on` and its value is one expression; any
+ * other `on…` attribute renders as written, and the browser, which reads
+ * attribute names in any letter case, runs its text. A component's props are
+ * not markup, and a spread can't be read here.
+ */
+const INLINE_HANDLERS = [
+	{
+		selector: `${RENDERED_START_TAG} > :matches(SvelteAttribute, SvelteShorthandAttribute)[key.name=/^on/i][key.name=/[A-Z]/]`,
+		message: inlineHandlerMessage
+	},
+	{
+		selector: `${RENDERED_START_TAG} > SvelteAttribute[key.name=/^on[^A-Z]*$/]:not([value.length=1][value.0.type='SvelteMustacheTag'])`,
+		message: inlineHandlerMessage
+	}
+];
+
 const COMMON_SYNTAX = [
 	...RULEBOOK_SYNTAX,
 	IMPORT_META_ENV,
 	IMPORT_META_ENV_COMPUTED,
 	...FETCH_NAMES,
-	...SCRIPT_MARKUP
+	...SCRIPT_MARKUP,
+	...INLINE_HANDLERS
 ];
 
 const COMPONENT_SYNTAX = [...COMMON_SYNTAX, ...ANY_GLOB, ANY_DYNAMIC_IMPORT];
@@ -618,18 +645,58 @@ const importTiersRule = {
 };
 
 /**
+ * `text` as a browser's URL parser reads its start: tabs and newlines dropped,
+ * leading controls and spaces trimmed, in lower case.
+ *
+ * @param {string} text
+ */
+function urlReadingOf(text) {
+	const unbroken = text.replace(/[\t\n\r]/g, '');
+	let start = 0;
+	while (start < unbroken.length && unbroken.charCodeAt(start) <= 0x20) start += 1;
+	return unbroken.slice(start).toLowerCase();
+}
+
+/**
  * True when a browser would read `text` as a URL on another origin: `http:`,
- * `https:` or protocol-relative, with tabs and newlines dropped, leading
- * controls and spaces trimmed and `\` read as `/`, as the network scan reads it.
+ * `https:` or protocol-relative, with `\` read as `/`, as the network scan reads it.
  *
  * @param {string} text
  */
 function readsAsRemote(text) {
-	const unbroken = text.replace(/[\t\n\r]/g, '');
-	let start = 0;
-	while (start < unbroken.length && unbroken.charCodeAt(start) <= 0x20) start += 1;
-	const read = unbroken.slice(start).toLowerCase();
+	const read = urlReadingOf(text);
 	return read.startsWith('http:') || read.startsWith('https:') || /^[/\\]{2}/.test(read);
+}
+
+/**
+ * True when a browser would read `text` as a `javascript:` URL.
+ *
+ * @param {string} text
+ */
+function readsAsScriptUrl(text) {
+	return urlReadingOf(text).startsWith('javascript:');
+}
+
+/**
+ * Visitors that hand `check` every string in a file: a string literal, each
+ * text part of a template literal, and each text part of a markup attribute.
+ *
+ * @param {(node: import('eslint').Rule.Node, text: unknown) => void} check
+ * @returns {import('eslint').Rule.RuleListener}
+ */
+function stringVisitors(check) {
+	return {
+		Literal(node) {
+			check(node, node.value);
+		},
+		TemplateElement(node) {
+			check(node, node.value.cooked ?? node.value.raw);
+		},
+		/** @param {import('eslint').Rule.Node} node */
+		SvelteLiteral(node) {
+			check(node, fieldOf(node, 'value'));
+		}
+	};
 }
 
 /** @type {import('eslint').Rule.RuleModule} */
@@ -644,31 +711,40 @@ const noRemoteStringRule = {
 		}
 	},
 	create(context) {
-		/** @param {import('eslint').Rule.Node} node @param {unknown} text */
-		function check(node, text) {
+		return stringVisitors((node, text) => {
 			if (typeof text !== 'string' || !readsAsRemote(text)) return;
 			context.report({ node, messageId: 'remote', data: { text: text.trim().slice(0, 40) } });
-		}
+		});
+	}
+};
 
-		return {
-			Literal(node) {
-				check(node, node.value);
-			},
-			TemplateElement(node) {
-				check(node, node.value.cooked ?? node.value.raw);
-			},
-			/** @param {import('eslint').Rule.Node} node */
-			SvelteLiteral(node) {
-				check(node, fieldOf(node, 'value'));
-			}
-		};
+/** @type {import('eslint').Rule.RuleModule} */
+const noScriptUrlRule = {
+	meta: {
+		type: 'problem',
+		docs: { description: 'No string holds a javascript: URL.' },
+		schema: [],
+		messages: {
+			script:
+				'No javascript: URL in source ({{text}}): following it runs its text as script; take a function as a prop and attach it with on…={handler}.'
+		}
+	},
+	create(context) {
+		return stringVisitors((node, text) => {
+			if (typeof text !== 'string' || !readsAsScriptUrl(text)) return;
+			context.report({ node, messageId: 'script', data: { text: text.trim().slice(0, 40) } });
+		});
 	}
 };
 
 /** The package's own rules, as an inline plugin. */
 const uiPlugin = {
 	meta: { name: 'ui' },
-	rules: { 'import-tiers': importTiersRule, 'no-remote-string': noRemoteStringRule }
+	rules: {
+		'import-tiers': importTiersRule,
+		'no-remote-string': noRemoteStringRule,
+		'no-script-url': noScriptUrlRule
+	}
 };
 
 /**
@@ -756,7 +832,8 @@ function boundaryBlocks(name) {
 			ignores,
 			rules: {
 				'ui/import-tiers': ['error', { tier: rules.tier }],
-				'ui/no-remote-string': 'error'
+				'ui/no-remote-string': 'error',
+				'ui/no-script-url': 'error'
 			}
 		}
 	];
