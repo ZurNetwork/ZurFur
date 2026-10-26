@@ -1,0 +1,64 @@
+{
+  "allow": [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BlueOak-1.0.0",
+    "ISC",
+    "MIT"
+  ],
+  "scoped": [
+    {
+      "licence": "MPL-2.0",
+      "packages": [
+        "lightningcss",
+        "lightningcss-android-arm64",
+        "lightningcss-darwin-arm64",
+        "lightningcss-darwin-x64",
+        "lightningcss-freebsd-x64",
+        "lightningcss-linux-arm-gnueabihf",
+        "lightningcss-linux-arm64-gnu",
+        "lightningcss-linux-arm64-musl",
+        "lightningcss-linux-x64-gnu",
+        "lightningcss-linux-x64-musl",
+        "lightningcss-win32-arm64-msvc",
+        "lightningcss-win32-x64-msvc"
+      ],
+      "reason": "Vite's CSS tool and its platform builds, run at build and dev time; nothing of ours imports them and none of their code ships",
+      "readBy": "Beaver (census)",
+      "readOn": "2026-10-26"
+    },
+    {
+      "licence": "MPL-2.0",
+      "packages": [
+        "axe-core"
+      ],
+      "reason": "Storybook's accessibility addon, a development tool, bundled only into the unpublished Storybook build and never into @zurfur/ui or web: the Storybook slice's web lint refuses axe-core, and declared-imports keeps it a devDependency that component code can't import",
+      "readBy": "Beaver (census)",
+      "readOn": "2026-10-26"
+    },
+    {
+      "licence": "OFL-1.1",
+      "packages": [
+        "@fontsource-variable/atkinson-hyperlegible-mono",
+        "@fontsource-variable/atkinson-hyperlegible-next",
+        "@fontsource-variable/inter",
+        "@fontsource-variable/jetbrains-mono"
+      ],
+      "reason": "Self-hosted fonts, shipped as font files under their own licence",
+      "readBy": "Beaver (census)",
+      "readOn": "2026-10-26"
+    }
+  ],
+  "exceptions": [
+    {
+      "package": "svelte-toolbelt@0.10.6",
+      "registry": null,
+      "terms": "MIT",
+      "reason": "No licence field in the registry or in its own package.json; the LICENSE file in the 0.10.6 tarball, read after checking the tarball against the registry's integrity, is the MIT licence (SHA-256 8914f144af4333312a07b30438dc6b75dd8da7a665c3ae9fa751f229eb615e8b)",
+      "readBy": "Beaver (census)",
+      "readOn": "2026-10-26"
+    }
+  ]
+}

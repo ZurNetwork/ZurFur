@@ -17,8 +17,10 @@ import {
 	parseNpmLockfile,
 	parseWaivers,
 	readRegistryDocument,
+	readVersionDocument,
 	registryLookup,
 	registryDocumentUrl,
+	registryVersionLookup,
 	reviewLockfiles
 } from './lock-review.mjs';
 
@@ -28,9 +30,20 @@ const BASE_LOCK_FILE = [path.join(FRONTEND, 'web', 'yarn.lock'), path.join(FRONT
 	fs.existsSync(file)
 );
 const LEXICONS_LOCK_FILE = path.join(FRONTEND, '..', 'lexicons', 'package-lock.json');
+const REAL_LIST_FILE = path.join(FRONTEND, '..', 'npm-licences.json');
+const DRIVER_SCRIPT = path.join(FRONTEND, '..', 'scripts', 'npm-lock-ci.sh');
+
+/** The basenames of the `frontend/*.mjs` tools on the driver's one `TOOLS="…"` line. */
+function driverFiles() {
+	const lines = fs.readFileSync(DRIVER_SCRIPT, 'utf8').split('\n');
+	const toolLines = lines.filter((line) => /^TOOLS="[^"]*"$/.test(line));
+	assert.equal(toolLines.length, 1, 'scripts/npm-lock-ci.sh has exactly one TOOLS="…" line');
+	const words = toolLines[0].slice('TOOLS="'.length, -1).split(' ');
+	return Object.freeze(words.filter((word) => /^frontend\/[^/]+\.mjs$/.test(word)).map((word) => path.basename(word)));
+}
 
 /** The files CI's driver extracts to run the review; their relative imports must stay inside this set. */
-const DRIVER_FILES = Object.freeze(['lock-review.mjs', 'install-check.mjs']);
+const DRIVER_FILES = driverFiles();
 
 const DAY_MS = 86_400_000;
 const NOW = Date.parse('2026-10-26T12:00:00.000Z');
@@ -79,15 +92,22 @@ function npmLock(packages, { lockfileVersion = 3 } = {}) {
 	return `${JSON.stringify(document, null, 2)}\n`;
 }
 
-/** A registry document holding one version of `name`. */
-function registryDocument(name, version, integrity, time) {
-	const manifest = { name, version, license: 'MIT', dist: { integrity } };
+/** A version manifest: MIT unless `fields` says otherwise; a field set to undefined is left out. */
+function manifestOf(name, version, integrity, fields = {}) {
+	const manifest = { name, version, license: 'MIT', dist: { integrity }, ...fields };
+	return Object.fromEntries(Object.entries(manifest).filter(([, value]) => value !== undefined));
+}
+
+/** A registry document holding one version of `name`, its manifest built from `fields`. */
+function registryDocument(name, version, integrity, time, fields = {}) {
+	const manifest = manifestOf(name, version, integrity, fields);
 	return { name, versions: { [version]: manifest }, time: { created: OLD_TIME, [version]: time } };
 }
 
 /**
  * A stub registry: `table` maps `name@version` to an integrity (published long ago) or to
- * `{ integrity, time }`; anything else fails the lookup. Documents go through the real reader.
+ * `{ integrity, time, fields }`, `fields` overriding the MIT manifest; anything else fails the
+ * lookup. Documents go through the real reader.
  */
 function stub(table) {
 	const calls = [];
@@ -95,10 +115,26 @@ function stub(table) {
 		calls.push(`${name}@${version}`);
 		const row = Object.hasOwn(table, `${name}@${version}`) ? table[`${name}@${version}`] : undefined;
 		if (row === undefined) throw new Error(`no such version ${name}@${version}`);
-		const { integrity, time } = typeof row === 'string' ? { integrity: row, time: OLD_TIME } : row;
-		return readRegistryDocument(registryDocument(name, version, integrity, time), version);
+		const { integrity, time = OLD_TIME, fields } = typeof row === 'string' ? { integrity: row } : row;
+		return readRegistryDocument(registryDocument(name, version, integrity, time, fields), version);
 	};
 	return { lookup, calls };
+}
+
+/**
+ * A stub of the per-version registry: `table` maps `name@version` to `{ integrity, fields }`
+ * (`fields` overriding the MIT manifest, its name and version included); anything else fails.
+ */
+function versionStub(table) {
+	const calls = [];
+	const versionLookup = async (name, version) => {
+		calls.push(`${name}@${version}`);
+		const row = Object.hasOwn(table, `${name}@${version}`) ? table[`${name}@${version}`] : undefined;
+		if (row === undefined) throw new Error(`no such version ${name}@${version}`);
+		const { integrity = INTEGRITY_A, fields } = typeof row === 'string' ? { integrity: row } : row;
+		return manifestOf(name, version, integrity, fields);
+	};
+	return { versionLookup, calls };
 }
 
 /** A lookup serving one hand-built registry document through the real reader. */
@@ -115,13 +151,32 @@ async function unexpectedLookup(name, version) {
 	throw new Error(`unexpected lookup of ${name}@${version}`);
 }
 
+/** A licence list's canonical text: `allow` (MIT unless given), `scoped` and `exceptions` entries. */
+function licenceList({ allow = ['MIT'], scoped = [], exceptions = [] } = {}) {
+	const provenance = { reason: 'read in the fixture', readBy: 'Fixture', readOn: '2026-10-26' };
+	const document = {
+		allow,
+		scoped: scoped.map((entry) => ({ ...entry, ...provenance })),
+		exceptions: exceptions.map((entry) => ({ ...entry, ...provenance }))
+	};
+	return `${JSON.stringify(document, null, 2)}\n`;
+}
+
+/** A list scoping MPL-2.0 to axe-core, allowing MIT and ISC. */
+const AXE_LIST = licenceList({ allow: ['ISC', 'MIT'], scoped: [{ licence: 'MPL-2.0', packages: ['axe-core'] }] });
+
+/** Writes a licence list (MIT only unless given) to a temp folder removed after the test; returns its path. */
+function listFile(t, text = licenceList()) {
+	return tempFiles(t, { 'npm-licences.json': text })['npm-licences.json'];
+}
+
 /** Runs `main()` with a fixed clock and a lookup that fails unless one is given; collects its output. */
 async function runMain(args, options = {}) {
 	let stdout = '';
 	let stderr = '';
 	const out = { write: (text) => (stdout += text) };
 	const err = { write: (text) => (stderr += text) };
-	const status = await main(args, out, err, { now: () => NOW, lookup: unexpectedLookup, ...options });
+	const status = await main(args, out, err, { now: () => NOW, lookup: unexpectedLookup, versionLookup: unexpectedLookup, ...options });
 	return { status, stdout, stderr, output: stdout + stderr };
 }
 
@@ -315,7 +370,7 @@ describe('the age floor', () => {
 
 	test('a CLI run prints each added entry with its publish date and age', async (t) => {
 		const { oldFile, newFile } = lockPair(t, lockfile(LEFT_PAD), lockfile(LEFT_PAD, SCOPED));
-		const run = await runMain([oldFile, newFile, '--min-age-days', '7'], { lookup: stub({ '@scope/pkg@2.0.0': YOUNG }).lookup });
+		const run = await runMain([oldFile, newFile, '--licences', listFile(t), '--min-age-days', '7'], { lookup: stub({ '@scope/pkg@2.0.0': YOUNG }).lookup });
 		assert.equal(run.status, 1, run.output);
 		assert.match(run.stdout, /^added: "@scope\/pkg@\^2\.0\.0" \(version 2\.0\.0\), published 2026-10-19T13:00:00\.000Z, 6\.9 days old$/m);
 		assert.match(run.stdout, /^FAIL \[young\] @scope\/pkg@2\.0\.0: .*under the 7-day floor$/m);
@@ -323,9 +378,9 @@ describe('the age floor', () => {
 
 	test('a CLI run over the floor exits 0', async (t) => {
 		const { oldFile, newFile } = lockPair(t, lockfile(LEFT_PAD), lockfile(LEFT_PAD, SCOPED));
-		const run = await runMain([oldFile, newFile, '--min-age-days', '7'], { lookup: stub({ '@scope/pkg@2.0.0': OLD_ENOUGH }).lookup });
+		const run = await runMain([oldFile, newFile, '--licences', listFile(t), '--min-age-days', '7'], { lookup: stub({ '@scope/pkg@2.0.0': OLD_ENOUGH }).lookup });
 		assert.equal(run.status, 0, run.output);
-		assert.match(run.stdout, /^ok: every added entry matches the registry, every one is at least 7 days old or waived$/m);
+		assert.match(run.stdout, /^ok: every added entry matches the registry, every one passes the licence list, every one is at least 7 days old or waived$/m);
 	});
 });
 
@@ -334,7 +389,7 @@ describe('waivers', () => {
 		const { oldFile, newFile } = lockPair(t, lockfile(LEFT_PAD), lockfile(LEFT_PAD, SCOPED));
 		const waivers = waiverFile(t, { waivers: [waiver()] });
 		const { lookup } = stub({ '@scope/pkg@2.0.0': YOUNG });
-		const run = await runMain([oldFile, newFile, '--min-age-days', '7', '--waivers', waivers], { lookup });
+		const run = await runMain([oldFile, newFile, '--licences', listFile(t), '--min-age-days', '7', '--waivers', waivers], { lookup });
 		assert.equal(run.status, 0, run.output);
 		assert.match(run.stdout, /^added: .*6\.9 days old, waived \(fixes GHSA-abcd-efgh-2345\)$/m);
 	});
@@ -343,7 +398,7 @@ describe('waivers', () => {
 		const { oldFile, newFile } = lockPair(t, lockfile(LEFT_PAD), lockfile(LEFT_PAD, SCOPED));
 		const waivers = waiverFile(t, { waivers: [waiver({ package: '@scope/pkg@2.0.1' })] });
 		const { lookup } = stub({ '@scope/pkg@2.0.0': YOUNG });
-		const run = await runMain([oldFile, newFile, '--min-age-days', '7', '--waivers', waivers], { lookup });
+		const run = await runMain([oldFile, newFile, '--licences', listFile(t), '--min-age-days', '7', '--waivers', waivers], { lookup });
 		assert.equal(run.status, 1, run.output);
 		assert.match(run.stdout, /FAIL \[young\]/);
 	});
@@ -352,7 +407,7 @@ describe('waivers', () => {
 		const { oldFile, newFile } = lockPair(t, lockfile(LEFT_PAD), lockfile(LEFT_PAD, SCOPED));
 		const waivers = waiverFile(t, { waivers: [waiver()] });
 		const { lookup } = stub({ '@scope/pkg@2.0.0': { integrity: INTEGRITY_B, time: YOUNG.time } });
-		const run = await runMain([oldFile, newFile, '--min-age-days', '7', '--waivers', waivers], { lookup });
+		const run = await runMain([oldFile, newFile, '--licences', listFile(t), '--min-age-days', '7', '--waivers', waivers], { lookup });
 		assert.equal(run.status, 1, run.output);
 		assert.match(run.stdout, /FAIL \[integrity\]/);
 		assert.doesNotMatch(run.stdout, /FAIL \[young\]/);
@@ -364,7 +419,7 @@ describe('waivers', () => {
 		const { oldFile, newFile } = lockPair(t, oldText, newText);
 		const waivers = waiverFile(t, { waivers: [waiver()] });
 		const { lookup } = stub({ '@scope/pkg@2.0.0': YOUNG });
-		const run = await runMain([oldFile, newFile, '--min-age-days', '7', '--waivers', waivers], { lookup });
+		const run = await runMain([oldFile, newFile, '--licences', listFile(t), '--min-age-days', '7', '--waivers', waivers], { lookup });
 		assert.equal(run.status, 0, run.output);
 		assert.match(run.stdout, /waived \(fixes GHSA-abcd-efgh-2345\)/);
 	});
@@ -392,7 +447,7 @@ describe('the waiver file', () => {
 			const { oldFile, newFile } = lockPair(t, lockfile(LEFT_PAD), lockfile(LEFT_PAD, SCOPED));
 			const waivers = waiverFile(t, document);
 			const { lookup, calls } = stub({ '@scope/pkg@2.0.0': YOUNG });
-			const run = await runMain([oldFile, newFile, '--min-age-days', '7', '--waivers', waivers], { lookup });
+			const run = await runMain([oldFile, newFile, '--licences', listFile(t), '--min-age-days', '7', '--waivers', waivers], { lookup });
 			assert.equal(run.status, 2, run.output);
 			assert.deepEqual(calls, []);
 			assert.match(run.stderr, /waivers\.json: /);
@@ -416,7 +471,7 @@ describe('fail-closed registry reads', () => {
 	async function reviewWithDocument(t, document, newBlock = SCOPED) {
 		const { oldFile, newFile } = lockPair(t, lockfile(LEFT_PAD), lockfile(LEFT_PAD, newBlock));
 		const { lookup, calls } = documentLookup(document);
-		const run = await runMain([oldFile, newFile, '--min-age-days', '7'], { lookup });
+		const run = await runMain([oldFile, newFile, '--licences', listFile(t), '--min-age-days', '7'], { lookup });
 		return { run, calls };
 	}
 
@@ -492,7 +547,7 @@ describe('fail-closed registry reads', () => {
 
 	test('a failed lookup exits 2', async (t) => {
 		const { oldFile, newFile } = lockPair(t, lockfile(LEFT_PAD), lockfile(LEFT_PAD, SCOPED));
-		const run = await runMain([oldFile, newFile, '--min-age-days', '7'], { lookup: stub({}).lookup });
+		const run = await runMain([oldFile, newFile, '--licences', listFile(t), '--min-age-days', '7'], { lookup: stub({}).lookup });
 		assert.equal(run.status, 2, run.output);
 		assert.match(run.stderr, /lookup failed for @scope\/pkg@2\.0\.0/);
 	});
@@ -521,7 +576,7 @@ describe('fail-closed registry reads', () => {
 			return Response.json(registryDocument('@scope/pkg', '2.0.0', INTEGRITY_A, OLD_TIME));
 		};
 		const { oldFile, newFile } = lockPair(t, lockfile(LEFT_PAD), lockfile(LEFT_PAD, SCOPED));
-		const run = await runMain([oldFile, newFile, '--min-age-days', '7'], { lookup: registryLookup });
+		const run = await runMain([oldFile, newFile, '--licences', listFile(t), '--min-age-days', '7'], { lookup: registryLookup });
 		assert.equal(run.status, 2, run.output);
 		assert.equal(inits.length, 1);
 		assert.equal(inits[0].redirect, 'error');
@@ -540,7 +595,7 @@ describe('the npm v3 reader', () => {
 	async function reviewNpm(t, oldPackages, newPackages, options = {}) {
 		const { oldFile, newFile } = lockPair(t, npmLock(oldPackages), options.newText ?? npmLock(newPackages));
 		const { lookup, calls } = stub(options.table ?? {});
-		const run = await runMain([oldFile, newFile, '--min-age-days', '7'], { lookup });
+		const run = await runMain([oldFile, newFile, '--licences', listFile(t), '--min-age-days', '7'], { lookup });
 		return { run, calls };
 	}
 
@@ -647,15 +702,25 @@ describe('the CLI', () => {
 		['a', 'b', '--bogus'],
 		['--help'],
 		['a', 'b', '--waivers', 'w.json'],
-		['a', 'b', '--min-age-days'],
-		['a', 'b', '--min-age-days', '0'],
-		['a', 'b', '--min-age-days', '-1'],
-		['a', 'b', '--min-age-days', '1.5'],
-		['a', 'b', '--min-age-days', '07'],
-		['a', 'b', '--min-age-days', '99999999999999999999'],
-		['a', 'b', '--min-age-days', '7', '--min-age-days', '7'],
-		['a', 'b', '--min-age-days', '7', '--waivers'],
-		['a', 'b', '--no-removals', '--no-removals']
+		['a', 'b', '--licences', 'l.json', '--min-age-days'],
+		['a', 'b', '--licences', 'l.json', '--min-age-days', '0'],
+		['a', 'b', '--licences', 'l.json', '--min-age-days', '-1'],
+		['a', 'b', '--licences', 'l.json', '--min-age-days', '1.5'],
+		['a', 'b', '--licences', 'l.json', '--min-age-days', '07'],
+		['a', 'b', '--licences', 'l.json', '--min-age-days', '99999999999999999999'],
+		['a', 'b', '--licences', 'l.json', '--min-age-days', '7', '--min-age-days', '7'],
+		['a', 'b', '--licences', 'l.json', '--min-age-days', '7', '--waivers'],
+		['a', 'b', '--no-removals', '--no-removals'],
+		['a', 'b', '--min-age-days', '7'],
+		['a', 'b', '--min-age-days', '7', '--waivers', 'w.json'],
+		['a', 'b', '--licences'],
+		['a', 'b', '--licences', 'l.json', '--licences', 'l.json'],
+		['--licence-sweep', 'a'],
+		['--licence-sweep', '--licences', 'l.json'],
+		['--licence-sweep', '--licence-sweep', '--licences', 'l.json', 'a'],
+		['--licence-sweep', '--licences', 'l.json', 'a', '--min-age-days', '7'],
+		['--licence-sweep', '--licences', 'l.json', 'a', '--min-age-days', '7', '--waivers', 'w.json'],
+		['--licence-sweep', '--licences', 'l.json', 'a', '--no-removals']
 	];
 	for (const args of badUsage) {
 		test(`exits 2 on bad usage ${JSON.stringify(args)}`, () => {
@@ -679,7 +744,7 @@ describe('the CLI', () => {
 	test('exits 2 on an unreadable waiver file', async (t) => {
 		const { oldFile, newFile } = lockPair(t, lockfile(LEFT_PAD), lockfile(LEFT_PAD));
 		const missing = path.join(path.dirname(oldFile), 'missing.json');
-		const run = await runMain([oldFile, newFile, '--min-age-days', '7', '--waivers', missing]);
+		const run = await runMain([oldFile, newFile, '--licences', listFile(t), '--min-age-days', '7', '--waivers', missing]);
 		assert.equal(run.status, 2, run.output);
 	});
 
@@ -719,11 +784,402 @@ describe('the CLI', () => {
 	});
 });
 
+/** True when `text` has `line` as one whole line. */
+function hasLine(text, line) {
+	return text.split('\n').includes(line);
+}
+
+const AXE_ALIAS_YARN = block('my-a11y@npm:axe-core@4.10.0', '4.10.0', INTEGRITY_A);
+const AXE_ALIAS_NPM = { 'node_modules/my-a11y': npmPackage('axe-core', '4.10.0', INTEGRITY_A, { name: 'axe-core' }) };
+const AXE_MPL = { integrity: INTEGRITY_A, fields: { license: 'MPL-2.0' } };
+
+describe('the licence rule', () => {
+	/** Runs the review of a yarn change adding `blocks` to LEFT_PAD, with the list and the floor. */
+	async function reviewYarn(t, blocks, table, { list = licenceList(), extra = [] } = {}) {
+		const { oldFile, newFile } = lockPair(t, lockfile(LEFT_PAD), lockfile(LEFT_PAD, ...blocks));
+		const { lookup, calls } = stub(table);
+		const run = await runMain([oldFile, newFile, '--licences', listFile(t, list), '--min-age-days', '7', ...extra], { lookup });
+		return { run, calls, newFile };
+	}
+
+	/** Runs the review of an npm change adding `packages` to an empty lockfile, with the list and the floor. */
+	async function reviewNpm(t, packages, table, { list = licenceList(), oldPackages = {} } = {}) {
+		const { oldFile, newFile } = lockPair(t, npmLock(oldPackages), npmLock(packages));
+		const { lookup, calls } = stub(table);
+		const run = await runMain([oldFile, newFile, '--licences', listFile(t, list), '--min-age-days', '7'], { lookup });
+		return { run, calls, newFile };
+	}
+
+	const WTFPL = { integrity: INTEGRITY_A, fields: { license: 'WTFPL' } };
+
+	test('an off-list added yarn entry exits 1, naming package, version, problem and lockfile', async (t) => {
+		const { run, newFile } = await reviewYarn(t, [SCOPED], { '@scope/pkg@2.0.0': WTFPL });
+		assert.equal(run.status, 1, run.output);
+		assert.ok(hasLine(run.stdout, `FAIL [licence] @scope/pkg@2.0.0 (${newFile}): "WTFPL" is not allowed`), run.output);
+	});
+
+	test('an off-list added npm entry exits 1, naming package, version, problem and lockfile', async (t) => {
+		const packages = { 'node_modules/@scope/pkg': npmPackage('@scope/pkg', '2.0.0', INTEGRITY_A) };
+		const { run, newFile } = await reviewNpm(t, packages, { '@scope/pkg@2.0.0': WTFPL });
+		assert.equal(run.status, 1, run.output);
+		assert.ok(hasLine(run.stdout, `FAIL [licence] @scope/pkg@2.0.0 (${newFile}): "WTFPL" is not allowed`), run.output);
+	});
+
+	test('an allowed added entry passes in both formats', async (t) => {
+		const yarn = await reviewYarn(t, [SCOPED], { '@scope/pkg@2.0.0': INTEGRITY_A });
+		assert.equal(yarn.run.status, 0, yarn.run.output);
+		assert.match(yarn.run.stdout, /^ok: .*every one passes the licence list/m);
+		const packages = { 'node_modules/@scope/pkg': npmPackage('@scope/pkg', '2.0.0', INTEGRITY_A) };
+		const npm = await reviewNpm(t, packages, { '@scope/pkg@2.0.0': INTEGRITY_A });
+		assert.equal(npm.run.status, 0, npm.run.output);
+	});
+
+	test('a scoped licence passes for a package it names and fails for another', async (t) => {
+		const axe = block('axe-core@^4.10.0', '4.10.0', INTEGRITY_A);
+		const named = await reviewYarn(t, [axe], { 'axe-core@4.10.0': AXE_MPL }, { list: AXE_LIST });
+		assert.equal(named.run.status, 0, named.run.output);
+		const other = block('other-pkg@^1.0.0', '1.0.0', INTEGRITY_A);
+		const unnamed = await reviewYarn(t, [other], { 'other-pkg@1.0.0': AXE_MPL }, { list: AXE_LIST });
+		assert.equal(unnamed.run.status, 1, unnamed.run.output);
+		assert.match(unnamed.run.stdout, /^FAIL \[licence\] other-pkg@1\.0\.0 \(.*\): "MPL-2\.0" is allowed only for the packages its scoped entry names$/m);
+	});
+
+	test('an exception admits the exact version it names, and only that one', async (t) => {
+		const list = licenceList({ exceptions: [{ package: 'quiet-pkg@1.0.0', registry: null, terms: 'MIT' }] });
+		const unlicensed = { integrity: INTEGRITY_A, fields: { license: undefined } };
+		const excepted = await reviewYarn(t, [block('quiet-pkg@^1.0.0', '1.0.0', INTEGRITY_A)], { 'quiet-pkg@1.0.0': unlicensed }, { list });
+		assert.equal(excepted.run.status, 0, excepted.run.output);
+		const next = await reviewYarn(t, [block('quiet-pkg@^1.0.1', '1.0.1', INTEGRITY_A)], { 'quiet-pkg@1.0.1': unlicensed }, { list });
+		assert.equal(next.run.status, 1, next.run.output);
+		assert.match(next.run.stdout, /^FAIL \[licence\] quiet-pkg@1\.0\.1 .*: no licence field$/m);
+	});
+
+	test('the rule makes exactly one lookup per added entry', async (t) => {
+		const other = block('other-pkg@^1.0.0', '1.0.0', INTEGRITY_A);
+		const { run, calls } = await reviewYarn(t, [SCOPED, other], { '@scope/pkg@2.0.0': INTEGRITY_A, 'other-pkg@1.0.0': WTFPL });
+		assert.equal(run.status, 1, run.output);
+		assert.deepEqual(calls.toSorted(), ['@scope/pkg@2.0.0', 'other-pkg@1.0.0']);
+	});
+
+	test('without --licences there is no licence rule', async (t) => {
+		const { oldFile, newFile } = lockPair(t, lockfile(LEFT_PAD), lockfile(LEFT_PAD, SCOPED));
+		const run = await runMain([oldFile, newFile], { lookup: stub({ '@scope/pkg@2.0.0': WTFPL }).lookup });
+		assert.equal(run.status, 0, run.output);
+		assert.doesNotMatch(run.stdout, /licence/);
+	});
+
+	test('--min-age-days without --licences exits 2 before any lookup', async (t) => {
+		const { oldFile, newFile } = lockPair(t, lockfile(LEFT_PAD), lockfile(LEFT_PAD, SCOPED));
+		const { lookup, calls } = stub({ '@scope/pkg@2.0.0': INTEGRITY_A });
+		const run = await runMain([oldFile, newFile, '--min-age-days', '7'], { lookup });
+		assert.equal(run.status, 2, run.output);
+		assert.match(run.stderr, /--min-age-days needs --licences/);
+		assert.deepEqual(calls, []);
+	});
+
+	test('an unreadable list file exits 2', async (t) => {
+		const { oldFile, newFile } = lockPair(t, lockfile(LEFT_PAD), lockfile(LEFT_PAD, SCOPED));
+		const missing = path.join(path.dirname(oldFile), 'missing.json');
+		const { lookup, calls } = stub({ '@scope/pkg@2.0.0': INTEGRITY_A });
+		const run = await runMain([oldFile, newFile, '--licences', missing, '--min-age-days', '7'], { lookup });
+		assert.equal(run.status, 2, run.output);
+		assert.match(run.stderr, /missing\.json: cannot read/);
+		assert.deepEqual(calls, []);
+	});
+
+	test('a malformed list (MPL-2.0 in allow) exits 2 before any lookup', async (t) => {
+		const { oldFile, newFile } = lockPair(t, lockfile(LEFT_PAD), lockfile(LEFT_PAD, SCOPED));
+		const list = listFile(t, licenceList({ allow: ['MIT', 'MPL-2.0'] }));
+		const { lookup, calls } = stub({ '@scope/pkg@2.0.0': INTEGRITY_A });
+		const run = await runMain([oldFile, newFile, '--licences', list, '--min-age-days', '7'], { lookup });
+		assert.equal(run.status, 2, run.output);
+		assert.match(run.stderr, /npm-licences\.json: allow\[1\]: "MPL-2\.0" is never allowed/);
+		assert.deepEqual(calls, []);
+	});
+
+	test('a list is judged on the run clock: an entry read after today exits 2', async (t) => {
+		const list = licenceList({ scoped: [{ licence: 'MPL-2.0', packages: ['axe-core'] }] }).replace('"2026-10-26"', '"2026-10-27"');
+		const { run } = await reviewYarn(t, [SCOPED], { '@scope/pkg@2.0.0': INTEGRITY_A }, { list });
+		assert.equal(run.status, 2, run.output);
+		assert.match(run.stderr, /readOn "2026-10-27" is after today \(2026-10-26\)/);
+	});
+
+	test('a waived young entry still gets its licence verdict', async (t) => {
+		const waivers = waiverFile(t, { waivers: [waiver()] });
+		const young = { ...YOUNG, fields: { license: 'WTFPL' } };
+		const { run } = await reviewYarn(t, [SCOPED], { '@scope/pkg@2.0.0': young }, { extra: ['--waivers', waivers] });
+		assert.equal(run.status, 1, run.output);
+		assert.match(run.stdout, /waived \(fixes GHSA-abcd-efgh-2345\)/);
+		assert.match(run.stdout, /^FAIL \[licence\] @scope\/pkg@2\.0\.0 .*"WTFPL" is not allowed$/m);
+		assert.doesNotMatch(run.stdout, /FAIL \[young\]/);
+	});
+
+	test('a yarn alias of a scoped package exits 1, naming the alias and the real package', async (t) => {
+		const { run, newFile } = await reviewYarn(t, [AXE_ALIAS_YARN], { 'axe-core@4.10.0': AXE_MPL }, { list: AXE_LIST });
+		assert.equal(run.status, 1, run.output);
+		const line = `FAIL [licence] axe-core@4.10.0 (${newFile}): installed under the alias "my-a11y", and the list scopes axe-core to named packages`;
+		assert.ok(hasLine(run.stdout, line), run.output);
+	});
+
+	test('an npm alias of a scoped package exits 1, naming the alias and the real package', async (t) => {
+		const { run, newFile } = await reviewNpm(t, AXE_ALIAS_NPM, { 'axe-core@4.10.0': AXE_MPL }, { list: AXE_LIST });
+		assert.equal(run.status, 1, run.output);
+		const line = `FAIL [licence] axe-core@4.10.0 (${newFile}): installed under the alias "my-a11y", and the list scopes axe-core to named packages`;
+		assert.ok(hasLine(run.stdout, line), run.output);
+	});
+
+	test('an npm alias added beside an unchanged scoped package counts as added and exits 1', async (t) => {
+		const oldPackages = { 'node_modules/axe-core': npmPackage('axe-core', '4.10.0', INTEGRITY_A) };
+		const packages = { ...oldPackages, ...AXE_ALIAS_NPM };
+		const { run, calls } = await reviewNpm(t, packages, { 'axe-core@4.10.0': AXE_MPL }, { list: AXE_LIST, oldPackages });
+		assert.equal(run.status, 1, run.output);
+		assert.deepEqual(calls, ['axe-core@4.10.0']);
+		assert.match(run.stdout, /installed under the alias "my-a11y"/);
+	});
+
+	test('an alias of an unscoped MIT package passes in both formats', async (t) => {
+		const yarnAlias = block('my-pad@npm:left-pad@1.3.0', '1.3.0', INTEGRITY_B);
+		const yarn = await reviewYarn(t, [yarnAlias], { 'left-pad@1.3.0': INTEGRITY_B }, { list: AXE_LIST });
+		assert.equal(yarn.run.status, 0, yarn.run.output);
+		const npmAlias = { 'node_modules/my-pad': npmPackage('left-pad', '1.3.0', INTEGRITY_A, { name: 'left-pad' }) };
+		const npm = await reviewNpm(t, npmAlias, { 'left-pad@1.3.0': INTEGRITY_A }, { list: AXE_LIST });
+		assert.equal(npm.run.status, 0, npm.run.output);
+	});
+
+	test('a manifest that bundles packages exits 1 even under an allowed licence', async (t) => {
+		const bundled = { integrity: INTEGRITY_A, fields: { bundleDependencies: ['x'] } };
+		const { run } = await reviewYarn(t, [SCOPED], { '@scope/pkg@2.0.0': bundled });
+		assert.equal(run.status, 1, run.output);
+		assert.match(run.stdout, /^FAIL \[licence\] @scope\/pkg@2\.0\.0 .*: bundles packages no lockfile lists/m);
+	});
+
+	test('the review keeps working without a list through reviewLockfiles', async () => {
+		const { lookup } = stub({ '@scope/pkg@2.0.0': { integrity: INTEGRITY_A, fields: { license: 'WTFPL' } } });
+		const result = await reviewLockfiles(lockfile(LEFT_PAD), lockfile(LEFT_PAD, SCOPED), { lookup, now: () => NOW, minAgeDays: 7 });
+		assert.deepEqual([result.findings, result.errors], [[], []]);
+	});
+});
+
+describe('the licence sweep', () => {
+	/** Runs the sweep over `files` ({ name: text }) in order, with the list. */
+	async function sweep(t, files, table, { list = licenceList() } = {}) {
+		const paths = tempFiles(t, files);
+		const { versionLookup, calls } = versionStub(table);
+		const run = await runMain(['--licence-sweep', '--licences', listFile(t, list), ...Object.values(paths)], { versionLookup });
+		return { run, calls, paths };
+	}
+
+	/** The `licence …: n` lines of the output, in order. */
+	function countLines(stdout) {
+		return stdout.split('\n').filter((line) => line.startsWith('licence '));
+	}
+
+	test('covers every lockfile: an off-list entry only in the npm lockfile exits 1', async (t) => {
+		const files = {
+			'yarn.lock': lockfile(LEFT_PAD),
+			'package-lock.json': npmLock({ 'node_modules/@scope/pkg': npmPackage('@scope/pkg', '2.0.0', INTEGRITY_A) })
+		};
+		const table = { 'left-pad@1.3.0': INTEGRITY_A, '@scope/pkg@2.0.0': { fields: { license: 'WTFPL' } } };
+		const { run, calls, paths } = await sweep(t, files, table);
+		assert.equal(run.status, 1, run.output);
+		assert.deepEqual(calls, ['left-pad@1.3.0', '@scope/pkg@2.0.0']);
+		assert.ok(hasLine(run.stdout, `FAIL [licence] @scope/pkg@2.0.0 (${paths['package-lock.json']}): "WTFPL" is not allowed`), run.output);
+		assert.deepEqual(countLines(run.stdout), ['licence MIT: 1', 'licence WTFPL: 1']);
+	});
+
+	test('a clean sweep exits 0 with the per-licence counts, sorted', async (t) => {
+		const axe = block('axe-core@^4.10.0', '4.10.0', INTEGRITY_A);
+		const files = {
+			'yarn.lock': lockfile(LEFT_PAD, SCOPED, axe),
+			'package-lock.json': npmLock({
+				'node_modules/isc-pkg': npmPackage('isc-pkg', '1.0.0', INTEGRITY_A),
+				'node_modules/left-pad': npmPackage('left-pad', '1.3.0', INTEGRITY_A)
+			})
+		};
+		const table = {
+			'left-pad@1.3.0': INTEGRITY_A,
+			'@scope/pkg@2.0.0': INTEGRITY_A,
+			'axe-core@4.10.0': { fields: { license: 'MPL-2.0' } },
+			'isc-pkg@1.0.0': { fields: { license: 'ISC' } }
+		};
+		const { run } = await sweep(t, files, table, { list: AXE_LIST });
+		assert.equal(run.status, 0, run.output);
+		assert.deepEqual(countLines(run.stdout), ['licence ISC: 1', 'licence MIT: 3', 'licence MPL-2.0: 1']);
+		assert.match(run.stdout, /^ok: every entry of .* matches the registry and passes the licence list$/m);
+	});
+
+	test('one triple at two paths is one entry and one lookup', async (t) => {
+		const pkg = npmPackage('@scope/pkg', '2.0.0', INTEGRITY_A);
+		const files = { 'package-lock.json': npmLock({ 'node_modules/@scope/pkg': pkg, 'node_modules/x/node_modules/@scope/pkg': pkg }) };
+		const { run, calls } = await sweep(t, files, { '@scope/pkg@2.0.0': INTEGRITY_A });
+		assert.equal(run.status, 0, run.output);
+		assert.deepEqual(calls, ['@scope/pkg@2.0.0']);
+		assert.deepEqual(countLines(run.stdout), ['licence MIT: 1']);
+	});
+
+	test('an integrity mismatch exits 1', async (t) => {
+		const { run } = await sweep(t, { 'yarn.lock': lockfile(LEFT_PAD) }, { 'left-pad@1.3.0': INTEGRITY_B });
+		assert.equal(run.status, 1, run.output);
+		assert.match(run.stdout, /^FAIL \[integrity\] left-pad@1\.3\.0 \(.*\): lockfile "sha512-A+==", registry "sha512-B+=="$/m);
+	});
+
+	test('a yarn entry with no integrity exits 1', async (t) => {
+		const bare = LEFT_PAD.replace(/\n {2}integrity [^\n]*/, '');
+		const { run } = await sweep(t, { 'yarn.lock': lockfile(bare) }, { 'left-pad@1.3.0': INTEGRITY_A });
+		assert.equal(run.status, 1, run.output);
+		assert.match(run.stdout, /^FAIL \[integrity\] left-pad@1\.3\.0 \(.*\): lockfile null, /m);
+	});
+
+	test('a document whose name differs exits 2', async (t) => {
+		const { run } = await sweep(t, { 'yarn.lock': lockfile(LEFT_PAD) }, { 'left-pad@1.3.0': { fields: { name: 'right-pad' } } });
+		assert.equal(run.status, 2, run.output);
+		assert.match(run.stderr, /left-pad@1\.3\.0 \(.*\): the version document names package "right-pad", not "left-pad"/);
+	});
+
+	test('a document whose version differs exits 2', async (t) => {
+		const { run } = await sweep(t, { 'yarn.lock': lockfile(LEFT_PAD) }, { 'left-pad@1.3.0': { fields: { version: '1.3.1' } } });
+		assert.equal(run.status, 2, run.output);
+		assert.match(run.stderr, /the version document is version "1\.3\.1", not "1\.3\.0"/);
+	});
+
+	test('a document with no dist.integrity exits 2', async (t) => {
+		const { run } = await sweep(t, { 'yarn.lock': lockfile(LEFT_PAD) }, { 'left-pad@1.3.0': { fields: { dist: {} } } });
+		assert.equal(run.status, 2, run.output);
+		assert.match(run.stderr, /has no dist\.integrity/);
+	});
+
+	test('a failed lookup exits 2', async (t) => {
+		const { run } = await sweep(t, { 'yarn.lock': lockfile(LEFT_PAD) }, {});
+		assert.equal(run.status, 2, run.output);
+		assert.match(run.stderr, /^lock-review: lookup failed for left-pad@1\.3\.0 /m);
+	});
+
+	test('an unreadable yarn block exits 2', async (t) => {
+		const mixed = block('left-pad@^1.3.0', '1.3.0', INTEGRITY_A).replace('"left-pad@^1.3.0":', '"left-pad@^1.3.0", "right-pad@^1.3.0":');
+		const { run, calls } = await sweep(t, { 'yarn.lock': lockfile(mixed) }, { 'left-pad@1.3.0': INTEGRITY_A });
+		assert.equal(run.status, 2, run.output);
+		assert.deepEqual(calls, []);
+		assert.match(run.stderr, /cannot look up .*keys name different packages/);
+	});
+
+	test('a refused npm entry or an unreadable lockfile exits 2', async (t) => {
+		const link = { 'node_modules/@scope/pkg': { ...npmPackage('@scope/pkg', '2.0.0', INTEGRITY_A), link: true } };
+		const refused = await sweep(t, { 'package-lock.json': npmLock(link) }, {});
+		assert.equal(refused.run.status, 2, refused.run.output);
+		assert.match(refused.run.stderr, /package-lock\.json: packages\["node_modules\/@scope\/pkg"\]: a link entry/);
+		const list = listFile(t);
+		const missing = path.join(path.dirname(list), 'missing.lock');
+		const run = await runMain(['--licence-sweep', '--licences', list, missing]);
+		assert.equal(run.status, 2, run.output);
+		assert.match(run.stderr, /missing\.lock: cannot read/);
+	});
+
+	test('a refused version exits 2 without a lookup', async (t) => {
+		const { run, calls } = await sweep(t, { 'yarn.lock': lockfile(block('left-pad@^1.3.0', '__proto__', INTEGRITY_A)) }, {});
+		assert.equal(run.status, 2, run.output);
+		assert.deepEqual(calls, []);
+	});
+
+	test('an exception no entry used is a note and the sweep still exits 0', async (t) => {
+		const list = licenceList({ exceptions: [{ package: 'quiet-pkg@1.0.0', registry: null, terms: 'MIT' }] });
+		const { run } = await sweep(t, { 'yarn.lock': lockfile(LEFT_PAD) }, { 'left-pad@1.3.0': INTEGRITY_A }, { list });
+		assert.equal(run.status, 0, run.output);
+		assert.ok(hasLine(run.stdout, 'note: the exception for quiet-pkg@1.0.0 matches no entry'), run.output);
+	});
+
+	test('an exception an entry used gives no note', async (t) => {
+		const list = licenceList({ exceptions: [{ package: 'quiet-pkg@1.0.0', registry: null, terms: 'MIT' }] });
+		const quiet = block('quiet-pkg@^1.0.0', '1.0.0', INTEGRITY_A);
+		const { run } = await sweep(t, { 'yarn.lock': lockfile(quiet) }, { 'quiet-pkg@1.0.0': { fields: { license: undefined } } }, { list });
+		assert.equal(run.status, 0, run.output);
+		assert.doesNotMatch(run.stdout, /^note:/m);
+		assert.deepEqual(countLines(run.stdout), ['licence (no licence field): 1']);
+	});
+
+	test('aliases of a scoped package exit 1 in both formats', async (t) => {
+		const files = { 'yarn.lock': lockfile(AXE_ALIAS_YARN), 'package-lock.json': npmLock(AXE_ALIAS_NPM) };
+		const { run, paths } = await sweep(t, files, { 'axe-core@4.10.0': { fields: { license: 'MPL-2.0' } } }, { list: AXE_LIST });
+		assert.equal(run.status, 1, run.output);
+		for (const file of Object.values(paths)) {
+			const line = `FAIL [licence] axe-core@4.10.0 (${file}): installed under the alias "my-a11y", and the list scopes axe-core to named packages`;
+			assert.ok(hasLine(run.stdout, line), run.output);
+		}
+	});
+
+	test('a manifest that bundles packages exits 1', async (t) => {
+		const { run } = await sweep(t, { 'yarn.lock': lockfile(LEFT_PAD) }, { 'left-pad@1.3.0': { fields: { bundledDependencies: ['x'] } } });
+		assert.equal(run.status, 1, run.output);
+		assert.match(run.stdout, /^FAIL \[licence\] left-pad@1\.3\.0 .*bundles packages no lockfile lists/m);
+	});
+
+	test('the real npm-licences.json loads and judges the entries it names', async (t) => {
+		const files = {
+			'yarn.lock': lockfile(
+				block('axe-core@^4.10.0', '4.10.0', INTEGRITY_A),
+				block('svelte-toolbelt@^0.10.6', '0.10.6', INTEGRITY_A),
+				LEFT_PAD
+			)
+		};
+		const paths = tempFiles(t, files);
+		const table = {
+			'axe-core@4.10.0': { fields: { license: 'MPL-2.0' } },
+			'svelte-toolbelt@0.10.6': { fields: { license: undefined } },
+			'left-pad@1.3.0': { fields: { license: 'WTFPL' } }
+		};
+		const { versionLookup } = versionStub(table);
+		const now = () => Math.max(NOW, Date.now());
+		const run = await runMain(['--licence-sweep', '--licences', REAL_LIST_FILE, paths['yarn.lock']], { versionLookup, now });
+		assert.equal(run.status, 1, run.output);
+		assert.deepEqual(run.stdout.split('\n').filter((line) => line.startsWith('FAIL ')), [
+			`FAIL [licence] left-pad@1.3.0 (${paths['yarn.lock']}): "WTFPL" is not allowed`
+		]);
+		assert.doesNotMatch(run.stdout, /^note:/m);
+	});
+
+	test('the version lookup fetches the per-version document with no redirects', async (t) => {
+		const realFetch = globalThis.fetch;
+		t.after(() => (globalThis.fetch = realFetch));
+		const requests = [];
+		globalThis.fetch = async (url, init) => {
+			requests.push({ url: String(url), init });
+			return Response.json(manifestOf('@scope/pkg', '2.0.0', INTEGRITY_A));
+		};
+		const document = await registryVersionLookup('@scope/pkg', '2.0.0');
+		assert.equal(document.dist.integrity, INTEGRITY_A);
+		assert.deepEqual(requests.map(({ url }) => url), ['https://registry.npmjs.org/@scope%2fpkg/2.0.0']);
+		assert.equal(requests[0].init.redirect, 'error');
+		assert.ok(requests[0].init.signal instanceof AbortSignal);
+	});
+
+	test('the version lookup refuses an HTTP error, a bad name and a bad version', async (t) => {
+		const realFetch = globalThis.fetch;
+		t.after(() => (globalThis.fetch = realFetch));
+		globalThis.fetch = async () => new Response('gone', { status: 404 });
+		await assert.rejects(registryVersionLookup('@scope/pkg', '2.0.0'), /HTTP 404/);
+		await assert.rejects(registryVersionLookup('@scope/..', '2.0.0'), /refused package name/);
+		await assert.rejects(registryVersionLookup('left-pad', '../1.0.0'), /refused version/);
+	});
+
+	test('the version document reader takes only own fields', () => {
+		const manifest = manifestOf('left-pad', '1.3.0', INTEGRITY_A);
+		assert.equal(readVersionDocument(manifest, 'left-pad', '1.3.0').integrity, INTEGRITY_A);
+		const inherited = Object.assign(Object.create({ name: 'left-pad' }), { version: '1.3.0', dist: { integrity: INTEGRITY_A } });
+		assert.throws(() => readVersionDocument(inherited, 'left-pad', '1.3.0'), GuardError);
+		assert.throws(() => readVersionDocument({ ...manifest, dist: { integrity: '' } }, 'left-pad', '1.3.0'), /no dist\.integrity/);
+		assert.throws(() => readVersionDocument([manifest], 'left-pad', '1.3.0'), /not an object/);
+	});
+});
+
 describe('the imports', () => {
 	/** Every module specifier `source` imports or re-exports, static or dynamic. */
 	function specifiers(source) {
 		return [...source.matchAll(/\b(?:from|import)\s*\(?\s*(['"])([^'"]+)\1/g)].map((match) => match[2]);
 	}
+
+	test('the driver set is exactly the three tools', () => {
+		assert.deepEqual(new Set(DRIVER_FILES), new Set(['lock-review.mjs', 'install-check.mjs', 'licences.mjs']));
+		assert.equal(DRIVER_FILES.length, 3);
+	});
 
 	for (const file of DRIVER_FILES) {
 		test(`${file} imports only node built-ins and the driver files`, () => {
