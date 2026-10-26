@@ -34,6 +34,14 @@ ignore = [
     # still open upstream). Used for JOSE/JWK RSA key handling.
     # SECURITY-RELEVANT -- flagged for the Engineer, not silently accepted.
     { id = "RUSTSEC-2023-0071", reason = "rsa 0.9.10 Marvin Attack timing side-channel; transitive via jacquard-oauth -> jose-jwk; advisory itself states no fix is available yet. Flagged for the Engineer -- JOSE/JWK key handling." },
+
+    # Transitive: atrium-crypto 0.1.3 and jacquard-common 0.12 -> k256 / ecdsa
+    # 0.16 -> elliptic-curve 0.13 -> crypto-bigint 0.5.5. The fix is 0.7.6+,
+    # which only elliptic-curve 0.14 uses; neither upstream has moved, so no
+    # compatible version exists. Secp256k1 signing (did:plc operations) runs
+    # through it. SECURITY-RELEVANT -- flagged for the Engineer; re-check
+    # before anything is deployed.
+    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.5 non-constant-time arithmetic; transitive via atrium-crypto / jacquard-common -> k256 -> elliptic-curve 0.13; fix needs elliptic-curve 0.14, which no upstream uses yet. Flagged for the Engineer -- did:plc signing; re-check before deployment." },
 ]
 
 [licenses]
