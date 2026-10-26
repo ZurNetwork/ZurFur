@@ -2,13 +2,17 @@
 # Classifies a change's paths for CI's `changes` job and for `just gate-light`.
 # Reads one repo-relative path per line on stdin.
 #
-#   ci-paths.sh           prints `code=true|false` and `lock=true|false`
+#   ci-paths.sh           prints `code=true|false`, `lock=true|false` and
+#                         `npmlock=true|false`
 #   ci-paths.sh --paths   prints `docs <path>` or `code <path>` per path
 #
 # code=true unless there is at least one path and every path is docs-only, so
 # an unknown path or a quoted name git could not print plainly counts as code.
 # lock=true when a path is a Cargo.lock, or when there are no paths at all.
-# Both fail closed: CI treats any output but an explicit `false` as true.
+# npmlock=true when a path is an npm lockfile (a yarn.lock or a
+# package-lock.json, at any depth) or a root osv-scanner.*.toml ignore file, or
+# when there are no paths at all. All three fail closed: CI treats any output
+# but an explicit `false` as true.
 #
 # CI runs the BASE branch's copy of this file, so a PR that edits the list
 # cannot use its own edit to skip its own jobs. Keep the list in step with the
@@ -48,6 +52,15 @@ is_lockfile() {
     return 1
 }
 
+# is_npm_lock <path> succeeds for what decides whether CI's npm-lock job blocks
+# on advisories: an npm lockfile or an advisory ignore file.
+is_npm_lock() {
+    case "$1" in
+        yarn.lock | */yarn.lock | package-lock.json | */package-lock.json | osv-scanner.*.toml) return 0 ;;
+    esac
+    return 1
+}
+
 mode="${1:-summary}"
 case "$mode" in
     summary | --paths) ;;
@@ -60,6 +73,7 @@ esac
 seen=0
 code=false
 lock=false
+npmlock=false
 while IFS= read -r path || [ -n "$path" ]; do
     [ -n "$path" ] || continue
     seen=1
@@ -72,6 +86,9 @@ while IFS= read -r path || [ -n "$path" ]; do
     if is_lockfile "$path"; then
         lock=true
     fi
+    if is_npm_lock "$path"; then
+        npmlock=true
+    fi
     if [ "$mode" = "--paths" ]; then
         printf '%s %s\n' "$kind" "$path"
     fi
@@ -81,6 +98,7 @@ if [ "$mode" = summary ]; then
     if [ "$seen" = 0 ]; then
         code=true
         lock=true
+        npmlock=true
     fi
-    printf 'code=%s\nlock=%s\n' "$code" "$lock"
+    printf 'code=%s\nlock=%s\nnpmlock=%s\n' "$code" "$lock" "$npmlock"
 fi

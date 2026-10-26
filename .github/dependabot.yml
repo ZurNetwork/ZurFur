@@ -1,0 +1,71 @@
+# Dependabot.
+# - github-actions: one grouped PR a month bumping every action, each new
+#   version at least 7 days old. crate-ci/typos and
+#   EmbarkStudios/cargo-deny-action are bumped by hand, together with
+#   TYPOS_VERSION and CARGO_DENY_VERSION in the Justfile.
+# - cargo (the workspace) and npm (frontend/ and lexicons/): security updates
+#   only, one grouped PR per ecosystem; open-pull-requests-limit 0 turns their
+#   version updates off. The @zurfur/* workspace packages are never updated.
+# Dependabot's PRs into main go like any PR into main: CI green, the npm-lock
+# job included, and the usual reviews. An npm security fix younger than 7 days
+# fails npm-lock: it waits until the version is 7 days old, or a waiver lands
+# on main first and `@dependabot rebase` re-runs the PR.
+# Never push commits to a Dependabot branch: Dependabot stops rebasing a PR
+# once other commits are pushed to it. The one exception is the monthly
+# github-actions PR: CI pins exact SHAs, so it gets one reviewed commit that
+# updates both pin lists, allowed_actions in scripts/tools-check.sh and the
+# want_steps line in scripts/npm-lock-pins.test.sh (the checkout and
+# setup-node SHAs). Each new SHA is checked against its upstream tag with
+# `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`, an annotated tag
+# dereferenced to its commit, never taken from the PR text, and each version
+# is at least 7 days old. On a conflict, close the PR and let Dependabot open
+# it again. This is safe only while CI holds no secrets: after that push, CI
+# runs as the pusher, not under Dependabot's restricted token.
+# No target-branch: with one, these settings stop applying to security updates.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: crate-ci/typos
+      - dependency-name: EmbarkStudios/cargo-deny-action
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    groups:
+      cargo-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: npm
+    directories:
+      - /frontend
+      - /lexicons
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "@zurfur/*"
+    commit-message:
+      prefix: chore
+      include: scope

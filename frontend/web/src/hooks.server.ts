@@ -4,6 +4,7 @@ import { env } from '$env/dynamic/private';
 import { rewriteApiRequest } from '$lib/server/api-proxy';
 import { mockModeMisconfigured } from '$lib/server/api/zurfur-api-mock';
 import { refuseCrossSiteWrites } from '$lib/server/cross-site-writes';
+import { refuseDoubleSlashPaths } from '$lib/server/double-slash-paths';
 import { firstParty } from '$lib/server/first-party-origin';
 import { consoleSink, logRequests, logUpstreamCalls } from '$lib/server/dev-log';
 import { logUnexpectedError } from '$lib/server/error-log';
@@ -87,14 +88,16 @@ export const handleFetch: HandleFetch = logUpstreamCalls(dev, consoleSink, bound
  * GET, HEAD and OPTIONS) gets a 403 unless its `Origin` is ZURFUR_PUBLIC_URL's
  * origin (`http://127.0.0.1:8080` in a dev build where it is unset; read once
  * by `first-party-origin.ts`) or it sends no `Origin` and `Sec-Fetch-Site:
- * same-origin`. In dev, each request is logged by its method, route template,
- * status and time (`logRequests`).
+ * same-origin`. Like that 403, a path starting with `//` gets a plain-text 404
+ * before any load, action or backend call. In dev, each request is logged by
+ * its method, route template, status and time (`logRequests`).
  */
 export const handle: Handle = handleChain(
 	logRequests(dev, consoleSink),
 	requestDeadline,
 	refuseFraming,
 	sessionHeaders,
+	refuseDoubleSlashPaths,
 	refuseCrossSiteWrites(firstParty),
 	sessionGate
 );

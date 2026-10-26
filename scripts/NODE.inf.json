@@ -21,13 +21,23 @@
       "node": false
     },
     {
+      "name": "cargo-config-check.sh",
+      "role": "fails on any tracked path with a .cargo segment (a file or folder under .cargo, or a .cargo symlink cargo would follow), at any depth and in any letter case (a cargo config could set a rustc-wrapper, linker or runner and run its own code in any cargo call); lists with jj file list, else git ls-files; exits 1 listing each path, 2 on a failed or empty listing (just cargo-config-check, in just gate and CI's hooks job; tested by cargo-config-check.test.sh)",
+      "node": false
+    },
+    {
+      "name": "cargo-config-check.test.sh",
+      "role": "tests for cargo-config-check.sh against scratch git repos with a stub jj that always fails: each config path and case caught, any other path under .cargo and a .cargo symlink (at the root and in backend/) caught, lookalikes and untracked files pass, an empty listing exits 2, today's tree passes",
+      "node": false
+    },
+    {
       "name": "ci-changes.sh",
-      "role": "the body of CI's changes job: verifies a PR's merge parents or a merge group's head and base, diffs, classifies with the base's ci-paths.sh (a merge group always runs everything); fails closed",
+      "role": "the body of CI's changes job: verifies a PR's merge parents or a merge group's head and base, diffs, classifies with the base's ci-paths.sh (a merge group always runs everything) and passes on its code, lock and npmlock; fails closed",
       "node": false
     },
     {
       "name": "ci-paths.sh",
-      "role": "classifies changed paths as docs-only or code for CI's changes job and just gate-light; fails closed",
+      "role": "classifies changed paths for CI's changes job (code: anything but docs-only; lock: a Cargo.lock; npmlock: an npm lockfile or a root osv-scanner.*.toml) and, with --paths, for just gate-light; fails closed",
       "node": false
     },
     {
@@ -88,6 +98,31 @@
     {
       "name": "nodes-tree-check.sh",
       "role": "the tree guards `just nodes-check` runs after `nodes check`: no NODE.json outside hidden and build folders, a node tree here, every NODE.inf.json and NODE.refs.json tracked; fails closed (tested by nodes-tree-check.test.sh)",
+      "node": false
+    },
+    {
+      "name": "npm-advisories.sh",
+      "role": "scans frontend/yarn.lock and lexicons/package-lock.json with the pinned osv-scanner (Linux x86_64, checked by SHA-256 on every run, cached under ${XDG_CACHE_HOME:-~/.cache}/zurfur-tools) under a clean environment, each with its own root ignore file held to an allow-list (only IgnoredVulns entries of id, reason and an ignoreUntil at most 90 days out) before any download or scan (--allow-list-only stops there); a self-test on cookie 0.6.0 and a package-count check prove the scanner checked; exits 0 clean, 1 an advisory, 2 a broken ignore file, 3 couldn't check, 4 a hash mismatch; NPM_ADVISORIES_MODE=report demotes 1 and 3 to a warning (just npm-advisories, last in just gate; the daily advisories workflow)",
+      "node": false
+    },
+    {
+      "name": "npm-advisories.test.sh",
+      "role": "tests for npm-advisories.sh against a stub curl and a stub scanner, offline: the allow-list before any download, --allow-list-only, bad binaries, the self-test and count check, exit codes and modes, per-lockfile configs and the scanner's clean environment",
+      "node": false
+    },
+    {
+      "name": "npm-lock-ci.sh",
+      "role": "the body of CI's npm-lock job, normally the PR base's copy: verifies the base, takes the advisory script, lock-review.mjs and install-check.mjs as one set from the base (the change's only when the base lacks this driver, with a warning), the old lockfiles and lock-age-waivers.json from the base, and each lockfile's osv-scanner ignores from the base when that lockfile changed; runs the advisory scan (block or report) and the 7-day floor over both lockfiles under env -i, then checks the change's own files it didn't use (its ignore files through the allow-list when a base's was scanned, its waivers parsed by lock-review when they differ from the base's), every check even after one fails, and exits with the worst code",
+      "node": false
+    },
+    {
+      "name": "npm-lock-ci.test.sh",
+      "role": "tests for npm-lock-ci.sh and the npm-lock job's inline step (extracted from ci.yml and run as GitHub runs it) against scratch git repos with real test merges, stub tools and a stub node: which copy runs, base verification (the step's, before it falls back to the change's driver, and the driver's), the waivers', ignores' and old lockfiles' sources, the checks of the change's own waivers and ignore files, the clean environments and the worst exit code",
+      "node": false
+    },
+    {
+      "name": "npm-lock-pins.test.sh",
+      "role": "pins the npm-lock job's three steps, setup-node's package cache switched off (and no other cache key), its inline step's lines, its mode expression, the web, ui and contract jobs waiting on it, the driver's env -i, 7-day floor and checks of the change's own waivers and ignore files, the daily npm-advisories job, just cargo-config-check in just gate and CI's hooks job, and just gate ending on just npm-advisories",
       "node": false
     },
     {

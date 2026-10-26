@@ -2,6 +2,7 @@ import { isRedirect, type HandleFetch, type RequestEvent } from '@sveltejs/kit';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { hangingFetch } from '$lib/testing/http';
 import { kitEventFetch } from '$lib/testing/kit-fetch';
+import { DOUBLE_SLASH_REFUSAL } from '$lib/server/double-slash-paths';
 import { FRAME_ANCESTORS_POLICY, X_FRAME_OPTIONS } from '$lib/server/frame-headers';
 import { SESSION_CACHE_CONTROL, SESSION_REFERRER_POLICY } from '$lib/server/session-headers';
 import { UNANSWERED_PAGE } from '$lib/server/unanswered';
@@ -56,7 +57,12 @@ describe('handle', () => {
 		const request = new Request('http://127.0.0.1:5174/', {
 			headers: { cookie: 'zurfur.sid=s3ss10n' }
 		});
-		const event = { route: { id: '/' }, request, locals: {} } as unknown as RequestEvent;
+		const event = {
+			route: { id: '/' },
+			url: new URL(request.url),
+			request,
+			locals: {}
+		} as unknown as RequestEvent;
 		const resolve = () => Promise.resolve(new Response('<p>private</p>'));
 		const input: HandleInput = { event, resolve };
 
@@ -72,6 +78,7 @@ describe('handle', () => {
 		const request = new Request('http://127.0.0.1:5174/login');
 		const event = {
 			route: { id: '/(public)/login' },
+			url: new URL(request.url),
 			request,
 			locals: {}
 		} as unknown as RequestEvent;
@@ -113,6 +120,49 @@ describe('handle', () => {
 			.catch((thrown: unknown) => thrown);
 
 		expect(isRedirect(outcome) && outcome.location).toBe('/login');
+		expect(resolve).not.toHaveBeenCalled();
+	});
+});
+
+describe('handle, refusing double-slash paths', () => {
+	/** A request for `//evil.example/x`, carrying `cookie` when given. */
+	function doubleSlashEvent(cookie?: string): RequestEvent {
+		const url = 'http://127.0.0.1:5174//evil.example/x';
+		const init: RequestInit = cookie === undefined ? {} : { headers: { cookie } };
+		const request = new Request(url, init);
+		return {
+			route: { id: null },
+			url: new URL(url),
+			request,
+			locals: {}
+		} as unknown as RequestEvent;
+	}
+
+	it('is wired to the double-slash guard: //evil.example/x gets the framing-stamped 404 and never resolves', async () => {
+		const event = doubleSlashEvent();
+		const resolve = vi.fn(() => Promise.resolve(new Response('RESOLVED')));
+
+		const response = await handle({ event, resolve });
+
+		expect(response.status).toBe(404);
+		expect(await response.text()).toBe(DOUBLE_SLASH_REFUSAL);
+		expect(response.headers.get('x-frame-options')).toBe(X_FRAME_OPTIONS);
+		expect(response.headers.get('content-security-policy')).toBe(FRAME_ANCESTORS_POLICY);
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('stamps the 404 to a signed-in request private, no-store and never resolves', async () => {
+		const event = doubleSlashEvent('zurfur.sid=s3ss10n');
+		const resolve = vi.fn(() => Promise.resolve(new Response('RESOLVED')));
+
+		const response = await handle({ event, resolve });
+
+		expect(response.status).toBe(404);
+		expect(await response.text()).toBe(DOUBLE_SLASH_REFUSAL);
+		expect(response.headers.get('x-frame-options')).toBe(X_FRAME_OPTIONS);
+		expect(response.headers.get('content-security-policy')).toBe(FRAME_ANCESTORS_POLICY);
+		expect(response.headers.get('cache-control')).toBe(SESSION_CACHE_CONTROL);
+		expect(response.headers.get('referrer-policy')).toBe(SESSION_REFERRER_POLICY);
 		expect(resolve).not.toHaveBeenCalled();
 	});
 });
