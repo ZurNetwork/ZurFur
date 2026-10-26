@@ -63,6 +63,17 @@ function editText(file, edit) {
 	fs.writeFileSync(file, after);
 }
 
+/** Edits only the lockfile block whose header line is `header`. */
+function editBlock(file, header, edit) {
+	editText(file, (text) => {
+		const start = text.indexOf(`\n${header}\n`);
+		assert.ok(start >= 0, `no block ${header}`);
+		const end = text.indexOf('\n\n', start + 1);
+		const stop = end < 0 ? text.length : end;
+		return text.slice(0, start) + edit(text.slice(start, stop)) + text.slice(stop);
+	});
+}
+
 function rulesOf(result) {
 	assert.deepEqual(result.errors, [], 'unexpected unreadable-file errors');
 	return new Set(result.findings.map((finding) => finding.rule));
@@ -71,6 +82,12 @@ function rulesOf(result) {
 function assertRefused(result, rule) {
 	const rules = rulesOf(result);
 	assert.ok(rules.has(rule), `expected rule ${rule}, got ${JSON.stringify(result.findings)}`);
+}
+
+/** Asserts the result holds findings and every one of them is `rule`. */
+function assertOnly(result, rule) {
+	const rules = rulesOf(result);
+	assert.deepEqual([...rules], [rule], `expected only rule ${rule}, got ${JSON.stringify(result.findings)}`);
 }
 
 function runCli(args) {
@@ -286,6 +303,138 @@ describe('before install: the lockfile', () => {
 		fs.rmSync(file('ui', 'package.json'));
 		const result = checkBeforeInstall(root);
 		assert.ok(result.errors.some((error) => error.includes('frontend/ui/package.json')), JSON.stringify(result));
+	});
+});
+
+const KIT_HEADER = '"@sveltejs/kit@^2.63.0":';
+const ADAPTER_HEADER = '"@sveltejs/adapter-static@^3.0.10":';
+const ROLLUP_HEADER = 'rollup@^4.59.0:';
+const ADAPTER_RESOLVED =
+	'https://registry.yarnpkg.com/@sveltejs/adapter-static/-/adapter-static-3.0.10.tgz#526ab78cd1d3a861dd0233e8ff34a204af40d595';
+const SHA1 = '526ab78cd1d3a861dd0233e8ff34a204af40d595';
+
+describe('before install: what lockfile blocks depend on', () => {
+	test("refuses kit's cookie range with no block (a dependency yarn would fetch unlocked)", (t) => {
+		const { root, file } = fixture(t);
+		editBlock(file('yarn.lock'), KIT_HEADER, (block) => block.replace('    cookie "^0.6.0"', '    cookie "^0.7.0"'));
+		const result = checkBeforeInstall(root);
+		assertOnly(result, 'lock-dependency-unlocked');
+		assert.equal(result.findings.length, 1, JSON.stringify(result.findings));
+		assert.match(result.findings[0].message, /line \d+ .*"cookie@\^0\.7\.0"/);
+	});
+
+	test('refuses an optionalDependencies range with no block', (t) => {
+		const { root, file } = fixture(t);
+		editBlock(file('yarn.lock'), ROLLUP_HEADER, (block) =>
+			block.replace('    "@rollup/rollup-android-arm-eabi" "4.62.2"', '    "@rollup/rollup-android-arm-eabi" "4.62.3"')
+		);
+		assertOnly(checkBeforeInstall(root), 'lock-dependency-unlocked');
+	});
+
+	test('refuses a dependency name that is not a package name', (t) => {
+		const { root, file } = fixture(t);
+		editBlock(file('yarn.lock'), KIT_HEADER, (block) => block.replace('    cookie "^0.6.0"', '    "cookie@x" "^0.6.0"'));
+		assertOnly(checkBeforeInstall(root), 'lock-field');
+	});
+});
+
+describe('before install: resolved is the registry tarball of the block', () => {
+	for (const [label, resolved] of [
+		['another package (left-pad)', `https://registry.yarnpkg.com/left-pad/-/left-pad-1.3.0.tgz#${SHA1}`],
+		['the right name at another version', ADAPTER_RESOLVED.replace('adapter-static-3.0.10.tgz', 'adapter-static-3.0.9.tgz')],
+		['a scoped package with the wrong basename', ADAPTER_RESOLVED.replace('/-/adapter-static-', '/-/adapter-node-')],
+		['a scoped basename that keeps its scope', ADAPTER_RESOLVED.replace('/-/adapter-static-', '/-/sveltejs-adapter-static-')],
+		['no #sha1', ADAPTER_RESOLVED.slice(0, ADAPTER_RESOLVED.indexOf('#'))],
+		['an empty #sha1', ADAPTER_RESOLVED.slice(0, ADAPTER_RESOLVED.indexOf('#') + 1)],
+		['a short hash', ADAPTER_RESOLVED.slice(0, -1)],
+		['a long hash', `${ADAPTER_RESOLVED}0`],
+		['an uppercase hash', ADAPTER_RESOLVED.replace(SHA1, SHA1.toUpperCase())],
+		['http://', ADAPTER_RESOLVED.replace('https://', 'http://')],
+		['a query', ADAPTER_RESOLVED.replace('.tgz#', '.tgz?x=1#')],
+		['an extra path segment', ADAPTER_RESOLVED.replace('/-/', '/-/x/')],
+		['a path walk', ADAPTER_RESOLVED.replace('/-/', '/-/../../left-pad/-/')]
+	]) {
+		test(`refuses a resolved pointing at ${label}`, (t) => {
+			const { root, file } = fixture(t);
+			editBlock(file('yarn.lock'), ADAPTER_HEADER, (block) => block.replace(ADAPTER_RESOLVED, resolved));
+			assertOnly(checkBeforeInstall(root), 'lock-resolved');
+		});
+	}
+
+	test('refuses a version that walks the tarball path', (t) => {
+		const { root, file } = fixture(t);
+		const version = '1.3.0/../../../evil/-/evil-6.6.6';
+		const block = `"left-pad@^1.3.0":\n  version "${version}"\n  resolved "https://registry.yarnpkg.com/left-pad/-/left-pad-${version}.tgz#${SHA1}"\n  integrity ${GOOD_INTEGRITY}\n`;
+		editText(file('yarn.lock'), (text) => `${text}\n${block}`);
+		assertOnly(checkBeforeInstall(root), 'lock-version');
+	});
+
+	test('refuses a key whose name walks the tarball path', (t) => {
+		const { root, file } = fixture(t);
+		const block = `"../evil@^1.0.0":\n  version "1.0.0"\n  resolved "https://registry.yarnpkg.com/../evil/-/evil-1.0.0.tgz#${SHA1}"\n  integrity ${GOOD_INTEGRITY}\n`;
+		editText(file('yarn.lock'), (text) => `${text}\n${block}`);
+		assertOnly(checkBeforeInstall(root), 'lock-name');
+	});
+
+	test('accepts an added left-pad block with its own tarball', (t) => {
+		const { root, file } = fixture(t);
+		const block = `"left-pad@^1.3.0":\n  version "1.3.0"\n  resolved "${GOOD_RESOLVED}"\n  integrity ${GOOD_INTEGRITY}\n`;
+		editText(file('yarn.lock'), (text) => `${text}\n${block}`);
+		assert.deepEqual(checkBeforeInstall(root), { findings: [], errors: [] });
+	});
+});
+
+describe('before install: the shape of a lockfile block', () => {
+	test('refuses a block whose keys name two packages', (t) => {
+		const { root, file } = fixture(t);
+		editText(file('yarn.lock'), (text) =>
+			text.replace(`\n${ADAPTER_HEADER}\n`, '\n"@sveltejs/adapter-static@^3.0.10", "left-pad@^1.3.0":\n')
+		);
+		assertOnly(checkBeforeInstall(root), 'lock-name');
+	});
+
+	for (const field of ['name "left-pad"', 'registry "npm"', 'uid "1.3.0"', 'permissions:\n    x "true"', 'prebuiltVariants:\n    x "y"']) {
+		test(`refuses a block with a ${field.split(/[ :]/)[0]} field`, (t) => {
+			const { root, file } = fixture(t);
+			editBlock(file('yarn.lock'), ADAPTER_HEADER, (block) => `${block}\n  ${field}`);
+			assertOnly(checkBeforeInstall(root), 'lock-field');
+		});
+	}
+
+	test('refuses a nested map under dependencies', (t) => {
+		const { root, file } = fixture(t);
+		editBlock(file('yarn.lock'), KIT_HEADER, (block) => block.replace('    cookie "^0.6.0"', '    cookie:\n      "^0.6.0" "x"'));
+		assertOnly(checkBeforeInstall(root), 'lock-field');
+	});
+
+	test('refuses dependencies given as a string', (t) => {
+		const { root, file } = fixture(t);
+		editBlock(file('yarn.lock'), ADAPTER_HEADER, (block) => `${block}\n  dependencies "left-pad@^1.3.0"`);
+		assertOnly(checkBeforeInstall(root), 'lock-field');
+	});
+
+	test('refuses optionalDependencies given as a string', (t) => {
+		const { root, file } = fixture(t);
+		editBlock(file('yarn.lock'), ADAPTER_HEADER, (block) => `${block}\n  optionalDependencies "left-pad@^1.3.0"`);
+		assertOnly(checkBeforeInstall(root), 'lock-field');
+	});
+
+	test('refuses a version given as a map', (t) => {
+		const { root, file } = fixture(t);
+		editBlock(file('yarn.lock'), ADAPTER_HEADER, (block) => block.replace('  version "3.0.10"', '  version:\n    x "3.0.10"'));
+		assertOnly(checkBeforeInstall(root), 'lock-version');
+	});
+
+	test('refuses resolved given as a map', (t) => {
+		const { root, file } = fixture(t);
+		editBlock(file('yarn.lock'), ADAPTER_HEADER, (block) => block.replace(`  resolved "${ADAPTER_RESOLVED}"`, `  resolved:\n    x "${ADAPTER_RESOLVED}"`));
+		assertOnly(checkBeforeInstall(root), 'lock-resolved');
+	});
+
+	test('refuses integrity given as a map', (t) => {
+		const { root, file } = fixture(t);
+		editBlock(file('yarn.lock'), ADAPTER_HEADER, (block) => block.replace(/\n {2}integrity (\S+)/, '\n  integrity:\n    x $1'));
+		assertOnly(checkBeforeInstall(root), 'lock-integrity');
 	});
 });
 

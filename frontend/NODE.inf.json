@@ -34,7 +34,7 @@
     },
     {
       "name": "install-check.mjs",
-      "role": "the install guard, Node built-ins only: before install it pins the workspace's shape (root keys, the workspaces list, no .yarnrc, one .npmrc with its two lines), refuses non-registry specs and any workspace range missing from the lockfile (yarn 1's --frozen-lockfile doesn't check workspace dependencies), and refuses duplicate lockfile keys, foreign resolved hosts and non-sha512 integrity; with --installed it refuses install scripts and binding.gyp off an empty allow list and requires @zurfur/ui to be a symlink to ui/",
+      "role": "the install guard, Node built-ins only: before install it pins the workspace's shape (root keys, the workspaces list, no .yarnrc, one .npmrc with its two lines), refuses non-registry specs and any workspace range missing from the lockfile (yarn 1's --frozen-lockfile doesn't check workspace dependencies), and holds every lockfile block to what yarn writes: one package per block, only version, resolved, integrity, dependencies and optionalDependencies, resolved exactly that package's registry tarball with its sha1, sha512 integrity, no duplicate keys, and every dependency a block lists itself a lockfile key (yarn resolves a missing one from the registry, unlocked); with --installed it refuses install scripts and binding.gyp off an empty allow list and requires @zurfur/ui to be a symlink to ui/",
       "node": false
     },
     {
