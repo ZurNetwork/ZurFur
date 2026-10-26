@@ -74,12 +74,11 @@ async fn bound_commission(pool: &PgPool, title: &str) -> Uuid {
     .await
     .expect("insert its six entries");
     sqlx::query(
-        "INSERT INTO commission (id, node_id, title, owner_id, lifecycle, visibility, created_at)
-         VALUES ($1, $2, $3, $4, 'draft', 'private', now())",
+        "INSERT INTO commission (id, node_id, owner_id, lifecycle, created_at)
+         VALUES ($1, $2, $3, 'draft', now())",
     )
     .bind(commission)
     .bind(node)
-    .bind(title)
     .bind(OWNER_DID)
     .execute(&mut *tx)
     .await
@@ -305,8 +304,8 @@ async fn the_fill_binds_only_nodes_it_inserted() {
     .await
     .expect("its entries");
     sqlx::query(
-        "INSERT INTO commission (id, node_id, title, owner_id, lifecycle, visibility, created_at)
-         VALUES ($1, $2, 'A lookalike', $3, 'draft', 'private', now())",
+        "INSERT INTO commission (id, node_id, owner_id, lifecycle, created_at)
+         VALUES ($1, $2, $3, 'draft', now())",
     )
     .bind(declared)
     .bind(lookalike_node)

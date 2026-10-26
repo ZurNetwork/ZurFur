@@ -20,7 +20,7 @@ use crate::node_backfill::{
 };
 
 /// The commission node fill's migration, as sqlx numbers it.
-const FILL_VERSION: i64 = 20261022132603;
+pub(crate) const FILL_VERSION: i64 = 20261022132603;
 
 /// The six fixed entry words, as the node table sorts them.
 const ENTRY_WORDS: [&str; 6] = [
@@ -33,10 +33,10 @@ const ENTRY_WORDS: [&str; 6] = [
 ];
 
 /// The three level tokens.
-const LEVEL_TOKENS: [&str; 3] = ["private", "listed", "public"];
+pub(crate) const LEVEL_TOKENS: [&str; 3] = ["private", "listed", "public"];
 
 /// A fresh database migrated up to just before the node table, with its owner.
-async fn just_before_den_1() -> (PgPool, impl Sized) {
+pub(crate) async fn just_before_den_1() -> (PgPool, impl Sized) {
     let (pool, container) = bare_pool().await;
     run_migrations_before(&pool, DEN_1_VERSION).await;
     seed_owner(&pool).await;
@@ -44,14 +44,14 @@ async fn just_before_den_1() -> (PgPool, impl Sized) {
 }
 
 /// A fresh database migrated through the node table's migration, with its owner.
-async fn through_den_1() -> (PgPool, impl Sized) {
+pub(crate) async fn through_den_1() -> (PgPool, impl Sized) {
     let (pool, container) = just_before_den_1().await;
     run_migrations_through(&pool, DEN_1_VERSION).await;
     (pool, container)
 }
 
 /// The node a commission row points at.
-async fn commission_node(pool: &PgPool, commission: Uuid) -> NodeRow {
+pub(crate) async fn commission_node(pool: &PgPool, commission: Uuid) -> NodeRow {
     sqlx::query_as("SELECT n.* FROM node n JOIN commission c ON c.node_id = n.id WHERE c.id = $1")
         .bind(commission)
         .fetch_one(pool)
@@ -69,7 +69,7 @@ async fn children(pool: &PgPool, parent: Uuid) -> Vec<NodeRow> {
 }
 
 /// The node id a commission row points at, or `None`.
-async fn node_id_of(pool: &PgPool, commission: Uuid) -> Option<Uuid> {
+pub(crate) async fn node_id_of(pool: &PgPool, commission: Uuid) -> Option<Uuid> {
     sqlx::query_scalar("SELECT node_id FROM commission WHERE id = $1")
         .bind(commission)
         .fetch_one(pool)
@@ -78,7 +78,7 @@ async fn node_id_of(pool: &PgPool, commission: Uuid) -> Option<Uuid> {
 }
 
 /// Whether the ledger records `version`.
-async fn ledger_records(pool: &PgPool, version: i64) -> bool {
+pub(crate) async fn ledger_records(pool: &PgPool, version: i64) -> bool {
     sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM _sqlx_migrations WHERE version = $1)")
         .bind(version)
         .fetch_one(pool)
@@ -142,16 +142,14 @@ async fn assert_filled(pool: &PgPool, commission: Uuid, title: &str, level: &str
 }
 
 /// The database's own refusal text inside `stopped`.
-fn refusal(stopped: &MigrateError) -> String {
-    let database_error = match stopped {
-        MigrateError::Execute(error) | MigrateError::ExecuteMigration(error, _) => {
-            error.as_database_error()
-        }
-        _ => None,
+pub(crate) fn refusal(stopped: &MigrateError) -> String {
+    let (MigrateError::Execute(error) | MigrateError::ExecuteMigration(error, _)) = stopped else {
+        panic!("the database refused the migration: {stopped:?}");
     };
-    database_error
-        .map(|error| error.message().to_owned())
-        .unwrap_or_else(|| panic!("the database refused the fill: {stopped:?}"))
+    let database_error = error
+        .as_database_error()
+        .unwrap_or_else(|| panic!("the database refused the migration: {stopped:?}"));
+    database_error.message().to_owned()
 }
 
 /// Asserts the fill stopped naming `named`, left no ledger row, and left each of `node_less`

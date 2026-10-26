@@ -1,5 +1,5 @@
 # Project settings for the nodes pack ([tool], [refs], [root]) and for
-# design-sync ([design]).
+# corpus-sync ([design]).
 
 [tool]
 run = "just nodes"
@@ -25,4 +25,4 @@ fmt = "cargo run -q -p design -- fmt --root ."
 check = "just gate"
 index_regen = "just design-index"
 index_check = "just design-index-check --strict"
-merge = "engineer"
+merge = "claude"

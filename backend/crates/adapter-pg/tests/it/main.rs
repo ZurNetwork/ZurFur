@@ -17,6 +17,7 @@ mod codegen_current;
 mod commission;
 mod commission_changelog;
 mod commission_deadline;
+mod commission_drop;
 mod commission_element;
 mod commission_file;
 mod commission_fill;
