@@ -48,6 +48,9 @@ const ROUTES = ['src/routes/**'];
 /** The gallery's own frame: the registry, the nav and the page layout. */
 const GALLERY = ['src/gallery/**'];
 
+/** The gallery's stores, carved out of its frame: the only files that keep settings in localStorage. */
+const STORAGE = ['src/gallery/skin-store.ts'];
+
 /** The one place motion libraries may be imported. */
 const MOTION = ['src/lib/motion/**'];
 
@@ -58,16 +61,20 @@ const LAZY = ['src/lib/lazy/**'];
 export const fileSets = {
 	checks: { files: CHECKS, ignores: [] },
 	routes: { files: ROUTES, ignores: CHECKS },
-	gallery: { files: GALLERY, ignores: CHECKS },
+	gallery: { files: GALLERY, ignores: [...CHECKS, ...STORAGE] },
+	storage: { files: STORAGE, ignores: CHECKS },
 	motion: { files: MOTION, ignores: CHECKS },
 	lazy: { files: LAZY, ignores: CHECKS },
-	components: { files: CODE, ignores: [...CHECKS, ...ROUTES, ...GALLERY, ...MOTION, ...LAZY] }
+	components: {
+		files: CODE,
+		ignores: [...CHECKS, ...ROUTES, ...GALLERY, ...STORAGE, ...MOTION, ...LAZY]
+	}
 };
 
 /** @typedef {keyof typeof fileSets} FileSetName */
 
 /** @type {readonly FileSetName[]} */
-const FILE_SET_NAMES = ['checks', 'routes', 'gallery', 'motion', 'lazy', 'components'];
+const FILE_SET_NAMES = ['checks', 'routes', 'gallery', 'storage', 'motion', 'lazy', 'components'];
 
 /**
  * One `files` or `ignores` glob as a regular expression: `**` spans any number
@@ -134,6 +141,7 @@ const TIER_OF_SET = {
 	lazy: 'shipped',
 	routes: 'host',
 	gallery: 'host',
+	storage: 'host',
 	checks: 'checks'
 };
 
@@ -194,7 +202,8 @@ function isUnlintedTarget(target, suffix) {
 
 const NETWORK_MESSAGE =
 	'Components never reach the network: take the data as a prop and let the app fetch it.';
-const STORAGE_MESSAGE =
+/** Why a component never keeps anything in the browser. */
+export const STORAGE_MESSAGE =
 	'Components never touch browser storage: take the value as a prop and let the app keep it.';
 const PROCESS_MESSAGE =
 	'The process environment belongs to the server: take the value as a prop instead.';
@@ -212,36 +221,147 @@ const NETWORK_GLOBALS = [
 	{ name: 'require', message: CODE_LOADING_MESSAGE }
 ];
 
-/** Browser storage, other than localStorage. */
-const STORAGE_GLOBALS_EXCEPT_LOCAL = [
-	{ name: 'sessionStorage', message: STORAGE_MESSAGE },
-	{ name: 'indexedDB', message: STORAGE_MESSAGE },
-	{ name: 'caches', message: STORAGE_MESSAGE },
-	{ name: 'cookieStore', message: STORAGE_MESSAGE }
-];
+/** Why the host keeps settings only through its stores. */
+export const HOST_STORAGE_MESSAGE =
+	"Only the gallery's stores (src/gallery/skin-store.ts) keep settings, and only in localStorage: go through them.";
 
-const LOCAL_STORAGE_GLOBAL = { name: 'localStorage', message: STORAGE_MESSAGE };
+/** Why no file puts a string into the page as HTML. */
+export const rawHtmlMessage =
+	'Raw HTML never reaches the page: render markup with Svelte, never through {@html}, createRawSnippet, svelte/internal, innerHTML, outerHTML, insertAdjacentHTML, setHTML, setHTMLUnsafe, createContextualFragment, DOMParser, parseHTMLUnsafe or document.write.';
+
+/** Why markup never runs script nor loads another document. */
+export const scriptMarkupMessage =
+	"Markup never runs script or loads another document: no <script>, <iframe>, <frame>, <object> or <embed> element, no srcdoc attribute, and no <svelte:element> naming one. The gallery's one boot script lives only in src/app.html.";
+
+/** Why nothing sets http-equiv. */
+export const httpEquivMessage =
+	'Nothing sets http-equiv: a <meta http-equiv> can send the page to another origin or rewrite its policy, and only the server sets those, as headers.';
+
+/** Why markup never carries an inline event handler. */
+export const inlineHandlerMessage =
+	'An inline event-handler attribute runs its text as script: take a function as a prop and attach it with a lowercase on…={handler}, never an on… attribute in another letter case or with text in its value.';
+
+/** The names a browser global is reached through besides its own. */
+const GLOBAL_OBJECTS = '/^(?:window|self|globalThis)$/';
+
+/** Browser storage, localStorage aside: refused in every source set. */
+const STORAGE_NAMES_EXCEPT_LOCAL = ['sessionStorage', 'indexedDB', 'caches', 'cookieStore'];
+
+/** Every browser storage a script can name as a global. */
+const STORAGE_NAMES = ['localStorage', ...STORAGE_NAMES_EXCEPT_LOCAL];
+
+/**
+ * Storage, as globals (bare, and through window, self and globalThis) and as a
+ * property of any object, which reaches what the globals rule can't see:
+ * `document.defaultView.localStorage`, `top.localStorage`, a destructured
+ * `{ localStorage } = window`, and `cookie` on any object. The browser's
+ * private file store too: `navigator.storage` as a member, bare or
+ * destructured, and as syntax through window, self and globalThis, read or
+ * destructured, and `getDirectory` on any object. A computed name past
+ * `navigator`, or navigator held in a variable, stays with review.
+ *
+ * @param {readonly string[]} names
+ * @param {string} message
+ */
+function storageBans(names, message) {
+	return {
+		globals: names.map((name) => ({ name, message })),
+		properties: [
+			...[...names, 'cookie', 'getDirectory'].map((property) => ({ property, message })),
+			{ object: 'navigator', property: 'storage', message }
+		],
+		syntax: [
+			{
+				selector: `MemberExpression[property.name='storage'][object.type='MemberExpression'][object.property.name='navigator'][object.object.name=${GLOBAL_OBJECTS}]`,
+				message
+			},
+			{
+				selector:
+					"VariableDeclarator[init.type='MemberExpression'][init.property.name='navigator'] > ObjectPattern > Property[key.name='storage']",
+				message
+			}
+		]
+	};
+}
+
+/** The components and their carve-outs: no storage at all. */
+const COMPONENT_STORAGE = storageBans(STORAGE_NAMES, STORAGE_MESSAGE);
+
+/** The host outside its stores: no storage at all. */
+const HOST_STORAGE = storageBans(STORAGE_NAMES, HOST_STORAGE_MESSAGE);
+
+/** The gallery's stores: localStorage, and nothing else. */
+const STORE_STORAGE = storageBans(STORAGE_NAMES_EXCEPT_LOCAL, HOST_STORAGE_MESSAGE);
 
 const PROCESS_GLOBAL = { name: 'process', message: PROCESS_MESSAGE };
+
+/** The HTML parser, by bare name and through window, self and globalThis. */
+const HTML_GLOBAL = { name: 'DOMParser', message: rawHtmlMessage };
 
 /** What the components' set and its two carve-outs refuse as globals. */
 const COMPONENT_GLOBALS = [
 	...NETWORK_GLOBALS,
-	LOCAL_STORAGE_GLOBAL,
-	...STORAGE_GLOBALS_EXCEPT_LOCAL,
-	PROCESS_GLOBAL
+	...COMPONENT_STORAGE.globals,
+	PROCESS_GLOBAL,
+	HTML_GLOBAL
 ];
 
-/** The gallery may keep its own settings in localStorage; everything else stays refused. */
-const HOST_GLOBALS = [...NETWORK_GLOBALS, ...STORAGE_GLOBALS_EXCEPT_LOCAL, PROCESS_GLOBAL];
+/** What the host refuses as globals, outside its stores. */
+const HOST_GLOBALS = [...NETWORK_GLOBALS, ...HOST_STORAGE.globals, PROCESS_GLOBAL, HTML_GLOBAL];
+
+/** What the gallery's stores refuse as globals: every storage but localStorage. */
+const STORE_GLOBALS = [...NETWORK_GLOBALS, ...STORE_STORAGE.globals, PROCESS_GLOBAL, HTML_GLOBAL];
 
 /** Member reads the globals rule can't see. */
 const NETWORK_PROPERTIES = [
 	{ object: 'navigator', property: 'sendBeacon', message: NETWORK_MESSAGE },
 	{ object: 'navigator', property: 'serviceWorker', message: CODE_LOADING_MESSAGE },
-	{ object: 'document', property: 'cookie', message: STORAGE_MESSAGE },
 	{ object: 'process', property: 'env', message: PROCESS_MESSAGE }
 ];
+
+/**
+ * The script-side twins of {@html} and of the markup bans, as members: on any
+ * object, the DOM calls that parse a string as HTML (innerHTML, outerHTML,
+ * insertAdjacentHTML, setHTML, setHTMLUnsafe, createContextualFragment,
+ * parseFromString and parseHTMLUnsafe), Svelte's createRawSnippet read off a
+ * namespace import, and the srcdoc and httpEquiv properties; document.write
+ * and document.writeln. The rest of the raw-HTML ban sits beside its kind:
+ * DOMParser as a global, createRawSnippet and svelte/internal as imports, and
+ * setAttribute, createAttribute and createElement naming a banned attribute or
+ * element by a static string as syntax. A computed or variable name,
+ * Reflect.set, Object.assign and a method borrowed through call or apply stay
+ * with review.
+ */
+const HTML_PROPERTIES = [
+	...[
+		'innerHTML',
+		'outerHTML',
+		'insertAdjacentHTML',
+		'setHTML',
+		'setHTMLUnsafe',
+		'createContextualFragment',
+		'parseFromString',
+		'parseHTMLUnsafe',
+		'createRawSnippet'
+	].map((property) => ({ property, message: rawHtmlMessage })),
+	{ object: 'document', property: 'write', message: rawHtmlMessage },
+	{ object: 'document', property: 'writeln', message: rawHtmlMessage },
+	{ property: 'srcdoc', message: scriptMarkupMessage },
+	{ property: 'httpEquiv', message: httpEquivMessage }
+];
+
+/** What the components' set and its two carve-outs refuse as members, element.animate() aside. */
+const COMPONENT_PROPERTIES = [
+	...NETWORK_PROPERTIES,
+	...COMPONENT_STORAGE.properties,
+	...HTML_PROPERTIES
+];
+
+/** What the host refuses as members, outside its stores. */
+const HOST_PROPERTIES = [...NETWORK_PROPERTIES, ...HOST_STORAGE.properties, ...HTML_PROPERTIES];
+
+/** What the gallery's stores refuse as members. */
+const STORE_PROPERTIES = [...NETWORK_PROPERTIES, ...STORE_STORAGE.properties, ...HTML_PROPERTIES];
 
 /** Web Animations, outside the motion adapter. */
 const ANIMATE_PROPERTY = {
@@ -254,6 +374,44 @@ const DEEP_SELF_IMPORT = {
 	regex: '^@zurfur/ui/',
 	message: 'Import @zurfur/ui from its public entry only, never a file inside it.'
 };
+
+/**
+ * `text` as a regular expression that matches it in any letter case, read
+ * case-sensitively: each letter becomes a class of its two cases.
+ *
+ * @param {string} text letters, `@` and `/` only
+ */
+const anyCase = (text) =>
+	[...text]
+		.map((character) =>
+			/[a-z]/i.test(character)
+				? `[${character.toLowerCase()}${character.toUpperCase()}]`
+				: character
+		)
+		.join('');
+
+const HOST_SELF_MESSAGE =
+	'The host imports @zurfur/ui from its public entry, @zurfur/ui/styles, @zurfur/ui/tokens.json and @zurfur/ui/tokens.additions.json only, never a file inside it.';
+
+/**
+ * The host's deep self imports: everything past the public entry but exactly
+ * `@zurfur/ui/styles`, `@zurfur/ui/tokens.json` and
+ * `@zurfur/ui/tokens.additions.json`, as the exports map names
+ * them (no query, no case variant, no deeper path), read case-sensitively,
+ * and the package's name in any other letter case.
+ */
+const HOST_DEEP_SELF_IMPORTS = [
+	{
+		regex: '^@zurfur/ui/(?!(?:styles|tokens\\.json|tokens\\.additions\\.json)$)',
+		caseSensitive: true,
+		message: HOST_SELF_MESSAGE
+	},
+	{
+		regex: `^(?!@zurfur/ui/)${anyCase('@zurfur/ui/')}`,
+		caseSensitive: true,
+		message: HOST_SELF_MESSAGE
+	}
+];
 
 const ROOT_IMPORT = {
 	regex: '^/',
@@ -337,27 +495,45 @@ const VITE_CODE_LOADING_IMPORTS = [
 	{ regex: '\\.wasm\\?init', message: CODE_LOADING_MESSAGE }
 ];
 
+/**
+ * Svelte's raw-HTML helper, createRawSnippet, by name (aliased and re-exported
+ * too; a namespace import or export * of svelte names it as well), and
+ * Svelte's internal modules, which hold the runtime's raw-HTML helper.
+ */
+const RAW_HTML_IMPORTS = [
+	{ regex: '^svelte$', importNames: ['createRawSnippet'], message: rawHtmlMessage },
+	{ regex: '^svelte/internal(/|$)', message: rawHtmlMessage }
+];
+
 /** What every source set refuses as an import, before its own additions. */
 const COMMON_IMPORTS = [
 	ROOT_IMPORT,
 	ENV_IMPORT,
 	LIB_IMPORT,
-	DEEP_SELF_IMPORT,
 	...SERVER_IMPORTS,
-	...VITE_CODE_LOADING_IMPORTS
+	...VITE_CODE_LOADING_IMPORTS,
+	...RAW_HTML_IMPORTS
 ];
 
 const COMPONENT_IMPORTS = [
 	...COMMON_IMPORTS,
+	DEEP_SELF_IMPORT,
 	ANY_APP_IMPORT,
 	GALLERY_IMPORT,
 	...ADAPTER_MOTION_IMPORTS,
 	...HEAVY_IMPORTS
 ];
-const MOTION_IMPORTS = [...COMMON_IMPORTS, ANY_APP_IMPORT, GALLERY_IMPORT, ...HEAVY_IMPORTS];
+const MOTION_IMPORTS = [
+	...COMMON_IMPORTS,
+	DEEP_SELF_IMPORT,
+	ANY_APP_IMPORT,
+	GALLERY_IMPORT,
+	...HEAVY_IMPORTS
+];
 const LAZY_IMPORTS = COMPONENT_IMPORTS;
 const HOST_IMPORTS = [
 	...COMMON_IMPORTS,
+	...HOST_DEEP_SELF_IMPORTS,
 	APP_IMPORT_EXCEPT_PATHS,
 	...ADAPTER_MOTION_IMPORTS,
 	...HEAVY_IMPORTS
@@ -450,12 +626,14 @@ const FETCH_NAMES = [
 	{ selector: "SvelteDirective[key.name.name='fetch']", message: FETCH_MESSAGE }
 ];
 
-/** Why markup never runs script nor loads another document. */
-export const scriptMarkupMessage =
-	"Markup never runs script or loads another document: no <script>, <iframe>, <frame>, <object> or <embed> element, no srcdoc attribute, and no <svelte:element> naming one. The gallery's one boot script lives only in src/app.html.";
+/** The element names that run script or load another document. */
+const SCRIPT_MARKUP_NAMES = 'script|iframe|frame|object|embed';
 
 /** The element names that run script or load another document, in any letter case. */
-const SCRIPT_MARKUP_TAGS = '/^(?:script|iframe|frame|object|embed)$/i';
+const SCRIPT_MARKUP_TAGS = `/^(?:${SCRIPT_MARKUP_NAMES})$/i`;
+
+/** A qualified name, with or without a prefix, whose local part is `pattern`, in any letter case. */
+const qualified = (/** @type {string} */ pattern) => `/^(?:[^:]*:)?(?:${pattern})$/i`;
 
 /**
  * Markup that runs script or loads another document: the five elements wherever
@@ -487,10 +665,6 @@ const SCRIPT_MARKUP = [
 	}
 ];
 
-/** Why markup never carries an inline event handler. */
-export const inlineHandlerMessage =
-	'An inline event-handler attribute runs its text as script: take a function as a prop and attach it with a lowercase on…={handler}, never an on… attribute in another letter case or with text in its value.';
-
 /** The start tag of an element markup renders as written: an HTML element or <svelte:element>. */
 const RENDERED_START_TAG =
 	":matches(SvelteElement[kind='html'], SvelteElement[name.name='svelte:element']) > SvelteStartTag";
@@ -513,19 +687,105 @@ const INLINE_HANDLERS = [
 	}
 ];
 
+/**
+ * A call to one of `methods` on any object whose argument at `index` is a
+ * string literal, or a template literal with no expressions, matching `regex`.
+ *
+ * @param {readonly string[]} methods
+ * @param {number} index
+ * @param {string} regex
+ * @param {string} message
+ */
+function namedByLiteral(methods, index, regex, message) {
+	const call = `CallExpression[callee.type='MemberExpression'][callee.property.name=/^(?:${methods.join('|')})$/]`;
+	const argument = `arguments.${String(index)}`;
+	return [
+		{ selector: `${call}[${argument}.type='Literal'][${argument}.value=${regex}]`, message },
+		{
+			selector: `${call}[${argument}.type='TemplateLiteral'][${argument}.expressions.length=0][${argument}.quasis.0.value.cooked=${regex}]`,
+			message
+		}
+	];
+}
+
+/** The attribute names markup bans, as setAttribute and createAttribute read them. */
+const BANNED_ATTRIBUTES = [
+	{ regex: qualified('on.*'), message: inlineHandlerMessage },
+	{ regex: qualified('srcdoc'), message: scriptMarkupMessage },
+	{ regex: qualified('http-equiv'), message: httpEquivMessage }
+];
+
+/**
+ * The markup bans written as DOM calls: setAttribute and createAttribute (the
+ * name first) and setAttributeNS and createAttributeNS (the name second)
+ * naming an on… attribute, srcdoc or http-equiv, and createElement (the name
+ * first) and createElementNS (the name second) naming one of the five
+ * elements, each by a static string in any letter case. A name held in a
+ * variable or reached through a computed method stays with review.
+ */
+const SCRIPT_CALLS = [
+	...BANNED_ATTRIBUTES.flatMap(({ regex, message }) => [
+		...namedByLiteral(['setAttribute', 'createAttribute'], 0, regex, message),
+		...namedByLiteral(['setAttributeNS', 'createAttributeNS'], 1, regex, message)
+	]),
+	...namedByLiteral(['createElement'], 0, SCRIPT_MARKUP_TAGS, scriptMarkupMessage),
+	...namedByLiteral(['createElementNS'], 1, qualified(SCRIPT_MARKUP_NAMES), scriptMarkupMessage)
+];
+
+/**
+ * http-equiv, in any letter case, on any element or component in markup, the
+ * <svelte:head> and <svelte:element> included, and as a quoted object key, the
+ * shape a spread of attributes would carry it in.
+ */
+const HTTP_EQUIV = [
+	{
+		selector: ':matches(SvelteAttribute, SvelteShorthandAttribute)[key.name=/^http-equiv$/i]',
+		message: httpEquivMessage
+	},
+	{
+		selector: 'Property > Literal.key[value=/^http-equiv$/i]',
+		message: httpEquivMessage
+	}
+];
+
+/** `bind:innerHTML` and `bind:outerHTML`: {@html} written as a binding. */
+const HTML_BINDING = {
+	selector: "SvelteDirective[kind='Binding'][key.name.name=/^(?:innerHTML|outerHTML)$/i]",
+	message: rawHtmlMessage
+};
+
 const COMMON_SYNTAX = [
 	...RULEBOOK_SYNTAX,
 	IMPORT_META_ENV,
 	IMPORT_META_ENV_COMPUTED,
 	...FETCH_NAMES,
 	...SCRIPT_MARKUP,
-	...INLINE_HANDLERS
+	...INLINE_HANDLERS,
+	HTML_BINDING,
+	...SCRIPT_CALLS,
+	...HTTP_EQUIV
 ];
 
-const COMPONENT_SYNTAX = [...COMMON_SYNTAX, ...ANY_GLOB, ANY_DYNAMIC_IMPORT];
-const LAZY_SYNTAX = [...COMMON_SYNTAX, ...ANY_GLOB, DYNAMIC_IMPORT_EXCEPT_HEAVY];
-const ROUTES_SYNTAX = [...COMMON_SYNTAX, ...ANY_GLOB, ANY_DYNAMIC_IMPORT];
-const GALLERY_SYNTAX = [...COMMON_SYNTAX, ...GLOB_EXCEPT_PAGE_METAS, ANY_DYNAMIC_IMPORT];
+const COMPONENT_SYNTAX = [
+	...COMMON_SYNTAX,
+	...ANY_GLOB,
+	ANY_DYNAMIC_IMPORT,
+	...COMPONENT_STORAGE.syntax
+];
+const LAZY_SYNTAX = [
+	...COMMON_SYNTAX,
+	...ANY_GLOB,
+	DYNAMIC_IMPORT_EXCEPT_HEAVY,
+	...COMPONENT_STORAGE.syntax
+];
+const ROUTES_SYNTAX = [...COMMON_SYNTAX, ...ANY_GLOB, ANY_DYNAMIC_IMPORT, ...HOST_STORAGE.syntax];
+const GALLERY_SYNTAX = [
+	...COMMON_SYNTAX,
+	...GLOB_EXCEPT_PAGE_METAS,
+	ANY_DYNAMIC_IMPORT,
+	...HOST_STORAGE.syntax
+];
+const STORE_SYNTAX = [...COMMON_SYNTAX, ...ANY_GLOB, ANY_DYNAMIC_IMPORT, ...STORE_STORAGE.syntax];
 
 // ---------------------------------------------------------------------------
 // The package's own rules, for what no built-in rule can see.
@@ -756,37 +1016,44 @@ export const boundaryRules = {
 	components: {
 		tier: /** @type {const} */ ('shipped'),
 		globals: COMPONENT_GLOBALS,
-		properties: [...NETWORK_PROPERTIES, ANIMATE_PROPERTY],
+		properties: [...COMPONENT_PROPERTIES, ANIMATE_PROPERTY],
 		imports: COMPONENT_IMPORTS,
 		syntax: COMPONENT_SYNTAX
 	},
 	motion: {
 		tier: /** @type {const} */ ('shipped'),
 		globals: COMPONENT_GLOBALS,
-		properties: NETWORK_PROPERTIES,
+		properties: COMPONENT_PROPERTIES,
 		imports: MOTION_IMPORTS,
 		syntax: COMPONENT_SYNTAX
 	},
 	lazy: {
 		tier: /** @type {const} */ ('shipped'),
 		globals: COMPONENT_GLOBALS,
-		properties: [...NETWORK_PROPERTIES, ANIMATE_PROPERTY],
+		properties: [...COMPONENT_PROPERTIES, ANIMATE_PROPERTY],
 		imports: LAZY_IMPORTS,
 		syntax: LAZY_SYNTAX
 	},
 	routes: {
 		tier: /** @type {const} */ ('host'),
 		globals: HOST_GLOBALS,
-		properties: [...NETWORK_PROPERTIES, ANIMATE_PROPERTY],
+		properties: [...HOST_PROPERTIES, ANIMATE_PROPERTY],
 		imports: HOST_IMPORTS,
 		syntax: ROUTES_SYNTAX
 	},
 	gallery: {
 		tier: /** @type {const} */ ('host'),
 		globals: HOST_GLOBALS,
-		properties: [...NETWORK_PROPERTIES, ANIMATE_PROPERTY],
+		properties: [...HOST_PROPERTIES, ANIMATE_PROPERTY],
 		imports: HOST_IMPORTS,
 		syntax: GALLERY_SYNTAX
+	},
+	storage: {
+		tier: /** @type {const} */ ('host'),
+		globals: STORE_GLOBALS,
+		properties: [...STORE_PROPERTIES, ANIMATE_PROPERTY],
+		imports: HOST_IMPORTS,
+		syntax: STORE_SYNTAX
 	}
 };
 
@@ -839,9 +1106,9 @@ function boundaryBlocks(name) {
 	];
 }
 
-/** Every set but the checks: the components, their two carve-outs and the host. */
+/** Every set but the checks: the components, their two carve-outs, the host and its stores. */
 /** @type {readonly (keyof typeof boundaryRules)[]} */
-const SOURCE_SETS = ['components', 'motion', 'lazy', 'routes', 'gallery'];
+const SOURCE_SETS = ['components', 'motion', 'lazy', 'routes', 'gallery', 'storage'];
 
 export default defineConfig(
 	includeIgnoreFile(gitignorePath),
@@ -953,6 +1220,7 @@ export default defineConfig(
 	},
 	{
 		name: 'ui/no-at-html',
+		// Every .svelte file in every set, the host's and the checks' included.
 		files: ['**/*.svelte'],
 		rules: { 'svelte/no-at-html-tags': 'error' }
 	},

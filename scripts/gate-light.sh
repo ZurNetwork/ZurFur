@@ -161,6 +161,9 @@ if [ "$web" = 1 ]; then
         step yarn --cwd "frontend/$package" run lint
         step yarn --cwd "frontend/$package" run test
         step yarn --cwd "frontend/$package" run build
+        if [ "$package" = ui ]; then
+            step node frontend/ui/src/checks/built-output.ts frontend/ui/build
+        fi
     done
 else
     echo "gate-light: frontend/ unchanged; skipping the web checks"

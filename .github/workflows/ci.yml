@@ -412,7 +412,8 @@ jobs:
       - run: yarn run build
 
   # The @zurfur/ui component library: the install guard's own tests, then its
-  # type check, lint, browser-mode component tests and gallery build.
+  # type check, lint, browser-mode component tests and gallery build, then the
+  # built-output check over that build.
   ui:
     name: ui
     needs: [changes, npm-lock]
@@ -446,3 +447,5 @@ jobs:
       - run: yarn run lint
       - run: yarn run test
       - run: yarn run build
+      # Refuses remote URLs in the built CSS and HTML.
+      - run: node src/checks/built-output.ts build

@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { ESLint, type Linter } from 'eslint';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
 	boundaryRules,
 	fileSetOf,
+	HOST_STORAGE_MESSAGE,
+	httpEquivMessage,
 	inlineHandlerMessage,
-	scriptMarkupMessage
+	rawHtmlMessage,
+	scriptMarkupMessage,
+	STORAGE_MESSAGE
 } from '../../eslint.config.js';
 import { isRemote } from './scan/network';
 
@@ -30,7 +34,19 @@ const planted = {
 	spec: 'src/lib/planted.spec.ts'
 } as const;
 
-const plantedPaths = Object.values(planted);
+/**
+ * Paths a later change may create: planted while they are not on disk, and
+ * linted against the real project once they are, so the cases hold either way.
+ */
+const plannedOrReal = {
+	skinStore: 'src/gallery/skin-store.ts',
+	colourPage: 'src/routes/components/colour/+page.svelte',
+	environment: 'src/lib/styles/environment.ts'
+} as const;
+
+const notOnDisk = (relative: string): boolean => !existsSync(`${uiRoot}${relative}`);
+
+const plantedPaths = [...Object.values(planted), ...Object.values(plannedOrReal).filter(notOnDisk)];
 
 /** Real files a case lints planted text at; the file on disk is never read or touched. */
 const real = {
@@ -80,9 +96,19 @@ const boundaryRuleIds: ReadonlySet<string> = new Set([
 async function lintPlanted(filePath: string, code: string): Promise<readonly Linter.LintMessage[]> {
 	const [result] = await plantedLinter.lintText(code, { filePath });
 	if (result === undefined) throw new Error(`no lint result for ${filePath}`);
+	if (!notOnDisk(filePath)) await restoreFromDisk(filePath);
 	const fatal = result.messages.filter((message) => message.fatal === true);
 	expect(fatal).toEqual([]);
 	return result.messages;
+}
+
+/**
+ * Lints a real file's own text at its path again. The TypeScript project
+ * service keeps the last text it was handed for a path, so after a plant over
+ * a real file every file importing it would otherwise see the planted text.
+ */
+async function restoreFromDisk(filePath: string): Promise<void> {
+	await plantedLinter.lintText(readFileSync(`${uiRoot}${filePath}`, 'utf8'), { filePath });
 }
 
 async function expectRefused(filePath: string, code: string, ruleId: string): Promise<void> {
@@ -111,6 +137,20 @@ async function expectScriptMarkupRefused(filePath: string, code: string): Promis
 /** Refused by the inline-handler ban itself, not by any other syntax entry. */
 async function expectInlineHandlerRefused(filePath: string, code: string): Promise<void> {
 	await expectSyntaxMessage(filePath, code, inlineHandlerMessage);
+}
+
+/** Refused by `ruleId`, with a message that carries `why`. */
+async function expectRefusedBecause(
+	filePath: string,
+	code: string,
+	ruleId: string,
+	why: string
+): Promise<void> {
+	const messages = await lintPlanted(filePath, code);
+	const matching = messages.filter(
+		(message) => message.ruleId === ruleId && message.message.includes(why)
+	);
+	expect(matching).not.toEqual([]);
 }
 
 async function expectAllowed(filePath: string, code: string): Promise<void> {
@@ -173,6 +213,67 @@ const localSamples: readonly string[] = [
 	''
 ];
 
+/** Storage reached as a member, past what the globals rule sees. */
+const storageMemberRefusals: readonly Case[] = [
+	['localStorage on any window', 'export const r = (w: Window) => w.localStorage;', PROPERTIES],
+	[
+		'a destructured localStorage',
+		'export const r = (w: Window) => {\n\tconst { localStorage: s } = w;\n\treturn s;\n};',
+		PROPERTIES
+	],
+	["w['sessionStorage']", "export const r = (w: Window) => w['sessionStorage'];", PROPERTIES],
+	['window.document.cookie', 'export const r = window.document.cookie;', PROPERTIES],
+	['cookie on any document', 'export const r = (d: Document) => d.cookie;', PROPERTIES]
+];
+
+/** The script-side twins of {@html}. */
+const htmlSinkRefusals: readonly Case[] = [
+	['innerHTML', "export const r = (e: Element) => {\n\te.innerHTML = 'x';\n};", PROPERTIES],
+	['outerHTML', "export const r = (e: Element) => {\n\te.outerHTML = 'x';\n};", PROPERTIES],
+	[
+		'insertAdjacentHTML',
+		"export const r = (e: Element) => {\n\te.insertAdjacentHTML('beforeend', 'x');\n};",
+		PROPERTIES
+	],
+	[
+		'createContextualFragment',
+		"export const r = (range: Range) => range.createContextualFragment('x');",
+		PROPERTIES
+	],
+	['document.write', "export const r = () => {\n\tdocument.write('x');\n};", PROPERTIES]
+];
+
+/** The host's own spellings of its three subpath imports, and the rest it refuses. */
+const hostSubpathAllowed: readonly Allowed[] = [
+	['@zurfur/ui/styles', "import '@zurfur/ui/styles';"],
+	['@zurfur/ui/tokens.json', "import tokens from '@zurfur/ui/tokens.json';\nexport { tokens };"],
+	[
+		'@zurfur/ui/tokens.additions.json',
+		"import additions from '@zurfur/ui/tokens.additions.json';\nexport { additions };"
+	]
+];
+
+const hostDeepImportRefusals: readonly Case[] = [
+	['a file inside the styles', "import '@zurfur/ui/src/lib/styles/tokens.css';", IMPORTS],
+	['a path below styles', "import '@zurfur/ui/styles/x';", IMPORTS],
+	['styles with a trailing slash', "import '@zurfur/ui/styles/';", IMPORTS],
+	[
+		'tokens.json?raw',
+		"import tokens from '@zurfur/ui/tokens.json?raw';\nexport { tokens };",
+		IMPORTS
+	],
+	['styles?inline', "import '@zurfur/ui/styles?inline';", IMPORTS],
+	[
+		'tokens.additions.json?raw',
+		"import a from '@zurfur/ui/tokens.additions.json?raw';\nexport { a };",
+		IMPORTS
+	],
+	['a made-up json beside the tokens', "import '@zurfur/ui/tokens.extra.json';", IMPORTS],
+	['styles in another letter case', "import '@zurfur/ui/Styles';", IMPORTS],
+	['the package in another letter case', "import '@Zurfur/UI/styles';", IMPORTS],
+	['a re-export from inside the package', "export * from '@zurfur/ui/src/lib/x';", IMPORTS]
+];
+
 const componentRefusals: readonly Case[] = [
 	// Network and code loading.
 	['bare fetch', "export const r = fetch('/x');", GLOBALS],
@@ -198,6 +299,8 @@ const componentRefusals: readonly Case[] = [
 	['caches', 'export const r = caches;', GLOBALS],
 	['cookieStore', 'export const r: unknown = cookieStore;', GLOBALS],
 	['document.cookie', 'export const r = document.cookie;', PROPERTIES],
+	...storageMemberRefusals,
+	...htmlSinkRefusals,
 	// The server half's environment.
 	['process.env', 'export const r = process.env.X;', GLOBALS],
 	['process.env, by property', 'export const r = process.env.X;', PROPERTIES],
@@ -234,6 +337,17 @@ const componentRefusals: readonly Case[] = [
 	['a path through node_modules', "import '../../node_modules/web/src/lib/server/x';", IMPORTS],
 	['a path into web', "import '../../../web/src/lib/server/api/generated/x';", IMPORTS],
 	['a deep import of the package', "import '@zurfur/ui/src/lib/x';", IMPORTS],
+	["the host's @zurfur/ui/styles", "import '@zurfur/ui/styles';", IMPORTS],
+	[
+		"the host's @zurfur/ui/tokens.json",
+		"import tokens from '@zurfur/ui/tokens.json';\nexport { tokens };",
+		IMPORTS
+	],
+	[
+		"the host's @zurfur/ui/tokens.additions.json",
+		"import a from '@zurfur/ui/tokens.additions.json';\nexport { a };",
+		IMPORTS
+	],
 	// Code Vite turns into a Worker or a WebAssembly loader.
 	['?worker', "import W from './w.ts?worker';\nexport { W };", IMPORTS],
 	['?sharedworker', "import W from './w.ts?sharedworker';\nexport { W };", IMPORTS],
@@ -263,7 +377,7 @@ const componentRefusals: readonly Case[] = [
 
 describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 	it('plants only at paths that are not on disk', () => {
-		const onDisk = plantedPaths.filter((relative) => existsSync(`${uiRoot}${relative}`));
+		const onDisk = plantedPaths.filter((relative) => !notOnDisk(relative));
 		expect(onDisk).toEqual([]);
 	});
 
@@ -307,6 +421,49 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 			]
 		])('refuses %s', async (_label, code, ruleId) => {
 			await expectRefused(planted.componentSvelte, code, ruleId);
+		});
+	});
+
+	describe('no file holds raw HTML', () => {
+		const atHtml = '<script lang="ts">\n\tconst x = \'<b>x</b>\';\n</script>\n\n{@html x}\n';
+		const bound = (name: string): string =>
+			`<script lang="ts">\n\tlet x = $state('');\n</script>\n\n<div contenteditable="true" bind:${name}={x}></div>\n`;
+		const svelteSets = [
+			['a component', planted.componentSvelte],
+			['the motion adapter', planted.motionSvelte],
+			['the lazy loader', planted.lazySvelte],
+			['a route', planted.routesSvelte],
+			['a gallery page', plannedOrReal.colourPage],
+			['the gallery frame', planted.gallerySvelte]
+		] as const;
+
+		it.each(svelteSets)('refuses {@html x} in %s', async (_label, filePath) => {
+			await expectRefused(filePath, atHtml, 'svelte/no-at-html-tags');
+		});
+
+		it.each(
+			svelteSets.flatMap(([label, filePath]) => [
+				[`bind:innerHTML in ${label}`, filePath, bound('innerHTML')] as const,
+				[`bind:outerHTML in ${label}`, filePath, bound('outerHTML')] as const
+			])
+		)('refuses %s', async (_label, filePath, code) => {
+			await expectSyntaxMessage(filePath, code, rawHtmlMessage);
+		});
+
+		it('allows bind:textContent', async () => {
+			await expectAllowed(planted.componentSvelte, bound('textContent'));
+		});
+
+		it.each([
+			['a component', 'src/lib/X.svelte'],
+			['the motion adapter', 'src/lib/motion/X.svelte'],
+			['the lazy loader', 'src/lib/lazy/X.svelte'],
+			['a route', 'src/routes/X.svelte'],
+			['the gallery frame', 'src/gallery/X.svelte'],
+			['a check', 'src/checks/X.svelte']
+		])('switches {@html} off nowhere: %s', async (_label, filePath) => {
+			const config = (await realLinter.calculateConfigForFile(filePath)) as Linter.Config;
+			expect(config.rules?.['svelte/no-at-html-tags']).toEqual([2]);
 		});
 	});
 
@@ -392,18 +549,28 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 	});
 
 	const hostAllowed: readonly Allowed[] = [
-		['localStorage', "export const r = localStorage.getItem('x');"],
 		['$app/paths', "import { resolve } from '$app/paths';\nexport { resolve };"],
 		['@zurfur/ui', "import * as ui from '@zurfur/ui';\nexport { ui };"],
 		['$gallery/…', "import { groupNames } from '$gallery/groups';\nexport { groupNames };"],
-		['?raw', "import text from './a.txt?raw';\nexport { text };"]
+		['?raw', "import text from './a.txt?raw';\nexport { text };"],
+		...hostSubpathAllowed
 	];
 
-	const hostRefusals: readonly Case[] = [
+	/** What every file of the host refuses, its stores included. */
+	const everyHostRefusal: readonly Case[] = [
 		['fetch', "export const r = fetch('/x');", GLOBALS],
 		['new WebSocket', "export const r = new WebSocket('wss://x');", GLOBALS],
 		['sessionStorage', 'export const r = sessionStorage;', GLOBALS],
+		['globalThis.sessionStorage', 'export const r = globalThis.sessionStorage;', GLOBALS],
+		['indexedDB', 'export const r = indexedDB;', GLOBALS],
+		['caches', 'export const r = caches;', GLOBALS],
+		['cookieStore', 'export const r: unknown = cookieStore;', GLOBALS],
 		['document.cookie', 'export const r = document.cookie;', PROPERTIES],
+		["document['cookie']", "export const r = document['cookie'];", PROPERTIES],
+		["w['sessionStorage']", "export const r = (w: Window) => w['sessionStorage'];", PROPERTIES],
+		['window.document.cookie', 'export const r = window.document.cookie;', PROPERTIES],
+		...htmlSinkRefusals,
+		...hostDeepImportRefusals,
 		['process.env', 'export const r = process.env.X;', GLOBALS],
 		['import.meta.env', 'export const r: unknown = import.meta.env;', SYNTAX],
 		['$lib/y', "import { x } from '$lib/y';\nexport { x };", IMPORTS],
@@ -428,6 +595,58 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 		['el.animate()', 'export const r = document.body.animate([], 100);', PROPERTIES],
 		['throw', "export function f(): never {\n\tthrow new Error('x');\n}", SYNTAX]
 	];
+
+	/** localStorage, which only the gallery's stores may touch. */
+	const localStorageRefusals: readonly Case[] = [
+		['localStorage', "export const r = localStorage.getItem('x');", GLOBALS],
+		['window.localStorage', 'export const r = window.localStorage;', GLOBALS],
+		['localStorage on any window', 'export const r = (w: Window) => w.localStorage;', PROPERTIES],
+		[
+			'a destructured localStorage',
+			'export const r = (w: Window) => {\n\tconst { localStorage: s } = w;\n\treturn s;\n};',
+			PROPERTIES
+		]
+	];
+
+	const hostRefusals: readonly Case[] = [...everyHostRefusal, ...localStorageRefusals];
+
+	describe("the gallery's stores (src/gallery/skin-store.ts)", () => {
+		it.each([
+			['localStorage', "export const r = localStorage.getItem('x');"],
+			['window.localStorage', "export const r = window.localStorage.setItem('x', 'y');"],
+			['localStorage on any window', 'export const r = (w: Window) => w.localStorage;'],
+			...hostSubpathAllowed
+		] as const)('allows %s', async (_label, code) => {
+			await expectAllowed(plannedOrReal.skinStore, code);
+		});
+
+		it.each([
+			...everyHostRefusal,
+			['process.env', 'export const r = process.env.X;', GLOBALS],
+			[
+				"import.meta.glob('/src/routes/**/meta.ts')",
+				"export const r = import.meta.glob('/src/routes/**/meta.ts', { eager: true });",
+				SYNTAX
+			]
+		] as const)('refuses %s', async (_label, code, ruleId) => {
+			await expectRefused(plannedOrReal.skinStore, code, ruleId);
+		});
+	});
+
+	describe('localStorage outside the stores', () => {
+		it.each([
+			['a gallery page', plannedOrReal.colourPage, 'svelte'],
+			['the styles', plannedOrReal.environment, 'ts'],
+			['another file in the frame', 'src/gallery/x.ts', 'ts'],
+			['a route', planted.routes, 'ts']
+		] as const)('refuses localStorage in %s', async (_label, filePath, kind) => {
+			const code =
+				kind === 'svelte'
+					? '<script lang="ts">\n\tconst r = localStorage.getItem(\'x\');\n</script>\n\n{r}\n'
+					: "export const r = localStorage.getItem('x');";
+			await expectRefused(filePath, code, GLOBALS);
+		});
+	});
 
 	const galleryAllowed: readonly Allowed[] = [
 		...hostAllowed,
@@ -991,6 +1210,377 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 			await expectAllowed(filePath, stringModule('javascript:x'));
 		});
 	});
+
+	describe('every source set refuses raw HTML, a page refresh and the private file store', () => {
+		type Because = readonly [label: string, code: string, ruleId: string, why: string];
+
+		/** Svelte's raw-HTML helpers and the DOM calls that parse a string as HTML. */
+		const rawHtmlRefusals: readonly Because[] = [
+			[
+				'createRawSnippet',
+				"import { createRawSnippet } from 'svelte';\nexport { createRawSnippet };",
+				IMPORTS,
+				rawHtmlMessage
+			],
+			[
+				'createRawSnippet under an alias',
+				"import { createRawSnippet as raw } from 'svelte';\nexport { raw };",
+				IMPORTS,
+				rawHtmlMessage
+			],
+			[
+				'a re-export of createRawSnippet',
+				"export { createRawSnippet } from 'svelte';",
+				IMPORTS,
+				rawHtmlMessage
+			],
+			[
+				'a re-export of createRawSnippet under an alias',
+				"export { createRawSnippet as raw } from 'svelte';",
+				IMPORTS,
+				rawHtmlMessage
+			],
+			["export * from 'svelte'", "export * from 'svelte';", IMPORTS, rawHtmlMessage],
+			[
+				'createRawSnippet through a namespace import',
+				"import * as s from 'svelte';\nexport const r = s.createRawSnippet;",
+				PROPERTIES,
+				rawHtmlMessage
+			],
+			[
+				"s['createRawSnippet'] through a namespace import",
+				"import * as s from 'svelte';\nexport const r = s['createRawSnippet'];",
+				PROPERTIES,
+				rawHtmlMessage
+			],
+			[
+				'createRawSnippet destructured from a namespace import',
+				"import * as s from 'svelte';\nconst { createRawSnippet: raw } = s;\nexport { raw };",
+				PROPERTIES,
+				rawHtmlMessage
+			],
+			['svelte/internal', "import 'svelte/internal';", IMPORTS, rawHtmlMessage],
+			[
+				'svelte/internal/client',
+				"import * as $ from 'svelte/internal/client';\nexport { $ };",
+				IMPORTS,
+				rawHtmlMessage
+			],
+			[
+				'a re-export of svelte/internal/server',
+				"export * from 'svelte/internal/server';",
+				IMPORTS,
+				rawHtmlMessage
+			],
+			['new DOMParser()', 'export const r = new DOMParser();', GLOBALS, rawHtmlMessage],
+			['window.DOMParser', 'export const r = new window.DOMParser();', GLOBALS, rawHtmlMessage],
+			['self.DOMParser', 'export const r = new self.DOMParser();', GLOBALS, rawHtmlMessage],
+			[
+				'globalThis.DOMParser',
+				'export const r = new globalThis.DOMParser();',
+				GLOBALS,
+				rawHtmlMessage
+			],
+			[
+				'parseFromString on any object',
+				"export const r = (p: { readonly parseFromString: (s: string, t: string) => unknown }) =>\n\tp.parseFromString('<b>x</b>', 'text/html');",
+				PROPERTIES,
+				rawHtmlMessage
+			],
+			[
+				'parseHTMLUnsafe on any object',
+				"export const r = (d: { readonly parseHTMLUnsafe: (s: string) => unknown }) =>\n\td.parseHTMLUnsafe('<b>x</b>');",
+				PROPERTIES,
+				rawHtmlMessage
+			],
+			[
+				'setHTML on any object',
+				"export const r = (e: { readonly setHTML: (s: string) => void }) => {\n\te.setHTML('<b>x</b>');\n};",
+				PROPERTIES,
+				rawHtmlMessage
+			]
+		];
+
+		/** An element to set attributes on, `s` a string, and `ns` a namespace. */
+		const onElement = (body: string): string =>
+			`export const r = (e: Element, d: Document, s: string, ns: string) => {\n\t${body};\n};`;
+
+		/** Attributes and elements, named by a literal, that run script or load a document. */
+		const scriptAttributeRefusals: readonly Because[] = [
+			[
+				"setAttribute('onclick', s)",
+				onElement("e.setAttribute('onclick', s)"),
+				SYNTAX,
+				inlineHandlerMessage
+			],
+			[
+				"setAttribute('ONERROR', s)",
+				onElement("e.setAttribute('ONERROR', s)"),
+				SYNTAX,
+				inlineHandlerMessage
+			],
+			[
+				'setAttribute(`onload`, s)',
+				onElement('e.setAttribute(`onload`, s)'),
+				SYNTAX,
+				inlineHandlerMessage
+			],
+			[
+				"setAttribute('srcdoc', s)",
+				onElement("e.setAttribute('srcdoc', s)"),
+				SYNTAX,
+				scriptMarkupMessage
+			],
+			[
+				"setAttribute('SrcDoc', s)",
+				onElement("e.setAttribute('SrcDoc', s)"),
+				SYNTAX,
+				scriptMarkupMessage
+			],
+			[
+				"setAttributeNS(ns, 'onclick', s)",
+				onElement("e.setAttributeNS(ns, 'onclick', s)"),
+				SYNTAX,
+				inlineHandlerMessage
+			],
+			[
+				'setAttributeNS(ns, `srcdoc`, s)',
+				onElement('e.setAttributeNS(ns, `srcdoc`, s)'),
+				SYNTAX,
+				scriptMarkupMessage
+			],
+			[
+				"createAttribute('onclick')",
+				onElement("d.createAttribute('onclick')"),
+				SYNTAX,
+				inlineHandlerMessage
+			],
+			[
+				"createAttribute('srcdoc')",
+				onElement("d.createAttribute('srcdoc')"),
+				SYNTAX,
+				scriptMarkupMessage
+			],
+			[
+				"createAttributeNS(ns, 'OnClick')",
+				onElement("d.createAttributeNS(ns, 'OnClick')"),
+				SYNTAX,
+				inlineHandlerMessage
+			],
+			[
+				'srcdoc on any object',
+				'export const r = (f: HTMLIFrameElement, s: string) => {\n\tf.srcdoc = s;\n};',
+				PROPERTIES,
+				scriptMarkupMessage
+			],
+			[
+				"createElement('script')",
+				"export const r = document.createElement('script');",
+				SYNTAX,
+				scriptMarkupMessage
+			],
+			[
+				"createElement('IFRAME')",
+				onElement("d.createElement('IFRAME')"),
+				SYNTAX,
+				scriptMarkupMessage
+			],
+			[
+				'createElement(`embed`)',
+				onElement('d.createElement(`embed`)'),
+				SYNTAX,
+				scriptMarkupMessage
+			],
+			[
+				"createElement('Object')",
+				onElement("d.createElement('Object')"),
+				SYNTAX,
+				scriptMarkupMessage
+			],
+			[
+				"createElement('frame')",
+				onElement("d.createElement('frame')"),
+				SYNTAX,
+				scriptMarkupMessage
+			],
+			[
+				"createElementNS(ns, 'script')",
+				onElement("d.createElementNS(ns, 'script')"),
+				SYNTAX,
+				scriptMarkupMessage
+			],
+			[
+				"createElementNS(ns, 'svg:script')",
+				onElement("d.createElementNS(ns, 'svg:script')"),
+				SYNTAX,
+				scriptMarkupMessage
+			],
+			[
+				"setAttribute('http-equiv', s)",
+				onElement("e.setAttribute('HTTP-EQUIV', s)"),
+				SYNTAX,
+				httpEquivMessage
+			],
+			[
+				"a quoted 'http-equiv' key, as a spread of attributes carries it",
+				"export const r = { 'HTTP-EQUIV': 'refresh', content: '0' };",
+				SYNTAX,
+				httpEquivMessage
+			],
+			[
+				'httpEquiv on any object',
+				"export const r = (m: HTMLMetaElement) => {\n\tm.httpEquiv = 'refresh';\n};",
+				PROPERTIES,
+				httpEquivMessage
+			]
+		];
+
+		/** The browser's private file store, refused with the set's own storage message. */
+		const fileStoreRefusals = (why: string): readonly Because[] => [
+			[
+				'navigator.storage.getDirectory()',
+				'export const r = navigator.storage.getDirectory();',
+				PROPERTIES,
+				why
+			],
+			['navigator.storage', 'export const r = navigator.storage;', PROPERTIES, why],
+			["navigator['storage']", "export const r = navigator['storage'];", PROPERTIES, why],
+			['window.navigator.storage', 'export const r = window.navigator.storage;', SYNTAX, why],
+			['self.navigator.storage', 'export const r = self.navigator.storage;', SYNTAX, why],
+			[
+				'globalThis.navigator.storage',
+				'export const r = globalThis.navigator.storage;',
+				SYNTAX,
+				why
+			],
+			[
+				'a destructured storage',
+				'const { storage } = navigator;\nexport const r = storage;',
+				PROPERTIES,
+				why
+			],
+			[
+				'storage destructured from window.navigator',
+				'const { storage } = window.navigator;\nexport const r = storage;',
+				SYNTAX,
+				why
+			],
+			[
+				'getDirectory on any object',
+				'export const r = (m: StorageManager) => m.getDirectory();',
+				PROPERTIES,
+				why
+			],
+			[
+				'a file written to the private store',
+				"export async function r(): Promise<void> {\n\tconst root = await window.navigator.storage.getDirectory();\n\tconst file = await root.getFileHandle('x', { create: true });\n\tconst writable = await file.createWritable();\n\tawait writable.close();\n}",
+				PROPERTIES,
+				why
+			]
+		];
+
+		const allowed: readonly Allowed[] = [
+			['untrack from svelte', "import { untrack } from 'svelte';\nexport { untrack };"],
+			["setAttribute('title', s)", onElement("e.setAttribute('title', s)")],
+			["setAttribute('data-skin', 'dark')", onElement("e.setAttribute('data-skin', 'dark')")],
+			[
+				'setAttribute with a name held in a constant',
+				"const SKIN = 'data-skin';\nexport const r = (e: Element) => {\n\te.setAttribute(SKIN, 'dark');\n};"
+			],
+			["createElement('div')", "export const r = document.createElement('div');"],
+			['navigator.language', 'export const r = navigator.language;']
+		];
+
+		const sourceSets = [
+			['the components', planted.component, STORAGE_MESSAGE],
+			['the motion adapter', planted.motion, STORAGE_MESSAGE],
+			['the lazy loader', planted.lazy, STORAGE_MESSAGE],
+			['the pages', planted.routes, HOST_STORAGE_MESSAGE],
+			['the frame', planted.gallery, HOST_STORAGE_MESSAGE],
+			["the gallery's stores", plannedOrReal.skinStore, HOST_STORAGE_MESSAGE]
+		] as const;
+
+		describe.each(sourceSets)('in %s (%s)', (_set, filePath, storageMessage) => {
+			const refused = [
+				...rawHtmlRefusals,
+				...scriptAttributeRefusals,
+				...fileStoreRefusals(storageMessage)
+			];
+
+			it.each(refused)('refuses %s', async (_label, code, ruleId, why) => {
+				await expectRefusedBecause(filePath, code, ruleId, why);
+			});
+
+			it.each(allowed)('allows %s', async (_label, code) => {
+				await expectAllowed(filePath, code);
+			});
+		});
+
+		/** A component whose script declares `s`, then `markup`. */
+		const component = (markup: string): string =>
+			`<script lang="ts">\n\tconst s = 'x';\n</script>\n\n${markup}\n`;
+
+		const httpEquivRefusals: readonly Allowed[] = [
+			[
+				'a meta refresh in the body',
+				component(
+					'<meta http-equiv="refresh" content="0;url=https://x.invalid/leak" />\n<p>{s}</p>'
+				)
+			],
+			[
+				'a meta refresh in svelte:head',
+				component(
+					'<svelte:head><meta http-equiv="refresh" content="0;url=https://x.invalid/leak" /></svelte:head>\n<p>{s}</p>'
+				)
+			],
+			[
+				'HTTP-EQUIV in svelte:head',
+				component(
+					'<svelte:head><meta HTTP-EQUIV="refresh" content="0" /></svelte:head>\n<p>{s}</p>'
+				)
+			],
+			['http-equiv from an expression', component('<meta http-equiv={s} content="0" />')],
+			[
+				'http-equiv on svelte:element',
+				component('<svelte:element this="meta" http-equiv="refresh" content={s} />')
+			]
+		];
+
+		const svelteSets = [
+			['the components', planted.componentSvelte],
+			['the motion adapter', planted.motionSvelte],
+			['the lazy loader', planted.lazySvelte],
+			['the pages', planted.routesSvelte],
+			['a gallery page', plannedOrReal.colourPage],
+			['the frame', planted.gallerySvelte]
+		] as const;
+
+		describe.each(svelteSets)('in the markup of %s (%s)', (_set, filePath) => {
+			it.each(httpEquivRefusals)('refuses %s', async (_label, code) => {
+				await expectSyntaxMessage(filePath, code, httpEquivMessage);
+			});
+		});
+
+		it.each([
+			['the frame', planted.gallerySvelte],
+			['a gallery page', plannedOrReal.colourPage]
+		])('allows a meta description in the svelte:head of %s', async (_label, filePath) => {
+			await expectAllowed(
+				filePath,
+				component('<svelte:head><meta name="description" content="x" /></svelte:head>\n<p>{s}</p>')
+			);
+		});
+
+		it.each([
+			['a check', planted.check],
+			['a spec', planted.spec]
+		])('allows createRawSnippet and DOMParser in %s', async (_label, filePath) => {
+			await expectAllowed(
+				filePath,
+				"import { createRawSnippet } from 'svelte';\nexport const r = createRawSnippet(() => ({ render: () => '<b>x</b>' }));\nexport const d = new DOMParser().parseFromString('<b>x</b>', 'text/html');"
+			);
+		});
+	});
 });
 
 type RuleEntry = Linter.RuleEntry | undefined;
@@ -1069,8 +1659,14 @@ describe('the file sets', { timeout: 120_000 }, () => {
 		['src/lib/lazy/x.ts', 'lazy'],
 		['src/gallery/x.ts', 'gallery'],
 		['src/gallery/X.svelte', 'gallery'],
+		['src/gallery/other.ts', 'gallery'],
+		['src/gallery/skin-store.svelte.ts', 'gallery'],
+		['src/gallery/deep/skin-store.ts', 'gallery'],
+		['src/gallery/skin-store.ts', 'storage'],
 		['src/routes/x.ts', 'routes'],
-		['src/routes/components/button/+page.svelte', 'routes']
+		['src/routes/components/button/+page.svelte', 'routes'],
+		['src/routes/components/colour/+page.svelte', 'routes'],
+		['src/lib/styles/environment.ts', 'components']
 	] as const)('puts %s under the %s rules', async (filePath, name) => {
 		expect(await effectiveBoundary(filePath)).toEqual(expectedBoundary(name));
 	});
@@ -1082,6 +1678,7 @@ describe('the file sets', { timeout: 120_000 }, () => {
 		['src/lib/X.svelte.spec.ts'],
 		['src/lib/motion/x.spec.ts'],
 		['src/gallery/x.spec.ts'],
+		['src/gallery/skin-store.spec.ts'],
 		['src/routes/x.svelte.spec.ts']
 	])('leaves the check or spec %s free of the boundary rules', async (filePath) => {
 		expect(await effectiveBoundary(filePath)).toEqual(noBoundary);
@@ -1104,7 +1701,12 @@ describe('the file sets', { timeout: 120_000 }, () => {
 		'src/lib/X.svelte.spec.ts',
 		'src/routes/x.svelte.spec.ts',
 		'src/x.mjs',
-		'src/gallery/x.cts'
+		'src/gallery/x.cts',
+		...Object.values(plannedOrReal),
+		'src/gallery/other.ts',
+		'src/gallery/skin-store.spec.ts',
+		'src/gallery/skin-store.svelte.ts',
+		'src/gallery/deep/skin-store.ts'
 	])("classifies %s as ESLint's own matching does", async (filePath) => {
 		const name = fileSetOf(filePath);
 		expect(name).toBeDefined();

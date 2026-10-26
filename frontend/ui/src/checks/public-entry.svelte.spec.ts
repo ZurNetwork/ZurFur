@@ -7,8 +7,18 @@ describe('the public entry', () => {
 		expect(published).toBe(source);
 	});
 
-	it('exports what src/lib/index.ts exports, which is nothing yet', () => {
-		expect(Object.keys(published)).toEqual(Object.keys(source));
-		expect(Object.keys(published)).toEqual([]);
+	it('exports exactly the paper lists, the environment and the token model', () => {
+		expect(Object.keys(published).sort()).toEqual([
+			'MOTION_ATTRIBUTE',
+			'PAPER_CLASSES',
+			'PAPER_MOVES',
+			'SKIN_ATTRIBUTE',
+			'findToken',
+			'isTokenName',
+			'parseSkin',
+			'parseTokenModel',
+			'resolveToken',
+			'valueIn'
+		]);
 	});
 });

@@ -57,7 +57,7 @@
     },
     {
       "name": "gate-light.sh",
-      "role": "the light local gate for base merges and fix rounds (just gate-light): fmt, clippy, typos, the design-index and node-tree checks, the touched crates' tests, and, on a frontend/ or contract/ change, the guarded frontend install, the install guard's tests and web's and ui's checks (tested by gate-light.test.sh)",
+      "role": "the light local gate for base merges and fix rounds (just gate-light): fmt, clippy, typos, the design-index and node-tree checks, the touched crates' tests, and, on a frontend/ or contract/ change, the guarded frontend install, the install guard's tests and web's and ui's checks, the built-output check included (tested by gate-light.test.sh)",
       "node": false
     },
     {

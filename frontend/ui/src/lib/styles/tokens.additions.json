@@ -1,0 +1,11 @@
+{
+	"easing": {
+		"tokens": [
+			{
+				"name": "easing-linear",
+				"value": "linear",
+				"usage": "Constant speed, for the page fade and a toast's held stretch; pending the next design system revision."
+			}
+		]
+	}
+}

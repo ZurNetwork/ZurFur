@@ -3,6 +3,15 @@
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<script>
+			(function () {
+				try {
+					var s = window.localStorage.getItem('zurfur:skin');
+					if (s === 'dark') document.documentElement.setAttribute('data-skin', 'dark');
+					else if (s === 'light') document.documentElement.setAttribute('data-skin', 'light');
+				} catch (e) {}
+			})();
+		</script>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

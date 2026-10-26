@@ -58,31 +58,50 @@ const forbiddenFolders: ReadonlySet<string> = new Set([
 const allowedExtensions: ReadonlySet<string> = new Set(['.ts', '.svelte', '.css']);
 
 /**
- * The one JSON file a folder may hold, its node. Any other `.json` could be a
- * `package.json` or `tsconfig.json` that sends an import outside src/.
+ * The JSON file a folder may hold, its node (the two token files below are the
+ * only others). Any other `.json` could be a `package.json` or `tsconfig.json`
+ * that sends an import outside src/.
  */
 const nodeFileName = 'NODE.inf.json';
 
 /** Kit's page shell, the one HTML file, and only at src/'s root. */
 const pageShell = 'app.html';
 
+/**
+ * The two token files, the only other JSON files, allowed by exact path
+ * relative to src/. `tokens.json` is read by the copy step and its match spec,
+ * the generator, and, through the package's `./tokens.json` export, the
+ * gallery's token pages; `tokens.additions.json` by the generator, its spec
+ * and, through the package's `./tokens.additions.json` export, the same pages.
+ */
+const tokenFiles: ReadonlySet<string> = new Set([
+	'lib/styles/tokens.json',
+	'lib/styles/tokens.additions.json'
+]);
+
 function isAllowedFile(relative: string, name: string): boolean {
 	if (name === nodeFileName || relative === pageShell) return true;
+	if (tokenFiles.has(relative)) return true;
 	const dot = name.lastIndexOf('.');
 	return dot !== -1 && allowedExtensions.has(name.slice(dot));
 }
 
-/** The paths, relative to src/, that the package must never hold. */
+/**
+ * The paths, relative to src/ and `/`-separated, that the package must never
+ * hold. A backslash in any segment is refused: on Linux it is part of a name,
+ * but it reads as a separator elsewhere, so such a name could pass as another path.
+ */
 function forbiddenFiles(paths: readonly string[]): readonly string[] {
 	return paths.filter((relative) => {
-		const segments = relative.split(/[/\\]/);
+		const segments = relative.split('/');
 		const name = segments.at(-1) ?? '';
 		const folders = segments.slice(0, -1);
 		const hasForbiddenName = segments.some((segment) =>
 			forbiddenNames.some((pattern) => pattern.test(segment))
 		);
 		const hasForbiddenFolder = folders.some((folder) => forbiddenFolders.has(folder));
-		return hasForbiddenName || hasForbiddenFolder || !isAllowedFile(relative, name);
+		const hasBackslash = segments.some((segment) => segment.includes('\\'));
+		return hasForbiddenName || hasForbiddenFolder || hasBackslash || !isAllowedFile(relative, name);
 	});
 }
 
@@ -104,9 +123,10 @@ interface Tree {
 }
 
 /**
- * Walks `root` without following links: it descends only into real folders,
- * and a symlink (to a file or a folder), FIFO, socket or device is a stray,
- * since no lint or scan walks into it while Vite and TypeScript follow it.
+ * Walks `root` without following links, giving `/`-separated paths: it
+ * descends only into real folders, and a symlink (to a file or a folder),
+ * FIFO, socket or device is a stray, since no lint or scan walks into it
+ * while Vite and TypeScript follow it.
  */
 function walkTree(root: string): Tree {
 	// A trailing slash would make lstat follow a link at the root itself.
@@ -116,7 +136,7 @@ function walkTree(root: string): Tree {
 	const strays: string[] = [];
 	const visit = (folder: string): void => {
 		for (const name of readdirSync(path.join(base, folder))) {
-			const relative = path.join(folder, name);
+			const relative = folder === '' ? name : `${folder}/${name}`;
 			const kind = kindOf(path.join(base, relative));
 			if (kind === 'folder') visit(relative);
 			else if (kind === 'file') files.push(relative);
@@ -150,18 +170,14 @@ describe('the tree under src/', () => {
 	});
 
 	it('lists the real tree', () => {
-		expect(walkTree(srcRoot()).files).toContain(path.join('lib', 'index.ts'));
+		expect(walkTree(srcRoot()).files).toContain('lib/index.ts');
 	});
 
 	it('refuses a symlinked folder, a symlinked file and a dangling link, and walks into none', () => {
 		const tree = walkTree(plantedSrc);
 		const expected: Tree = {
-			files: [path.join('lib', 'index.ts')],
-			strays: [
-				path.join('lib', 'dangling.ts'),
-				path.join('lib', 'linked.ts'),
-				path.join('lib', 'vendor')
-			]
+			files: ['lib/index.ts'],
+			strays: ['lib/dangling.ts', 'lib/linked.ts', 'lib/vendor']
 		};
 		expect(tree).toEqual(expected);
 	});
@@ -211,11 +227,19 @@ describe('forbidden files', () => {
 		['a package manifest', 'lib/vendor/package.json'],
 		['a tsconfig', 'lib/tsconfig.json'],
 		['any other JSON file', 'lib/x.json'],
+		['another JSON file beside the tokens', 'lib/styles/other.json'],
+		['the token file name one folder up', 'lib/tokens.json'],
+		['the token file name one folder down', 'lib/styles/nested/tokens.json'],
+		['the token file name in the gallery', 'routes/tokens.json'],
+		['the token additions file name in the gallery', 'routes/tokens.additions.json'],
 		['an HTML file in lib', 'lib/evil.html'],
 		['a page shell below the root', 'routes/app.html'],
 		['a page shell in another case', 'App.html'],
 		['a node_modules folder', 'lib/node_modules/x/index.ts'],
-		['a node_modules folder at the root', 'node_modules/svelte/index.ts']
+		['a node_modules folder at the root', 'node_modules/svelte/index.ts'],
+		['a token file path written with backslashes as one name', 'lib\\styles\\tokens.json'],
+		['a backslash inside a file name', 'lib/x\\y.ts'],
+		['a backslash inside a folder name', 'lib/x\\y/z.ts']
 	])('refuses %s', (_label, relative) => {
 		expect(forbiddenFiles([relative])).toEqual([relative]);
 	});
@@ -230,6 +254,8 @@ describe('forbidden files', () => {
 		['a type declaration', 'lib/x.d.ts'],
 		['a runes module', 'lib/x.svelte.ts'],
 		['a stylesheet', 'lib/styles/tokens.css'],
+		['the token file', 'lib/styles/tokens.json'],
+		['the token additions file', 'lib/styles/tokens.additions.json'],
 		['a node file', 'NODE.inf.json'],
 		['a nested node file', 'lib/a/NODE.inf.json']
 	])('allows %s', (_label, relative) => {

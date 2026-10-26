@@ -84,7 +84,7 @@ new_repo
 change frontend/web/README.md "* star list"
 expect_plan "a Markdown edit under frontend runs the web checks" "yarn --cwd frontend/web run lint"
 
-# Every frontend plan: the guarded install, the guard's tests, web's and ui's four steps.
+# Every frontend plan: the guarded install, the guard's tests, web's and ui's four steps, then ui's built-output check.
 frontend_plan="just frontend-install
 node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs
 yarn --cwd frontend/web run check
@@ -94,7 +94,8 @@ yarn --cwd frontend/web run build
 yarn --cwd frontend/ui run check
 yarn --cwd frontend/ui run lint
 yarn --cwd frontend/ui run test
-yarn --cwd frontend/ui run build"
+yarn --cwd frontend/ui run build
+node frontend/ui/src/checks/built-output.ts frontend/ui/build"
 
 # expect_frontend_plan <name> — the plan holds every frontend step, in order.
 expect_frontend_plan() {
@@ -103,7 +104,7 @@ expect_frontend_plan() {
         failures=$((failures + 1))
         return
     }
-    got="$(printf '%s\n' "$out" | awk '/^gate-light: (just frontend-install|node --test |yarn --cwd frontend\/)/ { print substr($0, 13) }')"
+    got="$(printf '%s\n' "$out" | awk '/^gate-light: (just frontend-install|node --test |node frontend\/ui\/|yarn --cwd frontend\/)/ { print substr($0, 13) }')"
     if [ "$got" = "$frontend_plan" ]; then
         echo "ok   $1"
     else
@@ -116,6 +117,19 @@ expect_frontend_plan() {
 new_repo
 change frontend/ui/src/lib/index.ts "export {}"
 expect_frontend_plan "a ui change runs the install, the guard's tests and the web and ui checks"
+
+new_repo
+change frontend/ui/src/lib/index.ts "export {}"
+out="$(cd "$repo" && bash scripts/gate-light.sh --plan 2>&1)"
+build_line="$(printf '%s\n' "$out" | grep -nxF 'gate-light: yarn --cwd frontend/ui run build' | cut -d: -f1)"
+built_line="$(printf '%s\n' "$out" | grep -nxF 'gate-light: node frontend/ui/src/checks/built-output.ts frontend/ui/build' | cut -d: -f1)"
+if [ -n "$build_line" ] && [ -n "$built_line" ] && [ "$build_line" -lt "$built_line" ]; then
+    echo "ok   a ui change plans the built-output check after the ui build"
+else
+    echo "FAIL a ui change plans the built-output check after the ui build"
+    printf '%s\n' "$out" | awk '{ print "  " $0 }'
+    failures=$((failures + 1))
+fi
 
 new_repo
 change frontend/yarn.lock "# yarn lockfile v1"

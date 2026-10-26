@@ -2,9 +2,13 @@
  * The one parse the style and network scans share. A `.svelte` or `.html`
  * file goes through Svelte's modern AST, a `.css` file through Svelte's CSS
  * parser, and each yields what the scans read: CSS declarations, `@import`
- * preludes, URL-bearing attributes and `<svelte:head>` blocks. Input never
- * makes it throw: a file, style attribute or style element that doesn't
- * parse comes back as an `Unparsed` record, which both scans refuse.
+ * preludes, URL-bearing attributes, `http-equiv` attributes on any element
+ * (in any letter case, in a head or not), `<script>` elements and
+ * `<svelte:head>` blocks. An `.html` file is read as the browser reads it,
+ * not as a Svelte template: its braces are plain text, so no markup hides in
+ * an expression.
+ * Input never makes it throw: a file, style attribute or style element that
+ * doesn't parse comes back as an `Unparsed` record, which both scans refuse.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -69,6 +73,22 @@ export interface UrlAttribute {
 	readonly place: Place;
 }
 
+/**
+ * What an `http-equiv` attribute holds: no value, plain text as written, or
+ * a value with an expression in it, read as `valueTexts` reads it.
+ */
+export type HttpEquivValue =
+	| { readonly kind: 'absent' }
+	| { readonly kind: 'text'; readonly text: string }
+	| { readonly kind: 'expression'; readonly texts: readonly string[] };
+
+/** An `http-equiv` attribute, on any element: a pragma the browser acts on, wherever it sits. */
+export interface HttpEquivAttribute {
+	readonly element: string;
+	readonly value: HttpEquivValue;
+	readonly place: Place;
+}
+
 /** One node directly inside a `<svelte:head>`. */
 export interface HeadChild {
 	readonly type: string;
@@ -88,11 +108,26 @@ export interface Unparsed {
 	readonly place: Place;
 }
 
+/**
+ * A `<script>` element inside the markup, read as JavaScript: every string
+ * literal and template literal in it (holes read as `0`), or why it isn't
+ * JavaScript.
+ */
+export type ScriptElement =
+	| {
+			readonly kind: 'javascript';
+			readonly strings: readonly string[];
+			readonly place: Place;
+	  }
+	| { readonly kind: 'unparsed'; readonly reason: string; readonly place: Place };
+
 export interface ParsedSource {
 	readonly path: string;
 	readonly declarations: readonly CssDeclaration[];
 	readonly imports: readonly CssImport[];
 	readonly urlAttributes: readonly UrlAttribute[];
+	readonly httpEquivs: readonly HttpEquivAttribute[];
+	readonly scripts: readonly ScriptElement[];
 	readonly heads: readonly Head[];
 	readonly unparsed: readonly Unparsed[];
 }
@@ -115,10 +150,32 @@ const packageRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const checksFolder = 'src/checks/';
 
 function sourceKind(path: string): SourceKind | undefined {
-	if (path.endsWith('.svelte')) return 'svelte';
-	if (path.endsWith('.html')) return 'html';
-	if (path.endsWith('.css')) return 'css';
+	const lower = path.toLowerCase();
+	if (lower.endsWith('.svelte')) return 'svelte';
+	if (lower.endsWith('.html')) return 'html';
+	if (lower.endsWith('.css')) return 'css';
 	return undefined;
+}
+
+/** What an `.html` file's braces are read as while Svelte parses it: two noncharacters, as plain text. */
+const braceStandIns = { open: '\uFDD0', close: '\uFDD1' } as const;
+
+/** Reads a text the parse produced as the file wrote it. */
+type Restore = (text: string) => string;
+
+const asWritten: Restore = (text) => text;
+
+const restoreBraces: Restore = (text) =>
+	text.replaceAll(braceStandIns.open, '{').replaceAll(braceStandIns.close, '}');
+
+/**
+ * An `.html` file's text with every brace swapped for its stand-in, one
+ * character for one so offsets hold, or undefined when the file already
+ * holds a stand-in and so can't be read back.
+ */
+function withBracesAsText(text: string): string | undefined {
+	if (text.includes(braceStandIns.open) || text.includes(braceStandIns.close)) return undefined;
+	return text.replaceAll('{', braceStandIns.open).replaceAll('}', braceStandIns.close);
 }
 
 /** Every `.svelte`, `.html` and `.css` file under the package's `src/`, `src/checks/` aside, sorted by path. */
@@ -141,6 +198,8 @@ interface Collected {
 	readonly declarations: CssDeclaration[];
 	readonly imports: CssImport[];
 	readonly urlAttributes: UrlAttribute[];
+	readonly httpEquivs: HttpEquivAttribute[];
+	readonly scripts: ScriptElement[];
 	readonly heads: Head[];
 	readonly unparsed: Unparsed[];
 }
@@ -151,6 +210,8 @@ export function parseSource(source: SourceFile): ParsedSource {
 		declarations: [],
 		imports: [],
 		urlAttributes: [],
+		httpEquivs: [],
+		scripts: [],
 		heads: [],
 		unparsed: []
 	};
@@ -161,8 +222,10 @@ export function parseSource(source: SourceFile): ParsedSource {
 	} else {
 		switch (kind) {
 			case 'svelte':
+				collectMarkup(source.text, { placeAt, collected, restore: asWritten });
+				break;
 			case 'html':
-				collectMarkup(source.text, placeAt, collected);
+				collectHtml(source.text, placeAt, collected);
 				break;
 			case 'css':
 				collectCss(source.text, placeAt, 'stylesheet', collected);
@@ -194,14 +257,32 @@ function failureOffset(error: unknown): number {
 	return typeof start === 'number' ? start : 0;
 }
 
-function collectMarkup(text: string, placeAt: PlaceAt, collected: Collected): void {
+/** Where a template walk records what it reads, and how it reads text back. */
+interface Reading {
+	readonly placeAt: PlaceAt;
+	readonly collected: Collected;
+	readonly restore: Restore;
+}
+
+function collectHtml(text: string, placeAt: PlaceAt, collected: Collected): void {
+	const asText = withBracesAsText(text);
+	if (asText === undefined) {
+		const reason = 'holds U+FDD0 or U+FDD1, which the scan reads braces as';
+		collected.unparsed.push({ reason, place: placeAt(0) });
+		return;
+	}
+	collectMarkup(asText, { placeAt, collected, restore: restoreBraces });
+}
+
+function collectMarkup(text: string, reading: Reading): void {
+	const { placeAt, collected } = reading;
 	const root = parseMarkup(text);
 	if (!('fragment' in root)) {
 		collected.unparsed.push({ reason: root.reason, place: placeAt(root.offset) });
 		return;
 	}
 	if (root.css) walkCss(root.css.children, placeAt, 'stylesheet', collected);
-	walkTemplate(root.fragment, placeAt, collected, new Set());
+	walkTemplate(root.fragment, reading, new Set());
 }
 
 interface ParseFailure {
@@ -321,44 +402,36 @@ function isUrlAttributeName(name: string): name is UrlAttributeName {
 }
 
 /** Visits every object in the template once, acting on elements and heads. */
-function walkTemplate(
-	value: unknown,
-	placeAt: PlaceAt,
-	collected: Collected,
-	seen: Set<object>
-): void {
+function walkTemplate(value: unknown, reading: Reading, seen: Set<object>): void {
 	if (!isFields(value) || seen.has(value)) return;
 	seen.add(value);
-	if (isElementLike(value)) collectElement(value, placeAt, collected);
-	if (isSvelteHead(value)) collected.heads.push(headOf(value, placeAt));
+	if (isElementLike(value)) collectElement(value, reading);
+	if (isSvelteHead(value)) reading.collected.heads.push(headOf(value, reading.placeAt));
 	for (const child of Object.values(value)) {
 		if (Array.isArray(child)) {
-			for (const item of child) walkTemplate(item, placeAt, collected, seen);
+			for (const item of child) walkTemplate(item, reading, seen);
 		} else {
-			walkTemplate(child, placeAt, collected, seen);
+			walkTemplate(child, reading, seen);
 		}
 	}
 }
 
-function collectElement(element: ElementLike, placeAt: PlaceAt, collected: Collected): void {
+function collectElement(element: ElementLike, reading: Reading): void {
 	for (const attribute of element.attributes) {
-		if (isAttribute(attribute)) collectAttribute(element, attribute, placeAt, collected);
-		if (isStyleDirective(attribute)) collectStyleDirective(attribute, placeAt, collected);
+		if (isAttribute(attribute)) collectAttribute(element, attribute, reading);
+		if (isStyleDirective(attribute)) collectStyleDirective(attribute, reading);
 	}
-	if (element.type === 'RegularElement' && element.name.toLowerCase() === 'style') {
-		collectStyleElement(element, placeAt, collected);
-	}
+	if (element.type !== 'RegularElement') return;
+	const name = element.name.toLowerCase();
+	if (name === 'style') collectStyleElement(element, reading);
+	if (name === 'script') collectScriptElement(element, reading);
 }
 
-function collectAttribute(
-	element: ElementLike,
-	attribute: AST.Attribute,
-	placeAt: PlaceAt,
-	collected: Collected
-): void {
+function collectAttribute(element: ElementLike, attribute: AST.Attribute, reading: Reading): void {
+	const { placeAt, collected, restore } = reading;
 	const name = attribute.name.toLowerCase();
 	const place = placeAt(attribute.start);
-	const texts = valueTexts(attribute.value);
+	const texts = valueTexts(attribute.value).map(restore);
 	if (name === 'style') {
 		for (const text of texts) {
 			collectCss(`x{${text}}`, () => place, 'style-attribute', collected);
@@ -367,26 +440,57 @@ function collectAttribute(
 	if (isUrlAttributeName(name)) {
 		collected.urlAttributes.push({ element: element.name, attribute: name, values: texts, place });
 	}
+	if (name === 'http-equiv') {
+		const value = httpEquivValue(attribute.value, restore);
+		collected.httpEquivs.push({ element: element.name, value, place });
+	}
 }
 
-function collectStyleDirective(
-	directive: AST.StyleDirective,
-	placeAt: PlaceAt,
-	collected: Collected
-): void {
+/** An `http-equiv` value: absent, plain text (restored), or one holding an expression. */
+function httpEquivValue(value: AST.Attribute['value'], restore: Restore): HttpEquivValue {
+	if (value === true) return { kind: 'absent' };
+	const parts = Array.isArray(value) ? value : [value];
+	const textParts = parts.flatMap((part) => (part.type === 'Text' ? [part.data] : []));
+	if (textParts.length < parts.length) {
+		return { kind: 'expression', texts: valueTexts(value).map(restore) };
+	}
+	return { kind: 'text', text: restore(textParts.join('')) };
+}
+
+function collectStyleDirective(directive: AST.StyleDirective, reading: Reading): void {
+	const { placeAt, collected, restore } = reading;
 	const place = placeAt(directive.start);
-	for (const text of valueTexts(directive.value)) {
+	for (const text of valueTexts(directive.value).map(restore)) {
 		collectCss(`x{${directive.name}: ${text}}`, () => place, 'style-directive', collected);
 	}
 }
 
-/** A `<style>` element inside the markup, which Svelte leaves as text. */
-function collectStyleElement(element: ElementLike, placeAt: PlaceAt, collected: Collected): void {
-	const place = placeAt(element.start);
+/** The text inside an element Svelte leaves as text: `<style>` and `<script>`. */
+function elementText(element: ElementLike, restore: Restore): string {
 	const nodes: unknown = isFields(element.fragment) ? element.fragment.nodes : undefined;
 	const parts = Array.isArray(nodes) ? nodes : [];
-	const text = parts.map((node) => (isText(node) ? node.data : expressionPlaceholder)).join('');
-	collectCss(text, () => place, 'style-element', collected);
+	return restore(parts.map((node) => (isText(node) ? node.data : expressionPlaceholder)).join(''));
+}
+
+/** A `<style>` element inside the markup. */
+function collectStyleElement(element: ElementLike, reading: Reading): void {
+	const place = reading.placeAt(element.start);
+	const text = elementText(element, reading.restore);
+	collectCss(text, () => place, 'style-element', reading.collected);
+}
+
+/** A `<script>` element inside the markup, read as JavaScript. */
+function collectScriptElement(element: ElementLike, reading: Reading): void {
+	const place = reading.placeAt(element.start);
+	const text = elementText(element, reading.restore);
+	const root = parseMarkup(`<script>${text}</script>`);
+	if (!('fragment' in root)) {
+		reading.collected.scripts.push({ kind: 'unparsed', reason: root.reason, place });
+		return;
+	}
+	// The compiler answers undefined, not the null its types promise, for a missing block.
+	const strings = root.instance ? expressionStrings(root.instance.content) : [];
+	reading.collected.scripts.push({ kind: 'javascript', strings, place });
 }
 
 /**
@@ -512,10 +616,26 @@ function readUrl(text: string, index: number): readonly [string, number] {
 	return [content.trim(), at + 1];
 }
 
-/** True when a `url(` starts at `index`, as a whole function name. */
-function urlStartsAt(text: string, index: number): boolean {
-	if (text.slice(index, index + 4).toLowerCase() !== 'url(') return false;
-	return index === 0 || !/[\w-]/.test(text.charAt(index - 1));
+/**
+ * The index just past the `(` when a `url(` function starts at `index`, as a
+ * whole name in any letter case and with any of its letters written as a CSS
+ * escape (`u\72l(`), as the CSS tokenizer reads it; undefined otherwise.
+ */
+function urlFunctionAt(text: string, index: number): number | undefined {
+	if (index > 0 && /[\w-]/.test(text.charAt(index - 1))) return undefined;
+	let name = '';
+	let at = index;
+	while (name.length < 3 && at < text.length) {
+		if (text.charAt(at) === '\\') {
+			const [character, next] = readEscape(text, at);
+			name += character;
+			at = next;
+		} else {
+			name += text.charAt(at);
+			at += 1;
+		}
+	}
+	return name.toLowerCase() === 'url' && text.charAt(at) === '(' ? at + 1 : undefined;
 }
 
 /** Splits a CSS value into its code (strings, comments and `url()` bodies blanked), strings and URLs. */
@@ -526,6 +646,10 @@ export function cssValueParts(value: string): CssValueParts {
 	let at = 0;
 	while (at < value.length) {
 		const character = value.charAt(at);
+		const urlBody =
+			character === '"' || character === "'" || value.startsWith('/*', at)
+				? undefined
+				: urlFunctionAt(value, at);
 		if (value.startsWith('/*', at)) {
 			const close = value.indexOf('*/', at + 2);
 			const next = close === -1 ? value.length : close + 2;
@@ -536,8 +660,8 @@ export function cssValueParts(value: string): CssValueParts {
 			strings.push(content);
 			code += ' '.repeat(next - at);
 			at = next;
-		} else if (urlStartsAt(value, at)) {
-			const [url, next] = readUrl(value, at + 4);
+		} else if (urlBody !== undefined) {
+			const [url, next] = readUrl(value, urlBody);
 			urls.push(url);
 			code += `url(${' '.repeat(Math.max(0, next - at - 5))})`;
 			at = next;
