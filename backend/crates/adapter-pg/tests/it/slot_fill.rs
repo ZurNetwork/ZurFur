@@ -21,10 +21,19 @@ use crate::node_backfill::{
 };
 
 /// The Slot node fill's migration, as sqlx numbers it.
-const SLOT_FILL_VERSION: i64 = 20261026080502;
+pub(crate) const SLOT_FILL_VERSION: i64 = 20261026080502;
 
 /// A title no refusal may echo.
-const CANARY_TITLE: &str = "Canary slot title 7e3c";
+pub(crate) const CANARY_TITLE: &str = "Canary slot title 7e3c";
+
+/// The title of each Slot `seeded_through_den_1` seeds, in the order it answers them: two made
+/// before the node table, then two declared since.
+pub(crate) const SEEDED_SLOT_TITLES: [&str; 4] = [
+    CANARY_TITLE,
+    "A second Slot from before",
+    CANARY_TITLE,
+    "A second Slot declared since",
+];
 
 /// How many times a lock test polls `pg_locks` for the fill's wait before failing.
 const LOCK_WAIT_POLLS: u32 = 500;
@@ -49,7 +58,7 @@ async fn just_before_the_fill() -> (PgPool, impl Sized) {
 
 /// A commission bound to its own node and six entries, inserted in one committed unit on the
 /// schema before the fill, as the den's write gate writes a create. Answers its id.
-async fn bound_commission(pool: &PgPool, title: &str) -> Uuid {
+pub(crate) async fn bound_commission(pool: &PgPool, title: &str) -> Uuid {
     let commission = Uuid::now_v7();
     let node = Uuid::now_v7();
     let mut tx = pool.begin().await.expect("begin");
@@ -88,7 +97,7 @@ async fn bound_commission(pool: &PgPool, title: &str) -> Uuid {
 }
 
 /// The node a Slot row points at, or `None`.
-async fn slot_node_id(pool: &PgPool, element: Uuid) -> Option<Uuid> {
+pub(crate) async fn slot_node_id(pool: &PgPool, element: Uuid) -> Option<Uuid> {
     sqlx::query_scalar("SELECT node_id FROM commission_slot WHERE element_id = $1")
         .bind(element)
         .fetch_one(pool)
@@ -97,7 +106,7 @@ async fn slot_node_id(pool: &PgPool, element: Uuid) -> Option<Uuid> {
 }
 
 /// The node a Slot row points at.
-async fn slot_node(pool: &PgPool, element: Uuid) -> NodeRow {
+pub(crate) async fn slot_node(pool: &PgPool, element: Uuid) -> NodeRow {
     sqlx::query_as(
         "SELECT n.* FROM node n JOIN commission_slot s ON s.node_id = n.id WHERE s.element_id = $1",
     )
@@ -108,7 +117,7 @@ async fn slot_node(pool: &PgPool, element: Uuid) -> NodeRow {
 }
 
 /// The `slots` entry of `commission`'s node.
-async fn slots_entry(pool: &PgPool, commission: Uuid) -> Uuid {
+pub(crate) async fn slots_entry(pool: &PgPool, commission: Uuid) -> Uuid {
     sqlx::query_scalar(
         "SELECT e.id FROM node e JOIN commission c ON e.parent = c.node_id
          WHERE c.id = $1 AND e.type = 'commission.slots'",
@@ -139,7 +148,7 @@ async fn phantom_slot_node(pool: &PgPool, commission: Uuid, name: &str) -> Uuid 
 }
 
 /// Rename the node the bound Slot `element` points at to `name`, apart from its title.
-async fn rename_slot_node(pool: &PgPool, element: Uuid, name: &str) {
+pub(crate) async fn rename_slot_node(pool: &PgPool, element: Uuid, name: &str) {
     let renamed = sqlx::query(
         "UPDATE node SET name = $2 FROM commission_slot s
          WHERE s.element_id = $1 AND node.id = s.node_id",
@@ -208,7 +217,7 @@ async fn assert_stopped_naming(
 }
 
 /// Run `statement` in a transaction of its own, committed.
-async fn execute_alone(pool: &PgPool, statement: &'static str) {
+pub(crate) async fn execute_alone(pool: &PgPool, statement: &'static str) {
     sqlx::query(statement)
         .execute(pool)
         .await
@@ -232,14 +241,14 @@ async fn a_lock_on_waits(pool: &PgPool, table: &str) -> bool {
 
 /// Polls until a statement in this test's own database waits for a lock on `table`, and fails
 /// the test if none does within `LOCK_WAIT_POLLS` polls (about ten seconds).
-async fn wait_until_a_lock_on_waits(pool: &PgPool, table: &str) {
+pub(crate) async fn wait_until_a_lock_on_waits(pool: &PgPool, table: &str) {
     for _ in 0..LOCK_WAIT_POLLS {
         if a_lock_on_waits(pool, table).await {
             return;
         }
         tokio::time::sleep(LOCK_WAIT_INTERVAL).await;
     }
-    panic!("the fill never waited for a lock on {table} while the writer held one");
+    panic!("the migration never waited for a lock on {table} while the writer held one");
 }
 
 // ─── The fill ──────────────────────────────────────────────────────────────
@@ -566,16 +575,17 @@ async fn a_commission_committed_while_the_fill_waits_on_commission_stops_it() {
 /// A database migrated through the node table, seeded with Slots made before it and Slots
 /// declared since on the old path, node-less, then migrated up to just before the fill.
 /// Answers the commission and every seeded Slot.
-async fn seeded_through_den_1() -> (PgPool, impl Sized, Uuid, Vec<Uuid>) {
+pub(crate) async fn seeded_through_den_1() -> (PgPool, impl Sized, Uuid, Vec<Uuid>) {
     let (pool, container) = just_before_den_1().await;
+    let [first_before, second_before, first_since, second_since] = SEEDED_SLOT_TITLES;
     let commission = seed_commission(&pool, CANARY_TITLE, "private").await;
     let mut slots = vec![
-        seed_slot(&pool, commission, CANARY_TITLE).await,
-        seed_slot(&pool, commission, "A second Slot from before").await,
+        seed_slot(&pool, commission, first_before).await,
+        seed_slot(&pool, commission, second_before).await,
     ];
     run_migrations_through(&pool, DEN_1_VERSION).await;
-    slots.push(seed_slot(&pool, commission, CANARY_TITLE).await);
-    slots.push(seed_slot(&pool, commission, "A second Slot declared since").await);
+    slots.push(seed_slot(&pool, commission, first_since).await);
+    slots.push(seed_slot(&pool, commission, second_since).await);
     run_migrations_before(&pool, SLOT_FILL_VERSION).await;
     (pool, container, commission, slots)
 }

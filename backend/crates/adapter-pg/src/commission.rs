@@ -1341,8 +1341,8 @@ impl CommissionStore for PgCommissionStore {
         Ok(files)
     }
 
-    /// The commission's Slot satellites in declaration order; titles carried as
-    /// stored.
+    /// The commission's Slot satellites in declaration order, each titled by its node's
+    /// name as stored.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>> {
         let rows = sql::slots(&self.pool, uuid::Uuid::from(*commission)).await?;

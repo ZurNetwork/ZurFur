@@ -232,8 +232,7 @@ async fn slot_row_at(
     node: Uuid,
 ) -> Result<PgQueryResult, sqlx::Error> {
     sqlx::query(
-        "INSERT INTO commission_slot (element_id, commission_id, title, node_id)
-         VALUES ($1, $2, 'A slot', $3)",
+        "INSERT INTO commission_slot (element_id, commission_id, node_id) VALUES ($1, $2, $3)",
     )
     .bind(element)
     .bind(commission)
