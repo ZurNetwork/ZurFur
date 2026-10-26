@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { packageSources, parseSource } from './parse';
-import { isRemote, networkFindings, type NetworkRule } from './network';
+import { isRemote, networkFindings, schemeOf, type NetworkRule } from './network';
 
 function rulesOf(path: string, text: string): readonly NetworkRule[] {
 	const parsed = parseSource({ path, text });
@@ -11,6 +11,11 @@ const component = 'src/lib/Fixture.svelte';
 const stylesheet = 'src/lib/fixture.css';
 const hostLayout = 'src/routes/+layout.svelte';
 const galleryFrame = 'src/gallery/Frame.svelte';
+const shell = 'src/app.html';
+
+/** A page shell shaped like the real one, with `head` and `body` inside. */
+const shellWith = (head: string, body = ''): string =>
+	`<!doctype html>\n<html lang="en">\n\t<head>\n\t\t<meta charset="utf-8" />\n\t\t${head}\n\t\t%sveltekit.head%\n\t</head>\n\t<body data-sveltekit-preload-data="hover">\n\t\t<div style="display: contents">%sveltekit.body%</div>${body}\n\t</body>\n</html>\n`;
 
 interface Fixture {
 	readonly name: string;
@@ -213,6 +218,192 @@ const refused: readonly Fixture[] = [
 		rule: 'remote-attribute'
 	},
 	{
+		name: '@import of a font host',
+		path: stylesheet,
+		text: "@import 'https://fonts.googleapis.com/x';",
+		rule: 'remote-import'
+	},
+	{
+		name: '@import of a protocol-relative string',
+		path: stylesheet,
+		text: '@import "//x/y.css";',
+		rule: 'remote-import'
+	},
+	{
+		name: '@import with an escaped url(',
+		path: stylesheet,
+		text: '@import u\\72l(https://x/a.css);',
+		rule: 'remote-import'
+	},
+	{
+		name: 'an escaped @import',
+		path: stylesheet,
+		text: '@\\69mport "https://x/a.css";',
+		rule: 'remote-import'
+	},
+	{
+		name: '@import of a package path',
+		path: stylesheet,
+		text: "@import 'pkg/x.css';",
+		rule: 'non-relative-import'
+	},
+	{
+		name: '@import url() of a bare name',
+		path: stylesheet,
+		text: '@import url(x.css);',
+		rule: 'non-relative-import'
+	},
+	{
+		name: '@import of a root path',
+		path: stylesheet,
+		text: "@import '/x.css';",
+		rule: 'non-relative-import'
+	},
+	{
+		name: '@import of a data: sheet',
+		path: stylesheet,
+		text: "@import 'data:text/css,a{}';",
+		rule: 'non-relative-import'
+	},
+	{
+		name: '@import in a style block',
+		path: component,
+		text: "<style>@import 'pkg/x.css';</style>",
+		rule: 'non-relative-import'
+	},
+	{
+		name: '@import with no target',
+		path: stylesheet,
+		text: '@import x;',
+		rule: 'non-relative-import'
+	},
+	{
+		name: 'an upper-case URL(',
+		path: stylesheet,
+		text: 'a { background: URL(https://x/a.png); }',
+		rule: 'remote-url'
+	},
+	{
+		name: 'an escaped url( name',
+		path: stylesheet,
+		text: 'a { background: u\\72l(https://x/a.png); }',
+		rule: 'remote-url'
+	},
+	{
+		name: 'an image-set() string',
+		path: stylesheet,
+		text: 'a { background: image-set("https://a.test/x" 1x); }',
+		rule: 'remote-string'
+	},
+	{
+		name: 'a protocol-relative content string',
+		path: stylesheet,
+		text: 'a::before { content: "//x"; }',
+		rule: 'remote-string'
+	},
+	{
+		name: 'an ftp: url()',
+		path: stylesheet,
+		text: 'a { background: url(ftp://x/a.png); }',
+		rule: 'scheme-url'
+	},
+	{
+		name: 'a blob: url()',
+		path: component,
+		text: '<style>div { background: url(blob:x); }</style>',
+		rule: 'scheme-url'
+	},
+	{
+		name: 'a javascript: url() behind a tab',
+		path: stylesheet,
+		text: 'a { background: url(" \\9 javascript:x"); }',
+		rule: 'scheme-url'
+	},
+	{
+		name: 'a scheme in a custom property string',
+		path: stylesheet,
+		text: ':root { --x: "mailto:a@b"; }',
+		rule: 'scheme-string'
+	},
+	{
+		name: 'a link to another origin in the shell',
+		path: shell,
+		text: shellWith('<link rel="stylesheet" href="https://x" />'),
+		rule: 'remote-attribute'
+	},
+	{
+		name: 'a data: link in the shell',
+		path: shell,
+		text: shellWith('<link rel="icon" href="data:x" />'),
+		rule: 'shell-scheme'
+	},
+	{
+		name: 'a mailto: link in the shell',
+		path: shell,
+		text: shellWith('', '<a href="mailto:a@b">a</a>'),
+		rule: 'shell-scheme'
+	},
+	{
+		name: 'a poster with a scheme in the shell',
+		path: shell,
+		text: shellWith('', '<video poster="blob:x"></video>'),
+		rule: 'shell-scheme'
+	},
+	{
+		name: 'a form action with a scheme in the shell',
+		path: shell,
+		text: shellWith('', '<form action=" JAVASCRIPT:x"></form>'),
+		rule: 'shell-scheme'
+	},
+	{
+		name: 'markup in braces in the shell',
+		path: shell,
+		text: shellWith('', `<div>{'<img src="//x" alt="">'}</div>`),
+		rule: 'remote-attribute'
+	},
+	{
+		name: 'markup in an {@html} in the shell',
+		path: shell,
+		text: shellWith(`{@html '<link rel="icon" href="data:x">'}`),
+		rule: 'shell-scheme'
+	},
+	{
+		name: 'markup in a block in the shell',
+		path: shell,
+		text: shellWith('{#if false}<link rel="icon" href="data:x" />{/if}'),
+		rule: 'shell-scheme'
+	},
+	{
+		name: 'a remote string in a shell script',
+		path: shell,
+		text: shellWith("<script>import('https://x/a.js');</script>"),
+		rule: 'remote-script-string'
+	},
+	{
+		name: 'an escaped remote string in a shell script',
+		path: shell,
+		text: shellWith("<script>new Image().src = '\\x2f/x/a.png';</script>"),
+		rule: 'remote-script-string'
+	},
+	{
+		name: 'a shell script that is not JavaScript',
+		path: shell,
+		text: shellWith('<script type="importmap">{"imports": {"x": "./x.js"}}</script>'),
+		rule: 'unparsed'
+	},
+	{
+		name: 'a shell holding a brace stand-in',
+		path: shell,
+		text: shellWith('<title>\uFDD0</title>'),
+		rule: 'unparsed'
+	},
+	{
+		name: 'a remote url() in a shell style',
+		path: shell,
+		text: shellWith('<style>body { background: url(https://x/a.png); }</style>'),
+		rule: 'remote-url'
+	},
+	{
 		name: 'a svelte:head in lib',
 		path: component,
 		text: '<svelte:head><link rel="icon" href="/a.png" /></svelte:head>',
@@ -292,6 +483,46 @@ const passed: readonly Omit<Fixture, 'rule'>[] = [
 		text: "<style>div { background: url(/a.png), url(a.png), url('../b.png'); }</style>"
 	},
 	{ name: 'a relative @import', path: stylesheet, text: "@import './tokens.css';" },
+	{ name: 'a parent @import', path: stylesheet, text: "@import '../x.css';" },
+	{ name: 'a relative @import url()', path: stylesheet, text: '@import url(./x.css) layer(base);' },
+	{
+		name: 'a relative font url()',
+		path: stylesheet,
+		text: "@font-face { font-family: x; src: url(./x.woff2) format('woff2'); }"
+	},
+	{
+		name: 'a data: url() in a .css file',
+		path: stylesheet,
+		text: 'a { background: url(data:image/svg+xml;utf8,<svg/>); }'
+	},
+	{ name: 'a fragment url()', path: stylesheet, text: 'a { filter: url(#f); }' },
+	{
+		name: 'strings that name no scheme',
+		path: stylesheet,
+		text: 'a { font-family: "Inter Display", sans-serif; content: "Step 1 of 2"; }'
+	},
+	{
+		name: 'a word ending in url',
+		path: stylesheet,
+		text: 'a { --curl: x; background: myurl(x); }'
+	},
+	{
+		name: 'a shell like the real one',
+		path: shell,
+		text: shellWith('<meta name="viewport" content="width=device-width, initial-scale=1" />')
+	},
+	{
+		name: 'a shell with a boot script and a style',
+		path: shell,
+		text: shellWith(
+			"<script>\n\t\t\t// read the skin before paint\n\t\t\ttry {\n\t\t\t\tconst skin = { name: localStorage.getItem('zurfur.skin') ?? 'paper' };\n\t\t\t\tdocument.documentElement.dataset.skin = skin.name;\n\t\t\t} catch {}\n\t\t</script>\n\t\t<style>html { background: Canvas; }</style>"
+		)
+	},
+	{
+		name: 'a relative link in the shell',
+		path: shell,
+		text: shellWith('<link rel="icon" href="./favicon.png" />')
+	},
 	{
 		name: 'relative attributes',
 		path: component,
@@ -338,6 +569,25 @@ describe('isRemote', () => {
 		'reads %j as local',
 		(url) => {
 			expect(isRemote(url)).toBe(false);
+		}
+	);
+});
+
+describe('schemeOf', () => {
+	it.each([
+		['https://x', 'https'],
+		['data:x', 'data'],
+		[' \tFTP://x', 'ftp'],
+		['ja\nvascript:x', 'javascript'],
+		['a+b.c-d:x', 'a+b.c-d']
+	])('reads %j as %j', (url, scheme) => {
+		expect(schemeOf(url)).toBe(scheme);
+	});
+
+	it.each(['./a:b', '/a:b', 'a/b:c', '1a:b', '#a:b', '', '//x', 'a b:c'])(
+		'reads no scheme in %j',
+		(url) => {
+			expect(schemeOf(url)).toBeUndefined();
 		}
 	);
 });

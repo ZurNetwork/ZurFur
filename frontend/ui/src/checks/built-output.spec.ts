@@ -1,0 +1,254 @@
+import { afterAll, describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { checkBuild, main, type BuiltRule } from './built-output.ts';
+
+const uiRoot = fileURLToPath(new URL('../../', import.meta.url));
+
+/** Every fixture folder lives under one temporary folder, removed after the run. */
+const scratch = mkdtempSync(path.join(tmpdir(), 'ui-built-output-'));
+
+afterAll(() => {
+	rmSync(scratch, { recursive: true, force: true });
+});
+
+let fixtureCount = 0;
+
+/** Writes a build folder holding `files` (published path to text) and returns its path. */
+function buildFolder(files: Readonly<Record<string, string>>): string {
+	fixtureCount += 1;
+	const folder = path.join(scratch, `build-${String(fixtureCount)}`);
+	for (const [relative, text] of Object.entries(files)) {
+		const file = path.join(folder, relative);
+		mkdirSync(path.dirname(file), { recursive: true });
+		writeFileSync(file, text);
+	}
+	return folder;
+}
+
+/** A page shaped like the gallery build's, with `head` and `body` inside. */
+const page = (head = '', body = ''): string =>
+	[
+		'<!doctype html>',
+		'<html lang="en">',
+		'\t<head>',
+		'\t\t<meta charset="utf-8" />',
+		'\t\t<link href="./_app/immutable/assets/0.D1x2.css" rel="stylesheet">',
+		'\t\t<link rel="modulepreload" href="./_app/immutable/entry/start.Bx9.js">',
+		`\t\t${head}`,
+		'\t</head>',
+		'\t<body data-sveltekit-preload-data="hover">',
+		'\t\t<div style="display: contents"><main><p>{ a brace in text }</p></main>',
+		`\t\t\t${body}`,
+		'\t\t\t<script>',
+		'\t\t\t\t{',
+		'\t\t\t\t\t__sveltekit_x = { base: new URL(".", location).pathname.slice(0, -1) };',
+		'\t\t\t\t\tconst element = document.currentScript.parentElement;',
+		'\t\t\t\t\tPromise.all([import("./_app/immutable/entry/start.Bx9.js")]).then(([kit]) => {',
+		'\t\t\t\t\t\tkit.start(element);',
+		'\t\t\t\t\t});',
+		'\t\t\t\t}',
+		'\t\t\t</script>',
+		'\t\t</div>',
+		'\t</body>',
+		'</html>',
+		''
+	].join('\n');
+
+const cleanCss =
+	"@font-face{font-family:x;src:url(./x.woff2) format('woff2')}body{background:url(data:image/png;base64,AAAA)}a{background:url(../img/a.png)}";
+
+/** A build that passes: relative paths, data: URLs and braces as text. */
+const cleanBuild = {
+	'index.html': page(),
+	'components/button.html': page('<link rel="icon" href="../favicon.png">'),
+	'_app/immutable/assets/0.D1x2.css': cleanCss,
+	'_app/immutable/entry/start.Bx9.js': 'export const start = () => {};'
+};
+
+interface Run {
+	readonly code: number;
+	readonly out: string;
+	readonly err: string;
+}
+
+function run(argv: readonly string[]): Run {
+	let out = '';
+	let err = '';
+	const code = main(
+		argv,
+		{
+			write: (text: string) => {
+				out += text;
+			}
+		},
+		{
+			write: (text: string) => {
+				err += text;
+			}
+		}
+	);
+	return { code, out, err };
+}
+
+function rulesOf(folder: string): readonly BuiltRule[] {
+	return checkBuild(folder).findings.map((finding) => finding.rule);
+}
+
+describe('the built-output check', () => {
+	it('passes a clean build', () => {
+		const folder = buildFolder(cleanBuild);
+		expect(checkBuild(folder)).toEqual({ findings: [], errors: [] });
+		expect(run([folder])).toEqual({ code: 0, out: '', err: '' });
+	});
+
+	const refused: readonly (readonly [string, Readonly<Record<string, string>>, BuiltRule])[] = [
+		[
+			'built CSS with a remote @import',
+			{ 'a.css': "@import 'https://fonts.googleapis.com/css2?family=x';" },
+			'remote-import'
+		],
+		[
+			'built CSS with a remote url()',
+			{ 'a.css': 'a{background:url(https://x/a.png)}' },
+			'remote-url'
+		],
+		[
+			'built CSS with a protocol-relative url() in upper case',
+			{ 'a.css': 'a{background:URL(//x/a.png)}' },
+			'remote-url'
+		],
+		[
+			'built CSS with a remote string',
+			{ 'a.css': 'a{background:image-set("https://x/a.png" 1x)}' },
+			'remote-string'
+		],
+		['built CSS under another case', { 'A.CSS': 'a{background:url(//x/a.png)}' }, 'remote-url'],
+		[
+			'built HTML with a protocol-relative src',
+			{ 'x.html': page('', '<img src="//x" alt="">') },
+			'scheme-attribute'
+		],
+		[
+			'built HTML with a remote href',
+			{ 'x.html': page('<link rel="preconnect" href="https://x">') },
+			'scheme-attribute'
+		],
+		[
+			'built HTML with a data: href',
+			{ 'x.html': page('<link rel="icon" href="data:x">') },
+			'scheme-attribute'
+		],
+		[
+			'built HTML with a scheme in a srcset candidate',
+			{ 'x.html': page('', '<img srcset="./a.png 1x, blob:x 2x" alt="">') },
+			'scheme-attribute'
+		],
+		[
+			'built HTML with a form action',
+			{ 'x.html': page('', '<form action="https://x/post"></form>') },
+			'scheme-attribute'
+		],
+		[
+			'built HTML with a formaction',
+			{ 'x.html': page('', '<button formaction="mailto:a@b">b</button>') },
+			'scheme-attribute'
+		],
+		[
+			'built HTML with a poster',
+			{ 'x.html': page('', '<video poster="https://x/a.png"></video>') },
+			'scheme-attribute'
+		],
+		[
+			'built HTML with an entity-encoded scheme',
+			{ 'x.html': page('', '<img src="&#104;ttps://x/a.png" alt="">') },
+			'scheme-attribute'
+		],
+		[
+			'built HTML with a remote url() in a style attribute',
+			{ 'x.html': page('', '<div style="background:url(https://x/a.png)"></div>') },
+			'remote-url'
+		],
+		[
+			'built HTML with a remote @import in a style element',
+			{ 'x.html': page('<style>@import "//x/a.css";</style>') },
+			'remote-import'
+		],
+		['built HTML that does not parse', { 'x.html': page('', '<img/src="//x">') }, 'unparsed']
+	];
+
+	it.each(refused)('refuses %s', (_label, files, rule) => {
+		const folder = buildFolder({ ...cleanBuild, ...files });
+		expect(rulesOf(folder)).toContain(rule);
+		const { code, out } = run([folder]);
+		expect(code).toBe(1);
+		const [file] = Object.keys(files);
+		expect(out).toContain(path.join(folder, file ?? ''));
+		expect(out).toContain(`[${rule}]`);
+	});
+
+	it('names what it found', () => {
+		const folder = buildFolder({ ...cleanBuild, 'a.css': 'a{background:url(https://x/a.png)}' });
+		expect(run([folder]).out).toBe(
+			`${path.join(folder, 'a.css')}:1:3: [remote-url] background: url(https://x/a.png)\n`
+		);
+	});
+
+	it('refuses a link, which a server would follow', () => {
+		const folder = buildFolder(cleanBuild);
+		const outside = buildFolder({ 'evil.css': 'a{background:url(https://x/a.png)}' });
+		symlinkSync(path.join(outside, 'evil.css'), path.join(folder, 'linked.css'));
+		symlinkSync(outside, path.join(folder, 'linked-folder'));
+		expect(rulesOf(folder)).toEqual(['link', 'link']);
+		expect(run([folder]).code).toBe(1);
+	});
+
+	it.each([
+		['a missing folder', () => path.join(scratch, 'missing')],
+		['a file', () => path.join(buildFolder({ 'a.css': '' }), 'a.css')],
+		['a folder with no page', () => buildFolder({ 'a.css': 'a{color:red}' })],
+		[
+			'a link to a build',
+			() => {
+				const link = path.join(scratch, `link-${String(fixtureCount)}`);
+				symlinkSync(buildFolder(cleanBuild), link);
+				return link;
+			}
+		]
+	])('exits 2 for %s', (_label, folderOf) => {
+		const { code, err } = run([folderOf()]);
+		expect(code).toBe(2);
+		expect(err).toMatch(/^built-output: /);
+	});
+
+	it('exits 2 for an unreadable file', () => {
+		const folder = buildFolder(cleanBuild);
+		const file = path.join(folder, 'index.html');
+		chmodSync(file, 0o000);
+		const { code, err } = run([folder]);
+		chmodSync(file, 0o644);
+		expect(code).toBe(2);
+		expect(err).toContain(file);
+	});
+
+	it.each([[[]], [['a', 'b']]])('exits 2 for the arguments %j', (argv) => {
+		const { code, err } = run(argv);
+		expect(code).toBe(2);
+		expect(err).toContain('usage');
+	});
+
+	it.each([
+		['a clean build', () => buildFolder(cleanBuild), 0],
+		['a remote url()', () => buildFolder({ ...cleanBuild, 'a.css': 'a{background:url(//x)}' }), 1],
+		['a missing folder', () => path.join(scratch, 'missing'), 2]
+	])('runs under Node itself on %s', (_label, folderOf, expected) => {
+		const result = spawnSync(process.execPath, ['src/checks/built-output.ts', folderOf()], {
+			cwd: uiRoot,
+			encoding: 'utf8'
+		});
+		expect(result.status, result.stderr).toBe(expected);
+	});
+});

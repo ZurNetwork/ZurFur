@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { ESLint, type Linter } from 'eslint';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
 	boundaryRules,
 	fileSetOf,
 	inlineHandlerMessage,
+	rawHtmlMessage,
 	scriptMarkupMessage
 } from '../../eslint.config.js';
 import { isRemote } from './scan/network';
@@ -30,7 +31,19 @@ const planted = {
 	spec: 'src/lib/planted.spec.ts'
 } as const;
 
-const plantedPaths = Object.values(planted);
+/**
+ * Paths a later change may create: planted while they are not on disk, and
+ * linted against the real project once they are, so the cases hold either way.
+ */
+const plannedOrReal = {
+	skinStore: 'src/gallery/skin-store.ts',
+	colourPage: 'src/routes/components/colour/+page.svelte',
+	environment: 'src/lib/styles/environment.ts'
+} as const;
+
+const notOnDisk = (relative: string): boolean => !existsSync(`${uiRoot}${relative}`);
+
+const plantedPaths = [...Object.values(planted), ...Object.values(plannedOrReal).filter(notOnDisk)];
 
 /** Real files a case lints planted text at; the file on disk is never read or touched. */
 const real = {
@@ -80,9 +93,19 @@ const boundaryRuleIds: ReadonlySet<string> = new Set([
 async function lintPlanted(filePath: string, code: string): Promise<readonly Linter.LintMessage[]> {
 	const [result] = await plantedLinter.lintText(code, { filePath });
 	if (result === undefined) throw new Error(`no lint result for ${filePath}`);
+	if (!notOnDisk(filePath)) await restoreFromDisk(filePath);
 	const fatal = result.messages.filter((message) => message.fatal === true);
 	expect(fatal).toEqual([]);
 	return result.messages;
+}
+
+/**
+ * Lints a real file's own text at its path again. The TypeScript project
+ * service keeps the last text it was handed for a path, so after a plant over
+ * a real file every file importing it would otherwise see the planted text.
+ */
+async function restoreFromDisk(filePath: string): Promise<void> {
+	await plantedLinter.lintText(readFileSync(`${uiRoot}${filePath}`, 'utf8'), { filePath });
 }
 
 async function expectRefused(filePath: string, code: string, ruleId: string): Promise<void> {
@@ -173,6 +196,57 @@ const localSamples: readonly string[] = [
 	''
 ];
 
+/** Storage reached as a member, past what the globals rule sees. */
+const storageMemberRefusals: readonly Case[] = [
+	['localStorage on any window', 'export const r = (w: Window) => w.localStorage;', PROPERTIES],
+	[
+		'a destructured localStorage',
+		'export const r = (w: Window) => {\n\tconst { localStorage: s } = w;\n\treturn s;\n};',
+		PROPERTIES
+	],
+	["w['sessionStorage']", "export const r = (w: Window) => w['sessionStorage'];", PROPERTIES],
+	['window.document.cookie', 'export const r = window.document.cookie;', PROPERTIES],
+	['cookie on any document', 'export const r = (d: Document) => d.cookie;', PROPERTIES]
+];
+
+/** The script-side twins of {@html}. */
+const htmlSinkRefusals: readonly Case[] = [
+	['innerHTML', "export const r = (e: Element) => {\n\te.innerHTML = 'x';\n};", PROPERTIES],
+	['outerHTML', "export const r = (e: Element) => {\n\te.outerHTML = 'x';\n};", PROPERTIES],
+	[
+		'insertAdjacentHTML',
+		"export const r = (e: Element) => {\n\te.insertAdjacentHTML('beforeend', 'x');\n};",
+		PROPERTIES
+	],
+	[
+		'createContextualFragment',
+		"export const r = (range: Range) => range.createContextualFragment('x');",
+		PROPERTIES
+	],
+	['document.write', "export const r = () => {\n\tdocument.write('x');\n};", PROPERTIES]
+];
+
+/** The host's own spellings of its two subpath imports, and the rest it refuses. */
+const hostSubpathAllowed: readonly Allowed[] = [
+	['@zurfur/ui/styles', "import '@zurfur/ui/styles';"],
+	['@zurfur/ui/tokens.json', "import tokens from '@zurfur/ui/tokens.json';\nexport { tokens };"]
+];
+
+const hostDeepImportRefusals: readonly Case[] = [
+	['a file inside the styles', "import '@zurfur/ui/src/lib/styles/tokens.css';", IMPORTS],
+	['a path below styles', "import '@zurfur/ui/styles/x';", IMPORTS],
+	['styles with a trailing slash', "import '@zurfur/ui/styles/';", IMPORTS],
+	[
+		'tokens.json?raw',
+		"import tokens from '@zurfur/ui/tokens.json?raw';\nexport { tokens };",
+		IMPORTS
+	],
+	['styles?inline', "import '@zurfur/ui/styles?inline';", IMPORTS],
+	['styles in another letter case', "import '@zurfur/ui/Styles';", IMPORTS],
+	['the package in another letter case', "import '@Zurfur/UI/styles';", IMPORTS],
+	['a re-export from inside the package', "export * from '@zurfur/ui/src/lib/x';", IMPORTS]
+];
+
 const componentRefusals: readonly Case[] = [
 	// Network and code loading.
 	['bare fetch', "export const r = fetch('/x');", GLOBALS],
@@ -198,6 +272,8 @@ const componentRefusals: readonly Case[] = [
 	['caches', 'export const r = caches;', GLOBALS],
 	['cookieStore', 'export const r: unknown = cookieStore;', GLOBALS],
 	['document.cookie', 'export const r = document.cookie;', PROPERTIES],
+	...storageMemberRefusals,
+	...htmlSinkRefusals,
 	// The server half's environment.
 	['process.env', 'export const r = process.env.X;', GLOBALS],
 	['process.env, by property', 'export const r = process.env.X;', PROPERTIES],
@@ -234,6 +310,12 @@ const componentRefusals: readonly Case[] = [
 	['a path through node_modules', "import '../../node_modules/web/src/lib/server/x';", IMPORTS],
 	['a path into web', "import '../../../web/src/lib/server/api/generated/x';", IMPORTS],
 	['a deep import of the package', "import '@zurfur/ui/src/lib/x';", IMPORTS],
+	["the host's @zurfur/ui/styles", "import '@zurfur/ui/styles';", IMPORTS],
+	[
+		"the host's @zurfur/ui/tokens.json",
+		"import tokens from '@zurfur/ui/tokens.json';\nexport { tokens };",
+		IMPORTS
+	],
 	// Code Vite turns into a Worker or a WebAssembly loader.
 	['?worker', "import W from './w.ts?worker';\nexport { W };", IMPORTS],
 	['?sharedworker', "import W from './w.ts?sharedworker';\nexport { W };", IMPORTS],
@@ -263,7 +345,7 @@ const componentRefusals: readonly Case[] = [
 
 describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 	it('plants only at paths that are not on disk', () => {
-		const onDisk = plantedPaths.filter((relative) => existsSync(`${uiRoot}${relative}`));
+		const onDisk = plantedPaths.filter((relative) => !notOnDisk(relative));
 		expect(onDisk).toEqual([]);
 	});
 
@@ -307,6 +389,49 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 			]
 		])('refuses %s', async (_label, code, ruleId) => {
 			await expectRefused(planted.componentSvelte, code, ruleId);
+		});
+	});
+
+	describe('no file holds raw HTML', () => {
+		const atHtml = '<script lang="ts">\n\tconst x = \'<b>x</b>\';\n</script>\n\n{@html x}\n';
+		const bound = (name: string): string =>
+			`<script lang="ts">\n\tlet x = $state('');\n</script>\n\n<div contenteditable="true" bind:${name}={x}></div>\n`;
+		const svelteSets = [
+			['a component', planted.componentSvelte],
+			['the motion adapter', planted.motionSvelte],
+			['the lazy loader', planted.lazySvelte],
+			['a route', planted.routesSvelte],
+			['a gallery page', plannedOrReal.colourPage],
+			['the gallery frame', planted.gallerySvelte]
+		] as const;
+
+		it.each(svelteSets)('refuses {@html x} in %s', async (_label, filePath) => {
+			await expectRefused(filePath, atHtml, 'svelte/no-at-html-tags');
+		});
+
+		it.each(
+			svelteSets.flatMap(([label, filePath]) => [
+				[`bind:innerHTML in ${label}`, filePath, bound('innerHTML')] as const,
+				[`bind:outerHTML in ${label}`, filePath, bound('outerHTML')] as const
+			])
+		)('refuses %s', async (_label, filePath, code) => {
+			await expectSyntaxMessage(filePath, code, rawHtmlMessage);
+		});
+
+		it('allows bind:textContent', async () => {
+			await expectAllowed(planted.componentSvelte, bound('textContent'));
+		});
+
+		it.each([
+			['a component', 'src/lib/X.svelte'],
+			['the motion adapter', 'src/lib/motion/X.svelte'],
+			['the lazy loader', 'src/lib/lazy/X.svelte'],
+			['a route', 'src/routes/X.svelte'],
+			['the gallery frame', 'src/gallery/X.svelte'],
+			['a check', 'src/checks/X.svelte']
+		])('switches {@html} off nowhere: %s', async (_label, filePath) => {
+			const config = (await realLinter.calculateConfigForFile(filePath)) as Linter.Config;
+			expect(config.rules?.['svelte/no-at-html-tags']).toEqual([2]);
 		});
 	});
 
@@ -392,18 +517,28 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 	});
 
 	const hostAllowed: readonly Allowed[] = [
-		['localStorage', "export const r = localStorage.getItem('x');"],
 		['$app/paths', "import { resolve } from '$app/paths';\nexport { resolve };"],
 		['@zurfur/ui', "import * as ui from '@zurfur/ui';\nexport { ui };"],
 		['$gallery/…', "import { groupNames } from '$gallery/groups';\nexport { groupNames };"],
-		['?raw', "import text from './a.txt?raw';\nexport { text };"]
+		['?raw', "import text from './a.txt?raw';\nexport { text };"],
+		...hostSubpathAllowed
 	];
 
-	const hostRefusals: readonly Case[] = [
+	/** What every file of the host refuses, its stores included. */
+	const everyHostRefusal: readonly Case[] = [
 		['fetch', "export const r = fetch('/x');", GLOBALS],
 		['new WebSocket', "export const r = new WebSocket('wss://x');", GLOBALS],
 		['sessionStorage', 'export const r = sessionStorage;', GLOBALS],
+		['globalThis.sessionStorage', 'export const r = globalThis.sessionStorage;', GLOBALS],
+		['indexedDB', 'export const r = indexedDB;', GLOBALS],
+		['caches', 'export const r = caches;', GLOBALS],
+		['cookieStore', 'export const r: unknown = cookieStore;', GLOBALS],
 		['document.cookie', 'export const r = document.cookie;', PROPERTIES],
+		["document['cookie']", "export const r = document['cookie'];", PROPERTIES],
+		["w['sessionStorage']", "export const r = (w: Window) => w['sessionStorage'];", PROPERTIES],
+		['window.document.cookie', 'export const r = window.document.cookie;', PROPERTIES],
+		...htmlSinkRefusals,
+		...hostDeepImportRefusals,
 		['process.env', 'export const r = process.env.X;', GLOBALS],
 		['import.meta.env', 'export const r: unknown = import.meta.env;', SYNTAX],
 		['$lib/y', "import { x } from '$lib/y';\nexport { x };", IMPORTS],
@@ -428,6 +563,58 @@ describe('the boundary lint over planted text', { timeout: 120_000 }, () => {
 		['el.animate()', 'export const r = document.body.animate([], 100);', PROPERTIES],
 		['throw', "export function f(): never {\n\tthrow new Error('x');\n}", SYNTAX]
 	];
+
+	/** localStorage, which only the gallery's stores may touch. */
+	const localStorageRefusals: readonly Case[] = [
+		['localStorage', "export const r = localStorage.getItem('x');", GLOBALS],
+		['window.localStorage', 'export const r = window.localStorage;', GLOBALS],
+		['localStorage on any window', 'export const r = (w: Window) => w.localStorage;', PROPERTIES],
+		[
+			'a destructured localStorage',
+			'export const r = (w: Window) => {\n\tconst { localStorage: s } = w;\n\treturn s;\n};',
+			PROPERTIES
+		]
+	];
+
+	const hostRefusals: readonly Case[] = [...everyHostRefusal, ...localStorageRefusals];
+
+	describe("the gallery's stores (src/gallery/skin-store.ts)", () => {
+		it.each([
+			['localStorage', "export const r = localStorage.getItem('x');"],
+			['window.localStorage', "export const r = window.localStorage.setItem('x', 'y');"],
+			['localStorage on any window', 'export const r = (w: Window) => w.localStorage;'],
+			...hostSubpathAllowed
+		] as const)('allows %s', async (_label, code) => {
+			await expectAllowed(plannedOrReal.skinStore, code);
+		});
+
+		it.each([
+			...everyHostRefusal,
+			['process.env', 'export const r = process.env.X;', GLOBALS],
+			[
+				"import.meta.glob('/src/routes/**/meta.ts')",
+				"export const r = import.meta.glob('/src/routes/**/meta.ts', { eager: true });",
+				SYNTAX
+			]
+		] as const)('refuses %s', async (_label, code, ruleId) => {
+			await expectRefused(plannedOrReal.skinStore, code, ruleId);
+		});
+	});
+
+	describe('localStorage outside the stores', () => {
+		it.each([
+			['a gallery page', plannedOrReal.colourPage, 'svelte'],
+			['the styles', plannedOrReal.environment, 'ts'],
+			['another file in the frame', 'src/gallery/x.ts', 'ts'],
+			['a route', planted.routes, 'ts']
+		] as const)('refuses localStorage in %s', async (_label, filePath, kind) => {
+			const code =
+				kind === 'svelte'
+					? '<script lang="ts">\n\tconst r = localStorage.getItem(\'x\');\n</script>\n\n{r}\n'
+					: "export const r = localStorage.getItem('x');";
+			await expectRefused(filePath, code, GLOBALS);
+		});
+	});
 
 	const galleryAllowed: readonly Allowed[] = [
 		...hostAllowed,
@@ -1069,8 +1256,14 @@ describe('the file sets', { timeout: 120_000 }, () => {
 		['src/lib/lazy/x.ts', 'lazy'],
 		['src/gallery/x.ts', 'gallery'],
 		['src/gallery/X.svelte', 'gallery'],
+		['src/gallery/other.ts', 'gallery'],
+		['src/gallery/skin-store.svelte.ts', 'gallery'],
+		['src/gallery/deep/skin-store.ts', 'gallery'],
+		['src/gallery/skin-store.ts', 'storage'],
 		['src/routes/x.ts', 'routes'],
-		['src/routes/components/button/+page.svelte', 'routes']
+		['src/routes/components/button/+page.svelte', 'routes'],
+		['src/routes/components/colour/+page.svelte', 'routes'],
+		['src/lib/styles/environment.ts', 'components']
 	] as const)('puts %s under the %s rules', async (filePath, name) => {
 		expect(await effectiveBoundary(filePath)).toEqual(expectedBoundary(name));
 	});
@@ -1082,6 +1275,7 @@ describe('the file sets', { timeout: 120_000 }, () => {
 		['src/lib/X.svelte.spec.ts'],
 		['src/lib/motion/x.spec.ts'],
 		['src/gallery/x.spec.ts'],
+		['src/gallery/skin-store.spec.ts'],
 		['src/routes/x.svelte.spec.ts']
 	])('leaves the check or spec %s free of the boundary rules', async (filePath) => {
 		expect(await effectiveBoundary(filePath)).toEqual(noBoundary);
@@ -1104,7 +1298,12 @@ describe('the file sets', { timeout: 120_000 }, () => {
 		'src/lib/X.svelte.spec.ts',
 		'src/routes/x.svelte.spec.ts',
 		'src/x.mjs',
-		'src/gallery/x.cts'
+		'src/gallery/x.cts',
+		...Object.values(plannedOrReal),
+		'src/gallery/other.ts',
+		'src/gallery/skin-store.spec.ts',
+		'src/gallery/skin-store.svelte.ts',
+		'src/gallery/deep/skin-store.ts'
 	])("classifies %s as ESLint's own matching does", async (filePath) => {
 		const name = fileSetOf(filePath);
 		expect(name).toBeDefined();

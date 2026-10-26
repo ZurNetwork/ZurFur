@@ -26,10 +26,25 @@ interface Manifest {
 	readonly runtime: ReadonlySet<string>;
 	/** `devDependencies`: what only the host, the checks and the specs may import. */
 	readonly dev: ReadonlySet<string>;
+	/** The specifiers the package's own exports map answers: its name, and `name/sub` for each `./sub`. */
+	readonly exported: ReadonlySet<string>;
 }
 
-function readManifest(): Manifest {
-	const parsed: unknown = JSON.parse(readFileSync(path.join(uiRoot, 'package.json'), 'utf8'));
+/**
+ * The specifiers an exports map answers, read as Node reads it: a string, or
+ * an object of conditions alone, stands for `.`; otherwise each `.` or `./sub`
+ * key. A key with a `*` names a pattern, which no specifier here matches.
+ */
+function exportedSpecifiers(name: string, exportsField: unknown): ReadonlySet<string> {
+	if (typeof exportsField === 'string') return new Set([name]);
+	if (!isFields(exportsField)) return new Set();
+	const keys = Object.keys(exportsField);
+	if (keys.every((key) => !key.startsWith('.'))) return new Set([name]);
+	const subpaths = keys.filter((key) => key === '.' || key.startsWith('./'));
+	return new Set(subpaths.map((key) => (key === '.' ? name : `${name}/${key.slice(2)}`)));
+}
+
+function manifestOf(parsed: unknown): Manifest {
 	if (!isFields(parsed) || typeof parsed.name !== 'string') {
 		throw new Error('package.json has no name');
 	}
@@ -37,7 +52,17 @@ function readManifest(): Manifest {
 		...namesIn(parsed, 'dependencies'),
 		...namesIn(parsed, 'peerDependencies')
 	]);
-	return { name: parsed.name, runtime, dev: namesIn(parsed, 'devDependencies') };
+	return {
+		name: parsed.name,
+		runtime,
+		dev: namesIn(parsed, 'devDependencies'),
+		exported: exportedSpecifiers(parsed.name, parsed.exports)
+	};
+}
+
+function readManifest(): Manifest {
+	const parsed: unknown = JSON.parse(readFileSync(path.join(uiRoot, 'package.json'), 'utf8'));
+	return manifestOf(parsed);
 }
 
 /** Which rules a file answers to, by where it sits under src/. */
@@ -161,7 +186,10 @@ function refusalOf(file: SourceFile, specifier: string, manifest: Manifest): str
 	}
 	if (aliasPattern.test(specifier)) return undefined;
 	const name = packageName(specifier);
-	if (name === manifest.name || manifest.runtime.has(name)) return undefined;
+	if (name === manifest.name) {
+		return manifest.exported.has(specifier) ? undefined : 'a path the package does not export';
+	}
+	if (manifest.runtime.has(name)) return undefined;
 	if (manifest.dev.has(name)) {
 		return kind === 'component' ? 'a dev-only package in component code' : undefined;
 	}
@@ -221,6 +249,23 @@ const manifest = readManifest();
 function refusalsFor(relative: string, text: string): readonly ImportRefusal[] {
 	const file: SourceFile = { relative, text };
 	return importRefusals([file], manifest);
+}
+
+/** ui's manifest with the two subpaths the host imports in its exports map. */
+const manifestWithSubpaths = manifestOf({
+	name: manifest.name,
+	peerDependencies: Object.fromEntries([...manifest.runtime].map((name) => [name, '*'])),
+	devDependencies: Object.fromEntries([...manifest.dev].map((name) => [name, '*'])),
+	exports: {
+		'.': { types: './src/lib/index.ts', svelte: './src/lib/index.ts' },
+		'./styles': { types: './src/lib/styles/index.ts', svelte: './src/lib/styles/index.ts' },
+		'./tokens.json': './src/lib/styles/tokens.json'
+	}
+});
+
+function reasonsWithSubpaths(relative: string, text: string): readonly string[] {
+	const file: SourceFile = { relative, text };
+	return importRefusals([file], manifestWithSubpaths).map((refusal) => refusal.reason);
 }
 
 describe('declared imports', () => {
@@ -316,6 +361,54 @@ describe('declared imports', () => {
 		['a check importing an asset', 'checks/x.spec.ts', "import './a.svg';"]
 	])('allows %s', (_label, relative, text) => {
 		expect(refusalsFor(relative, text)).toEqual([]);
+	});
+
+	describe("the package's own exports", () => {
+		it.each([
+			['the styles in a route', 'routes/+layout.ts', "import '@zurfur/ui/styles';"],
+			['the styles in the frame', 'gallery/x.ts', "import '@zurfur/ui/styles';"],
+			[
+				'the tokens in a route',
+				'routes/components/colour/x.ts',
+				"import tokens from '@zurfur/ui/tokens.json';"
+			],
+			['the tokens in the frame', 'gallery/x.ts', "import tokens from '@zurfur/ui/tokens.json';"],
+			['the public entry in a route', 'routes/x.ts', "import * as ui from '@zurfur/ui';"]
+		])('allows %s, once the exports map names it', (_label, relative, text) => {
+			expect(reasonsWithSubpaths(relative, text)).toEqual([]);
+		});
+
+		it.each([
+			['a file inside the styles', "import '@zurfur/ui/src/lib/styles/tokens.css';"],
+			['a path below the styles', "import '@zurfur/ui/styles/x';"],
+			['the tokens with a query', "import tokens from '@zurfur/ui/tokens.json?raw';"],
+			['the styles in another letter case', "import '@zurfur/ui/Styles';"],
+			['the styles with a trailing slash', "import '@zurfur/ui/styles/';"]
+		])('refuses %s, a path the package does not export', (_label, text) => {
+			expect(reasonsWithSubpaths('routes/x.ts', text)).toEqual([
+				'a path the package does not export'
+			]);
+		});
+
+		it("refuses a subpath the real exports map doesn't name", () => {
+			const reasons = refusalsFor('routes/x.ts', "import '@zurfur/ui/src/lib/x';").map(
+				(refusal) => refusal.reason
+			);
+			expect(reasons).toEqual(['a path the package does not export']);
+		});
+
+		it.each([
+			['a string', './src/lib/index.ts', ['@zurfur/ui']],
+			['conditions alone', { types: './a.ts', svelte: './a.ts' }, ['@zurfur/ui']],
+			[
+				'subpaths',
+				{ '.': './a.ts', './styles': './s.ts', './tokens.json': './t.json' },
+				['@zurfur/ui', '@zurfur/ui/styles', '@zurfur/ui/tokens.json']
+			],
+			['no exports map', undefined, []]
+		])('reads an exports map of %s', (_label, exportsField, expected) => {
+			expect([...exportedSpecifiers('@zurfur/ui', exportsField)]).toEqual(expected);
+		});
 	});
 
 	it('refuses an undeclared package in a svelte script', () => {

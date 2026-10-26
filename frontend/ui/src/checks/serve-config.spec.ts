@@ -113,6 +113,96 @@ describe('the serve config', () => {
 	});
 });
 
+/** The values of `extends` that inherit the root config, and with it its loopback `server`. */
+const inheritsRoot: readonly unknown[] = ['./vite.config.ts', true];
+
+/** True when a project runs its tests in a browser, served by a Vite server of its own. */
+function runsInBrowser(project: Fields): boolean {
+	const test = isFields(project.test) ? project.test : {};
+	const browser = isFields(test.browser) ? test.browser : {};
+	return browser.enabled !== undefined && browser.enabled !== false;
+}
+
+/**
+ * Why one Vitest project could serve beyond loopback. A browser project's
+ * server takes the root `server` through `extends`, and Vitest lays the
+ * project's own `server` and `browser.api` over it, so neither may name a
+ * host or open the server to other origins. A project not written inline
+ * (a path or a function) can't be read, so it is refused.
+ */
+function projectRefusals(project: unknown): readonly string[] {
+	if (!isFields(project)) return ['a project not written inline'];
+	if (!runsInBrowser(project)) return [];
+	const refusals: string[] = [];
+	if (!inheritsRoot.includes(project.extends)) refusals.push('it does not extend the root config');
+	const server = isFields(project.server) ? project.server : {};
+	for (const key of ['host', ...openingKeys]) {
+		if (Object.hasOwn(server, key)) refusals.push(`it sets server.${key}`);
+	}
+	const test = isFields(project.test) ? project.test : {};
+	const browser = isFields(test.browser) ? test.browser : {};
+	const api = isFields(browser.api) ? browser.api : {};
+	for (const key of ['host', ...openingKeys]) {
+		if (Object.hasOwn(api, key)) refusals.push(`it sets browser.api.${key}`);
+	}
+	return refusals;
+}
+
+function vitestProjects(viteConfig: unknown): readonly unknown[] {
+	const test = isFields(viteConfig) ? viteConfig.test : undefined;
+	const projects = isFields(test) ? test.projects : undefined;
+	return Array.isArray(projects) ? projects : [];
+}
+
+describe("the browser tests' servers", () => {
+	const projects = vitestProjects(config);
+
+	it('finds a browser project to check', () => {
+		const browserProjects = projects.filter(
+			(project) => isFields(project) && runsInBrowser(project)
+		);
+		expect(browserProjects).not.toEqual([]);
+	});
+
+	it('serves every browser project on loopback, with no host of its own', () => {
+		expect(projects.flatMap(projectRefusals)).toEqual([]);
+	});
+
+	const browserProject = {
+		extends: './vite.config.ts',
+		server: { strictPort: false },
+		test: { name: 'x', browser: { enabled: true } }
+	};
+
+	it.each([
+		['a server host', { ...browserProject, server: { host: '0.0.0.0' } }, 'server.host'],
+		['a loopback server host', { ...browserProject, server: { host: loopback } }, 'server.host'],
+		['allowedHosts', { ...browserProject, server: { allowedHosts: true } }, 'server.allowedHosts'],
+		[
+			'a browser api host',
+			{ ...browserProject, test: { browser: { enabled: true, api: { host: '0.0.0.0' } } } },
+			'browser.api.host'
+		],
+		['no extends', { ...browserProject, extends: undefined }, 'does not extend'],
+		['another config', { ...browserProject, extends: './other.config.ts' }, 'does not extend'],
+		['a project by path', 'packages/*', 'not written inline']
+	])('refuses %s', (_label, project, reason) => {
+		expect(projectRefusals(project)).toContainEqual(expect.stringContaining(reason));
+	});
+
+	it.each([
+		['a browser project like the real one', browserProject],
+		[
+			'a browser api on a port',
+			{ ...browserProject, test: { browser: { enabled: true, api: 63315 } } }
+		],
+		['a node project with its own host', { server: { host: '0.0.0.0' }, test: { name: 'n' } }],
+		['a disabled browser', { server: { host: '0.0.0.0' }, test: { browser: { enabled: false } } }]
+	])('passes %s', (_label, project) => {
+		expect(projectRefusals(project)).toEqual([]);
+	});
+});
+
 /**
  * Names the vite config never holds, as a key, a property access, an identifier or a
  * string: `files` lets Kit rename the hooks and the service worker past the

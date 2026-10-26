@@ -1,27 +1,42 @@
 /**
  * The network scan: markup and CSS never fetch from another origin. It
- * refuses a remote `url()` and a remote string in any declaration (which
- * covers `image-set()`), a remote `@import`, a remote value in a URL-bearing
- * attribute (`src`, `href`, `srcset`, `action`, …; static text and the string
- * literals in its expressions), any `<svelte:head>` outside the gallery host
- * (`src/routes/`, `src/gallery/`), and anything in the host's head but
- * `<title>` and `<meta name>`. Remote means `http:`, `https:` or
- * protocol-relative (`//`, `\\`), read the way a browser reads a URL.
+ * refuses a `url()` or a string in any declaration (which covers
+ * `image-set()`) that is remote or names a scheme other than `data:`, an
+ * `@import` of anything but a relative path (`./`, `../`), a remote value in
+ * a URL-bearing attribute (`src`, `href`, `srcset`, `action`, …; static text
+ * and the string literals in its expressions), any `<svelte:head>` outside
+ * the gallery host (`src/routes/`, `src/gallery/`), and anything in the
+ * host's head but `<title>` and `<meta name>`. In an `.html` file, the page
+ * shell, a URL-bearing attribute names no scheme at all, and no string in a
+ * `<script>` is remote. Remote means `http:`, `https:` or protocol-relative
+ * (`//`, `\\`), read the way a browser reads a URL.
  *
  * Not caught: a URL built at run time from an expression, a spread
  * attribute, and a `<svelte:element this="style">`.
  */
-import type { Head, ParsedSource, Place, UrlAttribute, UrlAttributeName } from './parse';
-import { cssValueParts } from './parse';
+import type {
+	Head,
+	ParsedSource,
+	Place,
+	ScriptElement,
+	UrlAttribute,
+	UrlAttributeName
+} from './parse.ts';
+import { cssValueParts } from './parse.ts';
 
 /** The folders of the gallery host, the one place a `<svelte:head>` may live. */
 export const hostFolders = ['src/routes/', 'src/gallery/'] as const;
 
 export type NetworkRule =
 	| 'remote-url'
+	| 'scheme-url'
 	| 'remote-string'
+	| 'scheme-string'
 	| 'remote-import'
+	| 'non-relative-import'
 	| 'remote-attribute'
+	| 'shell-scheme'
+	| 'remote-script-string'
 	| 'head-outside-host'
 	| 'head-content'
 	| 'unparsed';
@@ -38,11 +53,42 @@ export interface NetworkFinding {
  * leading controls and spaces trimmed first, as the URL parser does.
  */
 export function isRemote(url: string): boolean {
+	const read = urlReading(url);
+	return read.startsWith('http:') || read.startsWith('https:') || /^[/\\]{2}/.test(read);
+}
+
+/** `url` as the URL parser reads its start: tabs and newlines dropped, leading controls and spaces trimmed, in lower case. */
+function urlReading(url: string): string {
 	const unbroken = url.replace(/[\t\n\r]/g, '');
 	let start = 0;
 	while (start < unbroken.length && unbroken.charCodeAt(start) <= 0x20) start += 1;
-	const read = unbroken.slice(start).toLowerCase();
-	return read.startsWith('http:') || read.startsWith('https:') || /^[/\\]{2}/.test(read);
+	return unbroken.slice(start).toLowerCase();
+}
+
+/** The scheme `url` starts with, in lower case, read as the URL parser reads it; undefined when it has none. */
+export function schemeOf(url: string): string | undefined {
+	return /^([a-z][a-z0-9+.-]*):/.exec(urlReading(url))?.[1];
+}
+
+/** True when `url` is remote or names any scheme, `data:` included. */
+export function namesAnotherPlace(url: string): boolean {
+	return isRemote(url) || schemeOf(url) !== undefined;
+}
+
+/** True when `url` names a scheme other than `data:` without being remote: `ftp:`, `blob:`, `mailto:`, … */
+function namesAnotherScheme(url: string): boolean {
+	const scheme = schemeOf(url);
+	return !isRemote(url) && scheme !== undefined && scheme !== 'data';
+}
+
+/** True when an `@import` target is a relative path, exactly as written: `./…` or `../…`. */
+function isRelativeImport(target: string): boolean {
+	return target.startsWith('./') || target.startsWith('../');
+}
+
+/** True for an `.html` file, the page shell. */
+function isShell(path: string): boolean {
+	return path.toLowerCase().endsWith('.html');
 }
 
 function isHost(path: string): boolean {
@@ -69,15 +115,37 @@ function attributeUrls(attribute: UrlAttributeName, value: string): readonly str
 	}
 }
 
-function attributeFindings(attribute: UrlAttribute): readonly NetworkFinding[] {
-	return attribute.values
-		.flatMap((value) => attributeUrls(attribute.attribute, value))
-		.filter(isRemote)
-		.map((url) => ({
-			rule: 'remote-attribute',
-			found: `<${attribute.element} ${attribute.attribute}="${url.trim()}">`,
-			place: attribute.place
-		}));
+/** The URLs one attribute holds, each as the browser reads it. */
+export function urlsOf(attribute: UrlAttribute): readonly string[] {
+	return attribute.values.flatMap((value) => attributeUrls(attribute.attribute, value));
+}
+
+function attributeFindings(attribute: UrlAttribute, inShell: boolean): readonly NetworkFinding[] {
+	return urlsOf(attribute).flatMap((url): readonly NetworkFinding[] => {
+		const found = `<${attribute.element} ${attribute.attribute}="${url.trim()}">`;
+		if (isRemote(url)) return [{ rule: 'remote-attribute', found, place: attribute.place }];
+		if (inShell && schemeOf(url) !== undefined) {
+			return [{ rule: 'shell-scheme', found, place: attribute.place }];
+		}
+		return [];
+	});
+}
+
+/**
+ * The page shell's scripts, which lint never reads: each is JavaScript, and
+ * no string in it is remote.
+ */
+function scriptFindings(script: ScriptElement): readonly NetworkFinding[] {
+	switch (script.kind) {
+		case 'unparsed':
+			return [{ rule: 'unparsed', found: `<script>: ${script.reason}`, place: script.place }];
+		case 'javascript':
+			return script.strings.filter(isRemote).map((text) => ({
+				rule: 'remote-script-string',
+				found: `<script> "${text.trim().slice(0, 60)}"`,
+				place: script.place
+			}));
+	}
 }
 
 function isAllowedInHostHead(child: Head['children'][number]): boolean {
@@ -113,27 +181,41 @@ export function networkFindings(source: ParsedSource): readonly NetworkFinding[]
 	}));
 	const inDeclarations = source.declarations.flatMap((declaration) => {
 		const { urls, strings } = cssValueParts(declaration.value);
-		const remoteUrls = urls.filter(isRemote).map((url): NetworkFinding => ({
-			rule: 'remote-url',
-			found: `${declaration.property}: url(${url})`,
-			place: declaration.place
-		}));
-		const remoteStrings = strings.filter(isRemote).map((text): NetworkFinding => ({
-			rule: 'remote-string',
-			found: `${declaration.property}: "${text}"`,
-			place: declaration.place
-		}));
-		return [...remoteUrls, ...remoteStrings];
+		const urlFindings = urls.flatMap((url): readonly NetworkFinding[] => {
+			const found = `${declaration.property}: url(${url})`;
+			if (isRemote(url)) return [{ rule: 'remote-url', found, place: declaration.place }];
+			if (namesAnotherScheme(url)) return [{ rule: 'scheme-url', found, place: declaration.place }];
+			return [];
+		});
+		const stringFindings = strings.flatMap((text): readonly NetworkFinding[] => {
+			const found = `${declaration.property}: "${text}"`;
+			if (isRemote(text)) return [{ rule: 'remote-string', found, place: declaration.place }];
+			if (namesAnotherScheme(text)) {
+				return [{ rule: 'scheme-string', found, place: declaration.place }];
+			}
+			return [];
+		});
+		return [...urlFindings, ...stringFindings];
 	});
-	const inImports = source.imports.flatMap((cssImport) => {
+	const inImports = source.imports.flatMap((cssImport): readonly NetworkFinding[] => {
 		const { urls, strings } = cssValueParts(cssImport.prelude);
-		return [...urls, ...strings].filter(isRemote).map((url): NetworkFinding => ({
-			rule: 'remote-import',
-			found: `@import ${url}`,
-			place: cssImport.place
-		}));
+		const targets = [...urls, ...strings];
+		const place = cssImport.place;
+		if (targets.length === 0) {
+			return [{ rule: 'non-relative-import', found: `@import ${cssImport.prelude}`, place }];
+		}
+		return targets.flatMap((target): readonly NetworkFinding[] => {
+			const found = `@import ${target}`;
+			if (isRemote(target)) return [{ rule: 'remote-import', found, place }];
+			if (!isRelativeImport(target)) return [{ rule: 'non-relative-import', found, place }];
+			return [];
+		});
 	});
-	const inAttributes = source.urlAttributes.flatMap(attributeFindings);
+	const inShell = isShell(source.path);
+	const inAttributes = source.urlAttributes.flatMap((attribute) =>
+		attributeFindings(attribute, inShell)
+	);
+	const inScripts = inShell ? source.scripts.flatMap(scriptFindings) : [];
 	const inHeads = source.heads.flatMap((head) => headFindings(source.path, head));
-	return [...unparsed, ...inDeclarations, ...inImports, ...inAttributes, ...inHeads];
+	return [...unparsed, ...inDeclarations, ...inImports, ...inAttributes, ...inScripts, ...inHeads];
 }
