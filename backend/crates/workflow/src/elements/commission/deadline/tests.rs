@@ -233,6 +233,42 @@ fn late_freezes_at_the_dispute_s_start() {
     );
 }
 
+// While Disputed the stored Delayed flag stays live: a deadline that hadn't lapsed at the
+// dispute's start reads Delayed once the flag is stored and nothing once it is taken down,
+// however late the clock has run since.
+#[test]
+fn the_delayed_flag_reads_as_stored_while_disputed() {
+    let mut disputed = crate::elements::commission::test_commission::disputed(
+        LifecycleStep::Active,
+        february(),
+        Some(march()),
+    );
+    assert_eq!(
+        disputed.deadline_status_at(may()),
+        None,
+        "no flag is stored and the deadline hadn't lapsed at the dispute's start"
+    );
+
+    disputed.delayed_flag = Some(DeadlineStatus::Delayed);
+    assert_eq!(
+        disputed.deadline_status_at(may()),
+        Some(DeadlineStatus::Delayed),
+        "the raised flag reads while Disputed"
+    );
+    assert_eq!(
+        CommissionState::from(&disputed).deadline_status_at(may()),
+        Some(DeadlineStatus::Delayed),
+        "by the state as well"
+    );
+
+    disputed.delayed_flag = None;
+    assert_eq!(
+        disputed.deadline_status_at(may()),
+        None,
+        "taking the flag down reads nothing"
+    );
+}
+
 // A dispute raised on a Completed or Cancelled commission whose deadline had already passed
 // reads it on the step it left: not Late before the raise, all through the dispute, or after
 // the clear.

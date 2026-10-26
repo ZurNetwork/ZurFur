@@ -36,8 +36,9 @@ fn unknown_token(_token: &str) -> DeadlineStatusError {
 
 /// The deadline-axis status at `now`: Late once `deadline` is past on a step that isn't
 /// terminal, else the stored flag; nothing with no deadline, a lingering flag included. While a
-/// `dispute` stands the status is the one at its start: the clock stops there and the step is
-/// the one it left, so a dispute never makes a commission Late and never stops one being Late.
+/// `dispute` stands only Late freezes: it is judged at the dispute's start on the step it left,
+/// so a dispute never makes a commission Late and never stops one being Late. The stored flag
+/// stays live and reads as stored.
 pub(super) fn status_at(
     deadline: Option<DateTimeUtc>,
     lifecycle_step: &LifecycleStep,

@@ -77,6 +77,15 @@ async fn put_maturity(
         .expect("PUT maturity")
 }
 
+/// How many changelog entries the commission holds, introspected off the backend.
+async fn changelog_len(backend: &MemBackend, id: uuid::Uuid) -> usize {
+    backend
+        .changelog_entries(domain::elements::commission::CommissionId::from(id))
+        .await
+        .expect("inspect changelog entries")
+        .len()
+}
+
 /// Seeds a committed commission owned by a directly-provisioned user (someone
 /// other than the signed-in caller), returning its id.
 async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
@@ -265,6 +274,97 @@ async fn every_rating_is_accepted_and_a_new_put_replaces() {
     }
 }
 
+// The body is the contract's request message: a field it doesn't name is a malformed body
+// (422 invalid_request), even beside a valid rating, and the refusal stores nothing and
+// records nothing.
+#[tokio::test]
+async fn a_rating_body_with_an_unknown_field_is_refused_and_stores_nothing() {
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
+    let client = client();
+    sign_in(&client, &base, "artist.bsky.social").await;
+    let id = create_commission(&client, &base, &backend).await;
+    let rated = put_maturity(
+        &client,
+        &base,
+        id,
+        json!({ "rating": "nudity", "graphic": true }),
+    )
+    .await;
+    assert_eq!(rated.status(), 204, "the first rating is accepted");
+    let entries_before = changelog_len(&backend, id).await;
+
+    let smuggled = json!({ "rating": "safe", "graphic": false, "title": "smuggled" });
+    let res = put_maturity(&client, &base, id, smuggled).await;
+    common::assert_problem(res, 422, "invalid_request").await;
+
+    assert_eq!(
+        stored_maturity(&backend, id).await,
+        Some(Maturity {
+            rating: MaturityRating::Nudity,
+            graphic: true,
+        }),
+        "the refused body changed no rating",
+    );
+    assert_eq!(
+        changelog_len(&backend, id).await,
+        entries_before,
+        "the refused body recorded no changelog entry",
+    );
+}
+
+// A body that names no `graphic` rates the commission as not graphic, replacing a flag the
+// last rating set; an `id` in the body is ignored, the path names the commission.
+#[tokio::test]
+async fn an_absent_graphic_means_not_graphic_and_a_body_id_is_ignored() {
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
+    let client = client();
+    sign_in(&client, &base, "artist.bsky.social").await;
+    let id = create_commission(&client, &base, &backend).await;
+    let foreign = seed_foreign_commission(&backend).await;
+    let graphic = put_maturity(
+        &client,
+        &base,
+        id,
+        json!({ "rating": "adult", "graphic": true }),
+    )
+    .await;
+    assert_eq!(graphic.status(), 204, "the graphic rating is accepted");
+
+    let without_graphic = json!({ "rating": "suggestive", "id": foreign.to_string() });
+    let res = put_maturity(&client, &base, id, without_graphic).await;
+    assert_eq!(res.status(), 204, "a body without graphic is accepted");
+
+    assert_eq!(
+        stored_maturity(&backend, id).await,
+        Some(Maturity {
+            rating: MaturityRating::Suggestive,
+            graphic: false,
+        }),
+        "the path's commission is rated, with the flag off",
+    );
+    assert_eq!(
+        stored_maturity(&backend, foreign).await,
+        None,
+        "the id in the body rated nothing",
+    );
+}
+
 // Server-side enforcement (AC): a value outside the enum is refused with a 422
 // and its own problem code, and nothing is stored — including the superseded
 // pre-DD vocabulary, case variants, and the derived *label* values (a rating
@@ -302,9 +402,9 @@ async fn out_of_vocabulary_ratings_are_refused_server_side() {
         refused["detail"],
         "That isn't a maturity rating; choose one of: safe, suggestive, nudity, adult."
     );
-    // A malformed body (no rating at all) is a 422 too.
+    // A body with no rating at all names no token, so it is refused the same way.
     let res = put_maturity(&client, &base, id, json!({ "graphic": true })).await;
-    assert_eq!(res.status(), 422, "a body without a rating is refused");
+    common::assert_problem(res, 422, "unknown_maturity_rating").await;
 
     assert_eq!(
         stored_maturity(&backend, id).await,
