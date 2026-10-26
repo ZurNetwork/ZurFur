@@ -13,7 +13,7 @@
     "The React auth frontend is deleted.",
     "Every install is the trio `node frontend/install-check.mjs`, `yarn --cwd frontend install --frozen-lockfile --ignore-scripts`, `node frontend/install-check.mjs --installed`: `just frontend-install` locally, the same three steps in CI's `ui`, `web` and `contract` jobs; `scripts/tools-check.sh` fails a workflow that installs any other way.",
     "`web` takes `@zurfur/ui` as a dev dependency at exactly `0.0.0`, resolved by the workspace symlink; `.npmrc` points the `@zurfur` scope at `registry.invalid`, so the package can never be fetched from npm.",
-    "A change to `yarn.lock` is reviewed with `node frontend/lock-review.mjs <old> <new>` (needs the network); re-run it at base merges that touch the lockfile."
+    "A change to `yarn.lock` or `lexicons/package-lock.json` is checked by CI's `npm-lock` job (scripts/npm-lock-ci.sh): `lock-review.mjs --min-age-days 7` with the base's waivers, and osv-scanner; locally, `just npm-lock-review <rev>` runs the same floor (needs the network)."
   ],
   "entry_points": [
     "web/src/hooks.server.ts (the app)",
@@ -44,12 +44,12 @@
     },
     {
       "name": "lock-review.mjs",
-      "role": "a review tool, not a gate (it needs the network): lists the lockfile blocks a change removed and added and checks each added block's integrity against the registry",
+      "role": "the npm lockfiles' floor and integrity check (it needs the network): CI's npm-lock job runs the base commit's copy through scripts/npm-lock-ci.sh, and `just npm-lock-review <rev>` runs it locally; reads two yarn v1 or two npm lockfileVersion 3 files (a v3 link or bundled entry, one without integrity or resolved outside registry.npmjs.org is refused), lists the entries a change removed and added, and checks each added entry against its full registry document, fetched once with no redirects: the integrity must match, and with --min-age-days N the version must be at least N days old unless --waivers names that exact name@version (a waiver never lifts the integrity check); names, versions, the document and the waiver file are read fail-closed; the registry lookup and the clock are injected only through main(), never the environment; exit 0 clean, 1 findings, 2 errors",
       "node": false
     },
     {
       "name": "lock-review.test.mjs",
-      "role": "lock-review's node:test fixtures",
+      "role": "lock-review's node:test fixtures, offline through the injected lookup and clock: the age floor, waivers and the waiver file, fail-closed registry reads, the npm v3 reader, the CLI's exit codes, that lock-review.mjs and install-check.mjs import nothing outside the pair, and the naming rule and v3 reader over the real lockfiles",
       "node": false
     },
     {

@@ -22,12 +22,12 @@
     },
     {
       "name": "ci-changes.sh",
-      "role": "the body of CI's changes job: verifies a PR's merge parents or a merge group's head and base, diffs, classifies with the base's ci-paths.sh (a merge group always runs everything); fails closed",
+      "role": "the body of CI's changes job: verifies a PR's merge parents or a merge group's head and base, diffs, classifies with the base's ci-paths.sh (a merge group always runs everything) and passes on its code, lock and npmlock; fails closed",
       "node": false
     },
     {
       "name": "ci-paths.sh",
-      "role": "classifies changed paths as docs-only or code for CI's changes job and just gate-light; fails closed",
+      "role": "classifies changed paths for CI's changes job (code: anything but docs-only; lock: a Cargo.lock; npmlock: an npm lockfile or a root osv-scanner.*.toml) and, with --paths, for just gate-light; fails closed",
       "node": false
     },
     {
@@ -98,6 +98,21 @@
     {
       "name": "npm-advisories.test.sh",
       "role": "tests for npm-advisories.sh against a stub curl and a stub scanner, offline: the allow-list before any download, bad binaries, the self-test and count check, exit codes and modes, per-lockfile configs and the scanner's clean environment",
+      "node": false
+    },
+    {
+      "name": "npm-lock-ci.sh",
+      "role": "the body of CI's npm-lock job, normally the PR base's copy: verifies the base, takes the advisory script, lock-review.mjs and install-check.mjs as one set from the base (the change's only when the base lacks this driver, with a warning), the old lockfiles and lock-age-waivers.json from the base, and each lockfile's osv-scanner ignores from the base when that lockfile changed; runs the advisory scan (block or report) and the 7-day floor over both lockfiles under env -i, every check even after one fails, and exits with the worst code",
+      "node": false
+    },
+    {
+      "name": "npm-lock-ci.test.sh",
+      "role": "tests for npm-lock-ci.sh and the npm-lock job's inline step (extracted from ci.yml and run as GitHub runs it) against scratch git repos with real test merges, stub tools and a stub node: which copy runs, base verification, the waivers', ignores' and old lockfiles' sources, the clean environments and the worst exit code",
+      "node": false
+    },
+    {
+      "name": "npm-lock-pins.test.sh",
+      "role": "pins the npm-lock job's three steps and its inline step's lines, its mode expression, the web, ui and contract jobs waiting on it, the driver's env -i and 7-day floor, the daily npm-advisories job and just gate ending on just npm-advisories",
       "node": false
     },
     {
