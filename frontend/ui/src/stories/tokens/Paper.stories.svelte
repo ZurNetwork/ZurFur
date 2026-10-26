@@ -13,10 +13,10 @@
 </script>
 
 <Story name="Page">
-	{#snippet template(args: Args, context: StoryContext<Args>)}
+	{#snippet template(_args: Args, context: StoryContext<Args>)}
 		<FrameSkin choice={parseSkinChoice(context.globals.skin)}>
 			{#snippet children(skin)}
-				<PaperPage {...args} {skin} />
+				<PaperPage {skin} />
 			{/snippet}
 		</FrameSkin>
 	{/snippet}

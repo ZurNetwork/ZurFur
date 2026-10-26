@@ -17,12 +17,18 @@
     "Storybook and the Vitest story projects run only through the package's scripts, under `env -i` and the network guard (see `frontend/ui`)."
   ],
   "entry_points": [
-    "frame/StoryFrame.svelte (the decorator every story renders in)"
+    "frame/StoryFrame.svelte (the decorator every story renders in)",
+    "tokens/ (the six token docs pages)"
   ],
   "fs": [
     {
       "name": "frame/",
-      "role": "StoryFrame.svelte (sets data-skin and data-motion on <html> and on a wrapping div, the portal target, from the toolbar's globals), FrameSkin.svelte (resolves Follow the OS to the skin showing), globals.ts (parseSkinChoice and parseMotion: address text to closed unions, unknown text meaning Follow the OS and Lively) and their specs",
+      "role": "StoryFrame.svelte (sets data-skin and data-motion on <html> and on a wrapping div, the portal target, from the toolbar's globals, and paints a docs page's background and text from the skin's tokens), FrameSkin.svelte (resolves Follow the OS to the skin showing), globals.ts (parseSkinChoice and parseMotion: address text to closed unions, unknown text meaning Follow the OS and Lively) and their specs",
+      "node": false
+    },
+    {
+      "name": "tokens/",
+      "role": "the six token pages as docs pages: <Name>Page.svelte (the page body, also rendered by the old gallery's route wrapper), <Name>.stories.svelte (one Page story, showing only the skin the toolbar picks) and <Name>.mdx (its docs page), for Colour, Type, Space and Shape, Shadows, Motion and Sound, Paper",
       "node": false
     }
   ],

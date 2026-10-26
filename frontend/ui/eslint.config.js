@@ -1191,6 +1191,14 @@ export default defineConfig(
 		rules: { 'no-unused-vars': 'off', '@typescript-eslint/no-unused-vars': 'error' }
 	},
 	{
+		name: 'ui/story-template-args',
+		// A story's template snippet is handed (args, context), and the rule reads every
+		// snippet parameter as checked, a leading one included. A story that reads only
+		// the context names the first one exactly `_args`; nothing else is let through.
+		files: ['src/stories/**/*.stories.svelte'],
+		rules: { '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_args$' }] }
+	},
+	{
 		name: 'ui/storybook-browser-config',
 		// The preview and the manager run in the browser, under the host's bans below.
 		files: STORYBOOK_BROWSER,

@@ -127,4 +127,31 @@ describe('StoryFrame', () => {
 			'rgb(236, 229, 211)'
 		);
 	});
+
+	it.each([
+		['light', 'rgb(236, 229, 211)', 'rgb(45, 43, 43)'],
+		['dark', 'rgb(21, 20, 23)', 'rgb(219, 219, 219)']
+	] as const)(
+		'paints a docs page around it in %s, its title included',
+		(skin, background, text) => {
+			const docs = document.createElement('div');
+			docs.className = 'sbdocs sbdocs-wrapper';
+			const content = document.createElement('div');
+			content.className = 'sbdocs sbdocs-content';
+			const title = document.createElement('h1');
+			title.textContent = 'Colour';
+			content.append(title);
+			docs.append(content);
+			document.body.append(docs);
+			try {
+				frame(skin, 'lively');
+				expect({
+					background: getComputedStyle(docs).backgroundColor,
+					title: getComputedStyle(title).color
+				}).toEqual({ background, title: text });
+			} finally {
+				docs.remove();
+			}
+		}
+	);
 });

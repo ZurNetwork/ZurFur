@@ -49,4 +49,16 @@
 		background: var(--color-bg);
 		color: var(--color-text);
 	}
+
+	/* A docs page around its stories wears the skin too, so the toggle switches the whole page. */
+	:global(.sbdocs.sbdocs-wrapper) {
+		background: var(--color-bg);
+	}
+
+	/* The docs page's own words (its title and prose), never the stories inside it. */
+	:global(
+		.sbdocs.sbdocs-wrapper > .sbdocs.sbdocs-content > :is(h1, h2, h3, h4, h5, h6, p, ul, ol)
+	) {
+		color: var(--color-text);
+	}
 </style>
