@@ -19,7 +19,7 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "kernel, identity, uuid, serde, serde_json (changelog payloads), async-trait, anyhow, thiserror, derive_more, strum; tokio io-util only to name AsyncRead for the streaming FileStore port; dev-deps proptest, chrono, trybuild (the create capability's compile-fail cases)",
+      "role": "kernel, identity, uuid, serde, serde_json (changelog payloads), async-trait, anyhow, thiserror, derive_more, strum; tokio io-util only to name AsyncRead for the streaming FileStore port; dev-deps proptest, chrono, trybuild (the create capability's and the changelog seal's compile-fail cases)",
       "node": false
     },
     {
@@ -34,7 +34,7 @@
     },
     {
       "name": "tests/",
-      "role": "fact_contract.rs — the Fact contract (commission-anchored evidence blocks hard deletion); ui.rs + ui/ — compile-fail cases: CommissionWrites::create without a capability, and with an AsOwner one",
+      "role": "fact_contract.rs — the Fact contract (commission-anchored evidence blocks hard deletion); ui.rs + ui/ — compile-fail cases: CommissionWrites::create without a capability, and with an AsOwner one; the changelog's seal: a NewChangelogEntry built from outside (E0451), a gated kind passed to event (E0308), with_note on a gated entry (E0599)",
       "node": false
     }
   ],

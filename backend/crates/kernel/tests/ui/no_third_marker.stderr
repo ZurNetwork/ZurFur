@@ -1,0 +1,28 @@
+error[E0277]: the trait bound `ForSomethingElse: custody::purpose_marker::sealed::Sealed` is not satisfied
+ --> tests/ui/no_third_marker.rs:7:28
+  |
+7 | impl SealPurposeMarker for ForSomethingElse {
+  |                            ^^^^^^^^^^^^^^^^ unsatisfied trait bound
+  |
+help: the trait `custody::purpose_marker::sealed::Sealed` is not implemented for `ForSomethingElse`
+ --> tests/ui/no_third_marker.rs:5:1
+  |
+5 | enum ForSomethingElse {}
+  | ^^^^^^^^^^^^^^^^^^^^^
+help: the following other types implement trait `custody::purpose_marker::sealed::Sealed`
+ --> src/elements/custody/purpose_marker.rs
+  |
+  |     impl Sealed for super::ForDidCustody {}
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ForDidCustody`
+  |
+  |     impl Sealed for super::ForSigninSecrets {}
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ForSigninSecrets`
+note: required by a bound in `SealPurposeMarker`
+ --> src/elements/custody/purpose_marker.rs
+  |
+  | pub trait SealPurposeMarker: sealed::Sealed {
+  |                              ^^^^^^^^^^^^^^ required by this bound in `SealPurposeMarker`
+  = note: `SealPurposeMarker` is a "sealed trait", because to implement it you also need to implement `kernel::elements::custody::purpose_marker::sealed::Sealed`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
+  = help: the following types implement the trait:
+            kernel::elements::custody::ForDidCustody
+            kernel::elements::custody::ForSigninSecrets

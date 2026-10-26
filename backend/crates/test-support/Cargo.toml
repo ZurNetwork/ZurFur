@@ -43,8 +43,6 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "coo
 tracing-subscriber = { workspace = true }
 # the session layer the served app wraps in tests
 tower-sessions = { workspace = true }
-# `pg_app` encodes the shipped example root key into its dev-profile Config.
-base64 = { workspace = true }
 # ...built by the driver's own `session_layer`, so tests run the real session cookie
 http-cookies = { path = "../http-cookies" }
 # The served rigs mount the app through the stack `main` serves.
@@ -58,8 +56,23 @@ tower-service = { workspace = true }
 atrium-crypto = { workspace = true }
 # The statement proxy's database URL.
 url = { workspace = true }
-# `pg_app::ProfileCacheState`: its names and its VARIANTS.
+# `pg_app::ProfileCacheState`: its names and its VARIANTS; `custody`: every Purpose.
 strum = { workspace = true }
+# `custody`: the test custodian's handles, derived by the dev key custodian.
+adapter-hkdf = { path = "../adapter-hkdf" }
+# `custody`: the test custodian's root, handed over wiped on drop.
+zeroize = { workspace = true }
+# `custody`'s canary: a planted root's PRK, purpose keys and key ids, computed from
+# RFC 5869 over HMAC-SHA256 apart from adapter-hkdf's code.
+hmac = { workspace = true }
+sha2-0-11 = { workspace = true }
+# `custody::signin_secrets_round_trip`: sign-in secrets sealed and opened through the
+# auth store, over jacquard's OAuth records (already linked through composition).
+adapter-atproto = { path = "../adapter-atproto" }
+jacquard-oauth = { workspace = true }
+jacquard-common = { workspace = true }
+fluent-uri = { workspace = true }
+smol_str = { workspace = true }
 
 [lints]
 workspace = true

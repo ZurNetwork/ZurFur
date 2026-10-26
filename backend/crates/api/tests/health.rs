@@ -37,8 +37,6 @@ async fn health_is_green_against_fresh_postgres() {
             database_url,
             log_level: "info".to_string(),
             handle_domain: "zurfur.app".parse().expect("a valid handle domain"),
-            // ZMVP-49 config (unused by the mem minter in these tests).
-            did_key_root_key: "unused-in-tests".to_string(),
             plc_directory_endpoint: "https://plc.directory".to_string(),
             plc_directory_submit: false,
             deadline_sweep_interval_secs: 60,
@@ -63,6 +61,8 @@ async fn health_is_green_against_fresh_postgres() {
         profile_lookups: application::user::ProfileLookups::default(),
         // /health resolves no identity; an empty in-memory world keeps DNS out.
         identity_resolver: Arc::new(adapter_mem::MemIdentityResolver::new()),
+        // /health tags nothing; the test custodian's handle fills the field.
+        den_mac: test_support::custody::test_custody().den_mac,
     };
     let sessions = http_cookies::session_layer(tower_sessions::MemoryStore::default(), false);
     let app = http_stack::stack(api::app(state), sessions, http_stack::Detach::default());

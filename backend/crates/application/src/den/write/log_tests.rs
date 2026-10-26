@@ -1,12 +1,18 @@
-//! What the Den's write logs on PostgreSQL, at trace, five ways: the owner's rename, a
-//! stranger's, a Participant's (a rename needs the Owner), a create on a taken segment, and a
-//! create whose store failure the gate latches. No DID or handle at info or above, no name
-//! anywhere, and nothing of PostgreSQL's detail.
+//! What the Den's write logs on PostgreSQL, at trace, nine ways: the owner's rename, a
+//! stranger's, a Participant's (a rename needs the Owner), a create on a taken segment, the
+//! owner's lifecycle move and one its rule refuses, a Delayed flag its rule refuses and a
+//! deadline set, and a create whose store failure the gate latches. No DID or handle at info or
+//! above, no name anywhere, and nothing of PostgreSQL's detail. The field acts the first test
+//! leaves out (the direction set and clear, the Delayed raise and take-down, the deadline clear)
+//! log the same, a stranger's of them included. The system's Late mark logs no DID and no name
+//! at any level.
 
 use std::sync::Arc;
 
 use domain::elements::{
-    commission::{CommissionRole, CommissionStanding},
+    commission::{
+        CommissionRefusal, CommissionRole, CommissionStanding, DirectionStatus, LifecycleStep,
+    },
     did::Did,
     level::Level,
 };
@@ -20,7 +26,10 @@ use super::tests::{PG_TITLE, node_name, pg_seed, provision, write};
 use super::*;
 use crate::den::{
     authority::MINT_AS,
-    test_acts::{create_act, rename_act},
+    test_acts::{
+        clear_deadline_act, clear_delayed_act, clear_direction_act, create_act, mark_late_act,
+        move_act, rename_act, set_deadline_act, set_delayed_act, set_direction_act, the_system,
+    },
 };
 
 /// The owner's DID.
@@ -76,6 +85,11 @@ async fn the_write_path_logs_no_identity_no_name_and_no_store_detail() {
     let taken = MINT_AS
         .scope(commission, write(&ports, &owner, create_act(SECRET_NAME)))
         .await;
+    let moved = write(&ports, &owner, move_act(commission, LifecycleStep::Active)).await;
+    let refused = write(&ports, &owner, move_act(commission, LifecycleStep::Draft)).await;
+    let undated = write(&ports, &owner, set_delayed_act(commission)).await;
+    let deadline = "2099-03-01T00:00:00Z".parse().expect("a timestamp");
+    let scheduled = write(&ports, &owner, set_deadline_act(commission, deadline)).await;
 
     assert!(renamed.is_ok(), "{renamed:?}");
     assert!(matches!(unseen, Err(DenWriteError::NotFound)), "{unseen:?}");
@@ -90,6 +104,24 @@ async fn the_write_path_logs_no_identity_no_name_and_no_store_detail() {
         ),
         "{taken:?}"
     );
+    assert!(moved.is_ok(), "{moved:?}");
+    assert!(
+        matches!(
+            refused,
+            Err(DenWriteError::Precondition(
+                CommissionRefusal::LifecycleMoveRefused
+            ))
+        ),
+        "{refused:?}"
+    );
+    assert!(
+        matches!(
+            undated,
+            Err(DenWriteError::Precondition(CommissionRefusal::NoDeadline))
+        ),
+        "{undated:?}"
+    );
+    assert!(scheduled.is_ok(), "{scheduled:?}");
     assert_eq!(node_name(&*ports.database, commission).await, SECRET_NAME);
     let text = log.text();
     assert!(
@@ -110,6 +142,68 @@ async fn the_write_path_logs_no_identity_no_name_and_no_store_detail() {
                     "an info line carries {identity}: {line}"
                 );
             }
+        }
+    }
+}
+
+/// The owner of the field acts' commission.
+const FIELD_OWNER: &str = "did:plc:den-write-log-field-owner";
+
+/// A stranger to the field acts' commission.
+const FIELD_STRANGER: &str = "did:plc:den-write-log-field-stranger";
+
+// The field acts the first test leaves out land for the owner and miss for a stranger; no line
+// at any level carries a DID, and no line carries the commission's name.
+#[tokio::test]
+async fn the_field_acts_log_no_identity_and_no_name() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let (owner, commission) = pg_seed(&ports, FIELD_OWNER).await;
+    let stranger = provision(&*ports.database, FIELD_STRANGER).await;
+    let deadline = "2099-03-01T00:00:00Z".parse().expect("a timestamp");
+    let (log, _guard) = capture_at_trace();
+
+    let dated = write(&ports, &owner, set_deadline_act(commission, deadline)).await;
+    let steered = write(
+        &ports,
+        &owner,
+        set_direction_act(commission, DirectionStatus::WaitingForInput),
+    )
+    .await;
+    let delayed = write(&ports, &owner, set_delayed_act(commission)).await;
+    let undelayed = write(&ports, &owner, clear_delayed_act(commission)).await;
+    let unsteered = write(&ports, &owner, clear_direction_act(commission)).await;
+    let undated = write(&ports, &owner, clear_deadline_act(commission)).await;
+    let unseen_direction = write(
+        &ports,
+        &stranger,
+        set_direction_act(commission, DirectionStatus::ChangesRequested),
+    )
+    .await;
+    let unseen_delayed = write(&ports, &stranger, set_delayed_act(commission)).await;
+    let unseen_clear = write(&ports, &stranger, clear_deadline_act(commission)).await;
+
+    for landed in [&dated, &steered, &delayed, &undelayed, &unsteered, &undated] {
+        assert!(landed.is_ok(), "{landed:?}");
+    }
+    for unseen in [&unseen_direction, &unseen_delayed, &unseen_clear] {
+        assert!(matches!(unseen, Err(DenWriteError::NotFound)), "{unseen:?}");
+    }
+    let text = log.text();
+    assert!(
+        text.contains("use case finished"),
+        "the capture saw nothing: {text}"
+    );
+    for line in text.lines() {
+        for leak in [
+            FIELD_OWNER,
+            FIELD_STRANGER,
+            "did:plc:",
+            PG_TITLE,
+            "DETAIL",
+            "Key (",
+        ] {
+            assert!(!line.contains(leak), "a line carries {leak}: {line}");
         }
     }
 }
@@ -147,4 +241,51 @@ async fn a_latched_store_failure_logs_no_store_detail_and_no_did() {
             assert!(!line.contains(leak), "a line carries {leak}: {line}");
         }
     }
+}
+
+/// The system's DID-less write's owner.
+const SYSTEM_OWNER: &str = "did:plc:den-write-log-system-owner";
+
+// The system's Late mark, landing and then owing nothing, logs no DID and no name at any level.
+#[tokio::test]
+async fn the_system_act_logs_no_did_or_name_at_any_level() {
+    let pg = pg_runtime().await;
+    let ports = Ports::from(&pg.runtime);
+    let (owner, commission) = pg_seed(&ports, SYSTEM_OWNER).await;
+    let missed = chrono::Utc::now() - chrono::Duration::hours(1);
+    write(&ports, &owner, set_deadline_act(commission, missed))
+        .await
+        .expect("the owner sets a deadline that has passed");
+    let (log, _guard) = capture_at_trace();
+
+    let marked = system_write(&ports, mark_late_act(commission)).await;
+    let owed_nothing = system_write(&ports, mark_late_act(commission)).await;
+
+    assert!(marked.is_ok(), "{marked:?}");
+    assert!(
+        matches!(
+            owed_nothing,
+            Err(DenWriteError::Precondition(CommissionRefusal::NothingOwed))
+        ),
+        "{owed_nothing:?}"
+    );
+    let text = log.text();
+    assert!(
+        text.contains("use case finished"),
+        "the capture saw nothing: {text}"
+    );
+    for line in text.lines() {
+        for leak in [SYSTEM_OWNER, "did:plc:", PG_TITLE, "DETAIL"] {
+            assert!(!line.contains(leak), "a line carries {leak}: {line}");
+        }
+    }
+}
+
+/// The system's write of `act` through the use case.
+async fn system_write(ports: &Ports, act: DenAct) -> Result<WriteResult, DenWriteError> {
+    let command = Command {
+        actor: the_system(),
+        act,
+    };
+    Den::from(ports).write(command, chrono::Utc::now()).await
 }

@@ -7,7 +7,9 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            ChangelogEntryKind, Commission, CommissionId, CommissionRole, NewChangelogEntry,
+            ChangelogEntryKind, Commission, CommissionId, CommissionRole, DeadlineCleared,
+            DeadlineSet, DelayedCleared, DelayedSet, DirectionCleared, DirectionSet, LateMark,
+            LifecycleMove, NewChangelogEntry,
         },
         level::Level,
         name::NodeName,
@@ -67,10 +69,24 @@ pub(crate) enum ActShape {
         /// Its new name.
         name: NodeName,
     },
+    /// Changes the anchored thing's fields; its node keeps its rows.
+    Change,
 }
 
-/// What an act declares about itself: its word, the type it acts on or makes, its anchor, the
-/// role it needs on an existing thing, and its shape.
+/// Who an act needs: anyone signed in, to make a new thing; a user holding a role on an existing
+/// thing; or the system, with no user behind it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Needs {
+    /// A create, which a top-level anchor carries; a thing anchor refuses it.
+    Create,
+    /// The least role a user needs on an existing thing.
+    Role(CommissionRole),
+    /// The system's own act, which no user may make.
+    System,
+}
+
+/// What an act declares about itself: its word, the type it acts on or makes, its anchor, who
+/// it needs, and its shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ActSpec {
     /// Its word, for the engine's log.
@@ -79,9 +95,8 @@ pub(crate) struct ActSpec {
     pub(crate) den_type: DenType,
     /// Where it is anchored.
     pub(crate) anchor: Anchor,
-    /// The least role it needs on an existing thing, from its capability's role; `None` for a
-    /// create, which a thing anchor refuses.
-    pub(crate) needs: Option<CommissionRole>,
+    /// Who it needs, from its capability's role: a create, a user's role, or the system.
+    pub(crate) needs: Needs,
     /// What it does to the tree.
     pub(crate) shape: ActShape,
 }
@@ -104,70 +119,220 @@ impl fmt::Debug for DenAct {
     }
 }
 
-/// A gated kind's domain constructor: its entry on a commission, by an actor, at a time.
-pub(in crate::den) type EntryConstructor =
-    fn(CommissionId, UserId, DateTimeUtc) -> NewChangelogEntry;
-
-/// A kind the gate writes, paired with its own domain constructor. Its fields are private, so
-/// an act names one of its associated consts and never builds one.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct GatedEntry {
-    kind: ChangelogEntryKind,
-    constructor: EntryConstructor,
+/// A gated kind's domain constructor: its entry on a commission, by an actor, at a time, with
+/// no change, or with the act's checked change `C`; or the system's entry, by no actor, with
+/// the checked change.
+pub(in crate::den) enum EntryConstructor<C> {
+    /// A constructor that takes no change.
+    Bare(fn(CommissionId, UserId, DateTimeUtc) -> NewChangelogEntry),
+    /// A constructor that takes the act's checked change.
+    Change(fn(CommissionId, UserId, &C, DateTimeUtc) -> NewChangelogEntry),
+    /// A constructor of the system's entry, which takes no actor and the act's checked change.
+    System(fn(CommissionId, &C, DateTimeUtc) -> NewChangelogEntry),
 }
 
-impl GatedEntry {
-    /// A create's entry: kind `Created`, by `NewChangelogEntry::created`.
+impl<C> fmt::Debug for EntryConstructor<C> {
+    /// Which shape it takes.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Bare(_) => formatter.write_str("Bare"),
+            Self::Change(_) => formatter.write_str("Change"),
+            Self::System(_) => formatter.write_str("System"),
+        }
+    }
+}
+
+/// The kinds a gated entry may build, paired with its own domain constructor, over the act's
+/// checked change `C`. Its fields are private, so an act names one of its associated consts
+/// and never builds one.
+#[derive(Debug)]
+pub(crate) struct GatedEntry<C> {
+    kinds: &'static [ChangelogEntryKind],
+    constructor: EntryConstructor<C>,
+}
+
+impl<C> GatedEntry<C> {
+    /// A create's entry: kind `Created`, by `NewChangelogEntry::created`, with no change.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
     pub(crate) const CREATED: Self = Self {
-        kind: ChangelogEntryKind::Created,
-        constructor: NewChangelogEntry::created,
+        kinds: &[ChangelogEntryKind::Created],
+        constructor: EntryConstructor::Bare(NewChangelogEntry::created),
     };
 
-    /// A rename's entry: kind `Renamed`, by `NewChangelogEntry::renamed`.
+    /// A rename's entry: kind `Renamed`, by `NewChangelogEntry::renamed`, with no change.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
     pub(crate) const RENAMED: Self = Self {
-        kind: ChangelogEntryKind::Renamed,
-        constructor: NewChangelogEntry::renamed,
+        kinds: &[ChangelogEntryKind::Renamed],
+        constructor: EntryConstructor::Bare(NewChangelogEntry::renamed),
     };
 
-    /// A gated entry of `kind` built by `constructor`, for the tests that hand the gate a
+    /// A gated entry of `kinds` built by `constructor`, for the tests that hand the gate a
     /// misbuilt one.
     #[cfg(test)]
     pub(in crate::den) fn for_test(
-        kind: ChangelogEntryKind,
-        constructor: EntryConstructor,
+        kinds: &'static [ChangelogEntryKind],
+        constructor: EntryConstructor<C>,
     ) -> Self {
-        Self { kind, constructor }
+        Self { kinds, constructor }
     }
 
-    /// The kind its entry must carry.
-    pub(in crate::den) fn kind(self) -> ChangelogEntryKind {
-        self.kind
+    /// Whether its entry may carry `kind`.
+    pub(in crate::den) fn builds(&self, kind: ChangelogEntryKind) -> bool {
+        self.kinds.contains(&kind)
     }
 
-    /// Its entry on `commission`, by `actor`, at `at`, as its domain constructor builds it.
+    /// Its entry on `commission`, by `actor`, at `at`, as its domain constructor builds it from
+    /// `change`, the change the act recorded; `None` when its constructor takes a change and
+    /// none was recorded, or takes an actor and the act has none. The system's constructor
+    /// takes no actor.
     pub(in crate::den) fn construct(
-        self,
+        &self,
         commission: CommissionId,
-        actor: UserId,
+        actor: Option<&UserId>,
+        change: Option<&C>,
         at: DateTimeUtc,
-    ) -> NewChangelogEntry {
-        (self.constructor)(commission, actor, at)
+    ) -> Option<NewChangelogEntry> {
+        match self.constructor {
+            EntryConstructor::Bare(constructor) => {
+                actor.map(|actor| constructor(commission, actor.clone(), at))
+            }
+            EntryConstructor::Change(constructor) => {
+                let actor = actor?;
+                change.map(|change| constructor(commission, actor.clone(), change, at))
+            }
+            EntryConstructor::System(constructor) => {
+                change.map(|change| constructor(commission, change, at))
+            }
+        }
     }
+}
+
+impl GatedEntry<LifecycleMove> {
+    /// A lifecycle move's entry: kind `LifecycleMoved`, by `NewChangelogEntry::lifecycle_moved`,
+    /// from the move the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
+    pub(crate) const LIFECYCLE_MOVED: Self = Self {
+        kinds: &[ChangelogEntryKind::LifecycleMoved],
+        constructor: EntryConstructor::Change(NewChangelogEntry::lifecycle_moved),
+    };
+}
+
+impl GatedEntry<DirectionSet> {
+    /// A direction status set's entry: kind `StatusChanged`, by
+    /// `NewChangelogEntry::direction_set`, from the set the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
+    pub(crate) const STATUS_SET: Self = Self {
+        kinds: &[ChangelogEntryKind::StatusChanged],
+        constructor: EntryConstructor::Change(NewChangelogEntry::direction_set),
+    };
+}
+
+impl GatedEntry<DirectionCleared> {
+    /// A direction status clear's entry: kind `StatusChanged`, by
+    /// `NewChangelogEntry::direction_cleared`, from the clear the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
+    pub(crate) const STATUS_CLEARED: Self = Self {
+        kinds: &[ChangelogEntryKind::StatusChanged],
+        constructor: EntryConstructor::Change(NewChangelogEntry::direction_cleared),
+    };
+}
+
+impl GatedEntry<DeadlineSet> {
+    /// A deadline set's entry: kind `DeadlineSet`, or `DeadlineExtended` for a later deadline,
+    /// by `NewChangelogEntry::deadline_set`, from the set the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
+    pub(crate) const DEADLINE_SET: Self = Self {
+        kinds: &[
+            ChangelogEntryKind::DeadlineSet,
+            ChangelogEntryKind::DeadlineExtended,
+        ],
+        constructor: EntryConstructor::Change(NewChangelogEntry::deadline_set),
+    };
+}
+
+impl GatedEntry<DeadlineCleared> {
+    /// A deadline clear's entry: kind `DeadlineSet`, by `NewChangelogEntry::deadline_cleared`,
+    /// from the clear the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
+    pub(crate) const DEADLINE_CLEARED: Self = Self {
+        kinds: &[ChangelogEntryKind::DeadlineSet],
+        constructor: EntryConstructor::Change(NewChangelogEntry::deadline_cleared),
+    };
+}
+
+impl GatedEntry<DelayedSet> {
+    /// A Delayed flag's entry: kind `Delayed`, by `NewChangelogEntry::delayed_set`, from the
+    /// set the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
+    pub(crate) const DELAYED_SET: Self = Self {
+        kinds: &[ChangelogEntryKind::Delayed],
+        constructor: EntryConstructor::Change(NewChangelogEntry::delayed_set),
+    };
+}
+
+impl GatedEntry<DelayedCleared> {
+    /// A Delayed flag taken down's entry: kind `Delayed`, by
+    /// `NewChangelogEntry::delayed_cleared`, from the clear the view wrote.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
+    pub(crate) const DELAYED_CLEARED: Self = Self {
+        kinds: &[ChangelogEntryKind::Delayed],
+        constructor: EntryConstructor::Change(NewChangelogEntry::delayed_cleared),
+    };
+}
+
+impl GatedEntry<LateMark> {
+    /// The system's Late entry: kind `Late`, by `NewChangelogEntry::late`, by no actor, from
+    /// the mark the act's rule checked.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a gated entry names its one domain constructor here, and only here"
+    )]
+    pub(crate) const LATE: Self = Self {
+        kinds: &[ChangelogEntryKind::Late],
+        constructor: EntryConstructor::System(NewChangelogEntry::late),
+    };
 }
 
 /// Which gated entry the gate writes once an act lands: one on every landing, or one only when
-/// the act changed its node.
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum EntryRule {
+/// the act changed its node or its view's write landed.
+#[derive(Debug)]
+pub(crate) enum EntryRule<C> {
     /// One entry, whatever the act changed.
-    Always(GatedEntry),
-    /// One entry when the act changed its node; none when it changed nothing.
-    OnChange(GatedEntry),
+    Always(GatedEntry<C>),
+    /// One entry when the act changed something; none when it changed nothing.
+    OnChange(GatedEntry<C>),
 }
 
-impl EntryRule {
-    /// The gated entry an act that `changed` its node writes, or `None`.
-    pub(crate) fn entry(self, changed: bool) -> Option<GatedEntry> {
+impl<C> EntryRule<C> {
+    /// The gated entry an act that `changed` something writes, or `None`.
+    pub(crate) fn entry(self, changed: bool) -> Option<GatedEntry<C>> {
         match self {
             Self::Always(gated) => Some(gated),
             Self::OnChange(gated) => changed.then_some(gated),

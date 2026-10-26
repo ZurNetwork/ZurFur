@@ -1,5 +1,5 @@
 //! The commissions route group: the commission JSON API, split per area
-//! (create, rename, changelog, notes, channel, delete, archive, maturity,
+//! (create, read, rename, lifecycle, changelog, notes, channel, delete, archive, maturity,
 //! elements, slots, seats, invitations, status, deadline, files, markup,
 //! positioning). Mounted under the first-party-`Origin` (CSRF) layer.
 
@@ -76,6 +76,8 @@ impl From<CommissionError> for Problem {
             CommissionError::UnknownSurface => Problem::unknown_surface(),
             CommissionError::NoDeadline => Problem::no_deadline(),
             CommissionError::CommissionLate => Problem::commission_late(),
+            CommissionError::LifecycleMoveRefused => Problem::lifecycle_move_refused(),
+            CommissionError::CommissionDisputed => Problem::commission_disputed(),
             CommissionError::IncorrectContent => {
                 Problem::invalid_request("The submitted content is empty.")
             }
@@ -116,7 +118,9 @@ mod deadline;
 mod delete;
 mod elements;
 mod files;
+mod get;
 mod invitations;
+mod lifecycle;
 mod markup;
 mod maturity;
 mod notes;
@@ -140,9 +144,13 @@ pub(crate) fn commissions_router(max_upload_bytes: usize) -> Router<AppState> {
         .route("/commissions", post(create::create_commission))
         .route(
             "/commissions/{id}",
-            axum::routing::delete(delete::delete_commission),
+            get(get::get_commission).delete(delete::delete_commission),
         )
         .route("/commissions/{id}/title", patch(rename::rename_commission))
+        .route(
+            "/commissions/{id}/lifecycle",
+            put(lifecycle::move_lifecycle),
+        )
         .route(
             "/commissions/{id}/changelog",
             get(changelog::read_changelog),

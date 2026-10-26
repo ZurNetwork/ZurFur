@@ -1,5 +1,5 @@
 //! The `begin`/`commit`/`rollback` door for callers that are not use-case
-//! methods: sweeps, composition and test seeding.
+//! methods: composition and test seeding.
 
 use domain::ports::{Database, UnitOfWorkFn};
 

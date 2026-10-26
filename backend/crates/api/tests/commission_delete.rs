@@ -30,10 +30,10 @@ use async_trait::async_trait;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
-        ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
-        CommissionMarkup, CommissionTitle, DeadlineStatus, DirectionStatus, ElementId, GrantLevel,
-        LapsedDeadline, LockedStanding, NewCommission, NewElement, NewSeat, NewSlot,
-        SeatInvitation, SeatInvitationId, TabId, element::TabRow,
+        AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
+        CommissionMarkup, CommissionTitle, DeadlineChange, DelayedChange, DirectionChange,
+        ElementId, GrantLevel, LateKinds, LifecycleMove, LockedNode, LockedStanding, NewCommission,
+        NewElement, NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId, element::TabRow,
     },
     did::Did,
     maturity::Maturity,
@@ -321,6 +321,21 @@ impl CommissionReads for FactBearingCommissions<'_> {
         self.0.standing_for_update(commission, user).await
     }
 
+    async fn lock_for_system(
+        &mut self,
+        commission: &CommissionId,
+    ) -> anyhow::Result<Option<LockedNode>> {
+        self.0.lock_for_system(commission).await
+    }
+
+    async fn late_owed(
+        &mut self,
+        commission: &CommissionId,
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<bool> {
+        self.0.late_owed(commission, late_kinds).await
+    }
+
     async fn is_participant(
         &mut self,
         commission: &CommissionId,
@@ -352,6 +367,14 @@ impl CommissionWrites for FactBearingCommissions<'_> {
         commission: &NewCommission,
     ) -> anyhow::Result<()> {
         self.0.create(capability, birth, commission).await
+    }
+
+    async fn set_lifecycle(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &LifecycleMove,
+    ) -> anyhow::Result<bool> {
+        self.0.set_lifecycle(capability, change).await
     }
 
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
@@ -436,30 +459,26 @@ impl CommissionWrites for FactBearingCommissions<'_> {
 
     async fn set_direction_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DirectionStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DirectionChange,
     ) -> anyhow::Result<bool> {
-        self.0.set_direction_status(id, status).await
+        self.0.set_direction_status(capability, change).await
     }
 
     async fn set_deadline(
         &mut self,
-        id: &CommissionId,
-        deadline: Option<DateTimeUtc>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DeadlineChange,
     ) -> anyhow::Result<bool> {
-        self.0.set_deadline(id, deadline).await
+        self.0.set_deadline(capability, change).await
     }
 
     async fn set_deadline_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DeadlineStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DelayedChange,
     ) -> anyhow::Result<bool> {
-        self.0.set_deadline_status(id, status).await
-    }
-
-    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
-        self.0.lapsed_deadlines(now).await
+        self.0.set_deadline_status(capability, change).await
     }
 }
 

@@ -9,8 +9,7 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            ChangelogEntryKind, CommissionId, CommissionMarkup, FileKey, Markup, MarkupKey,
-            NewChangelogEntry,
+            CommissionId, CommissionMarkup, FileKey, Markup, MarkupKey, NewChangelogEntry, OpenKind,
         },
         user::UserId,
     },
@@ -74,9 +73,9 @@ impl Commissions<'_> {
             .ok_or(CommissionError::FileNotFound)?;
 
         let id = MarkupKey::generate();
-        let entry = NewChangelogEntry::event(
+        let entry: NewChangelogEntry = NewChangelogEntry::event(
             commission_id,
-            ChangelogEntryKind::MarkupAdded,
+            OpenKind::MarkupAdded,
             actor_id.clone(),
             json!({
                 "markup_id": *id.as_ref(),
@@ -84,7 +83,8 @@ impl Commissions<'_> {
                 "markup": markup,
             }),
             now,
-        );
+        )
+        .into();
         let markup = CommissionMarkup {
             id,
             commission_id,

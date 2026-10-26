@@ -20,7 +20,7 @@
 //!   (actor NULL), atomically with the status write.
 //!
 //! The sweep itself is exercised deterministically by calling
-//! [`application::commission::sweep_deadlines`] with an injected `now` — the
+//! [`application::commission::Commissions::sweep_deadlines`] with an injected `now` — the
 //! same use case the composition root's interval task drives on the wall clock.
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
@@ -28,7 +28,7 @@
 use adapter_mem::{CommissionSeed, MemBackend};
 use chrono::{DateTime, Utc};
 use domain::elements::{
-    commission::{Commission, CommissionId, CommissionTitle, LifecycleStep},
+    commission::{Commission, CommissionId, CommissionTitle, DeadlineStatus, LifecycleStep},
     did::Did,
     profile::Profile,
     user::User,
@@ -73,11 +73,12 @@ async fn stored(backend: &MemBackend, id: uuid::Uuid) -> Commission {
         .expect("commission exists")
 }
 
-/// The persisted deadline status of `id`, as its stable wire token.
+/// The deadline status of `id` now (Late derived, else the stored flag), as its stable wire
+/// token.
 async fn stored_deadline_status(backend: &MemBackend, id: uuid::Uuid) -> Option<&'static str> {
     stored(backend, id)
         .await
-        .deadline_status
+        .deadline_status_at(Utc::now())
         .map(<&'static str>::from)
 }
 
@@ -125,7 +126,15 @@ async fn entries(
 /// Runs one deterministic sweep at the injected instant — exactly what the
 /// composition root's interval task does, minus the wall clock.
 async fn sweep(backend: &MemBackend, now: DateTime<Utc>) -> usize {
-    application::commission::sweep_deadlines(&*backend.database(), now)
+    let sweeper = Did::from("did:plc:sweeper".to_owned());
+    let mut runtime = test_support::runtime::mem(&sweeper).build().runtime;
+    runtime.commissions = backend.commission_store();
+    runtime.changelog = backend.changelog_store();
+    runtime.database = backend.database();
+    runtime
+        .app()
+        .commissions()
+        .sweep_deadlines(now)
         .await
         .expect("sweep runs")
         .marked_late
@@ -237,12 +246,13 @@ async fn extending_the_deadline_emits_deadline_extended() {
     assert_eq!(log[2].payload["to"], "2027-04-01T00:00:00Z");
 }
 
-// AC1 (clear) + AC4 — clearing the deadline empties the envelope field AND
-// wipes the deadline axis (a commission with no deadline never carries
-// deadline-axis statuses); the clear records as `deadline_set` with `to: null`.
-// Clearing an already-clear deadline is an idempotent no-op.
+// AC1 (clear) + AC4 — clearing the deadline empties the envelope field; a raised
+// Delayed flag stays stored but shows nowhere while there is no deadline (a
+// commission with no deadline never shows a deadline-axis status), and shows
+// again once a deadline is set. The clear records as `deadline_set` with
+// `to: null`. Clearing an already-clear deadline is an idempotent no-op.
 #[tokio::test]
-async fn clearing_the_deadline_wipes_the_axis() {
+async fn clearing_the_deadline_keeps_the_flag_hidden_until_a_deadline_returns() {
     let served = serve(
         test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
             Did::from("did:plc:artist".to_string()),
@@ -262,7 +272,7 @@ async fn clearing_the_deadline_wipes_the_axis() {
     )
     .await;
 
-    // Flag it as slipping first, so the clear has an axis value to wipe.
+    // Flag it as slipping first, so the clear has a flag to keep.
     assert_eq!(
         put_deadline_status(&client, &base, id, "delayed")
             .await
@@ -281,7 +291,13 @@ async fn clearing_the_deadline_wipes_the_axis() {
     let commission = stored(&backend, id).await;
     assert_eq!(commission.deadline, None, "the envelope field cleared");
     assert_eq!(
-        commission.deadline_status, None,
+        commission.delayed_flag,
+        Some(DeadlineStatus::Delayed),
+        "the raised flag stays stored"
+    );
+    assert_eq!(
+        commission.deadline_status_at(Utc::now()),
+        None,
         "no deadline ⇒ no deadline-axis status (AC4)"
     );
 
@@ -300,6 +316,11 @@ async fn clearing_the_deadline_wipes_the_axis() {
         .expect("DELETE deadline again");
     assert_eq!(res.status(), 204, "clearing twice is idempotent");
     assert_eq!(entries(&backend, id).await.len(), 3, "no no-op entry");
+
+    // A new deadline brings the kept flag back into view.
+    let res = put_deadline(&client, &base, id, "2027-05-01T00:00:00Z").await;
+    assert_eq!(res.status(), 204, "a new deadline is set");
+    assert_eq!(stored_deadline_status(&backend, id).await, Some("delayed"));
 }
 
 // Re-setting the deadline already held is the set-side no-op: 204, no entry.
@@ -758,7 +779,9 @@ async fn the_axes_compose_freely() {
         Some("waiting_for_approval")
     );
     assert_eq!(
-        commission.deadline_status.map(<&'static str>::from),
+        commission
+            .deadline_status_at(Utc::now())
+            .map(<&'static str>::from),
         Some("late"),
         "the two axes hold values simultaneously — the passed deadline derives \
          Late on the deadline axis"
@@ -774,7 +797,9 @@ async fn the_axes_compose_freely() {
         "the sweep never moves the direction axis"
     );
     assert_eq!(
-        commission.deadline_status.map(<&'static str>::from),
+        commission
+            .deadline_status_at(Utc::now())
+            .map(<&'static str>::from),
         Some("late")
     );
     assert!(
@@ -791,7 +816,9 @@ async fn the_axes_compose_freely() {
     assert_eq!(res.status(), 204);
     let commission = stored(&backend, id).await;
     assert_eq!(
-        commission.deadline_status.map(<&'static str>::from),
+        commission
+            .deadline_status_at(Utc::now())
+            .map(<&'static str>::from),
         Some("late"),
         "clearing the direction axis leaves the deadline axis alone"
     );
@@ -853,7 +880,9 @@ async fn a_non_participant_gets_the_same_404_as_a_missing_commission() {
         "the deadline never moved"
     );
     assert_eq!(
-        commission.deadline_status.map(<&'static str>::from),
+        commission
+            .deadline_status_at(Utc::now())
+            .map(<&'static str>::from),
         Some("late"),
         "the axis derives Late from the seeded past deadline — the non-participant \
          changed nothing (its stream below stays empty)"
@@ -944,4 +973,58 @@ async fn a_malformed_deadline_body_is_rejected() {
     let commission = stored(&backend, id).await;
     assert_eq!(commission.deadline, None, "nothing stored");
     assert_eq!(entries(&backend, id).await.len(), 1, "no entry appended");
+}
+
+// While Disputed the deadline is frozen: a fresh set, an extension and a clear each
+// answer `409 commission_disputed`, and no entry is written; the deadline stays as it was.
+#[tokio::test]
+async fn a_disputed_commission_s_deadline_is_frozen() {
+    let served = serve(
+        test_support::runtime::mem(&Did::from("did:plc:artist".to_string())).profile(Profile::new(
+            Did::from("did:plc:artist".to_string()),
+            "artist.bsky.social",
+        )),
+        api::app,
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
+    let client = client();
+    sign_in(&client, &base, "artist.bsky.social").await;
+    let undated = create_commission(&client, &base, &backend, json!({ "title": "Undated" })).await;
+    let dated = create_commission(
+        &client,
+        &base,
+        &backend,
+        json!({ "title": "Dated", "deadline": "2027-03-01T00:00:00Z" }),
+    )
+    .await;
+    for id in [undated, dated] {
+        backend.seed_lifecycle_step(CommissionId::from(id), LifecycleStep::Disputed);
+    }
+    let undated_log = entries(&backend, undated).await.len();
+    let dated_log = entries(&backend, dated).await.len();
+
+    let set = put_deadline(&client, &base, undated, "2027-03-01T00:00:00Z").await;
+    common::assert_problem(set, 409, "commission_disputed").await;
+    let extended = put_deadline(&client, &base, dated, "2027-04-01T00:00:00Z").await;
+    common::assert_problem(extended, 409, "commission_disputed").await;
+    let cleared = client
+        .delete(format!("{base}/commissions/{dated}/deadline"))
+        .send()
+        .await
+        .expect("DELETE deadline");
+    common::assert_problem(cleared, 409, "commission_disputed").await;
+
+    assert_eq!(stored(&backend, undated).await.deadline, None);
+    assert_eq!(
+        stored(&backend, dated).await.deadline,
+        Some("2027-03-01T00:00:00Z".parse().unwrap()),
+        "the deadline stays"
+    );
+    assert_eq!(
+        entries(&backend, undated).await.len(),
+        undated_log,
+        "no entry"
+    );
+    assert_eq!(entries(&backend, dated).await.len(), dated_log, "no entry");
 }

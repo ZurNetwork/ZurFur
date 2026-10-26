@@ -1,4 +1,4 @@
-use super::CommissionId;
+use super::{CommissionDeadline, CommissionId};
 use identity::elements::user::UserId;
 use kernel::{
     datetime::DateTimeUtc,
@@ -22,8 +22,8 @@ use kernel::{
 pub struct NewCommission {
     /// The maturity posture, or `None` while unrated.
     pub maturity: Option<Maturity>,
-    /// The deadline, or `None`.
-    pub deadline: Option<DateTimeUtc>,
+    /// The deadline at the store's precision, or `None`.
+    pub deadline: Option<CommissionDeadline>,
 }
 
 /// What the den's write gate supplies to a create, beside its capability: the commission's

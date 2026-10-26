@@ -1,7 +1,10 @@
 use chrono::Utc;
 use domain::elements::account::AccountId;
 use domain::elements::commission::{
-    CommissionTitle, FileName, NewSlot, SKELETON, SeatInvitation, SeatKind, SlotTitle,
+    CommissionDeadline, CommissionState, CommissionTitle, DirectionStatus, FileName, LateFacts,
+    LateKinds, NewSlot, SKELETON, SeatInvitation, SeatKind, SlotTitle, clear_deadline,
+    clear_delayed, clear_direction, move_lifecycle, owes_late, schedule_deadline, set_delayed,
+    set_direction,
 };
 use domain::elements::did::Did;
 use domain::elements::workflow::{ColumnName, WorkflowName};
@@ -48,7 +51,7 @@ async fn create_in(uow: &mut dyn UnitOfWork, created: &CommissionSeed) {
     };
     let chosen = NewCommission {
         maturity: created.maturity,
-        deadline: created.deadline,
+        deadline: created.deadline.map(CommissionDeadline::from),
     };
     let capability = WriteCapability::gate_issued(New::from(created.id));
     uow.commissions()
@@ -165,13 +168,7 @@ async fn changelog_appends_commit_and_roll_back_with_the_unit() {
     let mut uow = database.begin().await.unwrap();
     create_in(&mut *uow, &created).await;
     uow.changelog()
-        .append(&NewChangelogEntry::event(
-            id,
-            ChangelogEntryKind::Created,
-            owner.clone(),
-            json!({ "title": "Logged" }),
-            Utc::now(),
-        ))
+        .append(&NewChangelogEntry::created(id, owner.clone(), Utc::now()))
         .await
         .unwrap();
     uow.commit().await.unwrap();
@@ -239,15 +236,9 @@ async fn delete_removes_the_commission_and_cascades_its_changelog() {
     let mut uow = database.begin().await.unwrap();
     create_in(&mut *uow, &doomed).await;
     create_in(&mut *uow, &survivor).await;
-    for (id, title) in [(doomed_id, "Doomed"), (survivor_id, "Survivor")] {
+    for id in [doomed_id, survivor_id] {
         uow.changelog()
-            .append(&NewChangelogEntry::event(
-                id,
-                ChangelogEntryKind::Created,
-                owner.clone(),
-                json!({ "title": title }),
-                Utc::now(),
-            ))
+            .append(&NewChangelogEntry::created(id, owner.clone(), Utc::now()))
             .await
             .unwrap();
     }
@@ -983,62 +974,81 @@ async fn load_composition_answers_none_for_an_unknown_commission() {
     assert!(composition.elements.is_empty(), "empty is not absent");
 }
 
-// ZMVP-85 (store layer) — the direction status sets, replaces, and clears
-// through the unit of work; a dropped unit discards the staged change (the
-// mem mirror of pg's drop = rollback).
-#[tokio::test]
-async fn direction_status_sets_replaces_and_clears_through_the_unit() {
-    use domain::elements::commission::DirectionStatus;
+/// A Participant's capability on `id`, minted here as the den's write gate issues one.
+fn participant_on(id: CommissionId) -> WriteCapability<CommissionId, AsParticipant> {
+    WriteCapability::gate_issued(id)
+}
 
+/// The state `backend` holds for `id`, committed.
+async fn state_of(backend: &MemBackend, id: CommissionId) -> CommissionState {
+    let stored = backend
+        .find_commission(id)
+        .await
+        .unwrap()
+        .expect("the commission exists");
+    CommissionState::from(&stored)
+}
+
+/// The direction set to `to` on what `backend` holds for `id`, as its rule checks it.
+async fn direction_set(
+    backend: &MemBackend,
+    id: CommissionId,
+    to: DirectionStatus,
+) -> DirectionChange {
+    let state = state_of(backend, id).await;
+    let set = set_direction(&state, to).expect("a real set");
+    DirectionChange::from(set)
+}
+
+// The direction status sets, replaces and clears through the unit by compare-and-set; a
+// dropped unit discards the staged change, and a change checked from a status the row no
+// longer holds, or on no commission, changes nothing and answers `false`.
+#[tokio::test]
+async fn direction_status_sets_replaces_and_clears_by_compare_and_set() {
     let backend = MemBackend::new();
     let database = backend.database();
-    let owner = user_id();
-    let created = commission("Statused", owner);
+    let created = commission("Statused", user_id());
     let id = created.id;
     seed(&backend, &created).await;
-
-    let status_of = |backend: &MemBackend| {
-        let backend = backend.clone();
-        async move {
-            backend
-                .find_commission(id)
-                .await
-                .unwrap()
-                .expect("exists")
-                .direction_status
-        }
-    };
+    let capability = participant_on(id);
+    let status_of = async |backend: &MemBackend| state_of(backend, id).await.direction_status();
     assert_eq!(status_of(&backend).await, None, "born clear");
 
-    // Set, then replace — one nullable cell, so the second set wins whole.
+    let first = direction_set(&backend, id, DirectionStatus::WaitingForInput).await;
     let mut uow = database.begin().await.unwrap();
-    uow.commissions()
-        .set_direction_status(&id, Some(DirectionStatus::WaitingForInput))
+    let landed = uow
+        .commissions()
+        .set_direction_status(&capability, &first)
         .await
         .unwrap();
     uow.commit().await.unwrap();
+    assert!(landed);
     assert_eq!(
         status_of(&backend).await,
         Some(DirectionStatus::WaitingForInput)
     );
 
+    let replaced = direction_set(&backend, id, DirectionStatus::ChangesRequested).await;
     let mut uow = database.begin().await.unwrap();
-    uow.commissions()
-        .set_direction_status(&id, Some(DirectionStatus::ChangesRequested))
+    let landed = uow
+        .commissions()
+        .set_direction_status(&capability, &replaced)
         .await
         .unwrap();
     uow.commit().await.unwrap();
+    assert!(landed);
     assert_eq!(
         status_of(&backend).await,
         Some(DirectionStatus::ChangesRequested),
         "a set replaces the current value"
     );
 
-    // A dropped (uncommitted) unit discards its staged status write.
+    let state = state_of(&backend, id).await;
+    let cleared = DirectionChange::from(clear_direction(&state).expect("a real clear"));
     {
         let mut uow = database.begin().await.unwrap();
         uow.commissions()
-            .set_direction_status(&id, None)
+            .set_direction_status(&capability, &cleared)
             .await
             .unwrap();
     }
@@ -1048,108 +1058,246 @@ async fn direction_status_sets_replaces_and_clears_through_the_unit() {
         "a dropped unit rolls the clear back"
     );
 
-    // Clear commits to NULL; an absent commission is a no-op, not an error.
     let mut uow = database.begin().await.unwrap();
-    uow.commissions()
-        .set_direction_status(&id, None)
+    let stale = uow
+        .commissions()
+        .set_direction_status(&capability, &first)
         .await
         .unwrap();
-    uow.commissions()
+    let elsewhere = uow
+        .commissions()
         .set_direction_status(
-            &CommissionId::from(uuid::Uuid::now_v7()),
-            Some(DirectionStatus::WaitingForApproval),
+            &participant_on(CommissionId::from(uuid::Uuid::now_v7())),
+            &first,
         )
         .await
         .unwrap();
+    let landed = uow
+        .commissions()
+        .set_direction_status(&capability, &cleared)
+        .await
+        .unwrap();
     uow.commit().await.unwrap();
+    assert!(
+        !stale,
+        "a change from a status the row no longer holds matches nothing"
+    );
+    assert!(!elsewhere, "an absent commission matches nothing");
+    assert!(landed);
     assert_eq!(status_of(&backend).await, None, "cleared");
 }
 
-// ZMVP-86 (store layer) — the deadline and the MANUAL Delayed flag set and
-// clear through the unit of work; a dropped unit discards the staged change
-// (the mem mirror of pg's drop = rollback). Late is derived on lookup, never
-// persisted, so it is exercised separately below.
+// The deadline and the MANUAL Delayed flag set and clear through the unit by compare-and-set;
+// a dropped unit discards the staged change, and a stale change matches nothing. Late is
+// derived on lookup, never persisted, so it is exercised separately below.
 #[tokio::test]
-async fn deadline_and_status_set_and_clear_through_the_unit() {
+async fn deadline_and_delayed_set_and_clear_by_compare_and_set() {
     let backend = MemBackend::new();
     let database = backend.database();
-    let owner = user_id();
-    let created = commission("Deadlined", owner);
+    let created = commission("Deadlined", user_id());
     let id = created.id;
     seed(&backend, &created).await;
+    let capability = participant_on(id);
 
-    // A FUTURE deadline, so the derived Late never masks the manual flag.
-    let deadline = Utc::now() + chrono::Duration::days(30);
+    // A FUTURE deadline, so the derived Late never masks the manual flag; held, as the store
+    // holds it, to whole microseconds.
+    let now = Utc::now();
+    let in_a_month = CommissionDeadline::from(now + chrono::Duration::days(30));
+    let deadline = chrono::DateTime::<Utc>::from(in_a_month);
+    let undated = state_of(&backend, id).await;
+    let scheduled = schedule_deadline(&undated, in_a_month)
+        .expect("allowed")
+        .expect("a real set");
+    let set = DeadlineChange::from(scheduled);
     let mut uow = database.begin().await.unwrap();
-    {
-        let mut commissions = uow.commissions();
-        commissions.set_deadline(&id, Some(deadline)).await.unwrap();
-        commissions
-            .set_deadline_status(&id, Some(DeadlineStatus::Delayed))
-            .await
-            .unwrap();
-    }
+    let landed = uow
+        .commissions()
+        .set_deadline(&capability, &set)
+        .await
+        .unwrap();
     uow.commit().await.unwrap();
+    assert!(landed);
+    let dated = state_of(&backend, id).await;
+    let raised = set_delayed(&dated, now)
+        .expect("allowed")
+        .expect("a real set");
+    let flag = DelayedChange::from(raised);
+    let mut uow = database.begin().await.unwrap();
+    let landed = uow
+        .commissions()
+        .set_deadline_status(&capability, &flag)
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+    assert!(landed);
     let found = backend.find_commission(id).await.unwrap().expect("exists");
     assert_eq!(found.deadline, Some(deadline));
     assert_eq!(
-        found.deadline_status,
+        found.delayed_flag,
         Some(DeadlineStatus::Delayed),
-        "the manual flag persists; a future deadline is not Late"
+        "the manual flag persists"
+    );
+    assert_eq!(
+        found.deadline_status_at(now),
+        Some(DeadlineStatus::Delayed),
+        "a future deadline is not Late"
     );
 
-    // A dropped (uncommitted) unit discards its staged writes.
+    let flagged = state_of(&backend, id).await;
+    let unscheduled = clear_deadline(&flagged)
+        .expect("allowed")
+        .expect("a real clear");
+    let deadline_cleared = DeadlineChange::from(unscheduled);
+    let lowered = clear_delayed(&flagged, now)
+        .expect("allowed")
+        .expect("a real clear");
+    let flag_cleared = DelayedChange::from(lowered);
     {
         let mut uow = database.begin().await.unwrap();
         let mut commissions = uow.commissions();
-        commissions.set_deadline(&id, None).await.unwrap();
-        commissions.set_deadline_status(&id, None).await.unwrap();
-    }
-    let found = backend.find_commission(id).await.unwrap().expect("exists");
-    assert_eq!(found.deadline, Some(deadline), "the clear rolled back");
-    assert_eq!(found.deadline_status, Some(DeadlineStatus::Delayed));
-
-    // Clear commits; an absent commission is a no-op, not an error.
-    let mut uow = database.begin().await.unwrap();
-    {
-        let mut commissions = uow.commissions();
-        commissions.set_deadline(&id, None).await.unwrap();
-        commissions.set_deadline_status(&id, None).await.unwrap();
         commissions
-            .set_deadline(&CommissionId::from(uuid::Uuid::now_v7()), Some(deadline))
+            .set_deadline(&capability, &deadline_cleared)
+            .await
+            .unwrap();
+        commissions
+            .set_deadline_status(&capability, &flag_cleared)
             .await
             .unwrap();
     }
+    let found = backend.find_commission(id).await.unwrap().expect("exists");
+    assert_eq!(found.deadline, Some(deadline), "the clear rolled back");
+    assert_eq!(found.delayed_flag, Some(DeadlineStatus::Delayed));
+
+    let mut uow = database.begin().await.unwrap();
+    let (stale_deadline, stale_flag, cleared_deadline, cleared_flag) = {
+        let mut commissions = uow.commissions();
+        let stale_deadline = commissions.set_deadline(&capability, &set).await.unwrap();
+        let stale_flag = commissions
+            .set_deadline_status(&capability, &flag)
+            .await
+            .unwrap();
+        let cleared_deadline = commissions
+            .set_deadline(&capability, &deadline_cleared)
+            .await
+            .unwrap();
+        let cleared_flag = commissions
+            .set_deadline_status(&capability, &flag_cleared)
+            .await
+            .unwrap();
+        (stale_deadline, stale_flag, cleared_deadline, cleared_flag)
+    };
     uow.commit().await.unwrap();
+    assert!(
+        !stale_deadline,
+        "a deadline set from none matches a dated row"
+    );
+    assert!(!stale_flag, "a flag raised from none matches a flagged row");
+    assert!(cleared_deadline && cleared_flag);
     let found = backend.find_commission(id).await.unwrap().expect("exists");
     assert_eq!(found.deadline, None);
+    assert_eq!(found.delayed_flag, None);
     assert_eq!(
-        found.deadline_status, None,
+        found.deadline_status_at(now),
+        None,
         "no deadline ⇒ no axis status (AC4)"
     );
 }
 
-// ZMVP-86 — Late is DERIVED on lookup from `deadline < now`, never persisted:
-// a past deadline reads Late, and it supersedes a standing manual Delayed
-// without overwriting it in storage.
+// A flag left after its deadline was cleared is seen as nothing at the act's time, yet the row
+// holds it: the clear compares against the stored flag, so it lands.
+#[tokio::test]
+async fn a_dormant_flag_s_clear_compares_against_the_stored_flag() {
+    let backend = MemBackend::new();
+    let database = backend.database();
+    let created = commission("Dormant", user_id());
+    let id = created.id;
+    seed(&backend, &created).await;
+    let capability = participant_on(id);
+    let now = Utc::now();
+    let undated = state_of(&backend, id).await;
+    let in_a_month = now + chrono::Duration::days(30);
+    let scheduled = schedule_deadline(&undated, in_a_month.into())
+        .expect("allowed")
+        .expect("a real set");
+    let mut uow = database.begin().await.unwrap();
+    uow.commissions()
+        .set_deadline(&capability, &DeadlineChange::from(scheduled))
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+    let dated = state_of(&backend, id).await;
+    let raised = set_delayed(&dated, now)
+        .expect("allowed")
+        .expect("a real set");
+    let mut uow = database.begin().await.unwrap();
+    uow.commissions()
+        .set_deadline_status(&capability, &DelayedChange::from(raised))
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+    let flagged = state_of(&backend, id).await;
+    let unscheduled = clear_deadline(&flagged)
+        .expect("allowed")
+        .expect("a real clear");
+    let mut uow = database.begin().await.unwrap();
+    uow.commissions()
+        .set_deadline(&capability, &DeadlineChange::from(unscheduled))
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+
+    let dormant = state_of(&backend, id).await;
+    let lowered = clear_delayed(&dormant, now)
+        .expect("allowed")
+        .expect("a real clear");
+    let change = DelayedChange::from(lowered);
+    let mut uow = database.begin().await.unwrap();
+    let landed = uow
+        .commissions()
+        .set_deadline_status(&capability, &change)
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+
+    assert_eq!(change.before(), None, "the act saw no status");
+    assert!(landed);
+    assert_eq!(state_of(&backend, id).await.delayed_flag(), None);
+}
+
+// Late is DERIVED on lookup from `deadline < now`, never persisted: a past deadline reads
+// Late, and it supersedes a standing manual Delayed without overwriting it in storage.
 #[tokio::test]
 async fn late_is_derived_from_a_passed_deadline() {
     let backend = MemBackend::new();
     let database = backend.database();
-    let owner = user_id();
-    let created = commission("Slipping", owner);
+    let created = commission("Slipping", user_id());
     let id = created.id;
     seed(&backend, &created).await;
+    let capability = participant_on(id);
+    let now = Utc::now();
+    let yesterday = now - chrono::Duration::days(1);
+    let two_days_ago = now - chrono::Duration::days(2);
 
+    let undated = state_of(&backend, id).await;
+    let scheduled = schedule_deadline(&undated, yesterday.into())
+        .expect("allowed")
+        .expect("a real set");
+    let dated = CommissionState::from(&Commission {
+        deadline: Some(yesterday),
+        ..backend.find_commission(id).await.unwrap().expect("exists")
+    });
+    let raised = set_delayed(&dated, two_days_ago)
+        .expect("allowed before the deadline")
+        .expect("a real set");
     let mut uow = database.begin().await.unwrap();
     {
         let mut commissions = uow.commissions();
         commissions
-            .set_deadline(&id, Some(Utc::now() - chrono::Duration::days(1)))
+            .set_deadline(&capability, &DeadlineChange::from(scheduled))
             .await
             .unwrap();
         commissions
-            .set_deadline_status(&id, Some(DeadlineStatus::Delayed))
+            .set_deadline_status(&capability, &DelayedChange::from(raised))
             .await
             .unwrap();
     }
@@ -1157,16 +1305,21 @@ async fn late_is_derived_from_a_passed_deadline() {
 
     let found = backend.find_commission(id).await.unwrap().expect("exists");
     assert_eq!(
-        found.deadline_status,
+        found.deadline_status_at(now),
         Some(DeadlineStatus::Late),
         "a passed deadline derives Late, superseding the stored Delayed"
     );
+    assert_eq!(
+        found.delayed_flag,
+        Some(DeadlineStatus::Delayed),
+        "Late is never stored"
+    );
 }
 
-// ZMVP-86 (store layer, ruling E12) — `lapsed_deadlines` returns exactly
-// the sweepable set: past-deadline commissions that are not already Late
-// and not in a terminal lifecycle, ordered by deadline; and it sees writes
-// staged on the same open unit (the no-TOCTOU posture).
+// The pool's sweep scan returns exactly the sweepable set: past-deadline commissions with no
+// `late` entry since their deadline last changed, on a step a deadline lapses on (not terminal,
+// not Disputed), ordered by deadline. A unit's `late_owed` is the same anti-join for one
+// commission, and its system lock answers the commission's node and level.
 #[tokio::test]
 async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
     let backend = MemBackend::new();
@@ -1216,38 +1369,155 @@ async fn lapsed_deadlines_scans_exactly_the_sweepable_set() {
             .lifecycle_step = step;
     }
 
+    let already_late_stored = backend
+        .find_commission(already_late.id)
+        .await
+        .unwrap()
+        .expect("exists");
+    let already_late_facts = LateFacts {
+        state: CommissionState::from(&already_late_stored),
+        owed: true,
+    };
+    let mark = owes_late(&already_late_facts, now).expect("a late entry is owed");
+    let slipping_state = state_of(&backend, slipping.id).await;
+    let raised = set_delayed(&slipping_state, past(25))
+        .expect("allowed before the deadline")
+        .expect("a real set");
+
+    let late_kinds = LateKinds::default();
     let mut uow = database.begin().await.unwrap();
     {
         uow.commissions()
-            .set_deadline_status(&slipping.id, Some(DeadlineStatus::Delayed))
+            .set_deadline_status(&participant_on(slipping.id), &DelayedChange::from(raised))
             .await
             .unwrap();
         // Late is deduped on the changelog (no persisted Late), staged on the
         // SAME unit: a commission already logged Late is skipped by the scan.
         uow.changelog()
-            .append(&NewChangelogEntry::system(
-                already_late.id,
-                ChangelogEntryKind::Late,
-                serde_json::json!({}),
-                now,
-            ))
+            .append(&NewChangelogEntry::late(already_late.id, &mark, now))
             .await
             .unwrap();
 
-        let lapsed = uow.commissions().lapsed_deadlines(now).await.unwrap();
-        let ids: Vec<_> = lapsed.iter().map(|l| l.id).collect();
-        assert_eq!(
-            ids,
-            vec![missed.id, slipping.id, disputed.id],
-            "exactly the sweepable set, ordered by deadline"
+        assert!(
+            !uow.commissions()
+                .late_owed(&already_late.id, &late_kinds)
+                .await
+                .unwrap(),
+            "a late entry staged on the unit is seen by its own read"
         );
-        assert_eq!(lapsed[0].status, None);
+        assert!(
+            uow.commissions()
+                .late_owed(&missed.id, &late_kinds)
+                .await
+                .unwrap()
+        );
+        let locked = uow
+            .commissions()
+            .lock_for_system(&missed.id)
+            .await
+            .unwrap()
+            .expect("a bound commission answers its node");
+        assert_eq!(locked.level, Level::Private);
+        let absent = CommissionId::from(uuid::Uuid::now_v7());
         assert_eq!(
-            lapsed[1].status,
-            Some(DeadlineStatus::Delayed),
-            "the scan carries the standing flag"
+            uow.commissions().lock_for_system(&absent).await.unwrap(),
+            None
         );
     }
+    uow.commit().await.unwrap();
+
+    let not_lapsing = LifecycleStep::not_lapsing();
+    let ids = backend
+        .commission_store()
+        .lapsed_deadlines(now, &not_lapsing, &late_kinds)
+        .await
+        .unwrap();
+    assert_eq!(
+        ids,
+        vec![missed.id, slipping.id],
+        "exactly the sweepable set, ordered by deadline, a Delayed one included"
+    );
+}
+
+// An extension after a `late` entry re-arms both the owed read and the scan: one change per
+// miss.
+#[tokio::test]
+async fn an_extension_re_arms_the_owed_read_and_the_scan() {
+    let backend = MemBackend::new();
+    let database = backend.database();
+    let owner = user_id();
+    let now = Utc::now();
+    let missed = CommissionSeed {
+        created_at: now,
+        deadline: Some(now - chrono::Duration::days(30)),
+        ..commission("Re-armed", owner.clone())
+    };
+    seed(&backend, &missed).await;
+    let late_kinds = LateKinds::default();
+    let not_lapsing = LifecycleStep::not_lapsing();
+    let state = state_of(&backend, missed.id).await;
+    let late_facts = LateFacts {
+        state: state.clone(),
+        owed: true,
+    };
+    let mark = owes_late(&late_facts, now).expect("a late entry is owed");
+    let later = now - chrono::Duration::days(10);
+    let extended = schedule_deadline(&state, later.into())
+        .expect("allowed")
+        .expect("a real set");
+    assert!(extended.extends(), "a later deadline is an extension");
+
+    let mut uow = database.begin().await.unwrap();
+    uow.changelog()
+        .append(&NewChangelogEntry::late(missed.id, &mark, now))
+        .await
+        .unwrap();
+    let logged = uow
+        .commissions()
+        .late_owed(&missed.id, &late_kinds)
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+    let scanned_after_mark = backend
+        .commission_store()
+        .lapsed_deadlines(now, &not_lapsing, &late_kinds)
+        .await
+        .unwrap();
+
+    let mut uow = database.begin().await.unwrap();
+    uow.changelog()
+        .append(&NewChangelogEntry::deadline_set(
+            missed.id,
+            owner.clone(),
+            &extended,
+            now,
+        ))
+        .await
+        .unwrap();
+    let re_armed = uow
+        .commissions()
+        .late_owed(&missed.id, &late_kinds)
+        .await
+        .unwrap();
+    uow.commit().await.unwrap();
+    let scanned_after_extension = backend
+        .commission_store()
+        .lapsed_deadlines(now, &not_lapsing, &late_kinds)
+        .await
+        .unwrap();
+
+    let expected_after_mark = (false, Vec::<CommissionId>::new());
+    assert_eq!(
+        (logged, scanned_after_mark),
+        expected_after_mark,
+        "a late entry since the deadline was set owes nothing and leaves the scan"
+    );
+    let expected_after_extension = (true, vec![missed.id]);
+    assert_eq!(
+        (re_armed, scanned_after_extension),
+        expected_after_extension,
+        "an extension after the mark owes a fresh one and puts it back in the scan"
+    );
 }
 
 // The owner-arm participant predicate and the linked-channel round-trip on
@@ -2452,4 +2722,157 @@ async fn delete_cascades_participants_files_and_grants() {
             .unwrap()
             .is_none()
     );
+}
+
+/// Every gated entry built from a change its rule passed on `commission`, beside the literal
+/// JSON it stores.
+fn typed_entries(commission: &mut Commission) -> Vec<(NewChangelogEntry, Value)> {
+    let at = Utc::now();
+    let march: chrono::DateTime<Utc> = "2026-03-01T12:00:00Z".parse().expect("an RFC 3339 instant");
+    let april: chrono::DateTime<Utc> = "2026-04-01T12:00:00Z".parse().expect("an RFC 3339 instant");
+    let before_march = "2026-02-01T12:00:00Z".parse().expect("an RFC 3339 instant");
+    let owner = commission.owner_id.clone();
+    let id = commission.id;
+
+    commission.lifecycle_step = LifecycleStep::Active;
+    commission.deadline = None;
+    let undated = CommissionState::from(&*commission);
+    let moved = move_lifecycle(&undated, LifecycleStep::Batched)
+        .expect("passes")
+        .expect("a real move");
+    let lifecycle_moved = NewChangelogEntry::lifecycle_moved(id, owner.clone(), &moved, at);
+    let direction = set_direction(&undated, DirectionStatus::WaitingForInput).expect("a real set");
+    let direction_set = NewChangelogEntry::direction_set(id, owner.clone(), &direction, at);
+    let first = schedule_deadline(&undated, march.into())
+        .expect("passes")
+        .expect("a real set");
+    let deadline_set = NewChangelogEntry::deadline_set(id, owner.clone(), &first, at);
+
+    commission.deadline = Some(march);
+    commission.direction_status = Some(DirectionStatus::ChangesRequested);
+    let dated = CommissionState::from(&*commission);
+    let extended = schedule_deadline(&dated, april.into())
+        .expect("passes")
+        .expect("a real set");
+    let deadline_extended = NewChangelogEntry::deadline_set(id, owner.clone(), &extended, at);
+    let gone = clear_deadline(&dated)
+        .expect("passes")
+        .expect("a real clear");
+    let deadline_cleared = NewChangelogEntry::deadline_cleared(id, owner.clone(), &gone, at);
+    let cleared = clear_direction(&dated).expect("a real clear");
+    let direction_cleared = NewChangelogEntry::direction_cleared(id, owner.clone(), &cleared, at);
+    let raised = set_delayed(&dated, before_march)
+        .expect("passes")
+        .expect("a real set");
+    let delayed_set = NewChangelogEntry::delayed_set(id, owner.clone(), &raised, at);
+
+    commission.delayed_flag = Some(DeadlineStatus::Delayed);
+    let flagged = CommissionState::from(&*commission);
+    let lowered = clear_delayed(&flagged, before_march)
+        .expect("passes")
+        .expect("a real clear");
+    let delayed_cleared = NewChangelogEntry::delayed_cleared(id, owner, &lowered, at);
+    let late_facts = LateFacts {
+        state: flagged,
+        owed: true,
+    };
+    let mark = owes_late(&late_facts, at).expect("a late entry is owed");
+    let late = NewChangelogEntry::late(id, &mark, at);
+
+    vec![
+        (
+            lifecycle_moved,
+            json!({ "from": "active", "to": "batched" }),
+        ),
+        (
+            direction_set,
+            json!({ "from": null, "to": "waiting_for_input" }),
+        ),
+        (
+            direction_cleared,
+            json!({ "from": "changes_requested", "to": null }),
+        ),
+        (
+            deadline_set,
+            json!({ "from": null, "to": "2026-03-01T12:00:00Z" }),
+        ),
+        (
+            deadline_extended,
+            json!({ "from": "2026-03-01T12:00:00Z", "to": "2026-04-01T12:00:00Z" }),
+        ),
+        (
+            deadline_cleared,
+            json!({ "from": "2026-03-01T12:00:00Z", "to": null }),
+        ),
+        (
+            delayed_set,
+            json!({ "from": null, "to": "delayed", "deadline": "2026-03-01T12:00:00Z" }),
+        ),
+        (
+            delayed_cleared,
+            json!({ "from": "delayed", "to": null, "deadline": "2026-03-01T12:00:00Z" }),
+        ),
+        (
+            late,
+            json!({ "deadline": "2026-03-01T12:00:00Z", "from": "delayed" }),
+        ),
+    ]
+}
+
+// Each typed entry, the new `lifecycle_moved` among them, reads back with its kind and the
+// literal JSON its constructor wrote, and no note.
+#[tokio::test]
+async fn each_new_kind_s_stored_shape_is_its_literal_json() {
+    let backend = MemBackend::new();
+    let database = backend.database();
+    let created = commission("Shapes", user_id());
+    seed(&backend, &created).await;
+    let mut stored_commission = backend
+        .find_commission(created.id)
+        .await
+        .unwrap()
+        .expect("exists");
+    let typed = typed_entries(&mut stored_commission);
+
+    let mut uow = database.begin().await.unwrap();
+    for (entry, _) in &typed {
+        uow.changelog().append(entry).await.unwrap();
+    }
+    uow.commit().await.unwrap();
+
+    let stored = backend.changelog_entries(created.id).await.unwrap();
+    assert_eq!(stored.len(), typed.len());
+    for (read, (written, shape)) in stored.iter().zip(&typed) {
+        assert_eq!(read.kind, written.kind());
+        assert_eq!(read.payload, *shape, "{}", read.kind);
+        assert_eq!(read.note, None, "{}", read.kind);
+    }
+    assert_eq!(stored[0].kind, ChangelogEntryKind::LifecycleMoved);
+}
+
+// The raw seeder stores a legacy row exactly as given, with the next seq and no note.
+#[tokio::test]
+async fn the_changelog_seeder_stores_a_legacy_row_as_given() {
+    let backend = MemBackend::new();
+    let created = commission("Legacy", user_id());
+    seed(&backend, &created).await;
+    let legacy_payload = json!({ "title": "Legacy" });
+
+    let seeded = backend.seed_changelog_entry(
+        created.id,
+        ChangelogEntryKind::Created,
+        Some(created.owner_id.clone()),
+        legacy_payload.clone(),
+        created.created_at,
+    );
+
+    let stored = backend.changelog_entries(created.id).await.unwrap();
+    let [read] = stored.as_slice() else {
+        panic!("one entry: {} of them", stored.len());
+    };
+    assert_eq!(read.seq, seeded.seq);
+    assert_eq!(read.kind, ChangelogEntryKind::Created);
+    assert_eq!(read.actor_id.as_ref(), Some(&created.owner_id));
+    assert_eq!(read.payload, legacy_payload);
+    assert_eq!(read.note, None);
 }

@@ -23,10 +23,12 @@ strum = { workspace = true }
 uuid = { workspace = true }
 # Parse a logged PLC operation's JSON text into native `jsonb` for the op-log table.
 serde_json = { workspace = true }
-# Envelope-encrypt custody keys at rest (XChaCha20-Poly1305 AEAD under a root key).
+# Open the 0.1 custody rows (XChaCha20-Poly1305 under the 0.1 root) to re-wrap them.
 chacha20poly1305 = { workspace = true }
-# Wipe intermediate plaintext key buffers after wrap/unwrap.
+# Wipe the 0.1 root and every opened key bundle on drop.
 zeroize = { workspace = true }
+# The custody migration's errors, which name counts only.
+thiserror = { workspace = true }
 
 [dev-dependencies]
 # The codegen staleness gate regenerates against a fresh container and diffs;

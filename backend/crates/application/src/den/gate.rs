@@ -1,7 +1,9 @@
 //! The den's write host and its gate: the one place a write reaches the node rows, the one
 //! issuer of a write capability, the one lender of a handler's view, and the one builder of a
-//! write's changelog entry. Create and rename answer from what the gate wrote and the view
-//! read, never from a second read of the node.
+//! write's changelog entry. Each act's rule runs first, on the facts its grant read, before any
+//! row is written or any capability issued; each act is lent a view of its own, whose one write
+//! lands its checked change exactly once. Create and rename answer from what the gate wrote and
+//! the view read, never from a second read of the node.
 
 use std::{
     fmt,
@@ -9,15 +11,16 @@ use std::{
 };
 
 use atta::{
-    Access, Admission, Born, Checked, DisplayName, Found, Host, HostError, Kind, Metadata, Mount,
-    Placed, Reach, RealPath, Segment, Shape, Type, Viewer,
+    Access, Act, Admission, Born, Checked, DisplayName, Found, Host, HostError, Kind, Metadata,
+    Mount, Placed, Reach, RealPath, Segment, Shape, Type, Viewer,
 };
 use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            AsOwner, AsParticipant, Commission, CommissionBirth, CommissionId, CommissionRole,
-            NewChangelogEntry, NewCommission,
+            AsOwner, AsParticipant, AsSystem, Commission, CommissionBirth, CommissionId,
+            CommissionRefusal, CommissionRole, CommissionStanding, CommissionState, DeadlineChange,
+            DelayedChange, DirectionChange, LateFacts, NewChangelogEntry,
         },
         node::{NewNode, NodeId, NodeRow, NodeSegment, NodeType},
         text::StoredText,
@@ -26,12 +29,16 @@ use domain::{
     ports::{CommissionRepo, Creator, New, NodeRepo, SegmentTaken, Unit, WriteCapability},
 };
 
+use crate::commission::den::{Verdict, verdict};
+use crate::commission::sweep;
 use crate::{
-    commission::act::CommissionAct,
+    commission::{
+        act::CommissionAct, create, deadline, lifecycle::move_to, rename, status::direction,
+    },
     den::{
-        act::{ArmAnswer, DenAct, EntryRule, Handled, HandlerError},
-        authority::Grant,
-        host::{DenHost, host_error, type_kind},
+        act::{ArmAnswer, DenAct, EntryRule, Handled, HandlerError, Needs},
+        authority::{Grant, GrantKind},
+        host::{host_error, type_kind},
         level::den_level,
         names,
         write::commission_directory,
@@ -47,6 +54,8 @@ pub(in crate::den) enum DenRefusal {
     WiderThanPrivate,
     /// Another node already holds the made node's key.
     SegmentTaken,
+    /// The act's own domain rule refused it, on the facts its grant read.
+    Precondition(CommissionRefusal),
 }
 
 /// What the gate wrote: the commission written, the name Atta checked, a made node's settled
@@ -91,7 +100,7 @@ impl<'u> DenWriteHost<'u> {
     /// unit sits in a `Mutex` only because the engine's host must be `Sync`.
     pub(in crate::den) fn new(unit: Unit<'u>, grant: Grant, now: DateTimeUtc) -> Self {
         Self {
-            viewer: DenHost::viewer_of(grant.actor()),
+            viewer: grant.actor().viewer(),
             unit: Mutex::new(unit),
             grant,
             now,
@@ -166,31 +175,73 @@ impl Host for DenWriteHost<'_> {
     }
 }
 
-/// Which grant a capability's role needs, and the commission its thing names: the gate's role
-/// table. A den trait because the markers are workflow's and kernel's, with no trait of their
-/// own, and only this gate may read it.
+/// What a create reads before it acts: nothing, since the thing isn't made yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Unmade;
+
+/// How an act's change becomes the change its entry records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Record {
+    /// Its view's one write lands its checked change exactly once, and the entry records what
+    /// landed.
+    Landed,
+    /// No port method takes its capability, so it writes no field: the entry records the change
+    /// its rule checked, and any write is a broken rule.
+    Checked,
+}
+
+/// Which grant a capability's role needs, the facts its acts' rules read, how its change is
+/// recorded, and the commission its thing names: the gate's role table. A den trait because
+/// the markers are workflow's and kernel's, with no trait of their own, and only this gate may
+/// read it.
 pub(crate) trait RoleTable: Sized {
     /// What the capability is over.
     type Thing;
 
-    /// The least role on an existing commission this role needs; `None` for a creator's.
-    const NEEDS: Option<CommissionRole>;
+    /// What an act in this role reads before it acts.
+    type Facts;
+
+    /// Who this role needs: a creator, a user's least role on an existing commission, or the
+    /// system.
+    const NEEDS: Needs;
+
+    /// How an act in this role's change becomes the change its entry records.
+    const RECORD: Record;
 
     /// The thing `grant` leaves this role to write, or `None` when it doesn't.
     fn granted(grant: &Grant) -> Option<Self::Thing>;
+
+    /// The facts `grant` carries for this role, or `None` when it leaves this role nothing.
+    fn facts(grant: &Grant) -> Option<&Self::Facts>;
 
     /// The commission `thing` names.
     fn commission(thing: &Self::Thing) -> CommissionId;
 }
 
+/// The least role `needs` names on an existing commission, if it names one.
+fn role_needed(needs: Needs) -> Option<CommissionRole> {
+    match needs {
+        Needs::Role(role) => Some(role),
+        Needs::Create | Needs::System => None,
+    }
+}
+
 impl RoleTable for AsParticipant {
     type Thing = CommissionId;
 
+    type Facts = CommissionState;
+
     /// Any Participant, the Owner included.
-    const NEEDS: Option<CommissionRole> = Some(CommissionRole::Participant);
+    const NEEDS: Needs = Needs::Role(CommissionRole::Participant);
+
+    const RECORD: Record = Record::Landed;
 
     fn granted(grant: &Grant) -> Option<CommissionId> {
-        Self::NEEDS.and_then(|needs| grant.existing_at_least(needs))
+        role_needed(Self::NEEDS).and_then(|needs| grant.existing_at_least(needs))
+    }
+
+    fn facts(grant: &Grant) -> Option<&CommissionState> {
+        role_needed(Self::NEEDS).and_then(|needs| grant.state_at_least(needs))
     }
 
     fn commission(thing: &CommissionId) -> CommissionId {
@@ -201,11 +252,19 @@ impl RoleTable for AsParticipant {
 impl RoleTable for AsOwner {
     type Thing = CommissionId;
 
+    type Facts = CommissionState;
+
     /// The Owner only.
-    const NEEDS: Option<CommissionRole> = Some(CommissionRole::Owner);
+    const NEEDS: Needs = Needs::Role(CommissionRole::Owner);
+
+    const RECORD: Record = Record::Landed;
 
     fn granted(grant: &Grant) -> Option<CommissionId> {
-        Self::NEEDS.and_then(|needs| grant.existing_at_least(needs))
+        role_needed(Self::NEEDS).and_then(|needs| grant.existing_at_least(needs))
+    }
+
+    fn facts(grant: &Grant) -> Option<&CommissionState> {
+        role_needed(Self::NEEDS).and_then(|needs| grant.state_at_least(needs))
     }
 
     fn commission(thing: &CommissionId) -> CommissionId {
@@ -216,11 +275,19 @@ impl RoleTable for AsOwner {
 impl RoleTable for Creator {
     type Thing = New<CommissionId>;
 
+    type Facts = Unmade;
+
     /// No role: a create needs a create grant, never a standing.
-    const NEEDS: Option<CommissionRole> = None;
+    const NEEDS: Needs = Needs::Create;
+
+    const RECORD: Record = Record::Landed;
 
     fn granted(grant: &Grant) -> Option<New<CommissionId>> {
         grant.minted()
+    }
+
+    fn facts(grant: &Grant) -> Option<&Unmade> {
+        grant.minted().map(|_| &Unmade)
     }
 
     fn commission(thing: &New<CommissionId>) -> CommissionId {
@@ -228,23 +295,125 @@ impl RoleTable for Creator {
     }
 }
 
-/// A den act's handler: the role of the capability the gate issues it, the rule for the entry
-/// its act writes, and what it does with the view the gate lends it.
-pub(crate) trait Handler {
+impl RoleTable for AsSystem {
+    type Thing = CommissionId;
+
+    type Facts = LateFacts;
+
+    /// The system: only the system's own grant leaves it anything.
+    const NEEDS: Needs = Needs::System;
+
+    /// No port method takes the system's capability, so its entry records the checked change.
+    const RECORD: Record = Record::Checked;
+
+    fn granted(grant: &Grant) -> Option<CommissionId> {
+        grant.system()
+    }
+
+    fn facts(grant: &Grant) -> Option<&LateFacts> {
+        grant.late_facts()
+    }
+
+    fn commission(thing: &CommissionId) -> CommissionId {
+        *thing
+    }
+}
+
+/// A den act's handler: the role of the capability the gate issues it, the change its rule
+/// checks and the rule itself, the rule for the entry its act writes, and what it does with
+/// the view the gate lends it.
+pub(crate) trait Handler: Sized {
     /// The role of its capability; the act's needed role is read from it, never written apart.
     type Role: RoleTable;
 
-    /// When the gate writes the act's one changelog entry, and the gated entry it builds: a
-    /// kind with its own domain constructor.
-    const ENTRY: EntryRule;
+    /// The change its rule checks, which its view's one write writes.
+    type Checked;
+
+    /// When the gate writes the act's one changelog entry, and the gated entry it builds: the
+    /// kinds it may build with its own domain constructor, over the checked change.
+    const ENTRY: EntryRule<Self::Checked>;
+
+    /// The act's domain rule on the facts its grant read at `now`: the change it checks,
+    /// `None` when there is nothing to write, or the rule's refusal.
+    fn precondition(
+        &self,
+        facts: &<Self::Role as RoleTable>::Facts,
+        now: DateTimeUtc,
+    ) -> Result<Option<Self::Checked>, CommissionRefusal>;
 
     /// Acts through `lent` alone, and answers the thing it acted on as `lent` read it.
-    async fn handle(&self, lent: &mut Lent<'_, Self::Role>) -> Result<Handled, HandlerError>;
+    async fn handle(&self, lent: &mut Lent<'_, Self>) -> Result<Handled, HandlerError>;
 }
 
-/// The role an act handled by `H` needs on an existing commission: its capability's role's.
-pub(crate) fn needs<H: Handler>() -> Option<CommissionRole> {
+/// Who an act handled by `H` needs: its capability's role's.
+pub(crate) fn needs<H: Handler>() -> Needs {
     <H::Role as RoleTable>::NEEDS
+}
+
+/// What the gate's own checks answer for an act on a stored commission, with nothing written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::den) enum Judgement {
+    /// The role it needs is not held, or its rule refuses it.
+    Refused,
+    /// It passes, and writes nothing: what it sets is already held.
+    Unchanged,
+    /// It passes, and changes the commission.
+    Changes,
+}
+
+impl Judgement {
+    /// Whether the act passes, changing something or not.
+    pub(in crate::den) fn passes(self) -> bool {
+        self != Self::Refused
+    }
+}
+
+/// The gate's checks on `handler` for a user whose standing on a stored commission is
+/// `standing`, written nowhere: the verdict on the role its capability needs, then its rule on
+/// the commission's stored `state` at `now`, as the gate runs it before any write.
+fn judge<H>(
+    handler: &H,
+    standing: CommissionStanding,
+    state: &CommissionState,
+    now: DateTimeUtc,
+) -> Judgement
+where
+    H: Handler,
+    H::Role: RoleTable<Facts = CommissionState>,
+{
+    let Needs::Role(needed) = needs::<H>() else {
+        return Judgement::Refused;
+    };
+    let Verdict::Granted(_) = verdict(Some(standing), needed) else {
+        return Judgement::Refused;
+    };
+    match handler.precondition(state, now) {
+        Err(_) => Judgement::Refused,
+        Ok(None) => Judgement::Unchanged,
+        Ok(Some(_)) => Judgement::Changes,
+    }
+}
+
+/// [`judge`] on `act`, by an exhaustive match over the commission's acts: each act a user
+/// takes on a stored commission judged by its own handler; a create, which has no stored
+/// commission yet, and the system's Late mark, which no user takes, refused.
+pub(in crate::den) fn judge_act(
+    act: &CommissionAct,
+    standing: CommissionStanding,
+    state: &CommissionState,
+    now: DateTimeUtc,
+) -> Judgement {
+    match act {
+        CommissionAct::Create(_) | CommissionAct::MarkLate(_) => Judgement::Refused,
+        CommissionAct::Rename(rename) => judge(rename, standing, state, now),
+        CommissionAct::MoveLifecycle(move_to) => judge(move_to, standing, state, now),
+        CommissionAct::SetDirection(set) => judge(set, standing, state, now),
+        CommissionAct::ClearDirection(clear) => judge(clear, standing, state, now),
+        CommissionAct::SetDeadline(set) => judge(set, standing, state, now),
+        CommissionAct::ClearDeadline(clear) => judge(clear, standing, state, now),
+        CommissionAct::SetDelayed(set) => judge(set, standing, state, now),
+        CommissionAct::ClearDelayed(clear) => judge(clear, standing, state, now),
+    }
 }
 
 /// The write capability in role `R` that `grant` leaves, or `None`; the one issuer in the
@@ -288,7 +457,7 @@ fn node_segment(segment: &Segment) -> anyhow::Result<NodeSegment> {
 /// or a row of another type than `placed`'s, means the facts lied.
 async fn walk(rows: &mut dyn NodeRepo, grant: &Grant, placed: &Placed) -> anyhow::Result<NodeRow> {
     let commission = grant
-        .existing_at_least(CommissionRole::Participant)
+        .acted_on()
         .ok_or_else(|| facts_lied("an existing node's act holds no existing grant"))?;
     let bound = grant
         .bound_node()
@@ -431,9 +600,22 @@ async fn write_rename(
     Ok(Ok(written))
 }
 
+/// Walks a field act's node, which must be the node the grant is bound to, and writes no node
+/// row: a field act changes the commission's fields through its view, never its node.
+async fn write_change(rows: &mut dyn NodeRepo, grant: &Grant, node: &Placed) -> Gated<Written> {
+    let row = walk(rows, grant, node).await?;
+    let written = Written {
+        node: row.id,
+        commission: *row_commission(grant)?,
+        name: None,
+        level: node.level,
+        changed: false,
+    };
+    Ok(Ok(written))
+}
+
 /// Writes the rows of `shape` from Atta's checked act: a create's node and entries, a
-/// rename's new name on the walked row. No den act changes a node's content, so a change is
-/// a broken rule.
+/// rename's new name on the walked row, and nothing for a change, whose node is only walked.
 async fn write_rows(
     rows: &mut dyn NodeRepo,
     grant: &Grant,
@@ -443,16 +625,98 @@ async fn write_rows(
     match shape {
         Shape::Create { parent, .. } => write_create(rows, grant, parent, born).await,
         Shape::Rename { node, name } => write_rename(rows, grant, node, name).await,
-        Shape::Change { .. } => Err(facts_lied("no den act changes a node's content")),
+        Shape::Change { node } => write_change(rows, grant, node).await,
     }
 }
 
-/// The existing commission a rename's grant names.
+/// The existing commission a rename's or a change's grant names, a user's or the system's.
 fn row_commission(grant: &Grant) -> anyhow::Result<&CommissionId> {
     match grant.kind() {
-        crate::den::authority::GrantKind::Existing { commission, .. } => Ok(commission),
-        crate::den::authority::GrantKind::Create { .. } => {
-            Err(facts_lied("an existing node's act holds a create grant"))
+        GrantKind::Existing { commission, .. } | GrantKind::System { commission, .. } => {
+            Ok(commission)
+        }
+        GrantKind::Create { .. } => Err(facts_lied("an existing node's act holds a create grant")),
+    }
+}
+
+/// An act whose rule passed, before anything is written: its handler and the change its rule
+/// checked, `None` when there is nothing to write.
+struct Passed<H: Handler> {
+    handler: H,
+    change: Option<H::Checked>,
+}
+
+/// Each act whose rule passed, by its handler: an exhaustive enum over the den's leaf acts.
+enum Prepared {
+    /// A commission's create.
+    Create(Passed<create::Act>),
+    /// A commission's rename.
+    Rename(Passed<rename::Act>),
+    /// A commission's lifecycle move.
+    MoveLifecycle(Passed<move_to::Act>),
+    /// A commission's direction status set.
+    SetDirection(Passed<direction::set::Act>),
+    /// A commission's direction status clear.
+    ClearDirection(Passed<direction::clear::Act>),
+    /// A commission's deadline set.
+    SetDeadline(Passed<deadline::set::Act>),
+    /// A commission's deadline clear.
+    ClearDeadline(Passed<deadline::clear::Act>),
+    /// A commission's Delayed flag raised.
+    SetDelayed(Passed<deadline::status::set::Act>),
+    /// A commission's Delayed flag taken down.
+    ClearDelayed(Passed<deadline::status::clear::Act>),
+    /// The system's Late mark on a commission.
+    MarkLate(Passed<sweep::Act>),
+}
+
+/// `handler`'s rule on the facts `grant` carries for its role, at `now`: the act, passed, or
+/// the rule's refusal. A grant that carries no facts for the role is the wrong grant.
+fn passed<H: Handler>(
+    handler: H,
+    grant: &Grant,
+    now: DateTimeUtc,
+) -> Result<Passed<H>, DenRefusal> {
+    let facts = <H::Role as RoleTable>::facts(grant).ok_or(DenRefusal::WrongGrant)?;
+    let change = handler
+        .precondition(facts, now)
+        .map_err(DenRefusal::Precondition)?;
+    let passed = Passed { handler, change };
+    Ok(passed)
+}
+
+/// Runs each act's rule before anything is written: an exhaustive match over the den's acts.
+fn prepare(act: DenAct, grant: &Grant, now: DateTimeUtc) -> Result<Prepared, DenRefusal> {
+    match act {
+        DenAct::Commission(CommissionAct::Create(create)) => {
+            passed(create, grant, now).map(Prepared::Create)
+        }
+        DenAct::Commission(CommissionAct::Rename(rename)) => {
+            passed(rename, grant, now).map(Prepared::Rename)
+        }
+        DenAct::Commission(CommissionAct::MoveLifecycle(move_to)) => {
+            passed(move_to, grant, now).map(Prepared::MoveLifecycle)
+        }
+        DenAct::Commission(CommissionAct::SetDirection(set)) => {
+            passed(set, grant, now).map(Prepared::SetDirection)
+        }
+        DenAct::Commission(CommissionAct::ClearDirection(clear)) => {
+            passed(clear, grant, now).map(Prepared::ClearDirection)
+        }
+        DenAct::Commission(CommissionAct::SetDeadline(set)) => {
+            passed(set, grant, now).map(Prepared::SetDeadline)
+        }
+        DenAct::Commission(CommissionAct::ClearDeadline(clear)) => {
+            passed(clear, grant, now).map(Prepared::ClearDeadline)
+        }
+        DenAct::Commission(CommissionAct::SetDelayed(set)) => {
+            passed(set, grant, now).map(Prepared::SetDelayed)
+        }
+        DenAct::Commission(CommissionAct::ClearDelayed(clear)) => {
+            passed(clear, grant, now).map(Prepared::ClearDelayed)
+        }
+        DenAct::Commission(CommissionAct::MarkLate(mark)) => {
+            passed(mark, grant, now).map(Prepared::MarkLate)
         }
     }
 }
@@ -482,33 +746,233 @@ impl Latch {
     }
 }
 
-/// The lent view's own calls, unlatched: the commission repo, the capability, the node the gate
-/// wrote, the grant's actor and the gate's time. Only [`Lent`] reaches it.
-struct View<'a, R: RoleTable> {
-    repo: Box<dyn CommissionRepo + 'a>,
-    capability: WriteCapability<R::Thing, R>,
-    node: NodeId,
-    actor: UserId,
-    now: DateTimeUtc,
+/// What an act's one write did the first time it was called; a second call changes nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Wrote {
+    /// The rule checked no change, so it wrote nothing.
+    Nothing,
+    /// The checked change landed on exactly one row.
+    Landed,
+    /// The write was made and didn't land: it failed, or its compare-and-set matched no row.
+    Missed,
 }
 
-impl View<'_, Creator> {
+/// A second call of an act's one write: a broken rule, kept by the latch.
+fn written_twice() -> anyhow::Error {
+    facts_lied("an act's one write was called twice")
+}
+
+/// The lent view's own calls, unlatched: the commission repo, the capability, the node the gate
+/// wrote, the grant's user (none for the system), the gate's time, the change the act's rule
+/// checked, and what its one write did. Only [`Lent`] reaches it.
+struct View<'a, H: Handler> {
+    repo: Box<dyn CommissionRepo + 'a>,
+    capability: WriteCapability<<H::Role as RoleTable>::Thing, H::Role>,
+    node: NodeId,
+    actor: Option<UserId>,
+    now: DateTimeUtc,
+    change: Option<H::Checked>,
+    wrote: Option<Wrote>,
+}
+
+impl View<'_, create::Act> {
     /// Creates the capability's commission at the gate's node, owned by the grant's actor, at
-    /// the gate's time, with what `commission` chose.
-    async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {
+    /// the gate's time, with what the create chose, once.
+    async fn create(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(commission) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let owner_id = self
+            .actor
+            .clone()
+            .ok_or_else(|| facts_lied("a create has no user to own it"))?;
         let birth = CommissionBirth {
             node: self.node,
-            owner_id: self.actor.clone(),
+            owner_id,
             created_at: self.now,
         };
-        self.repo.create(&self.capability, &birth, commission).await
+        self.repo
+            .create(&self.capability, &birth, commission)
+            .await?;
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
     }
 }
 
-impl<R: RoleTable> View<'_, R> {
+impl View<'_, move_to::Act> {
+    /// Moves the capability's commission as the rule checked, by compare-and-set, once; a
+    /// move that matches no row fails.
+    async fn set_lifecycle(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self.repo.set_lifecycle(&self.capability, change).await?;
+        if !landed {
+            return Err(facts_lied("the lifecycle move matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
+impl View<'_, direction::set::Act> {
+    /// Sets the capability's commission's direction status as the rule checked, by
+    /// compare-and-set, once; a set that matches no row fails.
+    async fn set_direction_status(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self
+            .repo
+            .set_direction_status(&self.capability, &DirectionChange::from(change.clone()))
+            .await?;
+        if !landed {
+            return Err(facts_lied("the direction set matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
+impl View<'_, direction::clear::Act> {
+    /// Clears the capability's commission's direction status as the rule checked, by
+    /// compare-and-set, once; a clear that matches no row fails.
+    async fn set_direction_status(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self
+            .repo
+            .set_direction_status(&self.capability, &DirectionChange::from(change.clone()))
+            .await?;
+        if !landed {
+            return Err(facts_lied("the direction clear matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
+impl View<'_, deadline::set::Act> {
+    /// Sets the capability's commission's deadline as the rule checked, by compare-and-set,
+    /// once; a set that matches no row fails.
+    async fn set_deadline(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self
+            .repo
+            .set_deadline(&self.capability, &DeadlineChange::from(change.clone()))
+            .await?;
+        if !landed {
+            return Err(facts_lied("the deadline set matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
+impl View<'_, deadline::clear::Act> {
+    /// Clears the capability's commission's deadline as the rule checked, by compare-and-set,
+    /// once; a clear that matches no row fails.
+    async fn set_deadline(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self
+            .repo
+            .set_deadline(&self.capability, &DeadlineChange::from(change.clone()))
+            .await?;
+        if !landed {
+            return Err(facts_lied("the deadline clear matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
+impl View<'_, deadline::status::set::Act> {
+    /// Raises the capability's commission's Delayed flag as the rule checked, by
+    /// compare-and-set on the stored flag, once; a set that matches no row fails.
+    async fn set_deadline_status(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self
+            .repo
+            .set_deadline_status(&self.capability, &DelayedChange::from(change.clone()))
+            .await?;
+        if !landed {
+            return Err(facts_lied("the Delayed set matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
+impl View<'_, deadline::status::clear::Act> {
+    /// Takes the capability's commission's Delayed flag down as the rule checked, by
+    /// compare-and-set on the stored flag, once; a clear that matches no row fails.
+    async fn set_deadline_status(&mut self) -> anyhow::Result<()> {
+        if self.wrote.is_some() {
+            return Err(written_twice());
+        }
+        let Some(change) = &self.change else {
+            self.wrote = Some(Wrote::Nothing);
+            return Ok(());
+        };
+        self.wrote = Some(Wrote::Missed);
+        let landed = self
+            .repo
+            .set_deadline_status(&self.capability, &DelayedChange::from(change.clone()))
+            .await?;
+        if !landed {
+            return Err(facts_lied("the Delayed clear matched no row"));
+        }
+        self.wrote = Some(Wrote::Landed);
+        Ok(())
+    }
+}
+
+impl<H: Handler> View<'_, H> {
     /// The capability's commission as the unit holds it; no row is a failure.
     async fn lent(&mut self) -> anyhow::Result<Commission> {
-        let commission = R::commission(self.capability.thing());
+        let commission = <H::Role as RoleTable>::commission(self.capability.thing());
         self.repo
             .find(&commission)
             .await?
@@ -516,62 +980,127 @@ impl<R: RoleTable> View<'_, R> {
     }
 }
 
-/// What a handler is lent for one act: a view that writes only what its act may, each call
-/// through the gate's latch. Its fields are private, so only the gate makes one.
-pub(crate) struct Lent<'a, R: RoleTable> {
-    view: View<'a, R>,
+/// What a handler is lent for one act: a view of its own act, whose one write writes only the
+/// change its rule checked, each call through the gate's latch. Its fields are private, so only
+/// the gate makes one.
+pub(crate) struct Lent<'a, H: Handler> {
+    view: View<'a, H>,
     latch: Latch,
 }
 
-impl Lent<'_, Creator> {
+impl Lent<'_, create::Act> {
     /// Creates the commission the gate minted, at the node it made, for the grant's actor, at
-    /// the gate's time, with what `commission` chose.
-    pub(crate) async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {
-        self.latch.pass(self.view.create(commission).await)
+    /// the gate's time, with what the create chose.
+    pub(crate) async fn create(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.create().await)
     }
 }
 
-impl<R: RoleTable> Lent<'_, R> {
+impl Lent<'_, move_to::Act> {
+    /// Moves the commission's lifecycle as the rule checked: once, and only a real move.
+    pub(crate) async fn set_lifecycle(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_lifecycle().await)
+    }
+}
+
+impl Lent<'_, direction::set::Act> {
+    /// Sets the commission's direction status as the rule checked: once, and only a real set.
+    pub(crate) async fn set_direction_status(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_direction_status().await)
+    }
+}
+
+impl Lent<'_, direction::clear::Act> {
+    /// Clears the commission's direction status as the rule checked: once, and only a real clear.
+    pub(crate) async fn set_direction_status(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_direction_status().await)
+    }
+}
+
+impl Lent<'_, deadline::set::Act> {
+    /// Sets the commission's deadline as the rule checked: once, and only a real set.
+    pub(crate) async fn set_deadline(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_deadline().await)
+    }
+}
+
+impl Lent<'_, deadline::clear::Act> {
+    /// Clears the commission's deadline as the rule checked: once, and only a real clear.
+    pub(crate) async fn set_deadline(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_deadline().await)
+    }
+}
+
+impl Lent<'_, deadline::status::set::Act> {
+    /// Raises the commission's Delayed flag as the rule checked: once, and only a real set.
+    pub(crate) async fn set_deadline_status(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_deadline_status().await)
+    }
+}
+
+impl Lent<'_, deadline::status::clear::Act> {
+    /// Takes the commission's Delayed flag down as the rule checked: once, and only a real clear.
+    pub(crate) async fn set_deadline_status(&mut self) -> anyhow::Result<()> {
+        self.latch.pass(self.view.set_deadline_status().await)
+    }
+}
+
+impl<H: Handler> Lent<'_, H> {
     /// The capability's commission as the unit holds it, read after the act's writes.
     pub(crate) async fn lent(&mut self) -> anyhow::Result<Commission> {
         self.latch.pass(self.view.lent().await)
     }
 }
 
-/// What a lent handler answered, checked by the gate: the commission it acted on, and the
-/// rule for the entry its act writes.
-struct Landed {
+/// What a lent handler answered, checked by the gate: the commission it acted on, the change
+/// its view's write landed, and the capability, kept while the entry is built.
+struct Settled<H: Handler> {
     answer: Commission,
-    entry: EntryRule,
+    recorded: Option<H::Checked>,
+    capability: WriteCapability<<H::Role as RoleTable>::Thing, H::Role>,
 }
 
-/// Issues `H`'s capability and lends it, in a view over the commission repo, to `handler`.
-/// A tripped latch fails the act whatever the handler answered; an answer naming another
-/// commission than the grant's is a broken rule.
-async fn lend_as<H: Handler>(
-    handler: &H,
-    grant: &Grant,
-    unit: Unit<'_>,
+/// The change an act's one write landed: `None` when its rule checked none and it wrote
+/// nothing, the change when it landed exactly once, and a broken rule otherwise.
+fn landed_once<C>(change: Option<C>, wrote: Option<Wrote>) -> anyhow::Result<Option<C>> {
+    match (change, wrote) {
+        (None, None | Some(Wrote::Nothing)) => Ok(None),
+        (Some(change), Some(Wrote::Landed)) => Ok(Some(change)),
+        (Some(_), None) => Err(facts_lied("the act's checked change was never written")),
+        (Some(_), Some(Wrote::Missed)) => Err(facts_lied("the act's checked change didn't land")),
+        (Some(_), Some(Wrote::Nothing)) | (None, Some(Wrote::Landed | Wrote::Missed)) => Err(
+            facts_lied("the act's write wrote other than its checked change"),
+        ),
+    }
+}
+
+/// The change an act that writes no field records: the change its rule checked, as checked; a
+/// write is a broken rule, since no port method takes its capability.
+fn checked_unwritten<C>(change: Option<C>, wrote: Option<Wrote>) -> anyhow::Result<Option<C>> {
+    if wrote.is_some() {
+        return Err(facts_lied("an act that writes no field wrote"));
+    }
+    Ok(change)
+}
+
+/// Takes the lent view back after its handler answered: a tripped latch fails the act whatever
+/// the handler answered; an answer naming another commission than the grant's is a broken
+/// rule; and a checked change must have landed exactly once, or, for a role whose capability
+/// no write takes, be recorded as checked with nothing written.
+fn settle<H: Handler>(
+    lent: Lent<'_, H>,
+    handled: Result<Handled, HandlerError>,
     written: &Written,
-    now: DateTimeUtc,
-) -> Gated<Landed> {
-    let Some(capability) = issue::<H::Role>(grant) else {
-        return Ok(Err(DenRefusal::WrongGrant));
-    };
-    let view = View {
-        repo: unit.commissions(),
-        capability,
-        node: written.node,
-        actor: grant.actor().clone(),
-        now,
-    };
-    let mut lent = Lent {
-        view,
-        latch: Latch::default(),
-    };
-    let handled = handler.handle(&mut lent).await;
+) -> anyhow::Result<Settled<H>> {
     let Lent { view, latch } = lent;
-    drop(view);
+    let View {
+        repo,
+        capability,
+        change,
+        wrote,
+        ..
+    } = view;
+    drop(repo);
     if let Some(failure) = latch.tripped() {
         return Err(failure);
     }
@@ -581,92 +1110,149 @@ async fn lend_as<H: Handler>(
             "the handler answered another commission than the grant's",
         ));
     }
-    let landed = Landed {
-        answer,
-        entry: H::ENTRY,
+    let recorded = match <H::Role as RoleTable>::RECORD {
+        Record::Landed => landed_once(change, wrote)?,
+        Record::Checked => checked_unwritten(change, wrote)?,
     };
-    Ok(Ok(landed))
+    let settled = Settled {
+        answer,
+        recorded,
+        capability,
+    };
+    Ok(settled)
 }
 
-/// Lends each act to its type's handler: an exhaustive match over the den's acts, one
-/// [`lend_as`] per leaf act.
-async fn lend(
-    act: DenAct,
+/// Issues `H`'s capability and lends it, in a view of the act's own over the commission repo
+/// holding the change its rule checked, to its handler; then settles what the handler did and,
+/// while the capability lives, builds and appends the act's entry from the change the act
+/// recorded.
+async fn lend_as<H: Handler>(
+    passed: Passed<H>,
     grant: &Grant,
     unit: Unit<'_>,
     written: &Written,
     now: DateTimeUtc,
-) -> Gated<Landed> {
-    match act {
-        DenAct::Commission(CommissionAct::Create(create)) => {
-            lend_as(&create, grant, unit, written, now).await
-        }
-        DenAct::Commission(CommissionAct::Rename(rename)) => {
-            lend_as(&rename, grant, unit, written, now).await
-        }
-    }
+) -> Gated<Commission> {
+    let Passed { handler, change } = passed;
+    let Some(capability) = issue::<H::Role>(grant) else {
+        return Ok(Err(DenRefusal::WrongGrant));
+    };
+    let view = View {
+        repo: unit.commissions(),
+        capability,
+        node: written.node,
+        actor: grant.user().cloned(),
+        now,
+        change,
+        wrote: None,
+    };
+    let mut lent = Lent {
+        view,
+        latch: Latch::default(),
+    };
+    let handled = handler.handle(&mut lent).await;
+    let settled = settle(lent, handled, written)?;
+    let recorded = settled.recorded.as_ref();
+    append_entry(unit, H::ENTRY, written, recorded, grant.user(), now).await?;
+    drop(settled.capability);
+    Ok(Ok(settled.answer))
 }
 
-/// Whether `grant` is the kind `shape` needs: a create grant for a create, an existing
-/// thing's for a rename or a change.
-fn grant_fits(grant: &Grant, shape: &Shape) -> bool {
-    let creates = grant.minted().is_some();
-    match shape {
-        Shape::Create { .. } => creates,
-        Shape::Rename { .. } | Shape::Change { .. } => !creates,
-    }
-}
-
-/// The act's one entry, if `rule` writes one for what `written` changed: built by the rule's
-/// gated entry's domain constructor on the grant's commission, by `actor`, at `now`. An entry
-/// of another kind than the gated entry's, or built on another commission, by another actor
-/// or at another time, is a broken rule.
-fn built_entry(
-    rule: EntryRule,
+/// Lends each passed act to its handler: an exhaustive match over the den's acts, one
+/// [`lend_as`] per leaf act.
+async fn lend(
+    prepared: Prepared,
+    grant: &Grant,
+    unit: Unit<'_>,
     written: &Written,
-    actor: &UserId,
+    now: DateTimeUtc,
+) -> Gated<Commission> {
+    match prepared {
+        Prepared::Create(create) => lend_as(create, grant, unit, written, now).await,
+        Prepared::Rename(rename) => lend_as(rename, grant, unit, written, now).await,
+        Prepared::MoveLifecycle(move_to) => lend_as(move_to, grant, unit, written, now).await,
+        Prepared::SetDirection(set) => lend_as(set, grant, unit, written, now).await,
+        Prepared::ClearDirection(clear) => lend_as(clear, grant, unit, written, now).await,
+        Prepared::SetDeadline(set) => lend_as(set, grant, unit, written, now).await,
+        Prepared::ClearDeadline(clear) => lend_as(clear, grant, unit, written, now).await,
+        Prepared::SetDelayed(set) => lend_as(set, grant, unit, written, now).await,
+        Prepared::ClearDelayed(clear) => lend_as(clear, grant, unit, written, now).await,
+        Prepared::MarkLate(mark) => lend_as(mark, grant, unit, written, now).await,
+    }
+}
+
+/// Whether `grant` is the kind `shape` needs: a create grant for a create, a user's grant on
+/// an existing thing for a rename, and a user's or the system's for a change.
+fn grant_fits(grant: &Grant, shape: &Shape) -> bool {
+    match (shape, grant.kind()) {
+        (Shape::Create { .. }, GrantKind::Create { .. })
+        | (Shape::Rename { .. }, GrantKind::Existing { .. })
+        | (Shape::Change { .. }, GrantKind::Existing { .. } | GrantKind::System { .. }) => true,
+        (Shape::Create { .. }, GrantKind::Existing { .. } | GrantKind::System { .. })
+        | (Shape::Rename { .. }, GrantKind::Create { .. } | GrantKind::System { .. })
+        | (Shape::Change { .. }, GrantKind::Create { .. }) => false,
+    }
+}
+
+/// The act's one entry, if `rule` writes one for what changed: built by its gated entry's
+/// constructor on the grant's commission, by `actor` (none for the system), at `now`, from the
+/// recorded change. A kind it may not name, or another commission, actor or time than the
+/// grant's, or a note, is a broken rule.
+fn built_entry<C>(
+    rule: EntryRule<C>,
+    written: &Written,
+    recorded: Option<&C>,
+    actor: Option<&UserId>,
     now: DateTimeUtc,
 ) -> anyhow::Result<Option<NewChangelogEntry>> {
-    let Some(gated) = rule.entry(written.changed) else {
+    let changed = written.changed || recorded.is_some();
+    let Some(gated) = rule.entry(changed) else {
         return Ok(None);
     };
-    let entry = gated.construct(written.commission, actor.clone(), now);
-    if entry.kind != gated.kind() {
+    let entry = gated
+        .construct(written.commission, actor, recorded, now)
+        .ok_or_else(|| {
+            facts_lied("an entry's constructor takes a change or an actor the act doesn't have")
+        })?;
+    if !gated.builds(entry.kind()) {
         return Err(facts_lied(
-            "an entry's constructor built another kind than its gated entry's",
+            "an entry's constructor built a kind its gated entry doesn't name",
         ));
     }
-    let as_granted = entry.commission_id == written.commission
-        && entry.actor_id.as_ref() == Some(actor)
-        && entry.created_at == now;
+    let as_granted = entry.commission_id() == written.commission
+        && entry.actor_id() == actor
+        && entry.created_at() == now;
     if !as_granted {
         return Err(facts_lied(
             "an entry's constructor built it off the grant's commission, actor or time",
         ));
     }
+    if entry.note_text().is_some() {
+        return Err(facts_lied("an entry's constructor attached a note"));
+    }
     Ok(Some(entry))
 }
 
-/// Appends the act's one entry in the unit, if `rule` writes one for what `written` changed; a
-/// broken rule appends nothing.
-async fn append_entry(
+/// Appends the act's one entry in the unit, if `rule` writes one for what changed; a broken
+/// rule appends nothing.
+async fn append_entry<C>(
     unit: Unit<'_>,
-    rule: EntryRule,
+    rule: EntryRule<C>,
     written: &Written,
-    actor: &UserId,
+    recorded: Option<&C>,
+    actor: Option<&UserId>,
     now: DateTimeUtc,
 ) -> anyhow::Result<()> {
-    if let Some(entry) = built_entry(rule, written, actor, now)? {
+    if let Some(entry) = built_entry(rule, written, recorded, actor, now)? {
         unit.changelog().append(&entry).await?;
     }
     Ok(())
 }
 
 /// The gate, run once per act from the write host's apply: the grant's kind against the act;
-/// no made node wider than Private until 0.6; the node rows, under the unit's one node-port
-/// binding; the act lent to its handler; then, as the act's entry rule says of what changed,
-/// its one entry, built here by the rule's gated entry's domain constructor on the grant's
-/// commission, by the grant's actor, at `now`, and refused unless it carries that entry's kind.
+/// no made node wider than Private until 0.6; the act's own rule on the grant's facts, before
+/// any row or capability; the node rows, under the unit's one node-port binding; then the act
+/// lent to its handler, whose entry is built and appended as its rule says of what changed.
 pub(in crate::den) async fn gate(
     unit: Unit<'_>,
     grant: &Grant,
@@ -683,30 +1269,33 @@ pub(in crate::den) async fn gate(
     if born.iter().any(|(_, level)| *level != atta::Level::Private) {
         return Ok(Err(DenRefusal::WiderThanPrivate));
     }
-    let act = checked.into_act();
+    let Act { shape, body, .. } = checked.into_act();
+    let prepared = match prepare(body, grant, now) {
+        Ok(prepared) => prepared,
+        Err(refusal) => return Ok(Err(refusal)),
+    };
 
     #[expect(
         clippy::disallowed_methods,
         reason = "the den's write gate is the one place that reaches the node port"
     )]
     let mut rows = unit.nodes();
-    let written = write_rows(&mut *rows, grant, &act.shape, &born).await;
+    let written = write_rows(&mut *rows, grant, &shape, &born).await;
     drop(rows);
     let written = match written? {
         Ok(written) => written,
         Err(refusal) => return Ok(Err(refusal)),
     };
 
-    let landed = match lend(act.body, grant, &mut *unit, &written, now).await? {
-        Ok(landed) => landed,
+    let answer = match lend(prepared, grant, &mut *unit, &written, now).await? {
+        Ok(answer) => answer,
         Err(refusal) => return Ok(Err(refusal)),
     };
-    append_entry(unit, landed.entry, &written, grant.actor(), now).await?;
     let applied = DenApplied {
         commission: written.commission,
         name: written.name,
         level: written.level,
-        answer: ArmAnswer::Commission(landed.answer),
+        answer: ArmAnswer::Commission(answer),
     };
     Ok(Ok(applied))
 }

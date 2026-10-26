@@ -13,7 +13,7 @@ use domain::elements::{
     commission::{
         ChangelogEntry, Commission, CommissionComposition, CommissionFile, CommissionId,
         CommissionMarkup, CommissionStanding, CommissionSummary, ElementId, FileDownload, FileKey,
-        FileName, FileSummary, GrantLevel, Seat, SeatInvitation, Slot,
+        FileName, FileSummary, GrantLevel, LateKinds, LifecycleStep, Seat, SeatInvitation, Slot,
     },
     did::Did,
     handle::Handle,
@@ -601,6 +601,18 @@ impl CommissionStore for RecordingCommissionStore {
     async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>> {
         self.log.record("slots");
         self.inner.slots(commission).await
+    }
+
+    async fn lapsed_deadlines(
+        &self,
+        now: DateTimeUtc,
+        not_lapsing: &[LifecycleStep],
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<Vec<CommissionId>> {
+        self.log.record("lapsed_deadlines");
+        self.inner
+            .lapsed_deadlines(now, not_lapsing, late_kinds)
+            .await
     }
 }
 

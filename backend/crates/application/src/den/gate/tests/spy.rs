@@ -1,5 +1,6 @@
 //! A spy over a real database for the gate's tests: its units record each commission create's
-//! birth, can redirect every commission read to another commission or fail it, and can refuse
+//! birth and each commission read and write by name, can redirect every commission read to
+//! another commission or fail it, can answer every lifecycle write as landed, and can refuse
 //! every changelog append; everything else delegates.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -8,10 +9,10 @@ use async_trait::async_trait;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
     commission::{
-        ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
-        CommissionMarkup, DeadlineStatus, DirectionStatus, ElementId, GrantLevel, LapsedDeadline,
-        LockedStanding, NewChangelogEntry, NewCommission, NewElement, NewSeat, NewSlot,
-        SeatInvitation, SeatInvitationId, TabId, TabRow,
+        AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionFile, CommissionId,
+        CommissionMarkup, DeadlineChange, DelayedChange, DirectionChange, ElementId, GrantLevel,
+        LateKinds, LifecycleMove, LockedNode, LockedStanding, NewChangelogEntry, NewCommission,
+        NewElement, NewSeat, NewSlot, SeatInvitation, SeatInvitationId, TabId, TabRow,
     },
     maturity::Maturity,
     user::UserId,
@@ -26,6 +27,10 @@ use domain::ports::{
 #[derive(Clone, Default)]
 pub(super) struct Spy {
     births: Arc<Mutex<Vec<CommissionBirth>>>,
+    /// Each commission read and write the spied repos saw, by name, in order.
+    calls: Arc<Mutex<Vec<&'static str>>>,
+    /// Whether every unit's lifecycle write answers landed, whatever the store did.
+    lifecycle_lands: bool,
     /// When set, every unit's commission `find` reads this commission instead.
     answer_as: Option<CommissionId>,
     /// Whether every unit's commission `find` fails.
@@ -57,6 +62,29 @@ impl Spy {
             refuse_appends: true,
             ..Self::default()
         }
+    }
+
+    /// A spy whose units answer every lifecycle write as landed, after the store's own write.
+    pub(super) fn landing_every_move() -> Self {
+        Self {
+            lifecycle_lands: true,
+            ..Self::default()
+        }
+    }
+
+    /// Each commission read and write the spied repos saw so far, by name, in order.
+    pub(super) fn recorded_calls(&self) -> Vec<&'static str> {
+        self.calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn record(&self, call: &'static str) {
+        self.calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(call);
     }
 
     /// Every create's birth so far, in order.
@@ -180,6 +208,7 @@ struct SpyRepo<'a> {
 impl CommissionReads for SpyRepo<'_> {
     // An interposition: a `find` the spy fails, or redirects to read another commission.
     async fn find(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
+        self.spy.record("find");
         if self.spy.fail_reads {
             return Err(anyhow::anyhow!("the commission read fails"));
         }
@@ -196,7 +225,25 @@ impl CommissionReads for SpyRepo<'_> {
         commission: &CommissionId,
         user: &UserId,
     ) -> anyhow::Result<Option<LockedStanding>> {
+        self.spy.record("standing_for_update");
         self.inner.standing_for_update(commission, user).await
+    }
+
+    async fn lock_for_system(
+        &mut self,
+        commission: &CommissionId,
+    ) -> anyhow::Result<Option<LockedNode>> {
+        self.spy.record("lock_for_system");
+        self.inner.lock_for_system(commission).await
+    }
+
+    async fn late_owed(
+        &mut self,
+        commission: &CommissionId,
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<bool> {
+        self.spy.record("late_owed");
+        self.inner.late_owed(commission, late_kinds).await
     }
 
     async fn is_participant(
@@ -225,8 +272,20 @@ impl CommissionWrites for SpyRepo<'_> {
         birth: &CommissionBirth,
         commission: &NewCommission,
     ) -> anyhow::Result<()> {
+        self.spy.record("create");
         self.spy.births().push(birth.clone());
         self.inner.create(capability, birth, commission).await
+    }
+
+    // An interposition: every lifecycle write is recorded, and may be answered as landed.
+    async fn set_lifecycle(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &LifecycleMove,
+    ) -> anyhow::Result<bool> {
+        self.spy.record("set_lifecycle");
+        let landed = self.inner.set_lifecycle(capability, change).await?;
+        Ok(landed || self.spy.lifecycle_lands)
     }
 
     async fn declare_seat(&mut self, seat: &NewSeat) -> anyhow::Result<()> {
@@ -315,29 +374,25 @@ impl CommissionWrites for SpyRepo<'_> {
 
     async fn set_direction_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DirectionStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DirectionChange,
     ) -> anyhow::Result<bool> {
-        self.inner.set_direction_status(id, status).await
+        self.inner.set_direction_status(capability, change).await
     }
 
     async fn set_deadline(
         &mut self,
-        id: &CommissionId,
-        deadline: Option<DateTimeUtc>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DeadlineChange,
     ) -> anyhow::Result<bool> {
-        self.inner.set_deadline(id, deadline).await
+        self.inner.set_deadline(capability, change).await
     }
 
     async fn set_deadline_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DeadlineStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DelayedChange,
     ) -> anyhow::Result<bool> {
-        self.inner.set_deadline_status(id, status).await
-    }
-
-    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
-        self.inner.lapsed_deadlines(now).await
+        self.inner.set_deadline_status(capability, change).await
     }
 }

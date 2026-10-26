@@ -1,14 +1,15 @@
 //! `POST /commissions` and `PATCH /commissions/{id}/title` on the PostgreSQL stores over the
 //! den world: each answers the commission as stored, a Participant who isn't the owner can't
 //! rename, and someone outside the commission gets the answer a made-up id gets, which is
-//! also the answer their changelog read gets. Requires a container runtime socket.
+//! also the answer their changelog read gets. So does every other write call and the read.
+//! Requires a container runtime socket.
 
 use chrono::{DateTime, Utc};
 use domain::elements::commission::CommissionId;
 use serde_json::{Value, json};
 use test_support::{
     den::{Answer, get},
-    pg_app::{self, DenWorld, absent_commission},
+    pg_app::{self, DenWorld, absent_commission, new_write_calls, read_call},
 };
 
 /// Everything create and rename answer about a commission, in one comparable shape.
@@ -239,4 +240,38 @@ async fn bob_s_rename_answers_as_his_changelog_read_does() {
     assert_eq!(problem["code"], "commission_not_found");
     assert_eq!(problem.get("instance"), None, "the problem names no path");
     assert_eq!(stored(&world, old_sketch).await.title, "Old sketch");
+}
+
+// The seven new writes and the read answer bob, who takes no part in "Old sketch", exactly as
+// they answer a made-up id: status, body and headers, and the code every one carries. A call
+// that answered otherwise is named by its label.
+#[tokio::test]
+async fn a_stranger_and_a_made_up_id_answer_alike_on_every_new_call() {
+    let world = pg_app::den_world(api::app).await;
+    let old_sketch = world.old_sketch;
+    let mut calls = new_write_calls().to_vec();
+    calls.push(read_call());
+
+    for call in calls {
+        let pair = call.pair(&old_sketch);
+
+        let not_yours = call
+            .send(&world.bob, world.base_url(), &pair.not_yours)
+            .await;
+        let absent = call.send(&world.bob, world.base_url(), &pair.absent).await;
+
+        let not_yours = Answer::read(not_yours).await;
+        let absent = Answer::read(absent).await;
+        assert_eq!(not_yours, absent, "{}", call.label);
+        assert_eq!(absent.status, 404, "{}", call.label);
+        let problem: Value = serde_json::from_slice(&absent.body).expect("a JSON body");
+        assert_eq!(problem["code"], "commission_not_found", "{}", call.label);
+        assert_eq!(
+            problem.get("instance"),
+            None,
+            "{}: the problem names no path",
+            call.label
+        );
+    }
+    assert_eq!(stored(&world, old_sketch.id).await.title, "Old sketch");
 }

@@ -3,7 +3,7 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{ChangelogEntryKind, CommissionId, NewChangelogEntry},
+        commission::{CommissionId, NewChangelogEntry, OpenKind},
         user::UserId,
     },
 };
@@ -39,13 +39,9 @@ impl Commissions<'_> {
         } = cmd;
         let commission = require_owner(ports, &commission_id, &actor_id).await?;
 
-        let entry = NewChangelogEntry::event(
-            commission.id,
-            ChangelogEntryKind::Archived,
-            actor_id,
-            json!({}),
-            now,
-        );
+        let entry: NewChangelogEntry =
+            NewChangelogEntry::event(commission.id, OpenKind::Archived, actor_id, json!({}), now)
+                .into();
 
         let uow = uow.open().await?;
         let mut commissions = uow.commissions();

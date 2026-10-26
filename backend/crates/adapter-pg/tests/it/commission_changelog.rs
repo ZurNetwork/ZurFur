@@ -13,7 +13,10 @@ use chrono::Utc;
 use domain::{
     elements::{
         commission::{
-            ChangelogEntryKind, ChannelPointer, Commission, CommissionId, NewChangelogEntry,
+            ChangelogEntryKind, ChannelPointer, Commission, CommissionId, CommissionState,
+            DeadlineStatus, DirectionChange, DirectionStatus, LateFacts, LifecycleStep,
+            NewChangelogEntry, clear_deadline, clear_delayed, clear_direction, move_lifecycle,
+            owes_late, schedule_deadline, set_delayed, set_direction,
         },
         did::Did,
         user::User,
@@ -61,11 +64,9 @@ async fn append_commits_and_rolls_back_with_the_unit() {
     // Committed append is visible.
     let mut uow = db.begin().await.expect("begin");
     uow.changelog()
-        .append(&NewChangelogEntry::event(
+        .append(&NewChangelogEntry::created(
             commission.id,
-            ChangelogEntryKind::Created,
             commission.owner_id.clone(),
-            json!({ "title": "A ref sheet" }),
             Utc::now(),
         ))
         .await
@@ -102,18 +103,16 @@ async fn append_commits_and_rolls_back_with_the_unit() {
 #[tokio::test]
 async fn entries_read_back_in_seq_order_with_the_full_envelope() {
     let (pool, _container) = fresh_pool().await;
-    let commission = seed_commission(&pool, "did:plc:ordered-owner").await;
+    let mut commission = seed_commission(&pool, "did:plc:ordered-owner").await;
     let db = PgDatabase::new(pool.clone());
     let store = PgChangelogStore::new(pool.clone());
 
     let mut uow = db.begin().await.expect("begin");
     {
         let mut log = uow.changelog();
-        log.append(&NewChangelogEntry::event(
+        log.append(&NewChangelogEntry::created(
             commission.id,
-            ChangelogEntryKind::Created,
             commission.owner_id.clone(),
-            json!({ "title": "A ref sheet" }),
             Utc::now(),
         ))
         .await
@@ -126,15 +125,17 @@ async fn entries_read_back_in_seq_order_with_the_full_envelope() {
         ))
         .await
         .expect("append note");
-        // A system entry (the shape ZMVP-86's Late emitter will use): no actor.
-        log.append(&NewChangelogEntry::system(
-            commission.id,
-            ChangelogEntryKind::Late,
-            json!({ "deadline": "2026-07-01T00:00:00Z" }),
-            Utc::now(),
-        ))
-        .await
-        .expect("append system entry");
+        // The system's Late mark: no actor. The deadline is set on the loaded value only,
+        // for the Late rule to read.
+        commission.deadline = Some("2026-07-01T00:00:00Z".parse().expect("an RFC 3339 instant"));
+        let late_facts = LateFacts {
+            state: CommissionState::from(&commission),
+            owed: true,
+        };
+        let mark = owes_late(&late_facts, Utc::now()).expect("a late entry is owed");
+        log.append(&NewChangelogEntry::late(commission.id, &mark, Utc::now()))
+            .await
+            .expect("append system entry");
     }
     uow.commit().await.expect("commit");
 
@@ -146,7 +147,7 @@ async fn entries_read_back_in_seq_order_with_the_full_envelope() {
     );
     assert!(matches!(entries[0].kind, ChangelogEntryKind::Created));
     assert_eq!(entries[0].actor_id, Some(commission.owner_id));
-    assert_eq!(entries[0].payload["title"], "A ref sheet");
+    assert_eq!(entries[0].payload, json!({}));
     assert!(matches!(entries[1].kind, ChangelogEntryKind::Note));
     assert_eq!(entries[1].note.as_deref(), Some("traveling next week"));
     assert!(matches!(entries[2].kind, ChangelogEntryKind::Late));
@@ -162,6 +163,127 @@ async fn entries_read_back_in_seq_order_with_the_full_envelope() {
             .is_empty(),
         "streams are per-commission",
     );
+}
+
+/// Every gated entry built from a change its rule passed on `commission`, by its owner, beside
+/// the literal JSON it stores.
+fn typed_entries(commission: &mut Commission) -> Vec<(NewChangelogEntry, serde_json::Value)> {
+    let at = Utc::now();
+    let march: chrono::DateTime<Utc> = "2026-03-01T12:00:00Z".parse().expect("an RFC 3339 instant");
+    let april: chrono::DateTime<Utc> = "2026-04-01T12:00:00Z".parse().expect("an RFC 3339 instant");
+    let owner = commission.owner_id.clone();
+    let id = commission.id;
+
+    commission.lifecycle_step = LifecycleStep::Active;
+    commission.deadline = None;
+    let undated = CommissionState::from(&*commission);
+    let moved = move_lifecycle(&undated, LifecycleStep::Batched)
+        .expect("passes")
+        .expect("a real move");
+    let lifecycle_moved = NewChangelogEntry::lifecycle_moved(id, owner.clone(), &moved, at);
+    let direction = set_direction(&undated, DirectionStatus::WaitingForInput).expect("a real set");
+    let direction_set = NewChangelogEntry::direction_set(id, owner.clone(), &direction, at);
+    let first = schedule_deadline(&undated, march.into())
+        .expect("passes")
+        .expect("a real set");
+    let deadline_set = NewChangelogEntry::deadline_set(id, owner.clone(), &first, at);
+
+    commission.deadline = Some(march);
+    commission.direction_status = Some(DirectionStatus::ChangesRequested);
+    let dated = CommissionState::from(&*commission);
+    let extended = schedule_deadline(&dated, april.into())
+        .expect("passes")
+        .expect("a real set");
+    let deadline_extended = NewChangelogEntry::deadline_set(id, owner.clone(), &extended, at);
+    let gone = clear_deadline(&dated)
+        .expect("passes")
+        .expect("a real clear");
+    let deadline_cleared = NewChangelogEntry::deadline_cleared(id, owner.clone(), &gone, at);
+    let cleared = clear_direction(&dated).expect("a real clear");
+    let direction_cleared = NewChangelogEntry::direction_cleared(id, owner.clone(), &cleared, at);
+    let before_march = "2026-02-01T12:00:00Z".parse().expect("an RFC 3339 instant");
+    let raised = set_delayed(&dated, before_march)
+        .expect("passes")
+        .expect("a real set");
+    let delayed_set = NewChangelogEntry::delayed_set(id, owner.clone(), &raised, at);
+
+    commission.delayed_flag = Some(DeadlineStatus::Delayed);
+    let flagged = CommissionState::from(&*commission);
+    let lowered = clear_delayed(&flagged, before_march)
+        .expect("passes")
+        .expect("a real clear");
+    let delayed_cleared = NewChangelogEntry::delayed_cleared(id, owner, &lowered, at);
+    let late_facts = LateFacts {
+        state: flagged,
+        owed: true,
+    };
+    let mark = owes_late(&late_facts, at).expect("a late entry is owed");
+    let late = NewChangelogEntry::late(id, &mark, at);
+
+    vec![
+        (
+            lifecycle_moved,
+            json!({ "from": "active", "to": "batched" }),
+        ),
+        (
+            direction_set,
+            json!({ "from": null, "to": "waiting_for_input" }),
+        ),
+        (
+            direction_cleared,
+            json!({ "from": "changes_requested", "to": null }),
+        ),
+        (
+            deadline_set,
+            json!({ "from": null, "to": "2026-03-01T12:00:00Z" }),
+        ),
+        (
+            deadline_extended,
+            json!({ "from": "2026-03-01T12:00:00Z", "to": "2026-04-01T12:00:00Z" }),
+        ),
+        (
+            deadline_cleared,
+            json!({ "from": "2026-03-01T12:00:00Z", "to": null }),
+        ),
+        (
+            delayed_set,
+            json!({ "from": null, "to": "delayed", "deadline": "2026-03-01T12:00:00Z" }),
+        ),
+        (
+            delayed_cleared,
+            json!({ "from": "delayed", "to": null, "deadline": "2026-03-01T12:00:00Z" }),
+        ),
+        (
+            late,
+            json!({ "deadline": "2026-03-01T12:00:00Z", "from": "delayed" }),
+        ),
+    ]
+}
+
+// Each typed entry, the new `lifecycle_moved` among them, reads back with its kind and the
+// literal JSON its constructor wrote, and no note.
+#[tokio::test]
+async fn each_new_kind_s_stored_shape_is_its_literal_json() {
+    let (pool, _container) = fresh_pool().await;
+    let mut commission = seed_commission(&pool, "did:plc:shape-owner").await;
+    let db = PgDatabase::new(pool.clone());
+    let store = PgChangelogStore::new(pool.clone());
+    let typed = typed_entries(&mut commission);
+
+    let mut uow = db.begin().await.expect("begin");
+    for (entry, _) in &typed {
+        uow.changelog().append(entry).await.expect("append");
+    }
+    uow.commit().await.expect("commit");
+
+    let stored = store.entries(&commission.id).await.expect("read");
+    assert_eq!(stored.len(), typed.len());
+    for (read, (written, shape)) in stored.iter().zip(&typed) {
+        assert_eq!(read.kind, written.kind());
+        assert_eq!(read.payload, *shape, "{}", read.kind);
+        assert_eq!(read.note, None, "{}", read.kind);
+    }
+    assert_eq!(stored[0].kind, ChangelogEntryKind::LifecycleMoved);
 }
 
 // AC4 at the database — an UPDATE against commission_changelog is refused by
@@ -206,11 +328,9 @@ async fn entries_cascade_away_with_the_commission() {
 
     let mut uow = db.begin().await.expect("begin");
     uow.changelog()
-        .append(&NewChangelogEntry::event(
+        .append(&NewChangelogEntry::created(
             commission.id,
-            ChangelogEntryKind::Created,
             commission.owner_id,
-            json!({}),
             Utc::now(),
         ))
         .await
@@ -355,84 +475,121 @@ async fn find_roundtrips_the_linked_channel() {
     );
 }
 
-// ZMVP-85 — CommissionStore::find round-trips the nullable direction-axis
-// Status set, replaced, and cleared through the write view: one column, so a
-// set REPLACES by construction (ruling E29) and NULL is the cleared state.
-#[tokio::test]
-async fn find_roundtrips_the_direction_status() {
-    use domain::elements::commission::DirectionStatus;
+/// The direction status `store` holds for `id`.
+async fn direction_of(store: &PgCommissionStore, id: &CommissionId) -> Option<DirectionStatus> {
+    store
+        .find(id)
+        .await
+        .expect("find")
+        .expect("exists")
+        .direction_status
+}
 
+/// The direction change `to` on what `store` holds for `id`, as its rule checks it; `None`
+/// clears.
+async fn direction_change(
+    store: &PgCommissionStore,
+    id: &CommissionId,
+    to: Option<DirectionStatus>,
+) -> DirectionChange {
+    let stored = store.find(id).await.expect("find").expect("exists");
+    let state = CommissionState::from(&stored);
+    match to {
+        Some(to) => DirectionChange::from(set_direction(&state, to).expect("a real set")),
+        None => DirectionChange::from(clear_direction(&state).expect("a real clear")),
+    }
+}
+
+// CommissionStore::find round-trips the nullable direction status set, replaced and cleared
+// through the write view by compare-and-set: one column, so a set replaces by construction
+// and NULL is the cleared state; a change checked from a status the row no longer holds, or
+// on no commission, matches no row and answers `false`.
+#[tokio::test]
+async fn find_roundtrips_the_direction_status_by_compare_and_set() {
     let (pool, _container) = fresh_pool().await;
     let commission = seed_commission(&pool, "did:plc:status-owner").await;
     let db = PgDatabase::new(pool.clone());
     let store = PgCommissionStore::new(pool.clone());
-
-    let found = store
-        .find(&commission.id)
-        .await
-        .expect("find")
-        .expect("the commission exists");
-    assert!(
-        found.direction_status.is_none(),
+    let capability = seed::participant_on(commission.id);
+    assert_eq!(
+        direction_of(&store, &commission.id).await,
+        None,
         "born with no direction status"
     );
 
+    let first = direction_change(
+        &store,
+        &commission.id,
+        Some(DirectionStatus::WaitingForInput),
+    )
+    .await;
     let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .set_direction_status(&commission.id, Some(DirectionStatus::WaitingForInput))
+    let landed = uow
+        .commissions()
+        .set_direction_status(&capability, &first)
         .await
         .expect("set status");
     uow.commit().await.expect("commit");
+    assert!(landed);
     assert_eq!(
-        store
-            .find(&commission.id)
-            .await
-            .expect("find")
-            .expect("exists")
-            .direction_status,
+        direction_of(&store, &commission.id).await,
         Some(DirectionStatus::WaitingForInput),
     );
 
     // A second set replaces the value whole — never accumulates.
+    let replaced = direction_change(
+        &store,
+        &commission.id,
+        Some(DirectionStatus::ChangesRequested),
+    )
+    .await;
     let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .set_direction_status(&commission.id, Some(DirectionStatus::ChangesRequested))
+    let landed = uow
+        .commissions()
+        .set_direction_status(&capability, &replaced)
         .await
         .expect("replace status");
+    let stale = uow
+        .commissions()
+        .set_direction_status(&capability, &first)
+        .await
+        .expect("a stale set runs");
     uow.commit().await.expect("commit");
+    assert!(landed);
+    assert!(
+        !stale,
+        "a set from a status the row no longer holds matches no row"
+    );
     assert_eq!(
-        store
-            .find(&commission.id)
-            .await
-            .expect("find")
-            .expect("exists")
-            .direction_status,
+        direction_of(&store, &commission.id).await,
         Some(DirectionStatus::ChangesRequested),
     );
 
     // Clearing writes NULL; the deadline envelope is a separate axis and is
     // untouched throughout (it was None at seed and stays None).
+    let cleared = direction_change(&store, &commission.id, None).await;
     let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .set_direction_status(&commission.id, None)
+    let landed = uow
+        .commissions()
+        .set_direction_status(&capability, &cleared)
         .await
         .expect("clear status");
+    let elsewhere = uow
+        .commissions()
+        .set_direction_status(
+            &seed::participant_on(CommissionId::from(uuid::Uuid::now_v7())),
+            &first,
+        )
+        .await
+        .expect("an unknown commission runs");
     uow.commit().await.expect("commit");
+    assert!(landed);
+    assert!(!elsewhere, "an absent commission matches no row");
     let found = store
         .find(&commission.id)
         .await
         .expect("find")
         .expect("exists");
     assert!(found.direction_status.is_none(), "cleared to NULL");
-
-    // An absent commission is a no-op write, not an error.
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .set_direction_status(
-            &CommissionId::from(uuid::Uuid::now_v7()),
-            Some(DirectionStatus::WaitingForApproval),
-        )
-        .await
-        .expect("no-op on an unknown commission");
-    uow.commit().await.expect("commit");
+    assert!(found.deadline.is_none());
 }

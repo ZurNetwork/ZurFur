@@ -1169,14 +1169,6 @@ pub mod commission {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
-    pub struct LapsedDeadlinesRow {
-        pub id: uuid::Uuid,
-        pub deadline: chrono::DateTime<chrono::Utc>,
-        pub deadline_status: Option<String>,
-    }
-
-    /// Row shape read back from the prepared statement's metadata.
-    #[derive(Debug, sqlx::FromRow)]
     pub struct ListOwnedByRow {
         pub id: uuid::Uuid,
         pub owner_id: String,
@@ -1228,6 +1220,13 @@ pub mod commission {
         pub id: uuid::Uuid,
         pub tab: String,
         pub mode: String,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct LockForSystemRow {
+        pub node_id: uuid::Uuid,
+        pub level: String,
     }
 
     /// Row shape read back from the prepared statement's metadata.
@@ -1680,17 +1679,46 @@ pub mod commission {
 
     /// `queries/commission/lapsed_deadlines.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// The deadline param receives the sweep instant ("now"); lifecycle takes the
-    /// terminal lifecycles exempt from lapsing.
+    /// The deadline sweep's scan on the pool: the deadline param receives the sweep
+    /// instant ("now"); lifecycle takes the steps a missed deadline doesn't lapse on
+    /// (the terminal ones and Disputed); mark_kind takes the kind a Late mark records,
+    /// and rearm_kind the kinds that re-arm it. A commission with a mark recorded
+    /// since its last re-arming entry is left out. Answers ids only, ordered by
+    /// deadline, then id. Only a scan: the sweep re-reads each one under its own lock
+    /// before it writes.
     pub async fn lapsed_deadlines(
         conn: impl sqlx::PgExecutor<'_>,
         deadline: chrono::DateTime<chrono::Utc>,
         lifecycle: &[String],
-    ) -> sqlx::Result<Vec<LapsedDeadlinesRow>> {
-        sqlx::query_as(include_str!("../queries/commission/lapsed_deadlines.sql"))
+        mark_kind: &str,
+        rearm_kind: &[String],
+    ) -> sqlx::Result<Vec<uuid::Uuid>> {
+        sqlx::query_scalar(include_str!("../queries/commission/lapsed_deadlines.sql"))
             .bind(deadline)
             .bind(lifecycle)
+            .bind(mark_kind)
+            .bind(rearm_kind)
             .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/commission/late_owed.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Whether one commission is still owed a `late` entry: no entry of mark_kind
+    /// (the kind a Late mark records) since its last entry of rearm_kind (the kinds
+    /// that re-arm it). The sweep scan's anti-join, for one commission, run on the
+    /// unit after its lock so it sees what committed while the lock was awaited.
+    pub async fn late_owed(
+        conn: impl sqlx::PgExecutor<'_>,
+        commission_id: uuid::Uuid,
+        mark_kind: &str,
+        rearm_kind: &[String],
+    ) -> sqlx::Result<Option<bool>> {
+        sqlx::query_scalar(include_str!("../queries/commission/late_owed.sql"))
+            .bind(commission_id)
+            .bind(mark_kind)
+            .bind(rearm_kind)
+            .fetch_one(conn)
             .await
     }
 
@@ -1770,6 +1798,24 @@ pub mod commission {
     ) -> sqlx::Result<Vec<LoadTabsRow>> {
         sqlx::query_as(include_str!("../queries/commission/load_tabs.sql"))
             .bind(commission_id)
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/commission/lock_for_system.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The system's own act's lock, with no viewer: the node the commission points
+    /// at and that node's level, with the commission row locked until the unit of
+    /// work ends. FOR NO KEY UPDATE OF commission locks the commission row alone, as
+    /// the standing read does, so a user's act on the same commission waits for this
+    /// unit, and this one for it. An absent id, or a commission with no node,
+    /// answers no row.
+    pub async fn lock_for_system(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+    ) -> sqlx::Result<Vec<LockForSystemRow>> {
+        sqlx::query_as(include_str!("../queries/commission/lock_for_system.sql"))
+            .bind(id)
             .fetch_all(conn)
             .await
     }
@@ -1980,49 +2026,83 @@ pub mod commission {
     }
 
     /// `queries/commission/set_deadline.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Set or clear a commission's deadline by compare-and-set: the row changes only while it still
+    /// holds the deadline the change was checked from, so a stale change matches no row.
     pub async fn set_deadline(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
         deadline: Option<chrono::DateTime<chrono::Utc>>,
+        held_deadline: Option<chrono::DateTime<chrono::Utc>>,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/commission/set_deadline.sql"))
             .bind(id)
             .bind(deadline)
+            .bind(held_deadline)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
     }
 
     /// `queries/commission/set_deadline_status.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Raise or take down a commission's Delayed flag by compare-and-set: the row changes only while
+    /// it still holds the stored flag the change was checked from, so a stale change matches no row.
     pub async fn set_deadline_status(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
         deadline_status: Option<&str>,
+        held_deadline_status: Option<&str>,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!(
             "../queries/commission/set_deadline_status.sql"
         ))
         .bind(id)
         .bind(deadline_status)
+        .bind(held_deadline_status)
         .execute(conn)
         .await
         .map(|r| r.rows_affected())
     }
 
     /// `queries/commission/set_direction_status.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Set or clear a commission's direction status by compare-and-set: the row changes only while
+    /// it still holds the status the change was checked from, so a stale change matches no row.
     pub async fn set_direction_status(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
         direction_status: Option<&str>,
+        held_direction_status: Option<&str>,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!(
             "../queries/commission/set_direction_status.sql"
         ))
         .bind(id)
         .bind(direction_status)
+        .bind(held_direction_status)
         .execute(conn)
         .await
         .map(|r| r.rows_affected())
+    }
+
+    /// `queries/commission/set_lifecycle.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Move a commission's lifecycle step by compare-and-set: the row changes only while it still
+    /// holds the step the move was checked from, so a stale move matches no row.
+    pub async fn set_lifecycle(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: uuid::Uuid,
+        to_step: &str,
+        from_step: &str,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/commission/set_lifecycle.sql"))
+            .bind(id)
+            .bind(to_step)
+            .bind(from_step)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
     }
 
     /// `queries/commission/set_linked_channel.sql`, contract inferred from the SQL against the migrated schema.
@@ -2208,30 +2288,159 @@ pub mod health {
 }
 
 pub mod key_store {
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct FirstSealedRow {
+        pub did: String,
+        pub sealed_keys: Vec<u8>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct LegacyProbeRow {
+        pub did: String,
+        pub wrapped_keys: Vec<u8>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct LegacyUnsealedRow {
+        pub did: String,
+        pub wrapped_keys: Vec<u8>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
+    pub struct SealedProbeRow {
+        pub did: String,
+        pub sealed_keys: Vec<u8>,
+    }
+
+    /// `queries/key_store/count_unsealed.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// How many rows have no sealed envelope yet.
+    pub async fn count_unsealed(conn: impl sqlx::PgExecutor<'_>) -> sqlx::Result<i64> {
+        sqlx::query_scalar(include_str!("../queries/key_store/count_unsealed.sql"))
+            .fetch_one(conn)
+            .await
+    }
+
+    /// `queries/key_store/first_sealed.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// The first row holding a sealed envelope, by DID: the one row a command
+    /// opens to check its root. Read only once `sealed_keys` exists.
+    pub async fn first_sealed(
+        conn: impl sqlx::PgExecutor<'_>,
+    ) -> sqlx::Result<Option<FirstSealedRow>> {
+        sqlx::query_as(include_str!("../queries/key_store/first_sealed.sql"))
+            .fetch_optional(conn)
+            .await
+    }
+
     /// `queries/key_store/get.sql`, contract inferred from the SQL against the migrated schema.
-    pub async fn get(conn: impl sqlx::PgExecutor<'_>, did: &str) -> sqlx::Result<Option<Vec<u8>>> {
+    ///
+    /// A row's sealed envelope, by DID: NULL until the row is re-wrapped. Never
+    /// reads the 0.1 ciphertext.
+    pub async fn get(
+        conn: impl sqlx::PgExecutor<'_>,
+        did: &str,
+    ) -> sqlx::Result<Option<Option<Vec<u8>>>> {
         sqlx::query_scalar(include_str!("../queries/key_store/get.sql"))
             .bind(did)
             .fetch_optional(conn)
             .await
     }
 
+    /// `queries/key_store/legacy_probe.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every row still holding a 0.1 ciphertext, by DID. Names only columns the
+    /// table had before the custody envelope, so it also runs on that schema.
+    pub async fn legacy_probe(
+        conn: impl sqlx::PgExecutor<'_>,
+    ) -> sqlx::Result<Vec<LegacyProbeRow>> {
+        sqlx::query_as(include_str!("../queries/key_store/legacy_probe.sql"))
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/key_store/legacy_unsealed.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every row with no sealed envelope yet, by DID, locked until the unit of work
+    /// ends. Such a row always holds its 0.1 ciphertext.
+    pub async fn legacy_unsealed(
+        conn: impl sqlx::PgExecutor<'_>,
+    ) -> sqlx::Result<Vec<LegacyUnsealedRow>> {
+        sqlx::query_as(include_str!("../queries/key_store/legacy_unsealed.sql"))
+            .fetch_all(conn)
+            .await
+    }
+
     /// `queries/key_store/put.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Store a newly minted DID's sealed envelope. Writes no 0.1 ciphertext;
+    /// key_version keeps its default.
     pub async fn put(
         conn: impl sqlx::PgExecutor<'_>,
         did: &str,
-        wrapped_keys: &[u8],
-        key_version: i32,
+        sealed_keys: Option<&[u8]>,
         created_at: chrono::DateTime<chrono::Utc>,
     ) -> sqlx::Result<u64> {
         sqlx::query(include_str!("../queries/key_store/put.sql"))
             .bind(did)
-            .bind(wrapped_keys)
-            .bind(key_version)
+            .bind(sealed_keys)
             .bind(created_at)
             .execute(conn)
             .await
             .map(|r| r.rows_affected())
+    }
+
+    /// `queries/key_store/sealed_column_exists.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Whether the custody table has its sealed-envelope column yet, so a read can
+    /// run on the schema before the custody envelope.
+    pub async fn sealed_column_exists(conn: impl sqlx::PgExecutor<'_>) -> sqlx::Result<bool> {
+        sqlx::query_scalar(include_str!(
+            "../queries/key_store/sealed_column_exists.sql"
+        ))
+        .fetch_one(conn)
+        .await
+    }
+
+    /// `queries/key_store/sealed_probe.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every row holding a sealed envelope, by DID, so the probe can open each one.
+    pub async fn sealed_probe(
+        conn: impl sqlx::PgExecutor<'_>,
+    ) -> sqlx::Result<Vec<SealedProbeRow>> {
+        sqlx::query_as(include_str!("../queries/key_store/sealed_probe.sql"))
+            .fetch_all(conn)
+            .await
+    }
+
+    /// `queries/key_store/store_sealed.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Store a row's sealed envelope, only while it has none: the envelope is
+    /// written once. Changes one row, or none when the row is missing or sealed.
+    pub async fn store_sealed(
+        conn: impl sqlx::PgExecutor<'_>,
+        did: &str,
+        sealed_keys: Option<&[u8]>,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/key_store/store_sealed.sql"))
+            .bind(did)
+            .bind(sealed_keys)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
+    }
+
+    /// `queries/key_store/table_exists.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Whether the custody table exists, so a read can run before any migration.
+    pub async fn table_exists(conn: impl sqlx::PgExecutor<'_>) -> sqlx::Result<bool> {
+        sqlx::query_scalar(include_str!("../queries/key_store/table_exists.sql"))
+            .fetch_one(conn)
+            .await
     }
 }
 
@@ -2785,11 +2994,13 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "commission::set_deadline",
     "commission::set_deadline_status",
     "commission::set_direction_status",
+    "commission::set_lifecycle",
     "commission::set_linked_channel",
     "commission::set_maturity",
     "file::delete",
     "file::put",
     "key_store::put",
+    "key_store::store_sealed",
     "node::create",
     "node::delete",
     "node::set_name",

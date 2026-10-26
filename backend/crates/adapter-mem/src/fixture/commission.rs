@@ -10,7 +10,7 @@ use domain::{
         account::AccountId,
         commission::{
             ChangelogEntryKind, CommissionFile, CommissionId, CommissionTitle, ElementId, FileKey,
-            FileName, NewChangelogEntry, NewSlot, SlotTitle, SurfaceAddress, SurfaceName,
+            FileName, NewChangelogEntry, NewSlot, OpenKind, SlotTitle, SurfaceAddress, SurfaceName,
         },
         level::Level,
         user::UserId,
@@ -139,13 +139,14 @@ async fn seed_old_sketch(backend: &MemBackend, alice: &UserId) -> anyhow::Result
     seed_fixed(backend, OLD_SKETCH, "Old sketch", alice).await?;
 
     let archived_at = time_of(OLD_SKETCH) + OLD_SKETCH_ARCHIVED_AFTER;
-    let archived_entry = NewChangelogEntry::event(
+    let archived_entry: NewChangelogEntry = NewChangelogEntry::event(
         old_sketch(),
-        ChangelogEntryKind::Archived,
+        OpenKind::Archived,
         alice.clone(),
         json!({ "title": "Old sketch" }),
         archived_at,
-    );
+    )
+    .into();
     let database = backend.database();
     let mut uow = database.begin().await?;
     uow.commissions()
@@ -194,17 +195,14 @@ async fn seed_fixed(
         maturity: None,
     };
     backend.seed_bound_commission(&seed).await?;
-    let created_entry = NewChangelogEntry::event(
+    // The legacy `created` row names its title, a shape no constructor builds any more.
+    backend.seed_changelog_entry(
         seed.id,
         ChangelogEntryKind::Created,
-        owner.clone(),
+        Some(owner.clone()),
         json!({ "title": title }),
         created_at,
     );
-    let database = backend.database();
-    let mut uow = database.begin().await?;
-    uow.changelog().append(&created_entry).await?;
-    uow.commit().await?;
     Ok(())
 }
 
@@ -226,9 +224,9 @@ async fn upload_file(
         .put(file_key, &checked_name, CONTENT_TYPE, &mut content)
         .await?;
 
-    let file_added_entry = NewChangelogEntry::event(
+    let file_added_entry: NewChangelogEntry = NewChangelogEntry::event(
         untitled(),
-        ChangelogEntryKind::FileAdded,
+        OpenKind::FileAdded,
         uploader.clone(),
         json!({
             "file_id": key,
@@ -237,7 +235,8 @@ async fn upload_file(
             "byte_size": byte_size,
         }),
         uploaded_at,
-    );
+    )
+    .into();
     let file = CommissionFile {
         id: file_key,
         commission_id: untitled(),

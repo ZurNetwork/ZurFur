@@ -47,3 +47,80 @@ fn unknown_lifecycle_tokens_do_not_parse() {
         Err(UnknownLifecycleStep)
     );
 }
+
+/// A stored commission at `step`, as a rule reads it.
+fn state_at(step: LifecycleStep) -> CommissionState {
+    let commission = crate::elements::commission::test_commission::at(step);
+    CommissionState::from(&commission)
+}
+
+// No move enters Draft, from any step; a move into Disputed is refused too, and while
+// Disputed nothing moves.
+#[test]
+fn no_move_enters_draft() {
+    for from in LifecycleStep::VARIANTS {
+        if matches!(from, LifecycleStep::Draft | LifecycleStep::Disputed) {
+            continue;
+        }
+        let into_draft = move_lifecycle(&state_at(from.clone()), LifecycleStep::Draft);
+        assert_eq!(
+            into_draft,
+            Err(CommissionRefusal::LifecycleMoveRefused),
+            "{from} → draft"
+        );
+    }
+
+    let into_disputed = move_lifecycle(&state_at(LifecycleStep::Active), LifecycleStep::Disputed);
+    assert_eq!(into_disputed, Err(CommissionRefusal::LifecycleMoveRefused));
+
+    for to in LifecycleStep::VARIANTS {
+        let while_disputed = move_lifecycle(&state_at(LifecycleStep::Disputed), to.clone());
+        assert_eq!(
+            while_disputed,
+            Err(CommissionRefusal::CommissionDisputed),
+            "disputed → {to}"
+        );
+    }
+}
+
+// A move to the step already held is a no-op, Draft to Draft included.
+#[test]
+fn a_move_to_the_held_step_is_a_no_op() {
+    for step in LifecycleStep::VARIANTS {
+        if *step == LifecycleStep::Disputed {
+            continue;
+        }
+        let held = move_lifecycle(&state_at(step.clone()), step.clone());
+        assert_eq!(held, Ok(None), "{step} → {step}");
+    }
+}
+
+// A move between working steps passes, carrying the step held and the step moved to.
+#[test]
+fn a_move_between_working_steps_carries_both_steps() {
+    let moved = move_lifecycle(&state_at(LifecycleStep::Draft), LifecycleStep::Active)
+        .expect("draft → active passes")
+        .expect("a real move");
+
+    assert_eq!(moved.before(), &LifecycleStep::Draft);
+    assert_eq!(moved.after(), &LifecycleStep::Active);
+
+    let reopened = move_lifecycle(&state_at(LifecycleStep::Completed), LifecycleStep::Active);
+    assert!(matches!(reopened, Ok(Some(_))), "{reopened:?}");
+}
+
+// A missed deadline lapses on every working step: never on closed work, and never while
+// Disputed, which isn't terminal.
+#[test]
+fn a_deadline_lapses_on_working_steps_only() {
+    let not_lapsing: Vec<&'static str> = LifecycleStep::not_lapsing()
+        .iter()
+        .map(<&'static str>::from)
+        .collect();
+
+    assert_eq!(not_lapsing, ["completed", "cancelled", "disputed"]);
+    for step in LifecycleStep::VARIANTS {
+        let listed = LifecycleStep::not_lapsing().contains(step);
+        assert_eq!(step.lapses(), !listed, "{step}");
+    }
+}
