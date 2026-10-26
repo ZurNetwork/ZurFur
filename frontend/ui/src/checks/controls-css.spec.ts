@@ -7,8 +7,11 @@ import { PAPER_CLASSES } from '../lib/styles/paper-classes';
 const stylesFolder = new URL('../lib/styles/', import.meta.url);
 const controlsFolder = new URL('controls/', stylesFolder);
 
+/** Everything in the family folder, by name. */
+const folderEntries = readdirSync(controlsFolder).sort();
+
 /** Every family file, by name. */
-const familyFiles = readdirSync(controlsFolder).sort();
+const familyFiles = folderEntries.filter((name) => name.endsWith('.css'));
 
 function readFamily(name: string): string {
 	return readFileSync(new URL(name, controlsFolder), 'utf8');
@@ -165,6 +168,10 @@ describe('the control family files', () => {
 			'tip.css',
 			'toggle.css'
 		]);
+	});
+
+	it("sit beside nothing but the folder's node", () => {
+		expect(folderEntries.filter((name) => !familyFiles.includes(name))).toEqual(['NODE.inf.json']);
 	});
 
 	it.each(familyFiles)('%s keeps to tokens, paper classes and colour fades', (name) => {

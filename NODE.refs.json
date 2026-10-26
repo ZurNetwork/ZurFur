@@ -1175,11 +1175,6 @@
       "page": 39944194,
       "title": "Frontend Stack — Server-Only Effect & the Runes Seam",
       "governs": "components above the seam get plain data: the icons are plain shape data, drawn inline"
-    },
-    {
-      "page": 2026102301,
-      "title": "The Front Door and the Voice — Sections over the Tree, the One-Page Commission and an Interface That Feels Alive",
-      "governs": "decision 9: an interface that holds little, so a control often shows an icon where a word would crowd it"
     }
   ],
   "frontend/ui/src/lib/styles": [
