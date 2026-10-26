@@ -63,6 +63,7 @@ just gallery               # Build and serve the component gallery at http://127
 just tools-check           # Warn when local typos/cargo-deny/buf/just/nodes/rustc differ from CI's pins
 just npm-advisories        # osv-scanner over both npm lockfiles, each with its root ignore file (needs the network; gate's last step)
 just npm-lock-review <rev> # The 7-day floor and the registry integrity check on what both npm lockfiles gained since <rev> (needs the network)
+just cargo-config-check    # Fail on any tracked .cargo/config or .cargo/config.toml
 ```
 
 Building and running directly:

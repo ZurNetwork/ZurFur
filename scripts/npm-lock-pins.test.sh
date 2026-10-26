@@ -1,9 +1,10 @@
 #!/bin/sh
 # Pins the npm lockfile checks' wiring: the npm-lock job's shape and its inline
 # step in CI, the jobs that wait for it, the driver's clean environments and
-# floor, the daily npm advisory job, and `just gate` ending on the advisory
-# scan. Each line here is one a quiet edit could drop or loosen. Run directly,
-# or via `just scripts-test`.
+# floor, the daily npm advisory job, the cargo config check in `just gate` and
+# the hooks job, and `just gate` ending on the advisory scan. Each line here is
+# one a quiet edit could drop or loosen. Run directly, or via
+# `just scripts-test`.
 set -eu
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -117,7 +118,15 @@ expect_line "the floor runs under env -i" "$driver" \
     "env -i PATH=\"\$node_dir:/usr/bin:/bin\" HOME=\"\${HOME:-/nonexistent}\" \\"
 expect_line "the floor is 7 days, with the chosen waivers" "$driver" "--min-age-days 7 --waivers \"\$waivers\""
 
-# --- the cargo config check (a later change pins it here) ------------------------------
+# --- the cargo config check ------------------------------------------------------------
+
+gate_body="$(awk '
+    /^gate:/ { inside = 1; next }
+    inside && /^[^[:space:]]/ { inside = 0 }
+    inside { print }
+' "$root/Justfile")"
+expect_line "just gate runs the cargo config check" "$gate_body" "just cargo-config-check"
+expect_line "the hooks job runs the cargo config check" "$(job "$ci" hooks)" "- run: just cargo-config-check"
 
 # --- the daily advisories and the gate ----------------------------------------------------
 

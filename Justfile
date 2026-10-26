@@ -328,17 +328,18 @@ hooks-test:
 
 # Fixture tests for the CI path classifier, the `changes` job, gate-light, the
 # dev-profile pins, pr-wait, tools-check, the nodes install check, the nodes fmt
-# hook, den-fill, the dev logs, the private-papers check, the node-tree guard,
-# the nodes 0.7 node-text edits, the `jj push` gate's argument guard,
-# workspace-init, the npm advisory scan, CI's npm-lock driver and its pins
-# (the design-index check's own tests run under `design-index-check-test`). CI runs it in the `hooks` job,
-# which has no jj and no nodes: the jj fixtures and the node-text edits' tests
-# skip themselves there.
+# hook, den-fill, the dev logs, the private-papers check, the cargo-config
+# check, the node-tree guard, the nodes 0.7 node-text edits, the `jj push`
+# gate's argument guard, workspace-init, the npm advisory scan, CI's npm-lock
+# driver and its pins (the design-index check's own tests run under
+# `design-index-check-test`). CI runs it in the `hooks` job, which has no jj
+# and no nodes: the jj fixtures and the node-text edits' tests skip themselves
+# there.
 scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/nodes-install.test.sh scripts/nodes-fmt-hook.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/nodes-tree-check.test.sh scripts/nodes-0-7-edits.test.sh scripts/jj-push.test.sh scripts/workspace-init.test.sh scripts/build-id.test.sh scripts/npm-advisories.test.sh scripts/npm-lock-ci.test.sh scripts/npm-lock-pins.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/nodes-install.test.sh scripts/nodes-fmt-hook.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/cargo-config-check.test.sh scripts/nodes-tree-check.test.sh scripts/nodes-0-7-edits.test.sh scripts/jj-push.test.sh scripts/workspace-init.test.sh scripts/build-id.test.sh scripts/npm-advisories.test.sh scripts/npm-lock-ci.test.sh scripts/npm-lock-pins.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done
@@ -412,6 +413,10 @@ toml-check:
 private-papers-check:
     sh scripts/private-papers-check.sh
 
+# Fail when a .cargo/config or .cargo/config.toml is tracked (any depth, any case).
+cargo-config-check:
+    sh scripts/cargo-config-check.sh
+
 # Forward to the design corpus's recall eval harness (private, Python
 # stdlib) at $ZURFUR_DESIGN_DIR/eval/run.py — see that repo for subcommands
 # (lint, smoke, pilot, matrix). Fails with a clear message if the corpus
@@ -473,6 +478,7 @@ gate:
     just scripts-test
     just toml-check
     just private-papers-check
+    just cargo-config-check
     buf lint contract
     just frontend-install
     node --test frontend/install-check.test.mjs frontend/lock-review.test.mjs
