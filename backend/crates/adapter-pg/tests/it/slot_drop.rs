@@ -3,8 +3,9 @@
 //! the Slot node fill, plants at most one difference, then runs the drop and nothing after it.
 //! Checks that each of these stops the drop, naming the Slot's element id alone, the drop
 //! unrecorded and `title` still there: a Slot with no node, a `node_id` that names a missing node
-//! or one that isn't the Slot's own, a title that differs from its node's name, and a write
-//! committed while the drop waits for its lock on `commission_slot` or `node`. Checks what the
+//! or one that isn't the Slot's own (another segment, or under another commission), a title that
+//! differs from its node's name, and a write committed while the drop waits for its lock on
+//! `commission_slot` or `node`. A view reading `title` stops it too, and stays. Checks what the
 //! drop leaves: no title column or its CHECK, `node_id` NOT NULL, the fill's transitional check
 //! gone, and each Slot's name on its node. Requires a container runtime socket (DOCKER_HOST
 //! honored).
@@ -17,8 +18,9 @@ use crate::commission_fill::{ledger_records, refusal};
 use crate::migration_steps::{run_migrations_through, try_run_migrations_through};
 use crate::node_backfill::seed_slot;
 use crate::slot_fill::{
-    CANARY_TITLE, SEEDED_SLOT_TITLES, SLOT_FILL_VERSION, execute_alone, rename_slot_node,
-    seeded_through_den_1, slot_node, slot_node_id, wait_until_a_lock_on_waits,
+    CANARY_TITLE, SEEDED_SLOT_TITLES, SLOT_FILL_VERSION, bound_commission, execute_alone,
+    rename_slot_node, seeded_through_den_1, slot_node, slot_node_id, slots_entry,
+    wait_until_a_lock_on_waits,
 };
 
 /// The Slot title drop's migration, as sqlx numbers it.
@@ -32,6 +34,9 @@ const TITLE_APART: &str = "A distinctive slot title set apart";
 
 /// Sets the title of Slot `$1` to `$2`.
 const RETITLE_SLOT: &str = "UPDATE commission_slot SET title = $2 WHERE element_id = $1";
+
+/// PostgreSQL's SQLSTATE for a drop refused because other objects depend on what it drops.
+const DEPENDENT_OBJECTS_STILL_EXIST: &str = "2BP01";
 
 /// A database seeded through the real path and migrated through the Slot node fill, so every
 /// Slot is bound to its own node. Answers the commission and every seeded Slot.
@@ -51,6 +56,27 @@ async fn slot_has_column(pool: &PgPool, column: &str) -> bool {
     .fetch_one(pool)
     .await
     .expect("read the catalog's columns")
+}
+
+/// Whether the view `name` exists.
+async fn view_exists(pool: &PgPool, name: &str) -> bool {
+    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_views WHERE viewname = $1)")
+        .bind(name)
+        .fetch_one(pool)
+        .await
+        .expect("read the catalog's views")
+}
+
+/// The SQLSTATE of the database's own refusal inside `stopped`.
+fn refusal_code(stopped: &MigrateError) -> String {
+    let (MigrateError::Execute(error) | MigrateError::ExecuteMigration(error, _)) = stopped else {
+        panic!("the database refused the migration: {stopped:?}");
+    };
+    error
+        .as_database_error()
+        .and_then(|database_error| database_error.code())
+        .map(|code| code.into_owned())
+        .unwrap_or_else(|| panic!("the database refused the migration with a code: {stopped:?}"))
 }
 
 /// Whether `commission_slot.node_id` is NOT NULL.
@@ -154,6 +180,31 @@ async fn plant_foreign(pool: &PgPool, element: Uuid) {
     .await
     .expect("re-segment the Slot's node");
     assert_eq!(updated.rows_affected(), 1, "one node is re-segmented");
+    execute_alone(pool, "ALTER TABLE node ENABLE TRIGGER node_keeps_its_place").await;
+}
+
+/// Move the node Slot `element` points at under the `slots` entry of a second commission bound
+/// to its own node, in this test's own database only: `node_keeps_its_place` is disabled for the
+/// update and enabled again, so the node keeps its type, segment and name, and only its
+/// commission differs.
+async fn plant_under_another_commission(pool: &PgPool, element: Uuid) {
+    let other_commission = bound_commission(pool, "Another commission").await;
+    let other_slots = slots_entry(pool, other_commission).await;
+    execute_alone(
+        pool,
+        "ALTER TABLE node DISABLE TRIGGER node_keeps_its_place",
+    )
+    .await;
+    let moved = sqlx::query(
+        "UPDATE node SET parent = $2 FROM commission_slot s
+         WHERE s.element_id = $1 AND node.id = s.node_id",
+    )
+    .bind(element)
+    .bind(other_slots)
+    .execute(pool)
+    .await
+    .expect("move the Slot's node under another commission");
+    assert_eq!(moved.rows_affected(), 1, "one node is moved");
     execute_alone(pool, "ALTER TABLE node ENABLE TRIGGER node_keeps_its_place").await;
 }
 
@@ -283,10 +334,14 @@ async fn a_dangling_or_foreign_node_id_stops_the_drop() {
     let (foreign_db, _foreign_container, _, foreign_slots) = through_the_fill().await;
     let foreign = foreign_slots[3];
     plant_foreign(&foreign_db, foreign).await;
+    let (moved_db, _moved_container, _, moved_slots) = through_the_fill().await;
+    let moved = moved_slots[2];
+    plant_under_another_commission(&moved_db, moved).await;
 
     for (label, pool, named) in [
         ("a dangling node_id", &dangling_db, dangling),
         ("a foreign node_id", &foreign_db, foreign),
+        ("a node under another commission", &moved_db, moved),
     ] {
         let stopped = try_run_migrations_through(pool, DROP_VERSION)
             .await
@@ -302,6 +357,40 @@ async fn a_dangling_or_foreign_node_id_stops_the_drop() {
         slot_node_id(&dangling_db, dangling).await,
         Some(deleted_node),
         "the Slot still points at the deleted node"
+    );
+}
+
+// The drop carries no CASCADE: a view reading `title` makes PostgreSQL refuse it, and the view
+// stays.
+#[tokio::test]
+async fn a_view_reading_title_stops_the_drop_and_stays() {
+    let (pool, _container, _commission, _slots) = through_the_fill().await;
+    execute_alone(
+        &pool,
+        "CREATE VIEW slot_titles AS SELECT element_id, title FROM commission_slot",
+    )
+    .await;
+
+    let stopped = try_run_migrations_through(&pool, DROP_VERSION)
+        .await
+        .expect_err("the drop stops");
+
+    assert_eq!(
+        refusal_code(&stopped),
+        DEPENDENT_OBJECTS_STILL_EXIST,
+        "PostgreSQL refuses to drop a column a view reads: {stopped}"
+    );
+    assert!(
+        !ledger_records(&pool, DROP_VERSION).await,
+        "the ledger does not record the stopped drop"
+    );
+    assert!(
+        slot_has_column(&pool, "title").await,
+        "the title column still exists"
+    );
+    assert!(
+        view_exists(&pool, "slot_titles").await,
+        "the view reading title still exists"
     );
 }
 

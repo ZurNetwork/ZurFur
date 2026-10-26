@@ -58,7 +58,7 @@ async fn just_before_the_fill() -> (PgPool, impl Sized) {
 
 /// A commission bound to its own node and six entries, inserted in one committed unit on the
 /// schema before the fill, as the den's write gate writes a create. Answers its id.
-async fn bound_commission(pool: &PgPool, title: &str) -> Uuid {
+pub(crate) async fn bound_commission(pool: &PgPool, title: &str) -> Uuid {
     let commission = Uuid::now_v7();
     let node = Uuid::now_v7();
     let mut tx = pool.begin().await.expect("begin");
@@ -117,7 +117,7 @@ pub(crate) async fn slot_node(pool: &PgPool, element: Uuid) -> NodeRow {
 }
 
 /// The `slots` entry of `commission`'s node.
-async fn slots_entry(pool: &PgPool, commission: Uuid) -> Uuid {
+pub(crate) async fn slots_entry(pool: &PgPool, commission: Uuid) -> Uuid {
     sqlx::query_scalar(
         "SELECT e.id FROM node e JOIN commission c ON e.parent = c.node_id
          WHERE c.id = $1 AND e.type = 'commission.slots'",
