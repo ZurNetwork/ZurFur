@@ -31,6 +31,14 @@ repo() {
     printf '%s\n' "$dir"
 }
 
+# link <repo> <link path> <target>: a symlink at <link path> in <repo> pointing
+# at <target>, added to the index.
+link() {
+    mkdir -p "$1/$(dirname "$2")"
+    ln -s "$3" "$1/$2"
+    git -C "$1" add -- "$2"
+}
+
 # expect <name> <repo> <expected exit> [text the output must hold]...
 expect() {
     name="$1"
@@ -75,10 +83,25 @@ expect "every tracked cargo config is listed" "$r" 1 "  .cargo/config
 r="$(repo quoted 'a"b/.cargo/config.toml')"
 expect "a path git quotes is still caught" "$r" 1 '.cargo/config.toml"'
 
-r="$(repo lookalikes README.md .cargo/other cargo/config.toml .cargo/config.toml.bak .cargo/configx x.cargo/config.toml)"
+r="$(repo other-under-cargo README.md .cargo/other .cargo/config.toml.bak .cargo/configx)"
+expect "any other file under a .cargo folder fails" "$r" 1 "  .cargo/other
+" "  .cargo/config.toml.bak
+" "  .cargo/configx
+"
+
+r="$(repo root-symlink README.md cfg/config.toml)"
+link "$r" .cargo cfg
+expect "a tracked .cargo symlink to a folder holding config.toml fails" "$r" 1 "  .cargo
+"
+r="$(repo deep-symlink README.md backend/zz/config.toml)"
+link "$r" backend/.cargo zz
+expect "a tracked backend/.cargo symlink fails" "$r" 1 "  backend/.cargo
+"
+
+r="$(repo lookalikes README.md cargo/config.toml x.cargo/config.toml .cargox/config.toml .cargo.bak/x a.cargo)"
 out="$(cd "$r" && GIT_CEILING_DIRECTORIES="$tmp" PATH="$tmp/bin:$PATH" sh "$under_test" 2>&1)" && got=0 || got=$?
-if [ "$got" = 0 ] && [ "$out" = "cargo-config-check: OK, no cargo config file tracked" ]; then
-    echo "ok   lookalikes (.cargo/other, cargo/config.toml, …) pass with one OK line"
+if [ "$got" = 0 ] && [ "$out" = "cargo-config-check: OK, no tracked path has a .cargo segment" ]; then
+    echo "ok   lookalikes (cargo/config.toml, x.cargo/config.toml, .cargox/…, .cargo.bak/x, a.cargo) pass with one OK line"
 else
     echo "FAIL lookalikes should pass with one OK line: exit $got: $out"
     failures=$((failures + 1))
@@ -87,7 +110,7 @@ fi
 r="$(repo untracked README.md)"
 mkdir "$r/.cargo"
 echo x >"$r/.cargo/config.toml"
-expect "an untracked .cargo/config.toml passes" "$r" 0 "OK, no cargo config file tracked"
+expect "an untracked .cargo/config.toml passes" "$r" 0 "OK, no tracked path has a .cargo segment"
 
 r="$(repo empty)"
 expect "an empty listing fails closed" "$r" 2 "the tracked-file listing is empty"

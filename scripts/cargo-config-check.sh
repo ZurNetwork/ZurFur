@@ -1,10 +1,12 @@
 #!/bin/sh
-# Fails when a cargo config file is tracked: a `.cargo/config` or
-# `.cargo/config.toml` at any depth, in any letter case (a case-insensitive
-# file system reads `.Cargo/Config.toml` too). Cargo reads such a file from
-# the directory it runs in and every parent, and the file can name a
-# `rustc-wrapper`, a linker or a runner for the binaries cargo runs, so a
-# change that adds one runs its own code inside every job that calls cargo.
+# Fails when any tracked path has a `.cargo` segment, at any depth and in any
+# letter case (a case-insensitive file system reads `.Cargo` too): a
+# `.cargo/config.toml` file, anything else under a `.cargo` folder, or a
+# `.cargo` symlink, which cargo follows to the config file it points at.
+# Cargo reads `.cargo/config[.toml]` from the directory it runs in and every
+# parent, and the file can name a `rustc-wrapper`, a linker or a runner for
+# the binaries cargo runs, so a change that adds one runs its own code inside
+# every job that calls cargo.
 #
 # Lists the tracked files with `jj file list` in a jj workspace (the working
 # copy, @), else `git ls-files`. Exits 1 and lists each offending path; exits
@@ -44,7 +46,7 @@ hits=$(printf '%s\n' "$files" | awk '
     {
         path = $0
         if (path ~ /^".*"$/) path = substr(path, 2, length(path) - 2)
-        if (tolower(path) ~ /(^|\/)\.cargo\/config(\.toml)?$/) print "  " $0
+        if (tolower(path) ~ /(^|\/)\.cargo(\/|$)/) print "  " $0
     }
 ') || {
     echo "cargo-config-check: the path check itself failed" >&2
@@ -52,9 +54,9 @@ hits=$(printf '%s\n' "$files" | awk '
 }
 
 if [ -n "$hits" ]; then
-    echo "cargo-config-check: these tracked paths are cargo config files, which can run their own code in any cargo call:"
+    echo "cargo-config-check: these tracked paths have a .cargo segment, and a cargo config there (or behind a .cargo symlink) can run its own code in any cargo call:"
     printf '%s\n' "$hits"
-    echo "cargo-config-check: keep cargo config files out of the repo; a local one stays untracked."
+    echo "cargo-config-check: keep .cargo folders, files and symlinks out of the repo; a local one stays untracked."
     exit 1
 fi
-echo "cargo-config-check: OK, no cargo config file tracked"
+echo "cargo-config-check: OK, no tracked path has a .cargo segment"

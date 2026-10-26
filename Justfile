@@ -413,7 +413,7 @@ toml-check:
 private-papers-check:
     sh scripts/private-papers-check.sh
 
-# Fail when a .cargo/config or .cargo/config.toml is tracked (any depth, any case).
+# Fail when any tracked path has a .cargo segment: a file, a folder or a symlink (any depth, any case).
 cargo-config-check:
     sh scripts/cargo-config-check.sh
 

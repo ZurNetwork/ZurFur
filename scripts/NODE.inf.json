@@ -22,12 +22,12 @@
     },
     {
       "name": "cargo-config-check.sh",
-      "role": "fails on any tracked .cargo/config or .cargo/config.toml, at any depth and in any letter case (one could set a rustc-wrapper, linker or runner and run its own code in any cargo call); lists with jj file list, else git ls-files; exits 1 listing each path, 2 on a failed or empty listing (just cargo-config-check, in just gate and CI's hooks job; tested by cargo-config-check.test.sh)",
+      "role": "fails on any tracked path with a .cargo segment (a file or folder under .cargo, or a .cargo symlink cargo would follow), at any depth and in any letter case (a cargo config could set a rustc-wrapper, linker or runner and run its own code in any cargo call); lists with jj file list, else git ls-files; exits 1 listing each path, 2 on a failed or empty listing (just cargo-config-check, in just gate and CI's hooks job; tested by cargo-config-check.test.sh)",
       "node": false
     },
     {
       "name": "cargo-config-check.test.sh",
-      "role": "tests for cargo-config-check.sh against scratch git repos with a stub jj that always fails: each config path and case caught, lookalikes and untracked files pass, an empty listing exits 2, today's tree passes",
+      "role": "tests for cargo-config-check.sh against scratch git repos with a stub jj that always fails: each config path and case caught, any other path under .cargo and a .cargo symlink (at the root and in backend/) caught, lookalikes and untracked files pass, an empty listing exits 2, today's tree passes",
       "node": false
     },
     {

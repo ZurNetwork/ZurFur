@@ -374,7 +374,8 @@ jobs:
       - run: just toml-check
       # No private working paper (rulings, queue, retros, releases) is tracked.
       - run: just private-papers-check
-      # No .cargo/config[.toml] is tracked: one could run its own code in any cargo call.
+      # No tracked path has a .cargo segment (file, folder or symlink): a cargo
+      # config could run its own code in any cargo call.
       - run: just cargo-config-check
 
   web:
