@@ -77,7 +77,7 @@
 	</DropdownMenu.Trigger>
 	{#if portalTo !== undefined}
 		<DropdownMenu.Portal to={portalTo}>
-			<DropdownMenu.Content>
+			<DropdownMenu.Content align="start">
 				{#snippet child({ props, wrapperProps })}
 					<div {...wrapperProps}>
 						<div {...props} class="zf-menu" {@attach moves.note('in-place')}>

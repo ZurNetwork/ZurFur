@@ -94,6 +94,11 @@
 	opacity: 1;
 }
 
+/* A select still on its placeholder reads muted, like a text field's. */
+.zf-select select:has(> option:disabled:checked) {
+	color: var(--color-text-muted);
+}
+
 .zf-input input:disabled,
 .zf-input textarea:disabled,
 .zf-select select:disabled {
