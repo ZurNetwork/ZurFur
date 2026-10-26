@@ -37,7 +37,7 @@
     },
     {
       "name": "ci-paths.sh",
-      "role": "classifies changed paths for CI's changes job (code: anything but docs-only; lock: a Cargo.lock; npmlock: an npm lockfile or a root osv-scanner.*.toml) and, with --paths, for just gate-light; fails closed",
+      "role": "classifies changed paths for CI's changes job (code: anything but docs-only; lock: a Cargo.lock; npmlock: an npm lockfile, a root osv-scanner.*.toml or the root npm-licences.json) and, with --paths, for just gate-light; fails closed",
       "node": false
     },
     {
@@ -112,17 +112,17 @@
     },
     {
       "name": "npm-lock-ci.sh",
-      "role": "the body of CI's npm-lock job, normally the PR base's copy: verifies the base, takes the advisory script, lock-review.mjs and install-check.mjs as one set from the base (the change's only when the base lacks this driver, with a warning), the old lockfiles and lock-age-waivers.json from the base, and each lockfile's osv-scanner ignores from the base when that lockfile changed; runs the advisory scan (block or report) and the 7-day floor over both lockfiles under env -i, then checks the change's own files it didn't use (its ignore files through the allow-list when a base's was scanned, its waivers parsed by lock-review when they differ from the base's), every check even after one fails, and exits with the worst code",
+      "role": "the body of CI's npm-lock job, normally the PR base's copy: verifies the base, takes the advisory script, lock-review.mjs, install-check.mjs and licences.mjs as one set from the base (HEAD's, only when the base lacks this driver, with a warning), the licence list npm-licences.json from the same source (a base with the driver but no list exits 1), the old lockfiles and lock-age-waivers.json from the base, and each lockfile's osv-scanner ignores from the base when that lockfile changed; reads each base path only as a regular file (mode 100644) under plain folders, or exits 1 naming it and its mode, and finds (exit 1) any path of that read set (the driver, the tools, the data) that is neither absent nor a regular file under plain folders at HEAD; runs the advisory scan (block or report) and the 7-day floor and licence rule over both lockfiles under env -i, then checks the change's own files it didn't use (its ignore files through the allow-list when a base's was scanned, HEAD's waivers parsed by lock-review when they differ from the base's, and, when HEAD's licence list differs from the base's or is deleted, a sweep of every entry of both lockfiles against it by the base's lock-review, always blocking; both lists read from HEAD's blobs, never the working tree), every check even after one fails, and exits with the worst code",
       "node": false
     },
     {
       "name": "npm-lock-ci.test.sh",
-      "role": "tests for npm-lock-ci.sh and the npm-lock job's inline step (extracted from ci.yml and run as GitHub runs it) against scratch git repos with real test merges, stub tools and a stub node: which copy runs, base verification (the step's, before it falls back to the change's driver, and the driver's), the waivers', ignores' and old lockfiles' sources, the checks of the change's own waivers and ignore files, the clean environments and the worst exit code",
+      "role": "tests for npm-lock-ci.sh and the npm-lock job's inline step (extracted from ci.yml and run as GitHub runs it) against scratch git repos with real test merges, stub tools and a stub node: which copy runs, base verification (the step's, before it falls back to the change's driver, and the driver's), the waivers', licence list's, ignores' and old lockfiles' sources, the checks of the change's own waivers, ignore files and licence list (the sweep) read from HEAD rather than the working tree, regular files only (a symlinked, executable or symlinked-folder path at HEAD is a finding; a symlinked list, waivers, tool or driver, or a symlinked scripts folder, at the base exits 1 and runs nothing), the clean environments and the worst exit code",
       "node": false
     },
     {
       "name": "npm-lock-pins.test.sh",
-      "role": "pins the npm-lock job's three steps, setup-node's package cache switched off (and no other cache key), its inline step's lines, its mode expression, the web, ui and contract jobs waiting on it, the driver's env -i, 7-day floor and checks of the change's own waivers and ignore files, the daily npm-advisories job, just cargo-config-check in just gate and CI's hooks job, and just gate ending on just npm-advisories",
+      "role": "pins the npm-lock job's three steps, setup-node's package cache switched off (and no other cache key), its inline step's lines (the base's driver only as a regular file, its scripts folder only as a folder), its mode expression, the web, ui and contract jobs waiting on it, the driver's tools, read set and regular-file checks at the base and at HEAD, env -i, 7-day floor, the base's licence list for every floor and the waivers parse, and checks of the change's own waivers, ignore files and licence list (read from HEAD), the daily npm-advisories and npm-licences jobs, the guard's node --test line (licences.test.mjs included) in just gate, gate-light and CI's ui job, just npm-lock-review's licence list, just cargo-config-check in just gate and CI's hooks job, and just gate ending on just npm-licences then just npm-advisories",
       "node": false
     },
     {

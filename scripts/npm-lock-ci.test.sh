@@ -5,9 +5,11 @@
 # told apart, and a stub `node`; each records its arguments, its environment
 # (read from /proc, as the process received it) and which copy ran into
 # $HOME/log, and exits with the code in $HOME/adv-exit or $HOME/floor-exit,
-# or, for an allow-list-only run or a waivers parse (old and new the same
-# file), $HOME/allow-exit or $HOME/parse-exit (0 when absent; 2 when a file
-# they are given is missing, as the real tools fail closed).
+# or, for an allow-list-only run, a waivers parse (old and new the same file)
+# or a licence sweep (--licence-sweep), $HOME/allow-exit, $HOME/parse-exit or
+# $HOME/sweep-exit (0 when absent; 2 when a file they are given is missing, as
+# the real tools fail closed). The stub lock-review finds its arguments by
+# name and records the licence list it was given and that list's content.
 # HOME is the one control channel, since the driver passes it through its
 # clean environments. Run directly, or via `just scripts-test`. Needs git,
 # bash and a Linux /proc.
@@ -46,9 +48,10 @@ passing_tools() {
     printf '#!/bin/sh\necho "advisories copy=pr" >>"$HOME/log"\nexit 0\n' >"$repo/scripts/npm-advisories.sh"
     printf 'echo "floor copy=pr" >>"$HOME/log"\nexit 0\n' >"$repo/frontend/lock-review.mjs"
     echo "install-check pr" >"$repo/frontend/install-check.mjs"
+    echo "licences-tool pr" >"$repo/frontend/licences.mjs"
 }
 
-# stub_tools <copy>: writes the three tools into the repo, each naming <copy>.
+# stub_tools <copy>: writes the four tools into the repo, each naming <copy>.
 stub_tools() {
     mkdir -p "$repo/scripts" "$repo/frontend"
     cat >"$repo/scripts/npm-advisories.sh" <<STUB
@@ -63,17 +66,69 @@ printf 'advisories copy=$1 env=%s mode=%s\n' "\$names" "\$NPM_ADVISORIES_MODE" >
 printf 'advisories args=%s %s %s %s frontend=%s lexicons=%s\n' "\$1" "\$2" "\$3" "\$4" "\$(cat "\$2")" "\$(cat "\$4")" >>"\$HOME/log"
 exit "\$(cat "\$HOME/adv-exit")"
 STUB
-    cat >"$repo/frontend/lock-review.mjs" <<STUB
-dir="\$(dirname "\$0")"
-if [ "\$1" = "\$2" ]; then
-    printf 'waivers-parse copy=$1 old=%s flags=%s %s %s file=%s parsed=%s\n' "\$(tr '\\n' '|' <"\$1")" "\$3" "\$4" "\$5" "\$6" "\$(cat "\$6" 2>/dev/null || echo MISSING)" >>"\$HOME/log"
-    [ -f "\$6" ] || exit 2
-    exit "\$(cat "\$HOME/parse-exit" 2>/dev/null || echo 0)"
+    {
+        printf 'copy=%s\n' "$1"
+        cat <<'STUB'
+dir="$(dirname "$0")"
+sweep=0
+licences=""
+waivers=""
+flags=""
+rest=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --licence-sweep) sweep=1 ;;
+        --licences)
+            licences="$2"
+            shift
+            ;;
+        --min-age-days)
+            flags="$flags --min-age-days $2"
+            shift
+            ;;
+        --waivers)
+            flags="$flags --waivers"
+            waivers="$2"
+            shift
+            ;;
+        *) rest="${rest:+$rest }$1" ;;
+    esac
+    shift
+done
+flags="${flags# }"
+list="$(cat "$licences" 2>/dev/null || echo MISSING)"
+if [ "$sweep" = 1 ]; then
+    printf 'sweep copy=%s licences=%s list=%s lockfiles=%s\n' "$copy" "$licences" "$list" "$rest" >>"$HOME/log"
+    [ -f "$licences" ] || exit 2
+    exit "$(cat "$HOME/sweep-exit" 2>/dev/null || echo 0)"
 fi
-printf 'floor copy=$1 old=%s new=%s flags=%s %s %s sibling=%s waivers=%s\n' "\$(tr '\\n' '|' <"\$1")" "\$2" "\$3" "\$4" "\$5" "\$(cat "\$dir/install-check.mjs")" "\$(cat "\$6")" >>"\$HOME/log"
-exit "\$(cat "\$HOME/floor-exit")"
+# shellcheck disable=SC2086 # the positional paths, which hold no spaces
+set -- $rest
+if [ "$1" = "$2" ]; then
+    printf 'waivers-parse copy=%s old=%s flags=%s file=%s parsed=%s licences=%s list=%s\n' "$copy" "$(tr '\n' '|' <"$1")" "$flags" "$waivers" "$(cat "$waivers" 2>/dev/null || echo MISSING)" "$licences" "$list" >>"$HOME/log"
+    [ -f "$waivers" ] && [ -f "$licences" ] || exit 2
+    exit "$(cat "$HOME/parse-exit" 2>/dev/null || echo 0)"
+fi
+printf 'floor copy=%s old=%s new=%s flags=%s sibling=%s licences-sibling=%s waivers=%s licences=%s list=%s\n' "$copy" "$(tr '\n' '|' <"$1")" "$2" "$flags" "$(cat "$dir/install-check.mjs")" "$(cat "$dir/licences.mjs")" "$(cat "$waivers")" "$licences" "$list" >>"$HOME/log"
+[ -f "$licences" ] || exit 2
+exit "$(cat "$HOME/floor-exit")"
 STUB
+    } >"$repo/frontend/lock-review.mjs"
     echo "install-check $1" >"$repo/frontend/install-check.mjs"
+    echo "licences-tool $1" >"$repo/frontend/licences.mjs"
+}
+
+# put_driver: this checkout's driver into the repo, as a regular file.
+put_driver() {
+    cp "$driver" "$repo/scripts/npm-lock-ci.sh"
+    chmod 644 "$repo/scripts/npm-lock-ci.sh"
+}
+
+# symlink_to_copy <path>: replaces the repo's <path>, a file or a folder, with
+# a symlink to an identical copy beside it.
+symlink_to_copy() {
+    mv "$repo/$1" "$repo/$1.copy"
+    ln -s "$(basename "$1").copy" "$repo/$1"
 }
 
 # write <path> <content>: one file in the repo.
@@ -85,18 +140,19 @@ write() {
 g() { git -C "$repo" -c user.email=t@example.com -c user.name=t "$@" >/dev/null 2>&1; }
 
 # new_base [no-driver]: a base commit on main holding the real driver (unless
-# no-driver), stub tools marked base, lockfiles, waivers and ignore files,
-# then a `pr` branch.
+# no-driver), stub tools marked base, lockfiles, waivers, the licence list and
+# ignore files, then a `pr` branch.
 new_base() {
     rm -rf "$repo"
     mkdir -p "$repo/scripts"
     if [ "${1:-}" != no-driver ]; then
-        cp "$driver" "$repo/scripts/npm-lock-ci.sh"
+        put_driver
     fi
     stub_tools base
     write frontend/yarn.lock "yarn old"
     write lexicons/package-lock.json "npm old"
     write lock-age-waivers.json "waivers base"
+    write npm-licences.json "licences base"
     write osv-scanner.frontend.toml "frontend ignores base"
     write osv-scanner.lexicons.toml "lexicons ignores base"
     git -C "$repo" init -q -b main
@@ -121,12 +177,13 @@ pr_commit() {
     g merge --no-ff -m merge pr
 }
 
-# exits <adv> <floor> [<allow-list> <parse>]: the stub tools' exit codes.
+# exits <adv> <floor> [<allow-list> <parse> <sweep>]: the stub tools' exit codes.
 exits() {
     echo "$1" >"$home/adv-exit"
     echo "$2" >"$home/floor-exit"
     echo "${3:-0}" >"$home/allow-exit"
     echo "${4:-0}" >"$home/parse-exit"
+    echo "${5:-0}" >"$home/sweep-exit"
 }
 
 # The npm-lock job's `run: |` block, from the workflow, de-indented.
@@ -227,7 +284,7 @@ expect_status "with the base's tools passing, the change passes" 0
 
 # A base without the driver: the change's own driver and tools, with warnings.
 new_base no-driver
-cp "$driver" "$repo/scripts/npm-lock-ci.sh"
+put_driver
 stub_tools pr
 pr_commit
 exits 0 0
@@ -241,7 +298,7 @@ expect_not_in "no base tool ran" "$log" "copy=base"
 
 # A base whose tree can't be read is not a base without the driver.
 new_base no-driver
-cp "$driver" "$repo/scripts/npm-lock-ci.sh"
+put_driver
 pr_commit
 tree="$(git -C "$repo" rev-parse "$base_sha^{tree}")"
 rm -f "$repo/.git/objects/$(printf '%s' "$tree" | cut -c1-2)/$(printf '%s' "$tree" | cut -c3-)"
@@ -347,7 +404,8 @@ step pull_request "$base_sha" block
 expect_in "waivers come from the base" "$log" "waivers=waivers base"
 expect_not_in "the change's waivers are not used by the floor" "$log" "waivers=waivers pr"
 expect_in "changed waivers are parsed by the base's lock-review over an empty diff" "$log" \
-    "waivers-parse copy=base old=yarn old| flags=--min-age-days 7 --waivers file=lock-age-waivers.json parsed=waivers pr"
+    "waivers-parse copy=base old=yarn old| flags=--min-age-days 7 --waivers file="
+expect_in "the parse gets HEAD's copy of the change's waivers" "$log" "/head/lock-age-waivers.json parsed=waivers pr"
 expect_in "the driver says it parses the change's waivers" "$out" "this change's lock-age-waivers.json differs from the base's; parsing it"
 exits 0 0 0 2
 step pull_request "$base_sha" report
@@ -367,7 +425,7 @@ g rm -q lock-age-waivers.json
 pr_commit
 step pull_request "$base_sha" report
 expect_status "a change that deletes the waivers fails closed" 2
-expect_in "the deleted waivers are what the parse was given" "$log" "file=lock-age-waivers.json parsed=MISSING"
+expect_in "the deleted waivers are what the parse was given" "$log" "/head/lock-age-waivers.json parsed=MISSING"
 
 new_base
 g rm -q lock-age-waivers.json
@@ -380,6 +438,254 @@ expect_status "a base without waivers passes on the change's" 0
 expect_in "a base without waivers uses the change's" "$log" "waivers=waivers pr"
 expect_in "with a warning" "$out" "::warning::npm-lock: the base has no lock-age-waivers.json; using this change's"
 expect_not_in "a base without waivers: no second parse" "$log" "waivers-parse"
+
+# --- the licence list ------------------------------------------------------------------
+
+# The change edits its own list and its waivers: the floors and the waivers
+# parse still judge by the base's list.
+new_base
+write npm-licences.json "licences pr"
+write lock-age-waivers.json "waivers pr"
+pr_commit
+exits 0 0
+step pull_request "$base_sha" block
+expect_status "a change that edits its list passes when the base's list and the sweep pass" 0
+floors="$(printf '%s\n' "$log" | grep -c '^floor copy=base .* list=licences base$' || true)"
+if [ "$floors" = 2 ]; then
+    ok "both floors get the base's licence list"
+else
+    fail "both floors get the base's licence list" "$floors floors with it; log: $log"
+fi
+parse_line="$(printf '%s\n' "$log" | grep '^waivers-parse ' || true)"
+expect_in "the waivers parse gets the base's licence list" "$parse_line" "/data/npm-licences.json list=licences base"
+expect_not_in "no floor or parse judged by the change's list" "$(printf '%s\n' "$log" | grep -v '^sweep ')" "list=licences pr"
+expect_in "the driver names the list's source" "$out" "data npm-licences.json: from the base"
+
+# A base that has the driver but no list: nothing to judge by, so exit 1.
+new_base
+g rm -q npm-licences.json
+g commit -m "no list"
+base_sha="$(git -C "$repo" rev-parse HEAD)"
+write npm-licences.json "licences pr"
+pr_commit
+exits 0 0
+step pull_request "$base_sha" report
+expect_status "a base with the driver but no licence list exits 1" 1
+expect_in "it says why" "$out" "::error::npm-lock: the base has scripts/npm-lock-ci.sh but no npm-licences.json"
+expect_not_in "no floor ran without a base list" "$log" "floor copy="
+expect_not_in "nothing ran without a base list" "$log" "copy="
+
+# The bootstrap case: a base without the driver runs the change's list.
+new_base no-driver
+put_driver
+stub_tools pr
+write npm-licences.json "licences pr"
+pr_commit
+exits 0 0
+step pull_request "$base_sha" block
+expect_status "a base without the driver passes on the change's list" 0
+expect_in "a base without the driver: the floor gets HEAD's copy of the change's list" "$log" "/head/npm-licences.json list=licences pr"
+expect_in "with a warning" "$out" "::warning::npm-lock: the base has no scripts/npm-lock-ci.sh; using this change's npm-licences.json"
+expect_not_in "a base without the driver: no sweep" "$log" "sweep copy="
+
+# A change that edits its list: the base's lock-review sweeps both lockfiles
+# against the change's copy, under env -i, and its exit counts in either mode.
+new_base
+passing_tools
+write npm-licences.json "licences pr"
+pr_commit
+exits 0 0
+step pull_request "$base_sha" block
+expect_status "a list the sweep passes passes" 0
+expect_in "a changed list is swept by the base's lock-review" "$log" "sweep copy=base licences="
+expect_in "the sweep gets HEAD's copy of the list and both lockfiles" "$log" \
+    "/head/npm-licences.json list=licences pr lockfiles=frontend/yarn.lock lexicons/package-lock.json"
+# The node line the stub node wrote just before the sweep's own line.
+sweep_env="$(printf '%s\n' "$log" | awk '/^sweep / { print prev } { prev = $0 }')"
+expect_in "the sweep runs under env -i: node sees only HOME and PATH" "$sweep_env" "node env=HOME,PATH path=$work/bin:/usr/bin:/bin"
+expect_in "the driver says it sweeps the change's list" "$out" "this change's npm-licences.json differs from the base's; sweeping both lockfiles against it"
+expect_in "the sweep's exit is recorded" "$out" "npm-lock: this change's licence list: exit 0"
+exits 0 0 0 0 1
+step pull_request "$base_sha" report
+expect_status "a list the sweep finds against fails the run, even in report mode" 1
+expect_in "the failed sweep's exit is recorded" "$out" "npm-lock: this change's licence list: exit 1"
+exits 0 0 0 0 2
+step pull_request "$base_sha" block
+expect_status "a sweep error exits 2" 2
+exits 0 0
+
+# A change that deletes its list: the sweep is given the missing file.
+new_base
+g rm -q npm-licences.json
+pr_commit
+step pull_request "$base_sha" report
+expect_status "a change that deletes the list fails closed, even in report mode" 2
+expect_in "the deleted list is what the sweep was given" "$log" "/head/npm-licences.json list=MISSING"
+
+# An unchanged list: no sweep.
+new_base
+echo "change" >"$repo/change.md"
+pr_commit
+step pull_request "$base_sha" block
+expect_status "an unchanged list passes" 0
+expect_not_in "an unchanged list is not swept" "$log" "sweep copy="
+expect_not_in "nor named as changed" "$out" "npm-licences.json differs"
+
+# --- regular files only ----------------------------------------------------------------
+
+# The change's licence list, a symlink to an identical copy: a finding, and no
+# sweep of it, while the other checks still run.
+new_base
+symlink_to_copy npm-licences.json
+pr_commit
+exits 0 0
+step pull_request "$base_sha" block
+expect_status "a change whose licence list is a symlink to an identical copy exits 1" 1
+expect_in "it names the list and its mode" "$out" \
+    "::error::npm-lock: this change's npm-licences.json is mode 120000, not a regular file (100644)"
+expect_in "the finding is recorded" "$out" "npm-lock: this change's npm-licences.json: exit 1"
+expect_not_in "a symlinked list is not swept" "$log" "sweep copy="
+expect_in "the floors still run after the finding" "$log" "floor copy=base"
+
+new_base
+symlink_to_copy lock-age-waivers.json
+pr_commit
+step pull_request "$base_sha" block
+expect_status "a change whose waivers are a symlink to an identical copy exits 1" 1
+expect_in "it names the waivers and their mode" "$out" \
+    "::error::npm-lock: this change's lock-age-waivers.json is mode 120000, not a regular file (100644)"
+expect_not_in "symlinked waivers are not parsed" "$log" "waivers-parse"
+
+new_base
+chmod +x "$repo/npm-licences.json"
+pr_commit
+step pull_request "$base_sha" block
+expect_status "a change whose licence list is executable exits 1" 1
+expect_in "it names the list and mode 100755" "$out" \
+    "::error::npm-lock: this change's npm-licences.json is mode 100755, not a regular file (100644)"
+
+new_base
+symlink_to_copy scripts/npm-advisories.sh
+pr_commit
+step pull_request "$base_sha" block
+expect_status "a change whose advisory tool is a symlink exits 1" 1
+expect_in "it names the tool and its mode" "$out" \
+    "::error::npm-lock: this change's scripts/npm-advisories.sh is mode 120000, not a regular file (100644)"
+
+new_base
+symlink_to_copy frontend
+pr_commit
+step pull_request "$base_sha" block
+expect_status "a change whose frontend folder is a symlink to a copy exits 1" 1
+expect_in "it names the folder and its mode" "$out" \
+    "::error::npm-lock: this change's frontend is mode 120000, not a folder (040000)"
+reports="$(printf '%s\n' "$out" | grep -c "this change's frontend is mode" || true)"
+if [ "$reports" = 1 ]; then
+    ok "a symlinked folder is reported once"
+else
+    fail "a symlinked folder is reported once" "$reports reports; output: $out"
+fi
+
+# The change's lists are read from HEAD, never the working tree: HEAD narrows
+# them while the working tree holds the base's copies.
+new_base
+write npm-licences.json "licences pr"
+write lock-age-waivers.json "waivers pr"
+pr_commit
+write npm-licences.json "licences base"
+write lock-age-waivers.json "waivers base"
+step pull_request "$base_sha" block
+expect_status "lists read from HEAD pass when the sweep and parse pass" 0
+expect_in "the sweep gets HEAD's list, not the working tree's" "$log" "/head/npm-licences.json list=licences pr lockfiles="
+expect_in "the parse gets HEAD's waivers, not the working tree's" "$log" "/head/lock-age-waivers.json parsed=waivers pr"
+
+# A base whose list or waivers aren't regular files: exit 1 before any check.
+new_base
+symlink_to_copy npm-licences.json
+g add -A
+g commit -m "a symlinked list"
+base_sha="$(git -C "$repo" rev-parse HEAD)"
+echo "change" >"$repo/change.md"
+pr_commit
+step pull_request "$base_sha" block
+expect_status "a base whose licence list is a symlink exits 1" 1
+expect_in "it names the base's list and its mode" "$out" \
+    "::error::npm-lock: the base's npm-licences.json is mode 120000, not a regular file (100644)"
+expect_not_in "no floor ran on a symlinked base list" "$log" "floor copy="
+
+new_base
+symlink_to_copy lock-age-waivers.json
+g add -A
+g commit -m "symlinked waivers"
+base_sha="$(git -C "$repo" rev-parse HEAD)"
+echo "change" >"$repo/change.md"
+pr_commit
+step pull_request "$base_sha" block
+expect_status "a base whose waivers are a symlink exits 1" 1
+expect_in "it names the base's waivers and their mode" "$out" \
+    "::error::npm-lock: the base's lock-age-waivers.json is mode 120000, not a regular file (100644)"
+expect_not_in "no floor ran on symlinked base waivers" "$log" "floor copy="
+
+# A base whose advisory tool is a symlink: git show gives the link's text, a
+# path sh would run from this change's checkout.
+new_base
+printf '#!/bin/sh\necho "marker copy=link" >>"$HOME/log"\nexit 0\n' >"$repo/scripts/adv.sh"
+chmod +x "$repo/scripts/adv.sh"
+rm "$repo/scripts/npm-advisories.sh"
+ln -s scripts/adv.sh "$repo/scripts/npm-advisories.sh"
+g add -A
+g commit -m "a symlinked tool"
+base_sha="$(git -C "$repo" rev-parse HEAD)"
+echo "change" >"$repo/change.md"
+pr_commit
+exits 1 0
+step pull_request "$base_sha" block
+expect_status "a base whose advisory tool is a symlink exits 1" 1
+expect_in "it names the base's tool and its mode" "$out" \
+    "::error::npm-lock: the base's scripts/npm-advisories.sh is mode 120000, not a regular file (100644)"
+expect_not_in "the link's target never ran" "$log" "marker copy=link"
+exits 0 0
+
+# The inline step: a base whose driver is a symlink to an executable that
+# passes; git show would give its path, and sh would run it from this checkout.
+new_base
+printf '#!/bin/sh\necho "marker copy=link" >>"$HOME/log"\nexit 0\n' >"$repo/scripts/x.sh"
+chmod +x "$repo/scripts/x.sh"
+rm "$repo/scripts/npm-lock-ci.sh"
+ln -s scripts/x.sh "$repo/scripts/npm-lock-ci.sh"
+g add -A
+g commit -m "a symlinked driver"
+base_sha="$(git -C "$repo" rev-parse HEAD)"
+echo "change" >"$repo/change.md"
+pr_commit
+step pull_request "$base_sha" block
+expect_status "the step: a base whose driver is a symlink exits 1" 1
+expect_in "the step names the base's driver and its mode" "$out" \
+    "::error::npm-lock: the base's scripts/npm-lock-ci.sh is mode 120000, not a regular file (100644)"
+expect_not_in "the step never ran the link's target" "$log" "marker copy=link"
+
+# The inline step: a base whose scripts folder is a symlink lacks the driver
+# only on paper; the change's own driver must not run.
+new_base no-driver
+mv "$repo/scripts" "$repo/scripts.real"
+ln -s scripts.real "$repo/scripts"
+g add -A
+g commit -m "a symlinked scripts folder"
+base_sha="$(git -C "$repo" rev-parse HEAD)"
+rm "$repo/scripts"
+mv "$repo/scripts.real" "$repo/scripts"
+recording_driver
+pr_commit
+step pull_request "$base_sha" block
+expect_status "the step: a base whose scripts folder is a symlink exits 1" 1
+expect_in "the step names the base's folder and its mode" "$out" \
+    "::error::npm-lock: the base's scripts is mode 120000, not a folder (040000)"
+expect_not_in "the change's driver never ran on a symlinked scripts folder" "$log" "driver copy=pr"
+run_driver pull_request "$base_sha" block
+expect_status "the driver: a base whose scripts folder is a symlink exits 1" 1
+expect_in "the driver names the base's folder and its mode" "$out" \
+    "::error::npm-lock: the base's scripts is mode 120000, not a folder (040000)"
+expect_not_in "no tool ran on a symlinked scripts folder" "$log" "copy="
 
 # --- ignores --------------------------------------------------------------------------
 
