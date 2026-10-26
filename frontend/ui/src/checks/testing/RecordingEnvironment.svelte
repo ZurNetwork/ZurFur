@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Snippet } from 'svelte';
+	import { untrack, type Snippet } from 'svelte';
 	import type { Attachment } from 'svelte/attachments';
 	import { provideEnvironment, type Environment } from '../../lib/environment/context.ts';
 	import type { MoveName, Moves, NoteOrigin } from '../../lib/environment/moves.ts';
@@ -23,10 +23,16 @@
 
 	let { onRecord, children }: Props = $props();
 
-	/** An attachment that records `move`, with its arguments, against the element it lands on. */
+	/**
+	 * An attachment that records `move`, with its arguments, against the element
+	 * it lands on. The record is untracked, so a re-render that hands the wrapper
+	 * a new `onRecord` never re-runs the attachment and records it twice.
+	 */
 	function recorded(move: MoveName, args: readonly NoteOrigin[]): Attachment<HTMLElement> {
 		return (element) => {
-			onRecord({ kind: 'move', move, args, element });
+			untrack(() => {
+				onRecord({ kind: 'move', move, args, element });
+			});
 		};
 	}
 

@@ -866,8 +866,9 @@ const OUTSIDE_SVELTE = ':not([type=/^Svelte/] *)';
 
 /**
  * P6: no module-level state in a plain module: a `let` or `var` at the top
- * level (exported or not), a Map, Set, WeakMap or WeakSet built outside a
- * function, and the state runes anywhere in the file.
+ * level (exported or not), and a Map, Set, WeakMap or WeakSet or a state rune
+ * built outside a function (a class field counts as outside). A rune inside a
+ * function, in the motion adapter's runes modules, is per call, not shared.
  */
 const MODULE_STATE_SYNTAX = [
 	{
@@ -883,11 +884,11 @@ const MODULE_STATE_SYNTAX = [
 		message: MODULE_STATE_MESSAGE
 	},
 	{
-		selector: `CallExpression[callee.type='Identifier'][callee.name=/^\\$(?:state|derived)$/]${OUTSIDE_SVELTE}`,
+		selector: `CallExpression[callee.type='Identifier'][callee.name=/^\\$(?:state|derived)$/]:not(:function *)${OUTSIDE_SVELTE}`,
 		message: MODULE_STATE_MESSAGE
 	},
 	{
-		selector: `CallExpression[callee.type='MemberExpression'][callee.object.type='Identifier'][callee.object.name=/^\\$(?:state|derived)$/]${OUTSIDE_SVELTE}`,
+		selector: `CallExpression[callee.type='MemberExpression'][callee.object.type='Identifier'][callee.object.name=/^\\$(?:state|derived)$/]:not(:function *)${OUTSIDE_SVELTE}`,
 		message: MODULE_STATE_MESSAGE
 	}
 ];

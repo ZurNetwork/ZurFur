@@ -2056,6 +2056,21 @@ describe("the pattern's bans in what ships", { timeout: 120_000 }, () => {
 			await expectRefused(planted.runesModule, 'export const r = $state(0);', SYNTAX);
 		});
 
+		it('refuses a rune in a class field of a runes module', async () => {
+			await expectRefused(
+				planted.runesModule,
+				'export class Count {\n\tvalue = $state(0);\n}',
+				SYNTAX
+			);
+		});
+
+		it('allows a rune inside a function of a runes module, which is per call', async () => {
+			await expectAllowed(
+				planted.runesModule,
+				'export function counter(): { readonly read: () => number } {\n\tconst count = $state(0);\n\tconst doubled = $derived(count * 2);\n\treturn { read: () => doubled };\n}'
+			);
+		});
+
 		const allowed: readonly Allowed[] = [
 			['a frozen constant', "export const NAMES: readonly string[] = Object.freeze(['a', 'b']);"],
 			[
