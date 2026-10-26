@@ -35,6 +35,8 @@ export { default as Icon } from './icons/Icon.svelte';
 export { ICON_NAMES, isIconName, type IconName } from './icons/icons.ts';
 export { default as Button } from './controls/Button.svelte';
 export { default as Toggle } from './controls/Toggle.svelte';
+export { default as IconButton } from './controls/IconButton.svelte';
+export { default as Menu } from './controls/Menu.svelte';
 export {
 	isLinkHref,
 	isSameOriginPath,

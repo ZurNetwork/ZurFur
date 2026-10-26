@@ -1,1 +1,15 @@
-/* Tip: the tooltip an icon button shows. */
+/* Tip: the tooltip an icon button shows, a small note of words held just off the button. */
+.zf-tip {
+	margin: var(--space-1);
+	padding: var(--space-1) var(--space-2);
+	font-size: var(--text-xs);
+	line-height: var(--leading-xs);
+	font-weight: var(--weight-medium);
+	white-space: nowrap;
+	color: var(--color-text);
+	background: var(--color-note);
+	border: 1px solid transparent;
+	border-radius: var(--radius-xs);
+	box-shadow: var(--elevation-note);
+	pointer-events: none;
+}
