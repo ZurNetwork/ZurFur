@@ -122,7 +122,7 @@
     },
     {
       "name": "npm-lock-pins.test.sh",
-      "role": "pins the npm-lock job's three steps and its inline step's lines, its mode expression, the web, ui and contract jobs waiting on it, the driver's env -i, 7-day floor and checks of the change's own waivers and ignore files, the daily npm-advisories job, just cargo-config-check in just gate and CI's hooks job, and just gate ending on just npm-advisories",
+      "role": "pins the npm-lock job's three steps, setup-node's package cache switched off (and no other cache key), its inline step's lines, its mode expression, the web, ui and contract jobs waiting on it, the driver's env -i, 7-day floor and checks of the change's own waivers and ignore files, the daily npm-advisories job, just cargo-config-check in just gate and CI's hooks job, and just gate ending on just npm-advisories",
       "node": false
     },
     {

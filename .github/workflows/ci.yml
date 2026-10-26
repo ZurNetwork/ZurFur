@@ -131,7 +131,8 @@ jobs:
   # commit's scripts/npm-lock-ci.sh with the base's tools, waivers and old
   # lockfiles, so a change can't loosen what judges it; the web, ui and
   # contract jobs wait for it. It runs node and nothing a change's build
-  # config can steer: no Rust toolchain and no package install. Advisories
+  # config can steer: no Rust toolchain, no package install and no package
+  # cache (setup-node's automatic one is switched off). Advisories
   # block when `npmlock` isn't exactly 'false', and only report otherwise; the
   # floor always blocks. scripts/npm-lock-pins.test.sh pins the job's shape,
   # and scripts/npm-lock-ci.test.sh runs this step against scratch repos.
@@ -150,6 +151,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
+          package-manager-cache: false
       # The base's driver when it has one; only a present base commit that
       # lacks it runs this change's own, with a warning. Anything odd exits 1.
       - name: The advisory check and the 7-day floor, with the base's tools

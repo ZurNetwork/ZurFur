@@ -73,7 +73,15 @@ expect_line "npm-lock's checkout stores no credentials" "$npm_lock" "persist-cre
 expect_line "npm-lock's checkout fetches the base (full history for a merge group)" "$npm_lock" \
     "fetch-depth: \${{ github.event_name == 'merge_group' && '0' || '2' }}"
 expect_line "npm-lock's node is 24" "$npm_lock" "node-version: '24'"
-expect_none "npm-lock restores no package cache" "$npm_lock" '^[[:space:]]*cache[a-z-]*:'
+expect_line "npm-lock switches off setup-node's automatic package cache" "$npm_lock" "package-manager-cache: false"
+# Every other cache key line, any spelling or quoting, flow mappings too.
+other_caches="$(printf '%s\n' "$npm_lock" | grep -vE '^[[:space:]]*#' |
+    grep -iE "cache[a-z_-]*[\"']?[[:space:]]*:" | grep -vxE '[[:space:]]*package-manager-cache: false[[:space:]]*' || true)"
+if [ -z "$other_caches" ]; then
+    ok "npm-lock sets no other cache key"
+else
+    fail "npm-lock sets no other cache key" "found: $other_caches"
+fi
 expect_none "npm-lock runs no cargo, cargo-deny or yarn" "$npm_lock" 'cargo|yarn'
 
 # The inline step: the base, its commit, the base's copy, the fallback.
