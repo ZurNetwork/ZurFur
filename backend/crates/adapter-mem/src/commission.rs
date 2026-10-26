@@ -1694,7 +1694,7 @@ pub struct CommissionSeed {
     pub id: CommissionId,
     /// Its title, which its node is named by.
     pub title: CommissionTitle,
-    /// Its node's level, which the commission's visibility copies.
+    /// Its node's level.
     pub level: Level,
     /// The User who owns it.
     pub owner_id: UserId,
