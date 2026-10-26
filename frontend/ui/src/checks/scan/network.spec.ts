@@ -468,6 +468,60 @@ const refused: readonly Fixture[] = [
 		path: hostLayout,
 		text: '<svelte:head>hello</svelte:head>',
 		rule: 'head-content'
+	},
+	{
+		name: "a refresh meta in a route's body markup",
+		path: 'src/routes/components/paper/+page.svelte',
+		text: '<main><meta http-equiv="refresh" content="0;url=https://x.invalid/leak" /></main>',
+		rule: 'http-equiv'
+	},
+	{
+		name: 'a refresh meta in a lib component',
+		path: component,
+		text: '<meta http-equiv="refresh" content="0;url=/a" />',
+		rule: 'http-equiv'
+	},
+	{
+		name: 'an http-equiv in mixed case',
+		path: component,
+		text: '<meta HTTP-Equiv="refresh" content="0" />',
+		rule: 'http-equiv'
+	},
+	{
+		name: 'an http-equiv on a svelte:element',
+		path: component,
+		text: '<svelte:element this="meta" http-equiv="refresh" content="0" />',
+		rule: 'http-equiv'
+	},
+	{
+		name: 'an http-equiv with no value',
+		path: component,
+		text: '<meta http-equiv content="0" />',
+		rule: 'http-equiv'
+	},
+	{
+		name: 'an http-equiv holding an expression',
+		path: component,
+		text: '<meta http-equiv={kind} content="0" />',
+		rule: 'http-equiv'
+	},
+	{
+		name: 'a content-security-policy meta in a component',
+		path: component,
+		text: '<meta http-equiv="content-security-policy" content="default-src *" />',
+		rule: 'http-equiv'
+	},
+	{
+		name: "an http-equiv in the host's head",
+		path: hostLayout,
+		text: '<svelte:head><meta name="x" http-equiv="refresh" content="0" /></svelte:head>',
+		rule: 'http-equiv'
+	},
+	{
+		name: 'a refresh meta in the shell',
+		path: shell,
+		text: shellWith('<meta http-equiv="refresh" content="0;url=/a" />'),
+		rule: 'http-equiv'
 	}
 ];
 
@@ -548,7 +602,8 @@ const passed: readonly Omit<Fixture, 'rule'>[] = [
 		name: 'a non-URL attribute holding a URL',
 		path: component,
 		text: '<p title="https://x/a">a</p>'
-	}
+	},
+	{ name: 'a named meta in markup', path: component, text: '<meta name="x" content="y" />' }
 ];
 
 describe('isRemote', () => {

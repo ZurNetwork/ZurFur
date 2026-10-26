@@ -4,9 +4,11 @@
  * `image-set()`) that is remote or names a scheme other than `data:`, an
  * `@import` of anything but a relative path (`./`, `../`), a remote value in
  * a URL-bearing attribute (`src`, `href`, `srcset`, `action`, …; static text
- * and the string literals in its expressions), any `<svelte:head>` outside
- * the gallery host (`src/routes/`, `src/gallery/`), and anything in the
- * host's head but `<title>` and `<meta name>`. In an `.html` file, the page
+ * and the string literals in its expressions), any `http-equiv` attribute
+ * on any element, in any letter case and whatever its value (a refresh
+ * pragma navigates the page), any `<svelte:head>` outside the gallery host
+ * (`src/routes/`, `src/gallery/`), and anything in the host's head but
+ * `<title>` and `<meta name>` without `http-equiv`. In an `.html` file, the page
  * shell, a URL-bearing attribute names no scheme at all, and no string in a
  * `<script>` is remote. Remote means `http:`, `https:` or protocol-relative
  * (`//`, `\\`), read the way a browser reads a URL.
@@ -16,6 +18,7 @@
  */
 import type {
 	Head,
+	HttpEquivAttribute,
 	ParsedSource,
 	Place,
 	ScriptElement,
@@ -37,6 +40,7 @@ export type NetworkRule =
 	| 'remote-attribute'
 	| 'shell-scheme'
 	| 'remote-script-string'
+	| 'http-equiv'
 	| 'head-outside-host'
 	| 'head-content'
 	| 'unparsed';
@@ -148,6 +152,23 @@ function scriptFindings(script: ScriptElement): readonly NetworkFinding[] {
 	}
 }
 
+/** An `http-equiv` attribute as the scans name it: its element and its value as written. */
+export function describeHttpEquiv(attribute: HttpEquivAttribute): string {
+	const { element, value } = attribute;
+	switch (value.kind) {
+		case 'absent':
+			return `<${element} http-equiv>`;
+		case 'text':
+			return `<${element} http-equiv="${value.text.trim()}">`;
+		case 'expression':
+			return `<${element} http-equiv={…}>`;
+	}
+}
+
+function httpEquivFinding(attribute: HttpEquivAttribute): NetworkFinding {
+	return { rule: 'http-equiv', found: describeHttpEquiv(attribute), place: attribute.place };
+}
+
 function isAllowedInHostHead(child: Head['children'][number]): boolean {
 	if (child.type === 'Comment' || child.type === 'TitleElement') return true;
 	if (child.type === 'Text') return child.blank;
@@ -216,6 +237,15 @@ export function networkFindings(source: ParsedSource): readonly NetworkFinding[]
 		attributeFindings(attribute, inShell)
 	);
 	const inScripts = inShell ? source.scripts.flatMap(scriptFindings) : [];
+	const inHttpEquivs = source.httpEquivs.map(httpEquivFinding);
 	const inHeads = source.heads.flatMap((head) => headFindings(source.path, head));
-	return [...unparsed, ...inDeclarations, ...inImports, ...inAttributes, ...inScripts, ...inHeads];
+	return [
+		...unparsed,
+		...inDeclarations,
+		...inImports,
+		...inAttributes,
+		...inScripts,
+		...inHttpEquivs,
+		...inHeads
+	];
 }

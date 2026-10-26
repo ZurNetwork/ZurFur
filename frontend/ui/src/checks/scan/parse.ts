@@ -2,9 +2,11 @@
  * The one parse the style and network scans share. A `.svelte` or `.html`
  * file goes through Svelte's modern AST, a `.css` file through Svelte's CSS
  * parser, and each yields what the scans read: CSS declarations, `@import`
- * preludes, URL-bearing attributes, `<script>` elements and `<svelte:head>`
- * blocks. An `.html` file is read as the browser reads it, not as a Svelte
- * template: its braces are plain text, so no markup hides in an expression.
+ * preludes, URL-bearing attributes, `http-equiv` attributes on any element
+ * (in any letter case, in a head or not), `<script>` elements and
+ * `<svelte:head>` blocks. An `.html` file is read as the browser reads it,
+ * not as a Svelte template: its braces are plain text, so no markup hides in
+ * an expression.
  * Input never makes it throw: a file, style attribute or style element that
  * doesn't parse comes back as an `Unparsed` record, which both scans refuse.
  */
@@ -71,6 +73,22 @@ export interface UrlAttribute {
 	readonly place: Place;
 }
 
+/**
+ * What an `http-equiv` attribute holds: no value, plain text as written, or
+ * a value with an expression in it, read as `valueTexts` reads it.
+ */
+export type HttpEquivValue =
+	| { readonly kind: 'absent' }
+	| { readonly kind: 'text'; readonly text: string }
+	| { readonly kind: 'expression'; readonly texts: readonly string[] };
+
+/** An `http-equiv` attribute, on any element: a pragma the browser acts on, wherever it sits. */
+export interface HttpEquivAttribute {
+	readonly element: string;
+	readonly value: HttpEquivValue;
+	readonly place: Place;
+}
+
 /** One node directly inside a `<svelte:head>`. */
 export interface HeadChild {
 	readonly type: string;
@@ -108,6 +126,7 @@ export interface ParsedSource {
 	readonly declarations: readonly CssDeclaration[];
 	readonly imports: readonly CssImport[];
 	readonly urlAttributes: readonly UrlAttribute[];
+	readonly httpEquivs: readonly HttpEquivAttribute[];
 	readonly scripts: readonly ScriptElement[];
 	readonly heads: readonly Head[];
 	readonly unparsed: readonly Unparsed[];
@@ -179,6 +198,7 @@ interface Collected {
 	readonly declarations: CssDeclaration[];
 	readonly imports: CssImport[];
 	readonly urlAttributes: UrlAttribute[];
+	readonly httpEquivs: HttpEquivAttribute[];
 	readonly scripts: ScriptElement[];
 	readonly heads: Head[];
 	readonly unparsed: Unparsed[];
@@ -190,6 +210,7 @@ export function parseSource(source: SourceFile): ParsedSource {
 		declarations: [],
 		imports: [],
 		urlAttributes: [],
+		httpEquivs: [],
 		scripts: [],
 		heads: [],
 		unparsed: []
@@ -419,6 +440,21 @@ function collectAttribute(element: ElementLike, attribute: AST.Attribute, readin
 	if (isUrlAttributeName(name)) {
 		collected.urlAttributes.push({ element: element.name, attribute: name, values: texts, place });
 	}
+	if (name === 'http-equiv') {
+		const value = httpEquivValue(attribute.value, restore);
+		collected.httpEquivs.push({ element: element.name, value, place });
+	}
+}
+
+/** An `http-equiv` value: absent, plain text (restored), or one holding an expression. */
+function httpEquivValue(value: AST.Attribute['value'], restore: Restore): HttpEquivValue {
+	if (value === true) return { kind: 'absent' };
+	const parts = Array.isArray(value) ? value : [value];
+	const textParts = parts.flatMap((part) => (part.type === 'Text' ? [part.data] : []));
+	if (textParts.length < parts.length) {
+		return { kind: 'expression', texts: valueTexts(value).map(restore) };
+	}
+	return { kind: 'text', text: restore(textParts.join('')) };
 }
 
 function collectStyleDirective(directive: AST.StyleDirective, reading: Reading): void {

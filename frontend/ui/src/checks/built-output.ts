@@ -5,8 +5,11 @@
  * remote (`http:`, `https:`, `//`), and in every `.html` file a URL-bearing
  * attribute (`href`, `src`, `srcset`, `action`, `formaction`, `poster`, …)
  * that names a scheme or is protocol-relative, along with remote CSS in its
- * `<style>` elements and `style` attributes. A link inside the folder is
- * refused too, since a server would follow it.
+ * `<style>` elements and `style` attributes, and any `http-equiv` attribute
+ * on any element but Kit's own `content-security-policy` pragma (its value
+ * trimmed, in any letter case; one with no value, or any other value, is
+ * refused). A link inside the folder is refused too, since a server would
+ * follow it.
  *
  * Run by Node from `frontend/ui`: `node src/checks/built-output.ts build`.
  * Exit 0 clean, 1 findings, 2 unreadable input or bad usage.
@@ -14,11 +17,23 @@
 import { lstatSync, readdirSync, readFileSync, realpathSync, type Dirent } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { cssValueParts, parseSource, type ParsedSource, type Place } from './scan/parse.ts';
-import { isRemote, namesAnotherPlace, urlsOf } from './scan/network.ts';
+import {
+	cssValueParts,
+	parseSource,
+	type HttpEquivAttribute,
+	type ParsedSource,
+	type Place
+} from './scan/parse.ts';
+import { describeHttpEquiv, isRemote, namesAnotherPlace, urlsOf } from './scan/network.ts';
 
 export type BuiltRule =
-	'remote-url' | 'remote-string' | 'remote-import' | 'scheme-attribute' | 'link' | 'unparsed';
+	| 'remote-url'
+	| 'remote-string'
+	| 'remote-import'
+	| 'scheme-attribute'
+	| 'http-equiv'
+	| 'link'
+	| 'unparsed';
 
 export interface BuiltFinding {
 	readonly rule: BuiltRule;
@@ -129,6 +144,37 @@ function attributeFindings(source: ParsedSource): readonly BuiltFinding[] {
 	);
 }
 
+/** The one pragma a built page may carry: the policy Kit writes when it is set to. */
+const allowedPragma = 'content-security-policy';
+
+/** True only for plain text that, trimmed, is the policy pragma in any ASCII letter case. */
+function isAllowedPragma(attribute: HttpEquivAttribute): boolean {
+	const { value } = attribute;
+	switch (value.kind) {
+		case 'absent':
+		case 'expression':
+			return false;
+		case 'text':
+			return asciiLowerCase(value.text.trim()) === allowedPragma;
+	}
+}
+
+/** `text` with only the ASCII capitals lowered, as HTML compares keywords. */
+function asciiLowerCase(text: string): string {
+	return text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+}
+
+/** Any `http-equiv` but the policy pragma. */
+function httpEquivFindings(source: ParsedSource): readonly BuiltFinding[] {
+	return source.httpEquivs
+		.filter((attribute) => !isAllowedPragma(attribute))
+		.map((attribute): BuiltFinding => ({
+			rule: 'http-equiv',
+			found: describeHttpEquiv(attribute),
+			place: attribute.place
+		}));
+}
+
 /** The findings in one built file's text. */
 export function builtFileFindings(file: string, text: string): readonly BuiltFinding[] {
 	const source = parseSource({ path: file, text });
@@ -137,7 +183,8 @@ export function builtFileFindings(file: string, text: string): readonly BuiltFin
 		found: failure.reason,
 		place: failure.place
 	}));
-	const inHtml = builtKind(file) === 'html' ? attributeFindings(source) : [];
+	const inHtml =
+		builtKind(file) === 'html' ? [...attributeFindings(source), ...httpEquivFindings(source)] : [];
 	return [...unparsed, ...cssFindings(source), ...inHtml];
 }
 

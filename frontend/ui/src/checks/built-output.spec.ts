@@ -177,7 +177,47 @@ describe('the built-output check', () => {
 			{ 'x.html': page('<style>@import "//x/a.css";</style>') },
 			'remote-import'
 		],
-		['built HTML that does not parse', { 'x.html': page('', '<img/src="//x">') }, 'unparsed']
+		['built HTML that does not parse', { 'x.html': page('', '<img/src="//x">') }, 'unparsed'],
+		[
+			'built HTML with a refresh meta',
+			{ 'x.html': page('', '<meta http-equiv="refresh" content="0;url=https://x.invalid/leak">') },
+			'http-equiv'
+		],
+		[
+			'built HTML with a set-cookie meta',
+			{ 'x.html': page('<meta http-equiv="set-cookie" content="a=b">') },
+			'http-equiv'
+		],
+		[
+			'built HTML with an x-ua-compatible meta',
+			{ 'x.html': page('<meta http-equiv="X-UA-Compatible" content="IE=edge">') },
+			'http-equiv'
+		],
+		[
+			'built HTML with an http-equiv that has no value',
+			{ 'x.html': page('<meta http-equiv content="0">') },
+			'http-equiv'
+		],
+		[
+			'built HTML with an http-equiv that is empty',
+			{ 'x.html': page('<meta http-equiv="" content="0">') },
+			'http-equiv'
+		],
+		[
+			'built HTML with an http-equiv in braces',
+			{ 'x.html': page('<meta http-equiv="{content-security-policy}" content="0">') },
+			'http-equiv'
+		],
+		[
+			'built HTML with an http-equiv naming the policy and more',
+			{ 'x.html': page('<meta http-equiv="content-security-policy refresh" content="0">') },
+			'http-equiv'
+		],
+		[
+			'built HTML with an http-equiv in upper case on another element',
+			{ 'x.html': page('', '<div HTTP-EQUIV="refresh"></div>') },
+			'http-equiv'
+		]
 	];
 
 	it.each(refused)('refuses %s', (_label, files, rule) => {
@@ -188,6 +228,22 @@ describe('the built-output check', () => {
 		const [file] = Object.keys(files);
 		expect(out).toContain(path.join(folder, file ?? ''));
 		expect(out).toContain(`[${rule}]`);
+	});
+
+	it.each([
+		['in its own case', 'Content-Security-Policy'],
+		['in lower case with spaces around', ' content-security-policy\t']
+	])("passes Kit's content-security-policy meta %s", (_label, value) => {
+		const meta = `<meta http-equiv="${value}" content="default-src 'self'">`;
+		const folder = buildFolder({ ...cleanBuild, 'x.html': page(meta) });
+		expect(checkBuild(folder)).toEqual({ findings: [], errors: [] });
+	});
+
+	it('refuses a refresh meta beside the policy meta once', () => {
+		const policy = `<meta http-equiv="content-security-policy" content="default-src 'self'">`;
+		const refresh = '<meta http-equiv="refresh" content="0;url=/x">';
+		const folder = buildFolder({ ...cleanBuild, 'x.html': page(policy, refresh) });
+		expect(rulesOf(folder)).toEqual(['http-equiv']);
 	});
 
 	it('names what it found', () => {
