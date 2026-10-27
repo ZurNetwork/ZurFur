@@ -2,7 +2,7 @@
   "path": "frontend/ui/src/checks/testing",
   "charted": "2026-10-27",
   "short": "Harness components for the specs",
-  "is": "Small Svelte components the control specs render: parents that accept a control's changes, a probe that reads the environment, and a provider that records every call into the seam.",
+  "is": "Small Svelte components the control specs render: parents that accept a control's changes, a probe that reads the environment, a provider that records every call into the seam, a trigger that records what Tooltip hands it, and a short scrolling box shaped like Storybook's docs page.",
   "type": "code",
   "tags": [
     "category:ui",
@@ -33,6 +33,16 @@
       "node": false
     },
     {
+      "name": "AcceptingScrollingTabs.svelte",
+      "role": "a parent that accepts every tab a ScrollingTabs reports",
+      "node": false
+    },
+    {
+      "name": "AcceptingSelect.svelte",
+      "role": "a parent that accepts every value a Select reports",
+      "node": false
+    },
+    {
       "name": "AcceptingTabs.svelte",
       "role": "a parent that accepts every tab a Tabs reports",
       "node": false
@@ -50,6 +60,16 @@
     {
       "name": "RecordingEnvironment.svelte.spec.ts",
       "role": "spec for the recording environment",
+      "node": false
+    },
+    {
+      "name": "RecordingTrigger.svelte",
+      "role": "a Tooltip trigger that records the props it is handed and spreads none of them",
+      "node": false
+    },
+    {
+      "name": "ScrollBoxHost.svelte",
+      "role": "a short scrolling box around a transformed layer and a light skin scope, so a spec can prove a control scrolls nothing outside itself",
       "node": false
     }
   ],

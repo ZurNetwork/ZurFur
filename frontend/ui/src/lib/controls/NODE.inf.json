@@ -1,8 +1,8 @@
 {
   "path": "frontend/ui/src/lib/controls",
   "charted": "2026-10-27",
-  "short": "The ten controls, their item shapes and the day, locale and link mints",
-  "is": "The shipped controls (Button, IconButton, TextInput, Select, Checkbox, Toggle, Tabs, PillSwitch, Menu and DateField), one Svelte file each with its spec beside it; the plain TypeScript item shapes they take (`types.ts`) and the mints for a link, a calendar day and a language tag; two internal helpers (FieldFrame, Tooltip); and `floating.ts`, which picks where a floating part is put.",
+  "short": "The eleven controls, their item shapes, the day, locale and link mints, and the row stepper",
+  "is": "The shipped controls (Button, IconButton, TextInput, Select, Checkbox, Toggle, Tabs, ScrollingTabs, PillSwitch, Menu and DateField), one Svelte file each with its spec beside it; the plain TypeScript item shapes they take (`types.ts`) and the mints for a link, a calendar day and a language tag; two internal helpers (FieldFrame, Tooltip); `floating.ts`, which picks where a floating part is put; `step-row.ts`, which steps a scrolling row one item at a time; and `pill-type.ts`, which finds the one type a switch's typed options share.",
   "type": "code",
   "tags": [
     "category:ui",
@@ -11,13 +11,13 @@
   "conventions": [
     "One `.svelte` file per control, its `X.svelte.spec.ts` beside it. FieldFrame (lays out the label, hint and error) and Tooltip are internal: neither is exported. Item shapes and mints are plain TypeScript next to the components.",
     "Props are readonly and typed: no `$bindable`, no rest props, no `$props()` that is not destructured. TextInput takes only its listed native attributes and no `id`. Callbacks carry plain values (`onPress()`, `onChange(id)`, `onCheckedChange(boolean)`, `onOpenChange(boolean)`, `onSelect(id)`), never a DOM or bits-ui event.",
-    "A control is controlled and keeps no copy of the value. A bits-ui root takes function bindings; TextInput binds `value` with a getter and a setter; Checkbox and Select call back, wait a tick and write the prop back; DateField takes its value through a derived date and keeps only its segments as interaction state. A parent that refuses a change leaves the control showing its prop, and every stateful control has a spec for that.",
-    "Typed ids are generic. A string coming back from the page is looked up in the options, never cast; an unknown or empty one is ignored. A hidden input renders only when `name` is given. Every control takes a `testid` for its interactive element. A busy Button sets `aria-busy` and `aria-disabled`, keeps focus, shows Spinner's glyph beside its words and ignores presses.",
+    "A control is controlled and keeps no copy of the value. A bits-ui root takes function bindings, Select's included; TextInput binds `value` with a getter and a setter; Checkbox calls back, waits a tick and writes the prop back; DateField takes its value through a derived date and keeps only its segments as interaction state. A parent that refuses a change leaves the control showing its prop, and every stateful control has a spec for that.",
+    "Typed ids are generic. A string coming back from the page is looked up in the options, never cast; an unknown or empty one is ignored. A hidden input renders only when `name` is given, and Select's only once a value is chosen. Every control takes a `testid` for its interactive element. A busy Button sets `aria-busy` and `aria-disabled`, keeps focus, shows Spinner's glyph beside its words and ignores presses. An IconButton disabled as `'focusable'` sets `aria-disabled`, keeps its place in the tab order, its name and its tip, and ignores presses; `disabled: true` takes it out of the tab order.",
     "Every word a control shows is a prop, the words bits-ui supplies for the date field's segments included; the one exception is the date announcer's \"Empty\". A label is text, never markup. `words.spec` reads the real components for a literal word.",
-    "Motion only through the seam. A control calls `useEnvironment()` once at init, puts `squish` on every pressable element and `note` on the floating element that takes bits-ui's content props, and plays cues (`toggle` for Checkbox, Toggle, Tabs and PillSwitch; `open` and `close` for the menu; none for buttons). It imports nothing from `lib/motion` and uses no `transition:`, `in:`, `out:` or `animate:`. With no provider it is still.",
-    "A floating part (the menu, the tooltip) keeps bits-ui's two levels: the wrapper that carries the position stays unstyled and the inner element takes the note. It portals into the nearest `data-skin` element, else the body, so it wears the skin it opened from, and it opens only through an entry interaction, never at load.",
-    "bits-ui and `@internationalized/date` are imported only by `.svelte` files under `src/lib`, and no type from either crosses the public API. A spread attribute is allowed only on an HTML element, and only when it spreads the `props` or `wrapperProps` of the nearest `{#snippet child(…)}` that only bits-ui can render: the snippet sits right under a bits-ui component, or is handed to one as `child` and used nowhere else. IconButton alone may also hand its snippet to Tooltip as `trigger`.",
-    "Arrows on Tabs and PillSwitch move and choose. Tabs render a panel only for the active tab. The date field picks a day and no time.",
+    "Motion only through the seam. A control calls `useEnvironment()` once at init, puts `squish` on every pressable element but Select's trigger, which lifts as a field does, and an IconButton disabled as `'focusable'`, and `note` on the floating element that takes bits-ui's content props, and plays cues (`toggle` for Checkbox, Toggle, Tabs and PillSwitch; `open` and `close` for the menu and the select; none for buttons). It imports nothing from `lib/motion` and uses no `transition:`, `in:`, `out:` or `animate:`. With no provider it is still.",
+    "A floating part (the menu, the select's list, the tooltip) keeps bits-ui's two levels: the wrapper that carries the position stays unstyled and the inner element takes the note. It portals into the nearest `data-skin` element, else the body, so it wears the skin it opened from; Menu anchors its menu to the trigger element it keeps, so a trigger that changes form while open leaves the menu placed and focused; and it opens only through an entry interaction, never at load. Opening focuses the menu without scrolling any box around it.",
+    "bits-ui and `@internationalized/date` are imported only by `.svelte` files under `src/lib`, and no type from either crosses the public API. A spread attribute is allowed only on an HTML element, and only when it spreads the `props` or `wrapperProps` of the nearest `{#snippet child(…)}` that only bits-ui can render: the snippet sits right under a bits-ui component, or is handed to one as `child` and used nowhere else. IconButton may also hand its snippet to Tooltip as `trigger`; Menu alone hands its snippet to Tooltip as `trigger` and spreads that snippet's `props` onto `DropdownMenu.Trigger`, the one spread allowed on a component, which then holds only bits-ui's own `{#snippet child({ props })}`. Tooltip hands its trigger an exact set of keys, pinned by its spec.",
+    "Arrows on Tabs and PillSwitch move and choose. A release never chooses on its own: a menu row chooses on a click, and a select option on a release only after a press on that same option; Select forgets the press at every open, close, cancel and release. A menu stays open until a choice, Esc or a click outside. ScrollingTabs is the one composite: Tabs with two named, tipped step IconButtons, always shown, and at its end each stays focusable, says `aria-disabled` and does nothing; a step moves the tab list's own scroll by one tab (`step-row.ts`), never through `scrollIntoView`, and never changes the tab showing. Every other control is simple. Tabs render a panel only for the active tab. The date field picks a day and no time.",
     "A control's looks are the family stylesheets in `../styles/controls`; a control writes no colour, time or size of its own."
   ],
   "entry_points": [
@@ -62,7 +62,7 @@
     },
     {
       "name": "IconButton.svelte",
-      "role": "a button holding only an icon, with its label shown in a tooltip",
+      "role": "a button holding only an icon, with its label shown in a tooltip; disabled takes it out of the tab order, or keeps it there inert",
       "node": false
     },
     {
@@ -72,7 +72,7 @@
     },
     {
       "name": "Menu.svelte",
-      "role": "a dropdown menu on bits-ui: a button or icon trigger, items, a choice reported by id",
+      "role": "a dropdown menu on bits-ui: a button or icon trigger (its name in a tooltip), items, a choice reported by id; open until a choice, Esc or a click outside",
       "node": false
     },
     {
@@ -82,7 +82,7 @@
     },
     {
       "name": "PillSwitch.svelte",
-      "role": "one choice from a few on a radio group, shown as pills",
+      "role": "one choice from a few on a radio group, shown as pills; a type every typed option shares shows once, before them",
       "node": false
     },
     {
@@ -91,8 +91,18 @@
       "node": false
     },
     {
+      "name": "ScrollingTabs.svelte",
+      "role": "a composite: Tabs in one row with a step IconButton at each end, moving one tab per step",
+      "node": false
+    },
+    {
+      "name": "ScrollingTabs.svelte.spec.ts",
+      "role": "spec for ScrollingTabs",
+      "node": false
+    },
+    {
       "name": "Select.svelte",
-      "role": "a native select with a label, placeholder, hint and error",
+      "role": "a select on bits-ui: a field-like combobox button that opens its list as the menu's note; a choice reported by value",
       "node": false
     },
     {
@@ -102,7 +112,7 @@
     },
     {
       "name": "Tabs.svelte",
-      "role": "tabs on bits-ui with automatic activation; the parent writes each panel",
+      "role": "tabs on bits-ui with automatic activation; the parent writes each panel; an optional stepper snippet is handed each side's step",
       "node": false
     },
     {
@@ -132,7 +142,12 @@
     },
     {
       "name": "Tooltip.svelte",
-      "role": "internal: the visual-only tooltip IconButton uses",
+      "role": "internal: the visual-only tooltip IconButton and Menu's icon trigger use; `onPress` is optional",
+      "node": false
+    },
+    {
+      "name": "Tooltip.svelte.spec.ts",
+      "role": "spec for Tooltip: the exact keys it hands its trigger",
       "node": false
     },
     {
@@ -176,8 +191,33 @@
       "node": false
     },
     {
+      "name": "pill-type.spec.ts",
+      "role": "spec for the pill type",
+      "node": false
+    },
+    {
+      "name": "pill-type.ts",
+      "role": "`typeOf` and `sharedType`: an option's type, and the one type every typed option of a switch shares",
+      "node": false
+    },
+    {
+      "name": "step-row.spec.ts",
+      "role": "spec for the step math",
+      "node": false
+    },
+    {
+      "name": "step-row.svelte.spec.ts",
+      "role": "spec for stepping and watching a real row",
+      "node": false
+    },
+    {
+      "name": "step-row.ts",
+      "role": "plain stepping for a scrolling row: the row's edges, the next position one item over, the reveal of a focused item, and `watchRow`, which reports the edges as the row scrolls, resizes or changes",
+      "node": false
+    },
+    {
       "name": "types.ts",
-      "role": "the plain item shapes the controls take: tabs, pill options, select options, menu items and triggers, the date field words, and the button and icon button variants and sizes",
+      "role": "the plain item shapes the controls take: tabs and the tab step, pill options, select options, menu items and triggers, the date field words, and the button and icon button variants and sizes",
       "node": false
     }
   ],

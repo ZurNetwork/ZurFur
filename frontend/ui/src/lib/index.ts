@@ -36,6 +36,7 @@ export { ICON_NAMES, isIconName, type IconName } from './icons/icons.ts';
 export { default as Button } from './controls/Button.svelte';
 export { default as Toggle } from './controls/Toggle.svelte';
 export { default as Tabs } from './controls/Tabs.svelte';
+export { default as ScrollingTabs } from './controls/ScrollingTabs.svelte';
 export { default as PillSwitch } from './controls/PillSwitch.svelte';
 export { default as IconButton } from './controls/IconButton.svelte';
 export { default as Menu } from './controls/Menu.svelte';
@@ -61,7 +62,8 @@ export type {
 	MenuTrigger,
 	PillOption,
 	SelectOption,
-	TabItem
+	TabItem,
+	TabStep
 } from './controls/types.ts';
 export { default as ToastStack } from './surfaces/ToastStack.svelte';
 export { default as Card } from './surfaces/Card.svelte';

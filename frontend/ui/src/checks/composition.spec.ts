@@ -33,7 +33,8 @@ const KNOWN_EXCEPTIONS: readonly Pick<Exception, 'file' | 'elements' | 'families
 		families: ['zf-btn', 'zf-iconbtn']
 	},
 	{ file: 'src/lib/controls/DateField.svelte', elements: [], families: ['zf-input'] },
-	{ file: 'src/lib/styles/controls/menu.css', elements: [], families: ['zf-icon'] }
+	{ file: 'src/lib/styles/controls/menu.css', elements: [], families: ['zf-icon'] },
+	{ file: 'src/lib/controls/Select.svelte', elements: [], families: ['zf-menu'] }
 ];
 
 export type CompositionRefusalReason =

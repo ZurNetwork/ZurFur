@@ -106,6 +106,117 @@ describe('IconButton', () => {
 		expect(onPress).not.toHaveBeenCalled();
 	});
 
+	it('stays in the tab order, named, while disabled but focusable', async () => {
+		render(IconButton, {
+			icon: 'copy',
+			label: 'Copy path',
+			onPress: () => undefined,
+			disabled: 'focusable',
+			testid: 'copy'
+		});
+		await userEvent.tab();
+		const button = byTestId('copy');
+		expect(document.activeElement).toBe(button);
+		await expect.element(page.getByRole('button', { name: 'Copy path' })).toBeInTheDocument();
+		expect(button.getAttribute('aria-disabled')).toBe('true');
+		expect(button.hasAttribute('disabled')).toBe(false);
+		await vi.waitFor(() => {
+			expect(shownTip()?.textContent).toBe('Copy path');
+		});
+	});
+
+	it.each(variants)(
+		'ignores a click, Enter and Space while disabled but focusable in the %s look',
+		async (variant) => {
+			const onPress = vi.fn<() => void>();
+			render(IconButton, {
+				icon: 'copy',
+				label: 'Copy path',
+				onPress,
+				variant,
+				disabled: 'focusable',
+				testid: 'copy'
+			});
+			await page.getByRole('button').click({ force: true });
+			byTestId('copy').focus();
+			await userEvent.keyboard('{Enter}');
+			await userEvent.keyboard(' ');
+			expect(onPress).not.toHaveBeenCalled();
+			expect(document.activeElement).toBe(byTestId('copy'));
+		}
+	);
+
+	it('attaches no squish while disabled but focusable', () => {
+		const calls: SeamCall[] = [];
+		render(
+			IconButton,
+			{ icon: 'copy', label: 'Copy path', onPress: () => undefined, disabled: 'focusable' },
+			{ wrapper: RecordingEnvironment, wrapperProps: { onRecord: (call) => calls.push(call) } }
+		);
+		expect(calls).toEqual([]);
+	});
+
+	it('looks the same disabled natively and disabled but focusable', () => {
+		render(IconButton, {
+			icon: 'copy',
+			label: 'Copy path',
+			onPress: () => undefined,
+			disabled: true,
+			testid: 'native'
+		});
+		render(IconButton, {
+			icon: 'copy',
+			label: 'Copy path',
+			onPress: () => undefined,
+			disabled: 'focusable',
+			testid: 'focusable'
+		});
+		expect(byTestId('focusable').hasAttribute('disabled')).toBe(false);
+		const looks = ['native', 'focusable'].map((testid) => {
+			const style = getComputedStyle(byTestId(testid));
+			return [style.cursor, style.opacity, style.color];
+		});
+		expect(looks[1]).toEqual(looks[0]);
+		expect(looks[0]?.slice(0, 2)).toEqual(['not-allowed', '0.55']);
+	});
+
+	it.each(variants)(
+		'keeps its resting ink on hover while disabled but focusable in the %s look',
+		async (variant) => {
+			render(IconButton, {
+				icon: 'copy',
+				label: 'Copy path',
+				onPress: () => undefined,
+				variant,
+				disabled: 'focusable',
+				testid: 'copy'
+			});
+			const button = byTestId('copy');
+			const resting = [getComputedStyle(button).color, getComputedStyle(button).backgroundColor];
+			await page.getByRole('button').hover();
+			await vi.waitFor(() => {
+				expect(shownTip()).toBeDefined();
+			});
+			const hovered = [getComputedStyle(button).color, getComputedStyle(button).backgroundColor];
+			expect(hovered).toEqual(resting);
+		}
+	);
+
+	it('is natively disabled and out of the tab order when disabled is true', async () => {
+		render(IconButton, {
+			icon: 'copy',
+			label: 'Copy path',
+			onPress: () => undefined,
+			disabled: true,
+			testid: 'copy'
+		});
+		const button = byTestId('copy');
+		expect(button.hasAttribute('disabled')).toBe(true);
+		expect(button.hasAttribute('aria-disabled')).toBe(false);
+		await userEvent.tab();
+		expect(document.activeElement).not.toBe(button);
+	});
+
 	it('says pressed, expanded and what it controls only when told', async () => {
 		render(IconButton, {
 			icon: 'eye',

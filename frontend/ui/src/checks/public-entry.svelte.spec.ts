@@ -28,6 +28,7 @@ describe('the public entry', () => {
 			'Pin',
 			'SKIN_ATTRIBUTE',
 			'STILL_ENVIRONMENT',
+			'ScrollingTabs',
 			'Select',
 			'Skeleton',
 			'Spinner',

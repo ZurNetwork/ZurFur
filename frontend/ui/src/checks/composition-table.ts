@@ -33,6 +33,7 @@ export const KINDS: Readonly<Record<string, Kind>> = {
 	Select: 'simple',
 	Tabs: 'simple',
 	PillSwitch: 'simple',
+	ScrollingTabs: 'composite',
 	DateField: 'simple',
 	Menu: 'simple',
 	ToastStack: 'simple',
@@ -57,7 +58,7 @@ export const INTERNAL: readonly Row[] = [
 	},
 	{
 		file: 'src/lib/controls/Tooltip.svelte',
-		reason: "the visual-only tip IconButton's label shows in"
+		reason: "the visual-only tip that IconButton's label and Menu's icon trigger show in"
 	}
 ];
 
@@ -86,6 +87,15 @@ export const OWNERS: Readonly<Record<OwnedElement, readonly Row[]>> = {
 		{ file: 'src/lib/controls/Toggle.svelte', reason: "the switch's track" },
 		{ file: 'src/lib/controls/Tabs.svelte', reason: 'each tab' },
 		{ file: 'src/lib/controls/PillSwitch.svelte', reason: 'each pill' },
+		{
+			file: 'src/lib/controls/Select.svelte',
+			reason: "the select's trigger, a button that reads as a field"
+		},
+		{
+			file: 'src/checks/testing/RecordingTrigger.svelte',
+			reason:
+				'a spec harness: the trigger Tooltip hands its props to, which records them and spreads none'
+		},
 		{ file: 'src/lib/surfaces/Pin.svelte', reason: 'the pin on the art' },
 		{ file: 'src/gallery/MoveSheet.svelte', reason: "the old gallery's Play again on a move" },
 		{
@@ -104,7 +114,7 @@ export const OWNERS: Readonly<Record<OwnedElement, readonly Row[]>> = {
 		{ file: 'src/lib/controls/DateField.svelte', reason: 'the hidden input that posts the day' },
 		{ file: 'src/gallery/SkinSwitch.svelte', reason: "the old gallery's Skin switch" }
 	],
-	select: [{ file: 'src/lib/controls/Select.svelte', reason: 'the native select' }],
+	select: [],
 	textarea: [{ file: 'src/lib/controls/TextInput.svelte', reason: 'the multiline field' }],
 	img: [
 		{
@@ -138,7 +148,14 @@ export const FAMILIES: Readonly<Record<FilePath, readonly Family[]>> = {
 	'src/lib/styles/controls/field.css': ['zf-field', 'zf-input', 'zf-select', 'zf-date'],
 	'src/lib/styles/controls/check.css': ['zf-check'],
 	'src/lib/styles/controls/toggle.css': ['zf-toggle'],
-	'src/lib/styles/controls/tabs.css': ['zf-tabs', 'zf-tab', 'zf-tabview', 'zf-seg'],
+	'src/lib/styles/controls/tabs.css': [
+		'zf-tabs',
+		'zf-tab',
+		'zf-tabview',
+		'zf-seg',
+		'zf-tabs-row',
+		'zf-seg-row'
+	],
 	'src/lib/styles/controls/menu.css': ['zf-menu'],
 	'src/lib/styles/controls/tip.css': ['zf-tip'],
 	'src/lib/styles/surfaces/card.css': ['zf-card'],
@@ -171,8 +188,8 @@ export const FAMILIES: Readonly<Record<FilePath, readonly Family[]>> = {
 	'src/lib/controls/DateField.svelte': ['zf-date'],
 	'src/lib/controls/Checkbox.svelte': ['zf-check'],
 	'src/lib/controls/Toggle.svelte': ['zf-toggle'],
-	'src/lib/controls/Tabs.svelte': ['zf-tabs', 'zf-tab', 'zf-tabview'],
-	'src/lib/controls/PillSwitch.svelte': ['zf-seg'],
+	'src/lib/controls/Tabs.svelte': ['zf-tabs', 'zf-tab', 'zf-tabview', 'zf-tabs-row'],
+	'src/lib/controls/PillSwitch.svelte': ['zf-seg', 'zf-seg-row'],
 	'src/lib/controls/Menu.svelte': ['zf-menu'],
 	'src/lib/controls/Tooltip.svelte': ['zf-tip'],
 	'src/lib/surfaces/ToastStack.svelte': ['zf-toast-stack'],
@@ -215,6 +232,12 @@ export const EXCEPTIONS: readonly Exception[] = [
 		elements: [],
 		families: ['zf-icon'],
 		reason: "a menu row's icon is muted, and the danger row's icon takes the danger colour"
+	},
+	{
+		file: 'src/lib/controls/Select.svelte',
+		elements: [],
+		families: ['zf-menu'],
+		reason: "Select's list wears the menu's note and rows, so both lists look and move alike"
 	}
 ];
 
@@ -225,7 +248,8 @@ export const BITS_UI: Readonly<Record<FilePath, readonly string[]>> = {
 	'src/lib/controls/PillSwitch.svelte': ['RadioGroup'],
 	'src/lib/controls/Menu.svelte': ['DropdownMenu'],
 	'src/lib/controls/DateField.svelte': ['DateField'],
-	'src/lib/controls/Tooltip.svelte': ['Tooltip']
+	'src/lib/controls/Tooltip.svelte': ['Tooltip'],
+	'src/lib/controls/Select.svelte': ['Select']
 };
 
 /** A bits-ui part, by its namespace and its name in it. */

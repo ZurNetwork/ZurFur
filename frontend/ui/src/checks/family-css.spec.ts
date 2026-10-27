@@ -101,6 +101,12 @@ const TOKEN_NAMES = new Set(
 	[...readStyle('tokens.css').matchAll(/(--[a-z0-9-]+)\s*:/g)].map((match) => match[1] ?? '')
 );
 
+/** The custom properties bits-ui sets at run time, by exact name: never tokens. */
+const BITS_PROPERTIES: readonly string[] = [
+	'--bits-select-anchor-width',
+	'--bits-select-content-available-height'
+];
+
 /** The state classes the surfaces' components set. */
 const STATE_CLASSES: readonly string[] = ['is-active', 'is-revealed', 'is-hidden'];
 
@@ -307,7 +313,7 @@ function findingsIn(css: string): readonly string[] {
 		.flatMap(({ value }) =>
 			[...value.matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1] ?? '')
 		)
-		.filter((name) => !TOKEN_NAMES.has(name))
+		.filter((name) => !TOKEN_NAMES.has(name) && !BITS_PROPERTIES.includes(name))
 		.map((name) => `${name}: not a token`);
 	const unplaced = scan.unplaced.map(
 		({ selector, property, value }) =>

@@ -10,6 +10,7 @@
 	} from '../fixtures/fields.ts';
 	import type { MenuArgs } from './args.ts';
 	import MenuHolder from './MenuHolder.svelte';
+	import { FLOATING_ROOM } from './room.ts';
 
 	/** Waits until the page takes presses again: a menu left open by the story before has handed it back. */
 	async function untilPressable(trigger: HTMLElement): Promise<void> {
@@ -30,8 +31,9 @@
 		},
 		parameters: {
 			docs: {
+				story: { height: FLOATING_ROOM },
 				description: {
-					component: `A simple component: a button that opens a short list of actions. The button shows words, or an icon alone that a screen reader names. A row can carry an icon, be switched off, or be marked as one that can’t be undone. The menu is open only when its parent says so.
+					component: `A simple component: a button that opens a short list of actions. The button shows words, or an icon alone that shows its name in a tip. A row can carry an icon, be switched off, or be marked as one that can’t be undone. The menu is open only when its parent says so.
 
 Keyboard:
 
@@ -162,6 +164,35 @@ Keyboard:
 		const menu = await within(canvasElement.ownerDocument.body).findByRole('menu');
 		const archive = within(menu).getByRole('menuitem', { name: 'Move to archive' });
 		await userEvent.click(archive, { pointerEventsCheck: 0 });
+		await expect(args.onSelect).not.toHaveBeenCalled();
+		await expect(menu).toBeVisible();
+	}}
+/>
+
+<Story
+	name="Stays Open After a Click"
+	play={async ({ canvas, canvasElement, args }) => {
+		const trigger = canvas.getByRole('button', { name: 'Actions' });
+		await untilPressable(trigger);
+		await userEvent.pointer({ keys: '[MouseLeft>]', target: trigger });
+		await userEvent.pointer({ keys: '[/MouseLeft]', target: trigger });
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		const menu = within(canvasElement.ownerDocument.body).getByRole('menu');
+		await expect(menu).toBeVisible();
+		await expect(args.onOpenChange).toHaveBeenCalledTimes(1);
+		await expect(args.onSelect).not.toHaveBeenCalled();
+	}}
+/>
+
+<Story
+	name="Release on a Row Chooses Nothing"
+	play={async ({ canvas, canvasElement, args, userEvent: user }) => {
+		const trigger = canvas.getByRole('button', { name: 'Actions' });
+		await untilPressable(trigger);
+		await user.pointer({ keys: '[MouseLeft>]', target: trigger });
+		const menu = await within(canvasElement.ownerDocument.body).findByRole('menu');
+		const row = within(menu).getByRole('menuitem', { name: 'Duplicate' });
+		await user.pointer({ keys: '[/MouseLeft]', target: row });
 		await expect(args.onSelect).not.toHaveBeenCalled();
 		await expect(menu).toBeVisible();
 	}}

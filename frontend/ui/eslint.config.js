@@ -1467,9 +1467,20 @@ export const SVELTE_ELEMENT_FILES = ['src/lib/surfaces/Card.svelte'];
  * The files that may also hand their {#snippet child(…)} to one of our own
  * components: the component's default import and the attribute that takes it.
  * That component must render the snippet only with what bits-ui hands it.
+ * A row without `target` spreads the handed props onto an HTML element; a row
+ * with one spreads them only onto that bits-ui part (`Namespace.Part`), and
+ * onto nothing else in that file.
+ *
+ * @type {readonly { file: string, source: string, attribute: string, target?: string }[]}
  */
 const SNIPPET_HANDOFF_FILES = [
-	{ file: 'src/lib/controls/IconButton.svelte', source: './Tooltip.svelte', attribute: 'trigger' }
+	{ file: 'src/lib/controls/IconButton.svelte', source: './Tooltip.svelte', attribute: 'trigger' },
+	{
+		file: 'src/lib/controls/Menu.svelte',
+		source: './Tooltip.svelte',
+		attribute: 'trigger',
+		target: 'DropdownMenu.Trigger'
+	}
 ];
 
 /** The one module whose components hand a {#snippet child(…)} its props. */
@@ -1599,6 +1610,63 @@ function liesWithin(inner, outer) {
 }
 
 /**
+ * Every reference to `snippet`'s name but its own declaration.
+ *
+ * @param {unknown} snippet
+ * @param {import('eslint').SourceCode} sourceCode
+ */
+function referencesTo(snippet, sourceCode) {
+	const id = fieldOf(snippet, 'id');
+	const name = fieldOf(id, 'name');
+	if (typeof name !== 'string') return [];
+	const scopes = sourceCode.scopeManager?.scopes ?? [];
+	return scopes
+		.flatMap((scope) => scope.references)
+		.filter((reference) => reference.identifier.name === name && reference.identifier !== id);
+}
+
+/**
+ * The uses of a snippet that sits outside every component, as references that
+ * resolve to it or to nothing; undefined when its one binding can't be found.
+ *
+ * @param {unknown} snippet
+ * @param {import('eslint').SourceCode} sourceCode
+ */
+function usesOf(snippet, sourceCode) {
+	const scopes = sourceCode.scopeManager?.scopes ?? [];
+	const variable = scopes
+		.flatMap((scope) => scope.variables)
+		.find((candidate) =>
+			candidate.defs.some(
+				(definition) => definition.type === 'FunctionName' && definition.node === snippet
+			)
+		);
+	if (variable === undefined || variable.defs.length !== 1) return undefined;
+	return referencesTo(snippet, sourceCode).filter(
+		(reference) => reference.resolved === variable || reference.resolved === null
+	);
+}
+
+/**
+ * True when `attribute` hands a snippet to the one component and attribute
+ * `handoff` names: the component is the default import from exactly its source.
+ *
+ * @param {{ name: string, element: unknown }} attribute
+ * @param {import('eslint').SourceCode} sourceCode
+ * @param {{ source: string, attribute: string } | undefined} handoff
+ */
+function isHandoffAttribute(attribute, sourceCode, handoff) {
+	if (handoff === undefined || attribute.name !== handoff.attribute) return false;
+	const target = componentImport(attribute.element, sourceCode);
+	return (
+		target !== undefined &&
+		target.source === handoff.source &&
+		!target.isMember &&
+		fieldOf(target.specifier, 'type') === 'ImportDefaultSpecifier'
+	);
+}
+
+/**
  * True when `snippet`, a {#snippet child(…)}, can only ever be rendered by a
  * bits-ui component: it sits right under one, which takes it as `child`, and
  * nothing inside that component names it; or it sits anywhere else and every
@@ -1613,79 +1681,72 @@ function liesWithin(inner, outer) {
 function isRenderedByBitsUi(snippet, sourceCode, handoff) {
 	const isBitsUi = (/** @type {unknown} */ element) =>
 		componentImport(element, sourceCode)?.source === BITS_UI;
-	const id = fieldOf(snippet, 'id');
-	const name = fieldOf(id, 'name');
-	if (typeof name !== 'string') return false;
-	const scopes = sourceCode.scopeManager?.scopes ?? [];
-	const named = scopes
-		.flatMap((scope) => scope.references)
-		.filter((reference) => reference.identifier.name === name && reference.identifier !== id);
 	const parent = fieldOf(snippet, 'parent');
 	if (fieldOf(parent, 'type') === 'SvelteElement' && fieldOf(parent, 'kind') !== 'html') {
-		const inside = named.filter((reference) => liesWithin(reference.identifier, parent));
+		const inside = referencesTo(snippet, sourceCode).filter((reference) =>
+			liesWithin(reference.identifier, parent)
+		);
 		return inside.length === 0 && isBitsUi(parent);
 	}
-	const variable = scopes
-		.flatMap((scope) => scope.variables)
-		.find((candidate) =>
-			candidate.defs.some(
-				(definition) => definition.type === 'FunctionName' && definition.node === snippet
-			)
-		);
-	if (variable === undefined || variable.defs.length !== 1) return false;
-	const uses = named.filter(
-		(reference) => reference.resolved === variable || reference.resolved === null
-	);
-	/** @param {{ name: string, element: unknown }} attribute */
-	const isHandoff = (attribute) => {
-		if (handoff === undefined || attribute.name !== handoff.attribute) return false;
-		const target = componentImport(attribute.element, sourceCode);
-		return (
-			target !== undefined &&
-			target.source === handoff.source &&
-			!target.isMember &&
-			fieldOf(target.specifier, 'type') === 'ImportDefaultSpecifier'
-		);
-	};
+	const uses = usesOf(snippet, sourceCode);
+	if (uses === undefined) return false;
 	return (
 		uses.length > 0 &&
 		uses.every((reference) => {
 			const attribute = attributeValuedBy(reference.identifier);
 			if (attribute === undefined) return false;
-			return (attribute.name === 'child' && isBitsUi(attribute.element)) || isHandoff(attribute);
+			return (
+				(attribute.name === 'child' && isBitsUi(attribute.element)) ||
+				isHandoffAttribute(attribute, sourceCode, handoff)
+			);
 		})
 	);
 }
 
 /**
- * True when a spread attribute spreads exactly what bits-ui hands the
- * nearest {#snippet child(…)}: it sits on an HTML element, its argument is a
- * bare name, that name resolves to `props` or `wrapperProps` destructured
- * from that snippet's one parameter, nothing nearer shadowing it, and only a
- * bits-ui component can render that snippet (see isRenderedByBitsUi).
+ * True when `snippet` sits outside every component and every use of its
+ * name, at least one, hands it to the component and attribute `handoff` names.
+ *
+ * @param {unknown} snippet
+ * @param {import('eslint').SourceCode} sourceCode
+ * @param {{ source: string, attribute: string }} handoff
+ */
+function isHandedOffOnly(snippet, sourceCode, handoff) {
+	const parent = fieldOf(snippet, 'parent');
+	if (fieldOf(parent, 'type') === 'SvelteElement' && fieldOf(parent, 'kind') !== 'html') {
+		return false;
+	}
+	const uses = usesOf(snippet, sourceCode);
+	if (uses === undefined || uses.length === 0) return false;
+	return uses.every((reference) => {
+		const attribute = attributeValuedBy(reference.identifier);
+		return attribute !== undefined && isHandoffAttribute(attribute, sourceCode, handoff);
+	});
+}
+
+/**
+ * The nearest {#snippet child(…)} above a spread, when the spread's argument
+ * is a bare name that resolves to one of `keys` destructured from that
+ * snippet's one parameter, nothing nearer shadowing it; else undefined.
  *
  * @param {import('eslint').Rule.Node} node the SvelteSpreadAttribute
  * @param {import('eslint').SourceCode} sourceCode
- * @param {{ source: string, attribute: string } | undefined} handoff
+ * @param {readonly string[]} keys
  */
-function isSnippetPropsSpread(node, sourceCode, handoff) {
-	const element = fieldOf(fieldOf(node, 'parent'), 'parent');
-	if (fieldOf(element, 'type') !== 'SvelteElement' || fieldOf(element, 'kind') !== 'html') {
-		return false;
-	}
+function handedSnippet(node, sourceCode, keys) {
 	const argument = fieldOf(node, 'argument');
 	const name = fieldOf(argument, 'name');
-	if (fieldOf(argument, 'type') !== 'Identifier' || typeof name !== 'string') return false;
+	if (fieldOf(argument, 'type') !== 'Identifier' || typeof name !== 'string') return undefined;
 	const snippet = nearestSnippet(node);
-	if (fieldOf(fieldOf(snippet, 'id'), 'name') !== 'child') return false;
+	if (fieldOf(fieldOf(snippet, 'id'), 'name') !== 'child') return undefined;
 	const params = fieldOf(snippet, 'params');
 	const pattern = Array.isArray(params) && params.length === 1 ? params[0] : undefined;
-	if (fieldOf(pattern, 'type') !== 'ObjectPattern') return false;
+	if (fieldOf(pattern, 'type') !== 'ObjectPattern') return undefined;
 	const variable = variableAt(sourceCode, node, name);
-	if (variable === undefined || variable.defs.length !== 1) return false;
+	if (variable === undefined || variable.defs.length !== 1) return undefined;
 	const [definition] = variable.defs;
-	if (definition === undefined || definition.type !== 'Parameter') return false;
-	if (definition.node !== snippet) return false;
+	if (definition === undefined || definition.type !== 'Parameter') return undefined;
+	if (definition.node !== snippet) return undefined;
 	const property = fieldOf(definition.name, 'parent');
 	const key = fieldOf(property, 'key');
 	const isHandedProps =
@@ -1694,8 +1755,103 @@ function isSnippetPropsSpread(node, sourceCode, handoff) {
 		fieldOf(property, 'value') === definition.name &&
 		fieldOf(property, 'computed') === false &&
 		fieldOf(key, 'type') === 'Identifier' &&
-		SNIPPET_PROPS.some((allowed) => fieldOf(key, 'name') === allowed);
-	return isHandedProps && isRenderedByBitsUi(snippet, sourceCode, handoff);
+		keys.some((allowed) => fieldOf(key, 'name') === allowed);
+	return isHandedProps ? snippet : undefined;
+}
+
+/**
+ * True when `element` is the bits-ui part `target` names (`Namespace.Part`):
+ * exactly one member level, its root the named import of that namespace, under
+ * its own name, from exactly bits-ui.
+ *
+ * @param {unknown} element
+ * @param {import('eslint').SourceCode} sourceCode
+ * @param {string} target
+ */
+function isBitsUiPart(element, sourceCode, target) {
+	const [namespace, part, ...more] = target.split('.');
+	if (namespace === undefined || part === undefined || more.length > 0) return false;
+	const name = fieldOf(element, 'name');
+	const object = fieldOf(name, 'object');
+	const property = fieldOf(name, 'property');
+	const isShaped =
+		fieldOf(name, 'type') === 'SvelteMemberExpressionName' &&
+		fieldOf(object, 'type') === 'Identifier' &&
+		fieldOf(object, 'name') === namespace &&
+		fieldOf(property, 'type') === 'SvelteName' &&
+		fieldOf(property, 'name') === part;
+	if (!isShaped) return false;
+	const imported = componentImport(element, sourceCode);
+	if (imported === undefined || imported.source !== BITS_UI) return false;
+	const specifier = imported.specifier;
+	const importedName = fieldOf(specifier, 'imported');
+	return (
+		fieldOf(specifier, 'type') === 'ImportSpecifier' &&
+		fieldOf(importedName, 'type') === 'Identifier' &&
+		fieldOf(importedName, 'name') === namespace &&
+		fieldOf(fieldOf(specifier, 'local'), 'name') === namespace
+	);
+}
+
+/**
+ * True when `element`'s only children are blank text and at most one
+ * {#snippet child(…)} with one destructured parameter, which bits-ui renders.
+ *
+ * @param {unknown} element
+ */
+function holdsOnlyChildSnippet(element) {
+	const children = fieldOf(element, 'children');
+	if (!Array.isArray(children)) return false;
+	const snippets = children.filter((child) => fieldOf(child, 'type') === 'SvelteSnippetBlock');
+	const others = children.filter((child) => fieldOf(child, 'type') !== 'SvelteSnippetBlock');
+	const blank = others.every((child) => {
+		const value = fieldOf(child, 'value');
+		return (
+			fieldOf(child, 'type') === 'SvelteText' && typeof value === 'string' && /^\s*$/u.test(value)
+		);
+	});
+	if (!blank || snippets.length > 1) return false;
+	return snippets.every((snippet) => {
+		const params = fieldOf(snippet, 'params');
+		return (
+			fieldOf(fieldOf(snippet, 'id'), 'name') === 'child' &&
+			Array.isArray(params) &&
+			params.length === 1 &&
+			fieldOf(params[0], 'type') === 'ObjectPattern'
+		);
+	});
+}
+
+/**
+ * True when a spread attribute spreads exactly what bits-ui hands the
+ * nearest {#snippet child(…)}: it sits on an HTML element, its argument is a
+ * bare name, that name resolves to `props` or `wrapperProps` destructured
+ * from that snippet's one parameter, nothing nearer shadowing it, and only a
+ * bits-ui component can render that snippet (see isRenderedByBitsUi).
+ * Under a row with a `target`, the snippet handed off spreads its `props`
+ * only onto that bits-ui part, as the part's one attribute, with nothing in
+ * it but bits-ui's own {#snippet child(…)}.
+ *
+ * @param {import('eslint').Rule.Node} node the SvelteSpreadAttribute
+ * @param {import('eslint').SourceCode} sourceCode
+ * @param {{ source: string, attribute: string, target?: string } | undefined} handoff
+ */
+function isSnippetPropsSpread(node, sourceCode, handoff) {
+	const startTag = fieldOf(node, 'parent');
+	const element = fieldOf(startTag, 'parent');
+	if (fieldOf(element, 'type') !== 'SvelteElement') return false;
+	if (fieldOf(element, 'kind') === 'html') {
+		const snippet = handedSnippet(node, sourceCode, SNIPPET_PROPS);
+		const htmlHandoff = handoff?.target === undefined ? handoff : undefined;
+		return snippet !== undefined && isRenderedByBitsUi(snippet, sourceCode, htmlHandoff);
+	}
+	if (handoff?.target === undefined || fieldOf(element, 'kind') !== 'component') return false;
+	const attributes = fieldOf(startTag, 'attributes');
+	if (!Array.isArray(attributes) || attributes.length !== 1 || attributes[0] !== node) return false;
+	if (!isBitsUiPart(element, sourceCode, handoff.target)) return false;
+	if (!holdsOnlyChildSnippet(element)) return false;
+	const snippet = handedSnippet(node, sourceCode, ['props']);
+	return snippet !== undefined && isHandedOffOnly(snippet, sourceCode, handoff);
 }
 
 /** @type {import('eslint').Rule.RuleModule} */
