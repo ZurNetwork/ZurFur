@@ -1,15 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import ts from 'typescript';
-import { parse } from 'svelte/compiler';
 import { existsSync, readFileSync } from 'node:fs';
-import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { entryPath, exportedComponents, storiedComponent } from './scan/exports';
 import { packageSources, type SourceFile } from './scan/parse';
 
 const uiRoot = fileURLToPath(new URL('../../', import.meta.url));
-
-/** The package's public entry, relative to the package. */
-const entryPath = 'src/lib/index.ts';
 
 /** UI-3a's exported controls other than Button: the only names the pending list may hold. */
 const UI_3A_CONTROLS: readonly string[] = [
@@ -31,13 +26,6 @@ const UI_3A_CONTROLS: readonly string[] = [
  */
 const PENDING: readonly string[] = [];
 
-/** A component the public entry exports as `export { default as Name } from '….svelte'`. */
-interface ExportedComponent {
-	readonly name: string;
-	/** The component's file, relative to the package. */
-	readonly file: string;
-}
-
 export type CoverageRefusalReason =
 	| 'an exported component without stories'
 	| 'an exported component without its contract spec'
@@ -57,105 +45,6 @@ export interface CoverageInput {
 	/** True when a file exists, by its path relative to the package. */
 	readonly hasFile: (relative: string) => boolean;
 	readonly pending: readonly string[];
-}
-
-/** Every component the public entry exports by default from a `.svelte` file. */
-export function exportedComponents(entry: string): readonly ExportedComponent[] {
-	const source = ts.createSourceFile(entryPath, entry, ts.ScriptTarget.Latest, true);
-	return source.statements.flatMap((statement) => {
-		if (!ts.isExportDeclaration(statement) || statement.isTypeOnly) return [];
-		const specifier = statement.moduleSpecifier;
-		const clause = statement.exportClause;
-		if (specifier === undefined || !ts.isStringLiteral(specifier)) return [];
-		if (!specifier.text.endsWith('.svelte') || clause === undefined) return [];
-		if (!ts.isNamedExports(clause)) return [];
-		const file = path.posix.join(path.posix.dirname(entryPath), specifier.text);
-		return clause.elements.flatMap((element) =>
-			element.propertyName?.text === 'default' && !element.isTypeOnly
-				? [{ name: element.name.text, file }]
-				: []
-		);
-	});
-}
-
-type Fields = Readonly<Record<string, unknown>>;
-
-function isFields(value: unknown): value is Fields {
-	return Object(value) === value;
-}
-
-/** Every object in a parsed tree, each once. */
-function nodesOf(root: unknown): readonly Fields[] {
-	const seen = new Set<object>();
-	const found: Fields[] = [];
-	const visit = (value: unknown): void => {
-		if (Array.isArray(value)) {
-			for (const item of value) visit(item);
-			return;
-		}
-		if (!isFields(value) || seen.has(value)) return;
-		seen.add(value);
-		found.push(value);
-		for (const child of Object.values(value)) visit(child);
-	};
-	visit(root);
-	return found;
-}
-
-/** An identifier's name, or a string literal's text. */
-function nameOf(node: unknown): string | undefined {
-	if (!isFields(node)) return undefined;
-	if (node.type === 'Identifier') return typeof node.name === 'string' ? node.name : undefined;
-	if (node.type === 'Literal') return typeof node.value === 'string' ? node.value : undefined;
-	return undefined;
-}
-
-function moduleScript(text: string): unknown {
-	try {
-		const root: unknown = parse(text, { modern: true });
-		return isFields(root) && isFields(root.module) ? root.module.content : undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-/**
- * The component a stories file's `defineMeta({ component })` names, read back
- * to its name in `@zurfur/ui`; undefined when it names none, or one imported
- * from anywhere else.
- */
-export function storiedComponent(file: SourceFile): string | undefined {
-	const nodes = nodesOf(moduleScript(file.text));
-	const fromPackage = new Map<string, string>();
-	for (const node of nodes) {
-		if (node.type !== 'ImportDeclaration' || nameOf(node.source) !== '@zurfur/ui') continue;
-		const specifiers = Array.isArray(node.specifiers) ? node.specifiers : [];
-		for (const specifier of specifiers) {
-			if (!isFields(specifier) || specifier.type !== 'ImportSpecifier') continue;
-			const local = nameOf(specifier.local);
-			const imported = nameOf(specifier.imported);
-			if (local !== undefined && imported !== undefined) fromPackage.set(local, imported);
-		}
-	}
-	const metas = nodes.filter(
-		(node) => node.type === 'CallExpression' && nameOf(node.callee) === 'defineMeta'
-	);
-	const named = metas.flatMap((meta) => {
-		const argument: unknown = Array.isArray(meta.arguments) ? meta.arguments[0] : undefined;
-		const properties: readonly unknown[] =
-			isFields(argument) && Array.isArray(argument.properties) ? argument.properties : [];
-		return properties.flatMap((property) => {
-			const isComponent =
-				isFields(property) &&
-				property.type === 'Property' &&
-				property.computed !== true &&
-				nameOf(property.key) === 'component';
-			const value = isComponent ? nameOf(property.value) : undefined;
-			const imported = value === undefined ? undefined : fromPackage.get(value);
-			return imported === undefined ? [] : [imported];
-		});
-	});
-	return named.length === 1 ? named[0] : undefined;
 }
 
 /**

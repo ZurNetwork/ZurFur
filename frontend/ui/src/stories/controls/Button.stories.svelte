@@ -12,7 +12,7 @@
 	const { Story } = defineMeta({
 		title: 'Controls/Button',
 		component: Button,
-		tags: ['autodocs'],
+		tags: ['autodocs', 'simple'],
 		args: { onPress: fn() },
 		argTypes: {
 			variant: { control: 'select', options: ['primary', 'secondary', 'quiet', 'destructive'] },

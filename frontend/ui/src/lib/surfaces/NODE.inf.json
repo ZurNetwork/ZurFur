@@ -1,0 +1,28 @@
+{
+  "path": "frontend/ui/src/lib/surfaces",
+  "charted": "2026-10-27",
+  "short": "The surfaces and feedback pieces, their shapes and mints",
+  "is": "Where the surfaces (cards, dialogs, labels) and the feedback pieces (toasts, messages, loading) live with the plain shapes they take and their mints. Today it holds only `types.ts`, with `FeedbackAction`: a press a piece reports, or a link it follows, drawn through Button.",
+  "type": "code",
+  "tags": [
+    "category:ui",
+    "category:source"
+  ],
+  "conventions": [
+    "Each piece is simple or composite, as `src/checks/composition-table.ts` says. A simple piece draws its own element and its own family class and holds only glyphs and the internal pieces; a composite lays out library components with its own family class and plain text, and draws no button, link, field or picture of its own: an action is a `FeedbackAction` handed to Button.",
+    "One `.svelte` file per piece, its `X.svelte.spec.ts` beside it, and its stories under `src/stories/` tagged with its kind. Shapes and mints are plain TypeScript next to the pieces, readonly, with a `kind` discriminant and `?: never` on the keys another form owns.",
+    "A piece's looks are its family stylesheet in `../styles/surfaces`, whose selectors name only its own families; it writes no colour, time or size of its own, and moves only through the seam, like the controls.",
+    "Everything the library's conventions say holds here: dumb, controlled, every word a prop, no type from bits-ui or the date library passed out."
+  ],
+  "entry_points": [
+    "types.ts"
+  ],
+  "fs": [
+    {
+      "name": "types.ts",
+      "role": "`FeedbackAction`: a press with a label and an optional icon, or a link that adds a `LinkHref`",
+      "node": false
+    }
+  ],
+  "notes": []
+}

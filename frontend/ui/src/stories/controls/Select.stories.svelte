@@ -10,7 +10,7 @@
 		title: 'Controls/Select',
 		component: Select,
 		render: template,
-		tags: ['autodocs'],
+		tags: ['autodocs', 'simple'],
 		args: {
 			label: SELECT_WORDS.label,
 			options: STAGES,

@@ -9,7 +9,7 @@
 	const { Story } = defineMeta({
 		title: 'Controls/Pill Switch',
 		component: PillSwitch,
-		tags: ['autodocs'],
+		tags: ['autodocs', 'simple'],
 		args: { label: 'Filter', options: filterOptions, value: 'all', onChange: fn() },
 		argTypes: {
 			disabled: { control: 'boolean' },

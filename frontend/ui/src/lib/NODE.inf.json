@@ -1,15 +1,17 @@
 {
   "path": "frontend/ui/src/lib",
-  "charted": "2026-10-26",
-  "short": "The public entry, the controls, the seam, the icons and the styles",
-  "is": "What `@zurfur/ui` ships: `index.ts`, the whole public surface of the code, and the folders behind it: `controls/`, `icons/`, `environment/` (the seam), `motion/` (the paper moves) and `styles/`.",
+  "charted": "2026-10-27",
+  "short": "The public entry, the controls, the seam, the icons, the styles and the surfaces",
+  "is": "What `@zurfur/ui` ships: `index.ts`, the whole public surface of the code, and the folders behind it: `controls/`, `icons/`, `environment/` (the seam), `motion/` (the paper moves), `styles/` and `surfaces/`.",
   "type": "code",
   "tags": [
     "category:ui",
     "category:source"
   ],
   "conventions": [
-    "`index.ts` is the only way in. It exports the paper lists, the environment names and `parseSkin`, the token model, Icon with its names, the ten controls, the link, day and locale mints, the item shapes, and the seam's types, its still forms and `provideEnvironment`. It never exports `useEnvironment` (components reach it by relative path) and never a type from bits-ui or the date library; `checks/public-entry.svelte.spec.ts` holds the exact list, so an export is added there too.",
+    "`index.ts` is the only way in. It exports the paper lists, the environment names and `parseSkin`, the token model, Icon with its names, the ten controls, the link, day and locale mints, the item shapes and the feedback action's shape, and the seam's types, its still forms and `provideEnvironment`. It never exports `useEnvironment` (components reach it by relative path) and never a type from bits-ui or the date library; `checks/public-entry.svelte.spec.ts` holds the exact list, so an export is added there too.",
+    "Every component here is simple or composite, as `src/checks/composition-table.ts` says, and `src/checks/composition.spec.ts` holds every file under `src/` to it, so a new export fails until it has a kind. A simple component does one job: it draws one piece itself, its own element and its own family class, and holds only glyphs (Icon, and later Spinner) and the internal pieces (FieldFrame, Tooltip). A composite only lays out library components, simple or composite, with its own family class and plain text: it renders no button, link, field, picture or frame of its own. The owned elements (`button`, `a`, `input`, `select`, `textarea`, `img`, `video`, `audio`, `iframe`, SVG `image`), each `zf-` family and each bits-ui name stay with the files the table lists; bits-ui's link and image parts stay with none, and no file here renders `link`, `base`, `<svelte:head>` or a nested `<style>`. The named exceptions only shrink.",
+    "`src/checks/composition-table.ts` and `eslint.config.js`'s file lists are security-trigger files: a change that adds a row (a kind, a family, an exception, an owner of an owned element, a bits-ui name, or a file in an eslint list) gets a security review.",
     "Everything here is dumb: no fetch and no remote strings, no stores, no module-level `let`, `new Map` or `Set`, `$state` or `$derived` in a `.ts` or `.js` file, no `<script module>`, no `$app/*` and no clock reads. Seam constants are frozen. A `.svelte.ts` or `.svelte.js` file lives only in `motion/`.",
     "Svelte's context lives only in `environment/`; the shipped tier may not call `provideEnvironment`. Motion libraries are imported only in `motion/`, and heavy libraries only by dynamic import in `lazy/`, which does not exist yet.",
     "bits-ui and `@internationalized/date` are imported only by `.svelte` files here, never by a `.ts` file, the gallery, a route or a check harness, and no control passes one of their types out.",
@@ -47,6 +49,11 @@
     {
       "name": "styles/",
       "role": "design tokens, the two skins, the paper look, and the controls' family stylesheets",
+      "node": true
+    },
+    {
+      "name": "surfaces/",
+      "role": "the surfaces and feedback pieces, their shapes and mints; today `types.ts` with `FeedbackAction`",
       "node": true
     }
   ],

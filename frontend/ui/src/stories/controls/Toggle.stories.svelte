@@ -9,7 +9,7 @@
 	const { Story } = defineMeta({
 		title: 'Controls/Toggle',
 		component: Toggle,
-		tags: ['autodocs'],
+		tags: ['autodocs', 'simple'],
 		args: { label: showQueue.label, checked: false, onCheckedChange: fn() },
 		argTypes: {
 			checked: { control: 'boolean' },
