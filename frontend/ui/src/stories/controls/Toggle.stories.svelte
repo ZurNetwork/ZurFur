@@ -3,18 +3,8 @@
 	import { expect, fn } from 'storybook/test';
 	import { Toggle } from '@zurfur/ui';
 	import { showQueue } from '../fixtures/actions.ts';
+	import type { ToggleArgs } from './args.ts';
 	import ToggleHolder from './ToggleHolder.svelte';
-
-	/** What the template reads from the story's args: the switch's own props. */
-	interface SwitchArgs {
-		readonly label: string;
-		readonly description?: string | undefined;
-		readonly checked: boolean;
-		readonly onCheckedChange: (checked: boolean) => void;
-		readonly disabled?: boolean | undefined;
-		readonly name?: string | undefined;
-		readonly testid?: string | undefined;
-	}
 
 	const { Story } = defineMeta({
 		title: 'Controls/Toggle',
@@ -44,7 +34,7 @@ Keyboard:
 	});
 </script>
 
-{#snippet holder(args: SwitchArgs)}
+{#snippet holder(args: ToggleArgs)}
 	<ToggleHolder
 		label={args.label}
 		description={args.description}

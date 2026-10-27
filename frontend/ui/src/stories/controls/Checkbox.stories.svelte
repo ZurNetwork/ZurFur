@@ -3,19 +3,8 @@
 	import { expect, fn } from 'storybook/test';
 	import { Checkbox } from '@zurfur/ui';
 	import { selectAllSketches, shareSketches } from '../fixtures/actions.ts';
+	import type { CheckboxArgs } from './args.ts';
 	import CheckboxHolder from './CheckboxHolder.svelte';
-
-	/** What the template reads from the story's args: the box's own props. */
-	interface BoxArgs {
-		readonly label: string;
-		readonly description?: string | undefined;
-		readonly checked: boolean | 'mixed';
-		readonly onCheckedChange: (checked: boolean) => void;
-		readonly disabled?: boolean | undefined;
-		readonly name?: string | undefined;
-		readonly value?: string | undefined;
-		readonly testid?: string | undefined;
-	}
 
 	const { Story } = defineMeta({
 		title: 'Controls/Checkbox',
@@ -49,7 +38,7 @@ Keyboard:
 	});
 </script>
 
-{#snippet holder(args: BoxArgs)}
+{#snippet holder(args: CheckboxArgs)}
 	<CheckboxHolder
 		label={args.label}
 		description={args.description}

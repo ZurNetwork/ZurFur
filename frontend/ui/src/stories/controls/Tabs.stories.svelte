@@ -20,8 +20,13 @@
 		parameters: {
 			docs: {
 				description: {
-					component:
-						'A simple component: one row of tabs that switches the views of a profile or an open item. Each tab can carry a small icon and a muted count. Only the tab showing has its panel on the page. It keeps no copy of the choice, so what shows is always what its parent hands it.\n\n**Keyboard**\n\n- Tab → reaches the tab showing\n- ← and → → move to the previous or next tab and show it\n- Home and End → move to the first or last tab and show it'
+					component: `A simple component: one row of tabs that switches the views of a profile or an open item. Each tab can carry a small icon and a muted count. Only the tab showing has its panel on the page. It keeps no copy of the choice, so what shows is always what its parent hands it.
+
+Keyboard:
+
+- Tab: reaches the tab showing
+- ← and →: move to the previous or next tab and show it
+- Home and End: move to the first or last tab and show it`
 				}
 			}
 		}

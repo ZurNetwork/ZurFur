@@ -19,8 +19,13 @@
 		parameters: {
 			docs: {
 				description: {
-					component:
-						'A simple component: one labelled field for a line of text, or a few lines. It keeps no copy of the text, so what shows is always what its parent hands it. A hint helps, an error says what went wrong and how to go on.\n\n**Keyboard**\n\n- Tab → reaches the field\n- Type → edits the text\n- Esc → leaves the text as it is\n- Tab again → moves on'
+					component: `A simple component: one labelled field for a line of text, or a few lines. It keeps no copy of the text, so what shows is always what its parent hands it. A hint helps, an error says what went wrong and how to go on.
+
+Keyboard:
+
+- Tab: reaches the field
+- Type: edits the text
+- Tab again: moves on`
 				}
 			}
 		}

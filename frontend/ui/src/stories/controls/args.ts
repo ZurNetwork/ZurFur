@@ -1,7 +1,19 @@
 /** The args each control's stories hand the story template: the control's own props. */
 import type { ComponentProps } from 'svelte';
-import type { DateField, Menu, Select, Tabs, TextInput } from '@zurfur/ui';
+import type {
+	Checkbox,
+	DateField,
+	Menu,
+	PillSwitch,
+	Select,
+	Tabs,
+	TextInput,
+	Toggle
+} from '@zurfur/ui';
 
+export type CheckboxArgs = ComponentProps<typeof Checkbox>;
+export type ToggleArgs = ComponentProps<typeof Toggle>;
+export type PillSwitchArgs = ComponentProps<typeof PillSwitch>;
 export type TextInputArgs = ComponentProps<typeof TextInput>;
 export type SelectArgs = ComponentProps<typeof Select>;
 export type TabsArgs = ComponentProps<typeof Tabs>;

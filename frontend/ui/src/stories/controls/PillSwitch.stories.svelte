@@ -1,20 +1,10 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, fn } from 'storybook/test';
-	import { PillSwitch, type PillOption } from '@zurfur/ui';
+	import { PillSwitch } from '@zurfur/ui';
 	import { batchOptions, filterOptions, stageOptions, viewOptions } from '../fixtures/actions.ts';
+	import type { PillSwitchArgs } from './args.ts';
 	import PillSwitchHolder from './PillSwitchHolder.svelte';
-
-	/** What the template reads from the story's args: the switch's own props. */
-	interface PillArgs {
-		readonly label: string;
-		readonly options: readonly PillOption<string>[];
-		readonly value: string;
-		readonly onChange: (id: string) => void;
-		readonly disabled?: boolean | undefined;
-		readonly name?: string | undefined;
-		readonly testid?: string | undefined;
-	}
 
 	const { Story } = defineMeta({
 		title: 'Controls/Pill Switch',
@@ -46,7 +36,7 @@ Keyboard:
 	});
 </script>
 
-{#snippet holder(args: PillArgs)}
+{#snippet holder(args: PillSwitchArgs)}
 	<PillSwitchHolder
 		label={args.label}
 		options={args.options}

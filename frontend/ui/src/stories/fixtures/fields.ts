@@ -25,8 +25,7 @@ export const TEXT_WORDS = {
 	did: 'Artist DID',
 	search: 'Search commissions',
 	notes: 'Notes for the artist',
-	notesExample: 'Soft light from the left.\nWarm colours, no hard outlines.',
-	reference: 'Add a reference'
+	notesExample: 'Soft light from the left.\nWarm colours, no hard outlines.'
 } as const;
 
 /** A commission's stages, as the select's values. */

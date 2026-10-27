@@ -31,8 +31,16 @@
 		parameters: {
 			docs: {
 				description: {
-					component:
-						'A simple component: a button that opens a short list of actions. The button shows words, or an icon alone that a screen reader names. A row can carry an icon, be switched off, or be marked as one that can’t be undone. The menu is open only when its parent says so.\n\n**Keyboard**\n\n- Tab → reaches the button\n- Enter, Space or ↓ → opens the menu on its first row\n- ↑ and ↓ → move between rows, skipping rows that are off\n- Type a letter → jumps to the row that starts with it\n- Enter → chooses the row and closes the menu\n- Esc → closes the menu and returns to the button'
+					component: `A simple component: a button that opens a short list of actions. The button shows words, or an icon alone that a screen reader names. A row can carry an icon, be switched off, or be marked as one that can’t be undone. The menu is open only when its parent says so.
+
+Keyboard:
+
+- Tab: reaches the button
+- Enter, Space or ↓: opens the menu on its first row
+- ↑ and ↓: move between rows, skipping rows that are off
+- Type a letter: jumps to the row that starts with it
+- Enter: chooses the row and closes the menu
+- Esc: closes the menu and returns to the button`
 				}
 			}
 		}

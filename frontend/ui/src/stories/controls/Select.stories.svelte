@@ -20,8 +20,15 @@
 		parameters: {
 			docs: {
 				description: {
-					component:
-						'A simple component: a labelled list of choices that opens on the platform’s own picker. Use it for short, known lists. It keeps no copy of the choice, so what shows is always what its parent hands it.\n\n**Keyboard**\n\n- Tab → reaches the select\n- ↑ and ↓ → pick the previous or next option\n- Enter or Space → opens the list\n- Esc → closes the list\n- Tab again → moves on'
+					component: `A simple component: a labelled list of choices that opens on the platform’s own picker. Use it for short, known lists. It keeps no copy of the choice, so what shows is always what its parent hands it.
+
+Keyboard:
+
+- Tab: reaches the select
+- ↑ and ↓: pick the previous or next option
+- Enter or Space: opens the list
+- Esc: closes the list
+- Tab again: moves on`
 				}
 			}
 		}

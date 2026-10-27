@@ -30,8 +30,15 @@
 		parameters: {
 			docs: {
 				description: {
-					component:
-						'A simple component: one field for a day, in three parts. The language sets the order of the parts. An empty part shows its own word, and a screen reader hears that it is empty. It keeps no copy of the day, so once an edit is over the field shows what its parent holds.\n\n**Keyboard**\n\n- Tab → reaches the first part\n- ← and → → move between the parts\n- ↑ and ↓ → change the part\n- Digits → type the part\n- Backspace → clears the part one digit at a time, and once it is empty the field holds no day'
+					component: `A simple component: one field for a day, in three parts. The language sets the order of the parts. An empty part shows its own word, and a screen reader hears that it is empty. It keeps no copy of the day, so once an edit is over the field shows what its parent holds.
+
+Keyboard:
+
+- Tab: reaches the first part
+- ← and →: move between the parts
+- ↑ and ↓: change the part
+- Digits: type the part
+- Backspace: clears the part one digit at a time, and once it is empty the field holds no day`
 				}
 			}
 		}
