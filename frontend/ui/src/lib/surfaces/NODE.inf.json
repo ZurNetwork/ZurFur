@@ -20,7 +20,7 @@
   "fs": [
     {
       "name": "Avatar.svelte",
-      "role": "someone's picture in a circle, or the first letter, number or emoji of their name, in one of six tones and three sizes; with the name and handle beside it, or alone and read out as the name, hidden only when the name is empty; only a picture that passes the picture check loads",
+      "role": "someone's picture in a circle, or the first letter, number or emoji of their name, in one of six tones and three sizes; with the name and handle beside it, or alone and read out as the name, hidden only when the name holds nothing but invisible characters and white space; only a picture that passes the picture check loads",
       "node": false
     },
     {
