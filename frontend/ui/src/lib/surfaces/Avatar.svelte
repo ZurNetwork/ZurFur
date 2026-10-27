@@ -40,6 +40,9 @@
 	/** The bidi controls, which could break the isolate around the name. */
 	const BIDI_CONTROLS = /[\u202A-\u202E\u2066-\u2069]/gu;
 
+	/** Everything that draws nothing: bidi controls, default-ignorable code points and white space. */
+	const INVISIBLE = /[\p{Bidi_Control}\p{Default_Ignorable_Code_Point}\p{White_Space}]/gu;
+
 	/** The picture, checked again here; a value that fails the check shows the initial. */
 	const checkedPicture = $derived(
 		typeof picture === 'string' && isImageSrc(picture) ? picture : undefined
@@ -55,9 +58,9 @@
 	const isolatedName = $derived(`${FIRST_STRONG_ISOLATE}${heardName}${POP_DIRECTIONAL_ISOLATE}`);
 	/**
 	 * Whether the circle is read out as the name: only alone, and only when the name, without its
-	 * bidi controls and outer white space, isn't empty. Beside its text, or with no name, it is hidden.
+	 * invisible characters and white space, isn't empty. Beside its text, or with no name, it is hidden.
 	 */
-	const isReadAsName = $derived(!textShown && heardName.trim() !== '');
+	const isReadAsName = $derived(!textShown && shownName.replace(INVISIBLE, '') !== '');
 	const classes = $derived([
 		'zf-avatar',
 		`zf-avatar--${avatarSizeOf(size)}`,

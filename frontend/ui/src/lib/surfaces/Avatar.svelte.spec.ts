@@ -193,11 +193,37 @@ describe('Avatar', () => {
 		expect(circle.querySelector('bdi')).not.toBeNull();
 	});
 
-	it.each(['', ' ', '\u202E', `\u2066 ${PDI}`])(
-		'alone, draws a blank, hidden circle for the empty name %j',
-		(name) => {
+	it.each([
+		'',
+		' ',
+		'\u202E',
+		`\u2066 ${PDI}`,
+		'\u061C',
+		'\u200E',
+		'\u200F',
+		'\u200B',
+		` \u200B\u061C ${PDI}\u200E\u200F `
+	])('alone, draws a blank, hidden circle for the empty name %j', (name) => {
+		const shown = {
+			name,
+			size: 'md',
+			tone: 'neutral',
+			textShown: false,
+			testid: 'avatar'
+		} as const;
+		render(Avatar, shown);
+		const circle = circleOf('avatar');
+		expect(circle.getAttribute('aria-hidden')).toBe('true');
+		expect(circle.getAttribute('role')).toBeNull();
+		expect(circle.textContent.trim()).toBe('');
+		expect(page.getByRole('img').elements()).toEqual([]);
+	});
+
+	it.each(['\u200B', '\u200E', '\u061C'])(
+		'alone, still reads out a real name beside the invisible character %j',
+		(invisible) => {
 			const shown = {
-				name,
+				name: `${invisible}Mika${invisible}`,
 				size: 'md',
 				tone: 'neutral',
 				textShown: false,
@@ -205,10 +231,9 @@ describe('Avatar', () => {
 			} as const;
 			render(Avatar, shown);
 			const circle = circleOf('avatar');
-			expect(circle.getAttribute('aria-hidden')).toBe('true');
-			expect(circle.getAttribute('role')).toBeNull();
-			expect(circle.textContent.trim()).toBe('');
-			expect(page.getByRole('img').elements()).toEqual([]);
+			expect(circle.getAttribute('role')).toBe('img');
+			expect(circle.getAttribute('aria-hidden')).toBeNull();
+			expect(circle.getAttribute('aria-label')).toBe(`${FSI}${invisible}Mika${invisible}${PDI}`);
 		}
 	);
 
