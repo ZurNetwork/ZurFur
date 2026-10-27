@@ -115,7 +115,7 @@
     },
     {
       "name": "choices.ts",
-      "role": "the run-time choices, each taking any value and falling back to the safe one: the card element, the badge and status tones, the visibility level and its icon, an icon name and the number of skeleton lines",
+      "role": "the run-time choices, each taking any value and falling back to the safe one: the card element, the badge and status tones, the visibility level and its icon, an icon name, the number of skeleton lines (a whole number from 1 to 12), the avatar size and the avatar initial",
       "node": false
     },
     {

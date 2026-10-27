@@ -2,7 +2,7 @@
 	import { useEnvironment } from '../environment/context';
 	import { skeletonLinesOf } from './choices';
 
-	/** Text bars, the last one shorter; a count that is not a whole number from 1 to 10 draws one bar. */
+	/** Text bars, the last one shorter; a count that is not a whole number from 1 to 12 draws one bar. */
 	interface Lines {
 		readonly shape: 'lines';
 		readonly lines: number;

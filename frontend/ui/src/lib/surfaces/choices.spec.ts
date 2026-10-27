@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
 	SKELETON_LINES_CAP,
+	avatarSizeOf,
 	badgeToneOf,
 	cardElementOf,
 	iconOf,
+	initialOf,
 	skeletonLinesOf,
 	statusToneOf,
 	visibilityIconOf,
@@ -95,7 +97,11 @@ describe('iconOf', () => {
 });
 
 describe('skeletonLinesOf', () => {
-	it.each([1, 2, 3, SKELETON_LINES_CAP])('keeps %d', (count) => {
+	it('draws whole lines up to twelve', () => {
+		expect(SKELETON_LINES_CAP).toBe(12);
+	});
+
+	it.each([1, 2, 3, 12])('keeps %d', (count) => {
 		expect(skeletonLinesOf(count)).toBe(count);
 	});
 
@@ -103,7 +109,7 @@ describe('skeletonLinesOf', () => {
 		0,
 		-1,
 		1.5,
-		SKELETON_LINES_CAP + 1,
+		13,
 		1000,
 		Number.NaN,
 		Number.POSITIVE_INFINITY,
@@ -115,5 +121,49 @@ describe('skeletonLinesOf', () => {
 		[]
 	])('draws one bar for %o', (stranger) => {
 		expect(skeletonLinesOf(stranger)).toBe(1);
+	});
+});
+
+describe('avatarSizeOf', () => {
+	it.each(['sm', 'md', 'lg'] as const)('keeps %s', (size) => {
+		expect(avatarSizeOf(size)).toBe(size);
+	});
+
+	it.each(['xl', 'SM', '', undefined, 3, 'toString'])('turns %o into md', (stranger) => {
+		expect(avatarSizeOf(stranger)).toBe('md');
+	});
+});
+
+describe('initialOf', () => {
+	it('takes the first letter', () => {
+		expect(initialOf('Mika')).toBe('M');
+	});
+
+	it('takes a number', () => {
+		expect(initialOf('7th Moon')).toBe('7');
+	});
+
+	it('skips leading punctuation and spaces', () => {
+		expect(initialOf('  ...~ "Mika"')).toBe('M');
+	});
+
+	it('skips a lone combining mark, which is not a start', () => {
+		const combiningAcute = String.fromCodePoint(0x0301);
+		expect(initialOf(`${combiningAcute}Mika`)).toBe('M');
+	});
+
+	it('keeps a letter with its combining marks as one grapheme', () => {
+		const combiningAcute = String.fromCodePoint(0x0301);
+		expect(initialOf(`e${combiningAcute}lan`)).toBe(`e${combiningAcute}`);
+	});
+
+	it('keeps a whole emoji ZWJ sequence', () => {
+		const joiner = String.fromCodePoint(0x200d);
+		const family = ['\u{1F469}', '\u{1F469}', '\u{1F467}'].join(joiner);
+		expect(initialOf(`${family} Mika`)).toBe(family);
+	});
+
+	it.each(['', '...'])('names nothing for %j', (text) => {
+		expect(initialOf(text)).toBeUndefined();
 	});
 });

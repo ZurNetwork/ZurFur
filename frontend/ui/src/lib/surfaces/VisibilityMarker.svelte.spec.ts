@@ -74,6 +74,25 @@ describe('VisibilityMarker', () => {
 		}
 	);
 
+	it.each([false, true])(
+		'shows every word written as an image tag as text, with no image (compact %j)',
+		(compact) => {
+			const markup = '<img src=x onerror=alert(1)>';
+			const hostile: VisibilityWords = { private: markup, listed: markup, public: markup };
+			for (const level of ['private', 'listed', 'public'] as const) {
+				const { container, unmount } = render(VisibilityMarker, {
+					level,
+					words: hostile,
+					compact,
+					testid: 'marker'
+				});
+				expect(container.querySelector('img')).toBeNull();
+				expect(byTestId('marker').textContent.trim()).toBe(markup);
+				void unmount();
+			}
+		}
+	);
+
 	it('shows no word that was not handed to it', () => {
 		const unique: VisibilityWords = { private: 'P-word', listed: 'L-word', public: 'U-word' };
 		const { container } = render(VisibilityMarker, {

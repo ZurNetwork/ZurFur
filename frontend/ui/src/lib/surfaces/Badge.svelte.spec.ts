@@ -66,6 +66,14 @@ describe('Badge', () => {
 		expect(badge.textContent.trim()).toBe('<b>Open</b>');
 	});
 
+	it('shows a label written as an image tag as text, with no image', async () => {
+		const markup = '<img src=x onerror=alert(1)>';
+		const { container } = render(Badge, { label: markup, testid: 'badge' });
+		expect(container.querySelector('img')).toBeNull();
+		expect(byTestId('badge').textContent.trim()).toBe(markup);
+		await expect.element(page.getByText(markup)).toBeInTheDocument();
+	});
+
 	it('shows nothing but its label', () => {
 		render(Badge, { label: 'Open', icon: 'clock', testid: 'badge' });
 		expect(byTestId('badge').textContent.trim()).toBe('Open');

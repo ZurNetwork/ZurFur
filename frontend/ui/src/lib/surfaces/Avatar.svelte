@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { badgeToneOf } from './choices';
+	import { avatarSizeOf, badgeToneOf, initialOf } from './choices';
 	import { isImageSrc, type ImageSrc } from './image-src';
 	import type { AvatarSize, AvatarTone } from './types';
 
@@ -40,30 +40,6 @@
 	/** The bidi controls, which could break the isolate around the name. */
 	const BIDI_CONTROLS = /[\u202A-\u202E\u2066-\u2069]/gu;
 
-	/** A grapheme that starts with a letter, a number or a pictograph. */
-	const SHOWN_START = /^[\p{L}\p{N}\p{Extended_Pictographic}]/u;
-
-	/** The size class: one of the three, otherwise `md`. */
-	function sizeOf(value: unknown): AvatarSize {
-		switch (value) {
-			case 'sm':
-				return 'sm';
-			case 'lg':
-				return 'lg';
-			default:
-				return 'md';
-		}
-	}
-
-	/** The first whole grapheme that starts with a letter, a number or a pictograph, or nothing. */
-	function initialOf(text: string): string | undefined {
-		const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text);
-		for (const { segment } of graphemes) {
-			if (SHOWN_START.test(segment)) return segment;
-		}
-		return undefined;
-	}
-
 	/** The picture, checked again here; a value that fails the check shows the initial. */
 	const checkedPicture = $derived(
 		typeof picture === 'string' && isImageSrc(picture) ? picture : undefined
@@ -85,7 +61,7 @@
 	const isReadAsName = $derived(!textShown && initial !== undefined);
 	const classes = $derived([
 		'zf-avatar',
-		`zf-avatar--${sizeOf(size)}`,
+		`zf-avatar--${avatarSizeOf(size)}`,
 		`zf-avatar--${badgeToneOf(tone)}`
 	]);
 

@@ -143,6 +143,15 @@ describe('Pin', () => {
 		expect(pin.textContent.trim()).toBe('<b>3</b>');
 	});
 
+	it('shows a mark and a label written as an image tag as text, with no image', () => {
+		const markup = '<img src=x onerror=alert(1)>';
+		const { container } = render(Pin, pinProps({ mark: markup, label: markup }));
+		const pin = byTestId('pin');
+		expect(container.querySelector('img')).toBeNull();
+		expect(pin.textContent.trim()).toBe(markup);
+		expect(pin.getAttribute('aria-label')).toBe(markup);
+	});
+
 	it('shows no word of its own', () => {
 		const { container } = render(Pin, pinProps());
 		expect(container.textContent.trim()).toBe('3');

@@ -1,9 +1,9 @@
 /** The run-time choices the surface pieces make: each takes any value and falls back to the safe one. */
 import { isIconName, type IconName } from '../icons/icons';
-import type { BadgeTone, CardElement, StatusTone, VisibilityLevel } from './types';
+import type { AvatarSize, BadgeTone, CardElement, StatusTone, VisibilityLevel } from './types';
 
 /** The most bars a Skeleton draws as lines. */
-export const SKELETON_LINES_CAP = 10;
+export const SKELETON_LINES_CAP = 12;
 
 /** The element a Card becomes: one of the four it allows, otherwise a `div`. */
 export function cardElementOf(value: unknown): CardElement {
@@ -90,4 +90,28 @@ export function skeletonLinesOf(value: unknown): number {
 		value >= 1 &&
 		value <= SKELETON_LINES_CAP;
 	return isCounted ? value : 1;
+}
+
+/** A grapheme that starts with a letter, a number or a pictograph. */
+const SHOWN_START = /^[\p{L}\p{N}\p{Extended_Pictographic}]/u;
+
+/** The size class an Avatar wears: one of the three, otherwise `md`. */
+export function avatarSizeOf(value: unknown): AvatarSize {
+	switch (value) {
+		case 'sm':
+			return 'sm';
+		case 'lg':
+			return 'lg';
+		default:
+			return 'md';
+	}
+}
+
+/** The first whole grapheme that starts with a letter, a number or a pictograph, or nothing. */
+export function initialOf(text: string): string | undefined {
+	const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text);
+	for (const { segment } of graphemes) {
+		if (SHOWN_START.test(segment)) return segment;
+	}
+	return undefined;
 }

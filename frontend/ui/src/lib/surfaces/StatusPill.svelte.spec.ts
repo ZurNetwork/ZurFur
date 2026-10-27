@@ -87,6 +87,31 @@ describe('StatusPill', () => {
 		}
 	);
 
+	it('has no danger tone by type', () => {
+		// @ts-expect-error StatusTone has no danger: if this line stops failing, a danger tone crept in
+		const danger: StatusPart = { label: 'Late', tone: 'danger' };
+		expect(danger.tone).toBe('danger');
+	});
+
+	it('shows each part label and the fact text written as an image tag as text, with no image', () => {
+		const markup = '<img src=x onerror=alert(1)>';
+		const { container } = render(StatusPill, {
+			parts: [
+				{ label: markup, tone: 'progress' },
+				{ label: markup, tone: 'waiting' }
+			],
+			fact: { text: markup },
+			testid: 'pill'
+		});
+		expect(container.querySelector('img')).toBeNull();
+		const pill = byTestId('pill');
+		const [first, second] = segmentsIn(pill);
+		expect(first?.textContent.trim()).toBe(markup);
+		expect(second?.textContent.trim()).toBe(markup);
+		expect(pill.querySelector('.zf-status__fact')?.textContent.trim()).toBe(markup);
+		expect(page.getByText(markup).elements()).toHaveLength(3);
+	});
+
 	it('draws no icon on a part without one, or with one the registry lacks', () => {
 		render(StatusPill, {
 			parts: [

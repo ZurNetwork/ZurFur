@@ -45,6 +45,17 @@ describe('Spinner', () => {
 		expect(label?.textContent).toBe('Loading sketches');
 	});
 
+	it.each([false, true])(
+		'shows its words written as an image tag as text, with no image (shown %j)',
+		(labelShown) => {
+			const markup = '<img src=x onerror=alert(1)>';
+			const { container } = render(Spinner, { kind: 'status', label: markup, labelShown });
+			expect(container.querySelector('img')).toBeNull();
+			expect(container.querySelector('.zf-spinner-wrap__label')?.textContent).toBe(markup);
+			expect(page.getByRole('status').element().textContent.trim()).toBe(markup);
+		}
+	);
+
 	it('as a glyph is the ring alone: hidden, with no status role and no words', () => {
 		const { container } = render(Spinner, { kind: 'glyph', testid: 'ring' });
 		const ring = byTestId('ring');

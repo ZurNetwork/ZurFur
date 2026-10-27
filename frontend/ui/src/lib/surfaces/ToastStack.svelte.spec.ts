@@ -51,6 +51,14 @@ describe('ToastStack', () => {
 		expect(page.getByRole('region', { name: 'Notifications' }).elements()).toHaveLength(1);
 	});
 
+	it('names its region by a label written as an image tag, as text, with no image', () => {
+		const markup = '<img src=x onerror=alert(1)>';
+		const { container } = render(ToastStack, { label: markup });
+		expect(container.querySelector('img')).toBeNull();
+		expect(container.querySelector('section')?.getAttribute('aria-label')).toBe(markup);
+		expect(container.textContent.trim()).toBe('');
+	});
+
 	it('shows no word of its own', () => {
 		const { container } = render(ToastStack, { label: 'Notifications' });
 		expect(container.textContent.trim()).toBe('');

@@ -4,7 +4,6 @@ import { render } from 'vitest-browser-svelte';
 import type { ComponentProps } from 'svelte';
 import RecordingEnvironment from '../../checks/testing/RecordingEnvironment.svelte';
 import Skeleton from './Skeleton.svelte';
-import { SKELETON_LINES_CAP } from './choices.ts';
 import '../styles/index.ts';
 
 type SeamCall = Parameters<ComponentProps<typeof RecordingEnvironment>['onRecord']>[0];
@@ -47,25 +46,18 @@ describe('Skeleton', () => {
 		expect(only.getBoundingClientRect().width).toBeCloseTo(wrap.getBoundingClientRect().width, 0);
 	});
 
-	it.each([1, 2, SKELETON_LINES_CAP])('draws %d lines', (lines) => {
+	it.each([1, 2, 12])('draws %d lines', (lines) => {
 		const { container } = render(Skeleton, { shape: 'lines', lines });
 		expect(barsIn(container)).toHaveLength(lines);
 	});
 
-	it.each([
-		0,
-		-2,
-		1.5,
-		SKELETON_LINES_CAP + 1,
-		5000,
-		Number.NaN,
-		Number.POSITIVE_INFINITY,
-		'3',
-		undefined
-	])('draws one bar for the count %o', (stranger) => {
-		const { container } = render(Skeleton, { shape: 'lines', lines: stranger as number });
-		expect(barsIn(container)).toHaveLength(1);
-	});
+	it.each([0, -1, -2, 1.5, 13, 5000, Number.NaN, Number.POSITIVE_INFINITY, '3', 'many', undefined])(
+		'draws one bar for the count %o',
+		(stranger) => {
+			const { container } = render(Skeleton, { shape: 'lines', lines: stranger as number });
+			expect(barsIn(container)).toHaveLength(1);
+		}
+	);
 
 	it('draws a rectangle', () => {
 		render(Skeleton, { shape: 'rect', testid: 'shape' });
