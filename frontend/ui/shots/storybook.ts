@@ -1,9 +1,12 @@
 /**
  * What the screenshot walker reads from Storybook's build: the entries of
  * `index.json`, each id parsed before it names a picture, the address of an
- * entry in a skin, and the viewport its tags ask for.
+ * entry in a skin, and the viewport its tags ask for. Also the walk of one
+ * entry, which the walker and the self-tests share.
  */
 import { readdirSync, type Dirent } from 'node:fs';
+import { expect, type BrowserContext, type Page } from '@playwright/test';
+import { expectNoProblems, expectRendered, watchContext } from './watch.ts';
 
 /** The two skins every entry is shot in. */
 export type Skin = 'dark' | 'light';
@@ -23,7 +26,7 @@ export function isEntryId(raw: string): raw is EntryId {
 	return /^[a-z0-9-]+$/.test(raw);
 }
 
-/** The tag that leaves an entry out of the screenshots. */
+/** The tag that leaves an entry's pictures out; the entry is still opened and checked. */
 export const noShotTag = 'no-shot';
 
 /** The tag that shoots an entry at a phone's width. */
@@ -100,7 +103,7 @@ export function parseIndex(text: string): readonly IndexItem[] {
 	return Object.entries(index.entries).map(([key, value]) => parseItem(key, value));
 }
 
-/** True when the entry is shot: it is not tagged `no-shot`. */
+/** True when the entry's pictures are taken: it is not tagged `no-shot`. */
 export function isShot(entry: Entry): boolean {
 	return !entry.tags.includes(noShotTag);
 }
@@ -113,6 +116,26 @@ export function viewportOf(entry: Entry): Viewport {
 /** The preview address of an entry in a skin, with motion stopped. */
 export function entryAddress(entry: Entry, skin: Skin): string {
 	return `/iframe.html?id=${entry.id}&viewMode=${entry.viewMode}&globals=skin:${skin};motion:still`;
+}
+
+/**
+ * Opens an entry in a skin and fails the test on a request off 127.0.0.1, a
+ * page error or Storybook's error display, tagged `no-shot` or not; then, when
+ * it is shot, compares it with its reference picture.
+ */
+export async function walkEntry(
+	context: BrowserContext,
+	page: Page,
+	entry: Entry,
+	skin: Skin
+): Promise<void> {
+	const watch = await watchContext(context, page);
+	await page.goto(entryAddress(entry, skin));
+	await expectRendered(page, entry.viewMode, skin);
+	expectNoProblems(watch);
+	if (!isShot(entry)) return;
+	// Last, so an update run never keeps a picture from a failed test.
+	await expect(page).toHaveScreenshot([entry.id, `${skin}.png`]);
 }
 
 /** The picture file names, one per skin. */

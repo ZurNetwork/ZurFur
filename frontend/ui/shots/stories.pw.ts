@@ -2,28 +2,23 @@
  * The screenshot walker: every story and docs entry of the built Storybook,
  * in Paper dark and Paper light with motion stopped, checked for requests off
  * 127.0.0.1, page errors and Storybook's error display, then compared with its
- * reference picture. Also: the manager page under the same checks, and no
- * reference picture left behind by a renamed or removed entry.
+ * reference picture unless it is tagged `no-shot`. Also: the manager page
+ * under the same checks, and no reference picture left behind by a renamed or
+ * removed entry.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import {
-	entryAddress,
 	isShot,
 	parseIndex,
 	skins,
 	stalePictures,
 	viewportOf,
+	walkEntry,
 	type Entry
 } from './storybook.ts';
-import {
-	expectNoProblems,
-	expectRendered,
-	settle,
-	watchContext,
-	waitForStorybook
-} from './watch.ts';
+import { expectNoProblems, settle, watchContext, waitForStorybook } from './watch.ts';
 
 const shotsFolder = import.meta.dirname;
 const indexFile = path.join(shotsFolder, '..', 'storybook-static', 'index.json');
@@ -51,13 +46,7 @@ for (const entry of entries) {
 				test.use({ colorScheme: skin });
 
 				test(`${entry.viewMode} ${entry.id} in ${skin}`, async ({ context, page }) => {
-					test.skip(!isShot(entry), 'tagged no-shot');
-					const watch = await watchContext(context, page);
-					await page.goto(entryAddress(entry, skin));
-					await expectRendered(page, entry.viewMode, skin);
-					expectNoProblems(watch);
-					// Last, so an update run never keeps a picture from a failed test.
-					await expect(page).toHaveScreenshot([entry.id, `${skin}.png`]);
+					await walkEntry(context, page, entry, skin);
 				});
 			});
 		}
