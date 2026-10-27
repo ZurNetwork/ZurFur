@@ -131,7 +131,7 @@ describe('every word a control shows is a prop', () => {
 		expect(wordlessComponents()).toContain('icons/Icon.svelte');
 	});
 
-	it('finds no literal word in the real controls and icons', () => {
+	it('finds no literal word in the real controls, icons and surfaces', () => {
 		const findings = wordlessComponents().flatMap((relative) =>
 			literalWords(relative, readFileSync(path.join(libRoot, relative), 'utf8'))
 		);

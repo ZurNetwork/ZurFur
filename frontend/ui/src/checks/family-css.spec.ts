@@ -86,7 +86,7 @@ const TOKEN_NAMES = new Set(
 );
 
 /** The state classes the surfaces' components set. */
-const STATE_CLASSES: readonly string[] = ['is-active', 'is-revealed', 'is-hidden', 'is-resolved'];
+const STATE_CLASSES: readonly string[] = ['is-active', 'is-revealed', 'is-hidden'];
 
 interface Declaration {
 	readonly property: string;

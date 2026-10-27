@@ -45,6 +45,9 @@ export const badgeTones: readonly BadgeTone[] = [
 /** What the spinner says while it works. */
 export const spinnerWords = { loading: 'Loading sketches' } as const;
 
+/** What the toast stack is called. */
+export const toastStackWords = { label: 'Notifications' } as const;
+
 /** One word per visibility level. */
 export const visibilityWords: VisibilityWords = {
 	private: 'Only me',

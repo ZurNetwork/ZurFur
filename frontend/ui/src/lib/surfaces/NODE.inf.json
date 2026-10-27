@@ -2,7 +2,7 @@
   "path": "frontend/ui/src/lib/surfaces",
   "charted": "2026-10-27",
   "short": "The surfaces and feedback pieces, their shapes and mints",
-  "is": "Where the surfaces and the feedback pieces live with the plain shapes they take and their run-time choices. Today it holds Card, Badge, Spinner, Skeleton, VisibilityMarker and StatusPill, all simple, with `types.ts` (their shapes and `FeedbackAction`) and `choices.ts` (the allow-lists each piece falls back through).",
+  "is": "Where the surfaces and the feedback pieces live with the plain shapes they take and their run-time choices. Today it holds Card, Badge, Spinner, Skeleton, Avatar, VisibilityMarker, StatusPill, Pin and ToastStack, all simple, with `types.ts` (their shapes and `FeedbackAction`), `choices.ts` (the allow-lists each piece falls back through) and the two mints, `image-src.ts` and `pin-point.ts`.",
   "type": "code",
   "tags": [
     "category:ui",
@@ -70,7 +70,7 @@
     },
     {
       "name": "Spinner.svelte",
-      "role": "a ring that turns through the seam: a status with its words, or the glyph alone (what Button's busy state will hold)",
+      "role": "a ring that turns through the seam: a status with its words, or the glyph alone (what Button's busy state holds)",
       "node": false
     },
     {
@@ -86,6 +86,16 @@
     {
       "name": "StatusPill.svelte.spec.ts",
       "role": "spec for StatusPill",
+      "node": false
+    },
+    {
+      "name": "ToastStack.svelte",
+      "role": "the place toasts sit: a labelled region fixed at the bottom right, holding an always-there polite live region that holds the toasts",
+      "node": false
+    },
+    {
+      "name": "ToastStack.svelte.spec.ts",
+      "role": "spec for ToastStack",
       "node": false
     },
     {

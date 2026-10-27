@@ -7,7 +7,7 @@ describe('the public entry', () => {
 		expect(published).toBe(source);
 	});
 
-	it('exports exactly the paper lists, the environment names, the token model, the icons, the first controls, the first surfaces, the link, day and locale mints and the motion seam', () => {
+	it('exports exactly the paper lists, the environment names, the token model, the icons, the first controls, the first surfaces, the link, day, locale, picture and pin mints and the motion seam', () => {
 		expect(Object.keys(published).sort()).toEqual([
 			'Avatar',
 			'Badge',
@@ -34,6 +34,7 @@ describe('the public entry', () => {
 			'StatusPill',
 			'Tabs',
 			'TextInput',
+			'ToastStack',
 			'Toggle',
 			'VisibilityMarker',
 			'findToken',

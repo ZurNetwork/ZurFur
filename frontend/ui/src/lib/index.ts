@@ -63,6 +63,7 @@ export type {
 	SelectOption,
 	TabItem
 } from './controls/types.ts';
+export { default as ToastStack } from './surfaces/ToastStack.svelte';
 export { default as Card } from './surfaces/Card.svelte';
 export { default as Badge } from './surfaces/Badge.svelte';
 export { default as Spinner } from './surfaces/Spinner.svelte';

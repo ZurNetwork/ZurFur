@@ -31,11 +31,6 @@
 		0 0 0 var(--space-1) var(--color-pin-ring);
 }
 
-.zf-pin.is-resolved {
-	color: var(--color-pin-ring);
-	background: var(--color-pin-halo);
-}
-
 .zf-pin:focus-visible {
 	outline: 2px solid var(--color-focus);
 	outline-offset: var(--space-1);

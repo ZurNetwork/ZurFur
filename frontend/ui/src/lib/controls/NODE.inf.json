@@ -1,6 +1,6 @@
 {
   "path": "frontend/ui/src/lib/controls",
-  "charted": "2026-10-26",
+  "charted": "2026-10-27",
   "short": "The ten controls, their item shapes and the day, locale and link mints",
   "is": "The shipped controls (Button, IconButton, TextInput, Select, Checkbox, Toggle, Tabs, PillSwitch, Menu and DateField), one Svelte file each with its spec beside it; the plain TypeScript item shapes they take (`types.ts`) and the mints for a link, a calendar day and a language tag; two internal helpers (FieldFrame, Tooltip); and `floating.ts`, which picks where a floating part is put.",
   "type": "code",
@@ -12,7 +12,7 @@
     "One `.svelte` file per control, its `X.svelte.spec.ts` beside it. FieldFrame (lays out the label, hint and error) and Tooltip are internal: neither is exported. Item shapes and mints are plain TypeScript next to the components.",
     "Props are readonly and typed: no `$bindable`, no rest props, no `$props()` that is not destructured. TextInput takes only its listed native attributes and no `id`. Callbacks carry plain values (`onPress()`, `onChange(id)`, `onCheckedChange(boolean)`, `onOpenChange(boolean)`, `onSelect(id)`), never a DOM or bits-ui event.",
     "A control is controlled and keeps no copy of the value. A bits-ui root takes function bindings; TextInput binds `value` with a getter and a setter; Checkbox and Select call back, wait a tick and write the prop back; DateField takes its value through a derived date and keeps only its segments as interaction state. A parent that refuses a change leaves the control showing its prop, and every stateful control has a spec for that.",
-    "Typed ids are generic. A string coming back from the page is looked up in the options, never cast; an unknown or empty one is ignored. A hidden input renders only when `name` is given. Every control takes a `testid` for its interactive element. A busy Button sets `aria-busy` and `aria-disabled`, keeps focus and ignores presses.",
+    "Typed ids are generic. A string coming back from the page is looked up in the options, never cast; an unknown or empty one is ignored. A hidden input renders only when `name` is given. Every control takes a `testid` for its interactive element. A busy Button sets `aria-busy` and `aria-disabled`, keeps focus, shows Spinner's glyph beside its words and ignores presses.",
     "Every word a control shows is a prop, the words bits-ui supplies for the date field's segments included; the one exception is the date announcer's \"Empty\". A label is text, never markup. `words.spec` reads the real components for a literal word.",
     "Motion only through the seam. A control calls `useEnvironment()` once at init, puts `squish` on every pressable element and `note` on the floating element that takes bits-ui's content props, and plays cues (`toggle` for Checkbox, Toggle, Tabs and PillSwitch; `open` and `close` for the menu; none for buttons). It imports nothing from `lib/motion` and uses no `transition:`, `in:`, `out:` or `animate:`. With no provider it is still.",
     "A floating part (the menu, the tooltip) keeps bits-ui's two levels: the wrapper that carries the position stays unstyled and the inner element takes the note. It portals into the nearest `data-skin` element, else the body, so it wears the skin it opened from, and it opens only through an entry interaction, never at load.",
@@ -27,7 +27,7 @@
   "fs": [
     {
       "name": "Button.svelte",
-      "role": "a button, or a link when given a `LinkHref`; variant, size, icons, busy",
+      "role": "a button, or a link when given a `LinkHref`; variant, size, icons, busy (which shows Spinner's ring beside the words)",
       "node": false
     },
     {

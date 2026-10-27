@@ -42,7 +42,7 @@
     },
     {
       "name": "surfaces/",
-      "role": "the surfaces and feedback pieces' stories, under \"Surfaces and Feedback\": <Name>.stories.svelte for each exported surface (Card, Badge, Spinner, Skeleton, VisibilityMarker, StatusPill), each tagged with its kind, with a Moves and Sounds story for the moving ones",
+      "role": "the surfaces and feedback pieces' stories, under \"Surfaces and Feedback\": <Name>.stories.svelte for each exported surface (Card, Badge, Spinner, Skeleton, Avatar, VisibilityMarker, StatusPill, Pin, ToastStack), each tagged with its kind, with a Moves and Sounds story for the moving ones; ToastStack's also carries `layer` and `phone-320`",
       "node": false
     },
     {
