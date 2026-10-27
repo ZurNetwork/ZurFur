@@ -21,6 +21,19 @@ function rowAt(position: number): RowMeasure {
 	return { position, furthest: 266, fits };
 }
 
+/** A row 300 wide holding items of `widths` side by side with no gap, scrolled to `position`. */
+function contiguousAt(widths: readonly number[], position: number): RowMeasure {
+	const starts = widths.map((_width, index) =>
+		widths.slice(0, index).reduce((sum, width) => sum + width, 0)
+	);
+	const total = widths.reduce((sum, width) => sum + width, 0);
+	const contiguous = widths.map((width, index): ItemFit => ({
+		atStart: starts[index] ?? 0,
+		atEnd: (starts[index] ?? 0) + width - 300
+	}));
+	return { position, furthest: total - 300, fits: contiguous };
+}
+
 describe('rowEdges', () => {
 	it.each([
 		['at the start', 0, { atStart: true, atEnd: false }],
@@ -110,5 +123,15 @@ describe('revealPosition', () => {
 	it('does nothing for an item that is not there', () => {
 		expect(revealPosition(5, rowAt(0))).toBeUndefined();
 		expect(revealPosition(-1, rowAt(0))).toBeUndefined();
+	});
+
+	it.each([
+		['stays on a wide first item at its start', [400, 100, 100], 0, 0, undefined],
+		['brings a wide first item back to its start', [400, 100, 100], 0, 50, 0],
+		['stays on a wide item at its start', [100, 400, 100, 100], 1, 100, undefined],
+		['brings a wide item cut off at the end to its start', [100, 400, 100, 100], 1, 0, 100],
+		['brings a wide item cut off at the start to its start', [100, 400, 100, 100], 1, 400, 100]
+	])('%s, never past it', (_label, widths, index, position, expected) => {
+		expect(revealPosition(index, contiguousAt(widths, position))).toBe(expected);
 	});
 });

@@ -288,6 +288,35 @@ describe('ScrollingTabs', () => {
 		await restsAt(list, 0);
 	});
 
+	it.each([700, 320])(
+		'keeps each tab a key moves to whole inside the list in a box %ipx wide',
+		async (width) => {
+			const box = boxOf(width);
+			renderTabs(box);
+			const list = tabList();
+			const items = tabsOf(list);
+			const first = items[0] ?? list;
+			first.focus();
+			await vi.waitFor(() => {
+				expect(document.activeElement).toBe(first);
+			});
+			for (const next of items.slice(1)) {
+				await userEvent.keyboard('{ArrowRight}');
+				expect(document.activeElement).toBe(next);
+				expect(isWhollyIn(list, next)).toBe(true);
+			}
+			await userEvent.keyboard('{Home}');
+			expect(document.activeElement).toBe(first);
+			expect(isWhollyIn(list, first)).toBe(true);
+			await userEvent.keyboard('{End}');
+			const last = items[items.length - 1] ?? list;
+			expect(document.activeElement).toBe(last);
+			expect(isWhollyIn(list, last)).toBe(true);
+			await pause(150);
+			expect(isWhollyIn(list, last)).toBe(true);
+		}
+	);
+
 	it('shows one tab panel, as Tabs does', async () => {
 		const box = boxOf(260);
 		renderTabs(box);

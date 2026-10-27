@@ -55,6 +55,31 @@ async function scrolledTo(row: HTMLElement, position: number): Promise<void> {
 	});
 }
 
+/** Whether `item` lies whole inside `row`, to a pixel. */
+function isWhollyIn(row: HTMLElement, item: HTMLElement): boolean {
+	const around = row.getBoundingClientRect();
+	const inside = item.getBoundingClientRect();
+	return inside.left >= around.left - 1 && inside.right <= around.right + 1;
+}
+
+/** Waits `ms` milliseconds. */
+function pause(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Resolves at the next scroll the row makes, once its other listeners have heard it. */
+function nextScroll(row: HTMLElement): Promise<void> {
+	return new Promise((resolve) => {
+		row.addEventListener(
+			'scroll',
+			() => {
+				resolve();
+			},
+			{ once: true }
+		);
+	});
+}
+
 afterEach(() => {
 	for (const holder of holders.splice(0)) holder.remove();
 	vi.restoreAllMocks();
@@ -208,6 +233,103 @@ describe('watchRow', () => {
 		stop();
 	});
 
+	it('lets the browser’s own focus scroll stand once it shows the item whole', async () => {
+		const { holder, row, items } = buildRow();
+		const stop = watchRow(row, () => undefined);
+		// Chromium centres a hidden item before `focusin` and leaves a partly shown one; the reveal
+		// finishes at once, and an item the browser left whole is not moved again.
+		for (const index of [3, 4, 0, 2]) {
+			const focused = items[index] ?? row;
+			focused.focus();
+			expect(isWhollyIn(row, focused)).toBe(true);
+			const left = row.scrollLeft;
+			await pause(100);
+			expect(row.scrollLeft).toBe(left);
+			expect(isWhollyIn(row, focused)).toBe(true);
+		}
+		expect(holder.scrollTop).toBe(0);
+		stop();
+	});
+
+	it('ends a focus on a snapping row with the item whole at an item’s start', async () => {
+		const { row, items } = buildRow();
+		row.style.scrollSnapType = 'x mandatory';
+		for (const each of items) each.style.scrollSnapAlign = 'start';
+		const stop = watchRow(row, () => undefined);
+		for (const index of [3, 4, 0, 2]) {
+			const focused = items[index] ?? row;
+			focused.focus();
+			await pause(100);
+			expect(isWhollyIn(row, focused)).toBe(true);
+			expect([0, 104, 208, 266]).toContain(row.scrollLeft);
+		}
+		stop();
+	});
+
+	it('puts the reveal back when a browser scrolls after the focus event', async () => {
+		const { row, items } = buildRow();
+		const stop = watchRow(row, () => undefined);
+		// Heard after the row's own listener, as a browser that scrolls after `focusin` would scroll.
+		const lateScroll = (): void => {
+			row.scrollLeft = 50;
+		};
+		document.addEventListener('focusin', lateScroll);
+		try {
+			items[3]?.focus({ preventScroll: true });
+			expect(row.scrollLeft).toBe(50);
+			await scrolledTo(row, 208);
+		} finally {
+			document.removeEventListener('focusin', lateScroll);
+		}
+		stop();
+	});
+
+	it('brings an item wider than the row to its own start, and leaves it there', async () => {
+		const { row, items } = buildRow();
+		items[1]?.style.setProperty('width', '300px');
+		const stop = watchRow(row, () => undefined);
+		items[1]?.focus();
+		expect(row.scrollLeft).toBe(104);
+		await pause(100);
+		expect(row.scrollLeft).toBe(104);
+		items[1]?.blur();
+		items[1]?.focus({ preventScroll: true });
+		expect(row.scrollLeft).toBe(104);
+		await pause(100);
+		expect(row.scrollLeft).toBe(104);
+		stop();
+	});
+
+	it('leaves a scroll the person makes once a focus has settled', async () => {
+		const { row, items } = buildRow();
+		const stop = watchRow(row, () => undefined);
+		const settled = nextScroll(row);
+		items[3]?.focus();
+		await settled;
+		expect(isWhollyIn(row, items[3] ?? row)).toBe(true);
+		row.dispatchEvent(new Event('wheel', { bubbles: true }));
+		row.scrollLeft = 0;
+		await pause(150);
+		expect(row.scrollLeft).toBe(0);
+		stop();
+	});
+
+	it.each(['wheel', 'pointerdown', 'touchstart'])(
+		'leaves a scroll the person starts with %s after a focus that needed no reveal',
+		async (input) => {
+			const { row, items } = buildRow();
+			const stop = watchRow(row, () => undefined);
+			items[1]?.focus();
+			await pause(100);
+			expect(row.scrollLeft).toBe(0);
+			row.dispatchEvent(new Event(input, { bubbles: true }));
+			row.scrollLeft = 150;
+			await pause(150);
+			expect(row.scrollLeft).toBe(150);
+			stop();
+		}
+	);
+
 	it('leaves the row alone once stopped: no scroll, resize, change or focus is heard', async () => {
 		const { row, items } = buildRow();
 		const { told, onEdges } = recorder();
@@ -217,7 +339,14 @@ describe('watchRow', () => {
 		const stop = watchRow(row, onEdges);
 		disconnect.mockClear();
 		stop();
-		expect(remove.mock.calls.map(([type]) => type).sort()).toEqual(['focusin', 'scroll']);
+		expect(remove.mock.calls.map(([type]) => type).sort()).toEqual([
+			'focusin',
+			'focusout',
+			'pointerdown',
+			'scroll',
+			'touchstart',
+			'wheel'
+		]);
 		expect(disconnect).toHaveBeenCalled();
 		expect(disconnectChanges).toHaveBeenCalled();
 		const heard = told.length;

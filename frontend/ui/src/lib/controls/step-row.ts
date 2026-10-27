@@ -52,7 +52,8 @@ export function stepPosition(side: StepSide, { position, furthest, fits }: RowMe
 
 /**
  * Where to scroll so the item at `index` lies whole inside the row, landing on
- * an item's start; undefined when it already does, or there is no such item.
+ * an item's start; an item wider than the row lands on its own start, never past
+ * it. Undefined when no scroll is needed, or there is no such item.
  */
 export function revealPosition(
 	index: number,
@@ -60,8 +61,10 @@ export function revealPosition(
 ): number | undefined {
 	const fit = fits[index];
 	if (fit === undefined) return undefined;
-	if (position > fit.atStart + NEAR) return within(fit.atStart, furthest);
+	const ownStart = within(fit.atStart, furthest);
+	if (position > fit.atStart + NEAR) return ownStart;
 	if (position >= fit.atEnd - NEAR) return undefined;
+	if (fit.atEnd > fit.atStart) return Math.abs(position - ownStart) <= NEAR ? undefined : ownStart;
 	const landing = fits.find((other) => other.atStart >= fit.atEnd - NEAR);
 	return within(landing === undefined ? furthest : landing.atStart, furthest);
 }
@@ -103,8 +106,9 @@ export function stepRow(row: HTMLElement, side: StepSide): void {
 
 /**
  * Keeps `onEdges` told where the row stands, and brings a focused item whole
- * into view; returns what undoes it all. It listens for scrolls and focus,
- * and watches the row and its items for resizes and for items coming and going.
+ * into view at once; returns what undoes it all. It listens for scrolls, focus
+ * and the person's own scrolling, and watches the row and its items for resizes
+ * and for items coming and going.
  */
 export function watchRow(row: HTMLElement, onEdges: (edges: RowEdges) => void): () => void {
 	const tell = (): void => {
@@ -121,27 +125,52 @@ export function watchRow(row: HTMLElement, onEdges: (edges: RowEdges) => void): 
 		tell();
 	});
 	changes.observe(row, { childList: true });
-	const stopScroll = on(row, 'scroll', tell, { passive: true });
-	// A browser scrolls a focused item into view after the focus event, so the reveal waits a frame for that.
-	let revealing: number | undefined;
-	const stopFocus = on(row, 'focusin', (event) => {
-		const focused = event.target;
-		if (revealing !== undefined) cancelAnimationFrame(revealing);
-		revealing = requestAnimationFrame(() => {
-			revealing = undefined;
-			const index = itemsOf(row).findIndex(
-				(item) => focused instanceof Node && item.contains(focused)
-			);
-			const target = revealPosition(index, measureRow(row));
-			if (target !== undefined) row.scrollLeft = target;
-		});
+	/** Scrolls the row so the item holding focus now lies whole, when one does and it does not already. */
+	const reveal = (): void => {
+		const focused = row.ownerDocument.activeElement;
+		const index = itemsOf(row).findIndex(
+			(item) => focused instanceof Node && item.contains(focused)
+		);
+		const target = revealPosition(index, measureRow(row));
+		if (target !== undefined) row.scrollLeft = target;
+	};
+	// Chromium scrolls inside `focus()`, before `focusin`: it centres an item that was hidden and leaves
+	// one partly shown, so the reveal on `focusin` has the last word. A browser that scrolls after
+	// `focusin` is put back by the first scroll that follows; any later scroll, and any the person
+	// starts, is left alone.
+	let settling = false;
+	const settle = (): void => {
+		settling = false;
+	};
+	const stopScroll = on(
+		row,
+		'scroll',
+		() => {
+			if (settling) {
+				settling = false;
+				reveal();
+			}
+			tell();
+		},
+		{ passive: true }
+	);
+	const stopFocusIn = on(row, 'focusin', () => {
+		reveal();
+		settling = true;
 	});
+	const stopFocusOut = on(row, 'focusout', settle);
+	const stopWheel = on(row, 'wheel', settle, { passive: true });
+	const stopPointer = on(row, 'pointerdown', settle, { passive: true });
+	const stopTouch = on(row, 'touchstart', settle, { passive: true });
 	watchItems();
 	tell();
 	return () => {
 		stopScroll();
-		stopFocus();
-		if (revealing !== undefined) cancelAnimationFrame(revealing);
+		stopFocusIn();
+		stopFocusOut();
+		stopWheel();
+		stopPointer();
+		stopTouch();
 		resizes.disconnect();
 		changes.disconnect();
 	};
