@@ -32,6 +32,7 @@ describe('the public entry', () => {
 			'StatusPill',
 			'Tabs',
 			'TextInput',
+			'ToastStack',
 			'Toggle',
 			'VisibilityMarker',
 			'findToken',
