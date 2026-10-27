@@ -1,8 +1,8 @@
 {
   "path": "frontend/ui",
-  "charted": "2026-10-26",
+  "charted": "2026-10-27",
   "short": "@zurfur/ui: the component library and its gallery",
-  "is": "@zurfur/ui — a private SvelteKit library of components, consumed by `web` as TypeScript source, with its component gallery in Storybook (config in `.storybook/`, stories and docs pages in `src/stories/`), served on loopback by `just gallery`. The old Kit gallery (its routes, prerendered by adapter-static) still builds beside it until Storybook replaces it.",
+  "is": "@zurfur/ui — a private SvelteKit library of components, consumed by `web` as TypeScript source, with its component gallery in Storybook (config in `.storybook/`, stories and docs pages in `src/stories/`), served on loopback by `just gallery`. The old Kit gallery (its routes, prerendered by adapter-static) still builds beside it until Storybook replaces it. `shots/` photographs every story and docs page of the built Storybook in both skins, inside the pinned Playwright image only.",
   "type": "code",
   "tags": [
     "category:ui",
@@ -29,12 +29,12 @@
   "fs": [
     {
       "name": ".gitignore",
-      "role": "ignores this package's build output (.svelte-kit/, build/, storybook-static/) and .env*",
+      "role": "ignores this package's build output (.svelte-kit/, build/, storybook-static/), the screenshot run's output (shots/output/) and .env*",
       "node": false
     },
     {
       "name": ".prettierignore",
-      "role": "lockfiles, static/, storybook-static/, NODE.inf.json files (the nodes tool formats those), the token files (tokens.json, tokens.css) and src/app.html (pinned by hash) are not formatted",
+      "role": "lockfiles, static/, storybook-static/, the screenshot run's output and reference pictures (shots/output/, shots/__screenshots__/), NODE.inf.json files (the nodes tool formats those), the token files (tokens.json, tokens.css) and src/app.html (pinned by hash) are not formatted",
       "node": false
     },
     {
@@ -54,13 +54,18 @@
     },
     {
       "name": "package.json",
-      "role": "@zurfur/ui 0.0.0: the exports map (the library entry, ./styles, ./tokens.json, ./tokens.additions.json), yarn scripts (dev/build/preview/check/lint, test and test:unit, storybook and build-storybook, tokens and tokens:copy; the Storybook and Vitest ones under env -i and the network guard), the dependencies (the two Atkinson Fontsource packages, bits-ui and @internationalized/date) and the dev dependencies (Storybook 10.6.2 and its addons, Playwright among them); svelte is a peer",
+      "role": "@zurfur/ui 0.0.0: the exports map (the library entry, ./styles, ./tokens.json, ./tokens.additions.json), yarn scripts (dev/build/preview/check/lint, check also type-checking shots/, test and test:unit, test:shots (the Node tests under shots/), storybook and build-storybook, tokens and tokens:copy; the Storybook and Vitest ones under env -i and the network guard), the dependencies (the two Atkinson Fontsource packages, bits-ui and @internationalized/date) and the dev dependencies (Storybook 10.6.2 and its addons, Playwright among them); svelte is a peer",
       "node": false
     },
     {
       "name": "prettier.config.js",
       "role": "tabs, single quotes, no trailing comma, width 100",
       "node": false
+    },
+    {
+      "name": "shots/",
+      "role": "the screenshot walker: Playwright Test over the built Storybook, inside the pinned Playwright image only, with its loopback server, image guard, self-tests and reference pictures",
+      "node": true
     },
     {
       "name": "src/",

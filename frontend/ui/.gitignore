@@ -22,3 +22,6 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# The screenshot run's results, actual pictures and differences (frontend/ui/shots).
+shots/output/
