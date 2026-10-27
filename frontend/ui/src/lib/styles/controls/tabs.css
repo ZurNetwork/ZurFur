@@ -17,6 +17,32 @@
 	scrollbar-width: none;
 }
 
+/* With step buttons, the tabs snap one at a time: each tab stops the scroll at its start. The scroll padding is the piece's padding, so the first tab rests at the very start. */
+.zf-tabs--step {
+	scroll-snap-type: x mandatory;
+	scroll-padding-inline: var(--space-half);
+}
+
+.zf-tabs--step > .zf-tab {
+	scroll-snap-align: start;
+	scroll-snap-stop: always;
+}
+
+/* The tabs with a step button each side; the tabs take the room between and scroll. */
+.zf-tabs-row {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	width: fit-content;
+	max-width: 100%;
+	min-width: 0;
+}
+
+.zf-tabs-row > .zf-tabs {
+	flex: 0 1 auto;
+	min-width: 0;
+}
+
 .zf-seg {
 	flex-wrap: wrap;
 }

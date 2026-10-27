@@ -80,8 +80,43 @@ export const LONG_TABS: readonly TabItem<LongSection>[] = [
 	{ id: 'about', label: 'About' }
 ];
 
+/** Sections after the long list's, as the scrolling tabs' extra ids. */
+export type ExtraSection =
+	| 'badges'
+	| 'favourites'
+	| 'sketches'
+	| 'refs'
+	| 'prices'
+	| 'terms'
+	| 'updates'
+	| 'events'
+	| 'shop'
+	| 'stream'
+	| 'journal'
+	| 'wishlist';
+
+/** A profile's many sections: the long list and twelve more, enough to outgrow any canvas. */
+export const SCROLLING_TABS: readonly TabItem<LongSection | ExtraSection>[] = [
+	...LONG_TABS,
+	{ id: 'badges', label: 'Badges' },
+	{ id: 'favourites', label: 'Favourites', count: '40' },
+	{ id: 'sketches', label: 'Sketches' },
+	{ id: 'refs', label: 'Refs' },
+	{ id: 'prices', label: 'Prices' },
+	{ id: 'terms', label: 'Terms' },
+	{ id: 'updates', label: 'Updates', count: '3' },
+	{ id: 'events', label: 'Events' },
+	{ id: 'shop', label: 'Shop' },
+	{ id: 'stream', label: 'Stream' },
+	{ id: 'journal', label: 'Journal' },
+	{ id: 'wishlist', label: 'Wishlist' }
+];
+
 /** The tab list's accessible name. */
 export const TABS_LABEL = 'Profile';
+
+/** The names of the two step buttons on scrolling tabs. */
+export const TAB_STEP_WORDS = { back: 'Earlier tabs', forward: 'More tabs' } as const;
 
 /** What a commission's menu can do, as the menu's ids. */
 export type CommissionAction = 'rename' | 'duplicate' | 'archive' | 'delete';

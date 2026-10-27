@@ -5,6 +5,7 @@ import { createRawSnippet } from 'svelte';
 import AcceptingDateField from './testing/AcceptingDateField.svelte';
 import AcceptingMenu from './testing/AcceptingMenu.svelte';
 import AcceptingPillSwitch from './testing/AcceptingPillSwitch.svelte';
+import AcceptingScrollingTabs from './testing/AcceptingScrollingTabs.svelte';
 import AcceptingSelect from './testing/AcceptingSelect.svelte';
 import AcceptingTabs from './testing/AcceptingTabs.svelte';
 import Button from '../lib/controls/Button.svelte';
@@ -336,6 +337,33 @@ const FIXTURES: Readonly<Record<string, readonly Fixture[]>> = {
 					onChange: () => undefined
 				}).container,
 			steps: [['switched', () => page.getByRole('tab', { name: 'Two' }).click()]]
+		}
+	],
+	'ScrollingTabs.svelte': [
+		{
+			label: 'narrow, with a panel and its step buttons',
+			render: () => {
+				// Narrow enough that the tabs outgrow their list, so the forward step can be pressed.
+				const narrow = document.createElement('div');
+				narrow.style.width = '120px';
+				document.body.append(narrow);
+				return render(AcceptingScrollingTabs<Choice>, {
+					target: narrow,
+					props: {
+						label: 'Sections',
+						tabs,
+						initial: 'one',
+						accepts: true,
+						stepWords: { back: 'Earlier tabs', forward: 'More tabs' },
+						testid: 'control',
+						onChange: () => undefined
+					}
+				}).container;
+			},
+			steps: [
+				['stepped', () => page.getByRole('button', { name: 'More tabs' }).click()],
+				['switched', () => page.getByRole('tab', { name: 'Two' }).click()]
+			]
 		}
 	],
 	'TextInput.svelte': [
