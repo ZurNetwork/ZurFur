@@ -32,7 +32,7 @@
     },
     {
       "name": "fixtures/",
-      "role": "made-up words, options and days the stories share, readonly and typed: actions.ts (Button, Icon Button, Checkbox, Toggle, Pill Switch) and fields.ts (Text Input, Select, Tabs, Menu, Date Field) and surfaces.ts (the surfaces and feedback pieces)",
+      "role": "made-up words, options and days the stories share, readonly and typed: actions.ts (Button, Icon Button, Checkbox, Toggle, Pill Switch) and fields.ts (Text Input, Select, Tabs, Menu, Date Field) and surfaces.ts (the surfaces and feedback pieces, with the fixture picture and the pins' points minted by their guards), and PlaceholderArt.svelte (an obvious placeholder picture of plain shapes in token colours, read out by the label it is given, with no load of its own; what it is given sits on it, placed against its box, as Pin's stories place their pins)",
       "node": false
     },
     {

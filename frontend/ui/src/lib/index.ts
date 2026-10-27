@@ -69,7 +69,11 @@ export { default as Spinner } from './surfaces/Spinner.svelte';
 export { default as Skeleton } from './surfaces/Skeleton.svelte';
 export { default as VisibilityMarker } from './surfaces/VisibilityMarker.svelte';
 export { default as StatusPill } from './surfaces/StatusPill.svelte';
+export { default as Avatar } from './surfaces/Avatar.svelte';
+export { default as Pin } from './surfaces/Pin.svelte';
 export type {
+	AvatarSize,
+	AvatarTone,
 	BadgeTone,
 	CardElement,
 	CardPadding,
@@ -81,6 +85,8 @@ export type {
 	VisibilityLevel,
 	VisibilityWords
 } from './surfaces/types.ts';
+export { isImageSrc, type ImageSrc } from './surfaces/image-src.ts';
+export { pinPointOf, type PinPoint } from './surfaces/pin-point.ts';
 export {
 	NO_MOVES,
 	type LoopKind,

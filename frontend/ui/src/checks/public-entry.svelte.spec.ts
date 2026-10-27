@@ -9,6 +9,7 @@ describe('the public entry', () => {
 
 	it('exports exactly the paper lists, the environment names, the token model, the icons, the first controls, the first surfaces, the link, day and locale mints and the motion seam', () => {
 		expect(Object.keys(published).sort()).toEqual([
+			'Avatar',
 			'Badge',
 			'Button',
 			'Card',
@@ -24,6 +25,7 @@ describe('the public entry', () => {
 			'PAPER_CLASSES',
 			'PAPER_MOVES',
 			'PillSwitch',
+			'Pin',
 			'SKIN_ATTRIBUTE',
 			'STILL_ENVIRONMENT',
 			'Select',
@@ -37,12 +39,14 @@ describe('the public entry', () => {
 			'findToken',
 			'isCalendarDay',
 			'isIconName',
+			'isImageSrc',
 			'isLinkHref',
 			'isLocaleTag',
 			'isSameOriginPath',
 			'isTokenName',
 			'parseSkin',
 			'parseTokenModel',
+			'pinPointOf',
 			'provideEnvironment',
 			'resolveToken',
 			'valueIn'

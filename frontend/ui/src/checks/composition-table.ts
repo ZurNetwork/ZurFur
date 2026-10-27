@@ -40,7 +40,9 @@ export const KINDS: Readonly<Record<string, Kind>> = {
 	Spinner: 'simple',
 	Skeleton: 'simple',
 	VisibilityMarker: 'simple',
-	StatusPill: 'simple'
+	StatusPill: 'simple',
+	Avatar: 'simple',
+	Pin: 'simple'
 };
 
 /** The glyphs a simple component may hold, by exported name. Spinner's glyph form is what Button's busy state holds. */
@@ -83,6 +85,7 @@ export const OWNERS: Readonly<Record<OwnedElement, readonly Row[]>> = {
 		{ file: 'src/lib/controls/Toggle.svelte', reason: "the switch's track" },
 		{ file: 'src/lib/controls/Tabs.svelte', reason: 'each tab' },
 		{ file: 'src/lib/controls/PillSwitch.svelte', reason: 'each pill' },
+		{ file: 'src/lib/surfaces/Pin.svelte', reason: 'the pin on the art' },
 		{ file: 'src/gallery/MoveSheet.svelte', reason: "the old gallery's Play again on a move" },
 		{
 			file: 'src/stories/tokens/PaperPage.svelte',
@@ -102,7 +105,12 @@ export const OWNERS: Readonly<Record<OwnedElement, readonly Row[]>> = {
 	],
 	select: [{ file: 'src/lib/controls/Select.svelte', reason: 'the native select' }],
 	textarea: [{ file: 'src/lib/controls/TextInput.svelte', reason: 'the multiline field' }],
-	img: [],
+	img: [
+		{
+			file: 'src/lib/surfaces/Avatar.svelte',
+			reason: 'the picture, given an ImageSrc and checked again'
+		}
+	],
 	video: [],
 	audio: [],
 	iframe: [],
@@ -171,7 +179,9 @@ export const FAMILIES: Readonly<Record<FilePath, readonly Family[]>> = {
 	'src/lib/surfaces/Spinner.svelte': ['zf-spinner', 'zf-spinner-wrap'],
 	'src/lib/surfaces/Skeleton.svelte': ['zf-skeleton', 'zf-skeleton-lines'],
 	'src/lib/surfaces/VisibilityMarker.svelte': ['zf-vis'],
-	'src/lib/surfaces/StatusPill.svelte': ['zf-status', 'zf-pill']
+	'src/lib/surfaces/StatusPill.svelte': ['zf-status', 'zf-pill'],
+	'src/lib/surfaces/Avatar.svelte': ['zf-avatar', 'zf-avatar-wrap', 'zf-handle'],
+	'src/lib/surfaces/Pin.svelte': ['zf-pin']
 };
 
 /** The families any `.svelte` file under `src/lib/` may write: `zf-sr` keeps words for screen readers only. */

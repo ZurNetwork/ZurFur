@@ -19,6 +19,16 @@
   ],
   "fs": [
     {
+      "name": "Avatar.svelte",
+      "role": "someone's picture in a circle, or the first letter, number or emoji of their name, in one of six tones and three sizes; with the name and handle beside it, or alone and read out as the name; only a picture that passes the picture check loads",
+      "node": false
+    },
+    {
+      "name": "Avatar.svelte.spec.ts",
+      "role": "spec for Avatar",
+      "node": false
+    },
+    {
       "name": "Badge.svelte",
       "role": "a small tag with a label, one of six tones and an optional icon",
       "node": false
@@ -36,6 +46,16 @@
     {
       "name": "Card.svelte.spec.ts",
       "role": "spec for Card",
+      "node": false
+    },
+    {
+      "name": "Pin.svelte",
+      "role": "a numbered button on a piece of art, placed at its point as percentages; open or closed, naming the thread it opens; a point that fails the check draws no pin",
+      "node": false
+    },
+    {
+      "name": "Pin.svelte.spec.ts",
+      "role": "spec for Pin",
       "node": false
     },
     {
@@ -86,6 +106,26 @@
     {
       "name": "choices.ts",
       "role": "the run-time choices, each taking any value and falling back to the safe one: the card element, the badge and status tones, the visibility level and its icon, an icon name and the number of skeleton lines",
+      "node": false
+    },
+    {
+      "name": "image-src.spec.ts",
+      "role": "spec for the picture address",
+      "node": false
+    },
+    {
+      "name": "image-src.ts",
+      "role": "`ImageSrc` and `isImageSrc`: a picture address, which is exactly a same-origin path",
+      "node": false
+    },
+    {
+      "name": "pin-point.spec.ts",
+      "role": "spec for the pin point",
+      "node": false
+    },
+    {
+      "name": "pin-point.ts",
+      "role": "`PinPoint` and `pinPointOf`: a frozen point of two fractions from 0 to 1, `-0` made 0; `pinPointFrom` checks any value again as one",
       "node": false
     },
     {

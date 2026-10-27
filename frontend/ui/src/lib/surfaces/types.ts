@@ -54,3 +54,9 @@ export interface VisibilityWords {
 	readonly listed: string;
 	readonly public: string;
 }
+
+/** An Avatar's size. */
+export type AvatarSize = 'sm' | 'md' | 'lg';
+
+/** An Avatar's tone: the same six as a Badge. */
+export type AvatarTone = BadgeTone;
