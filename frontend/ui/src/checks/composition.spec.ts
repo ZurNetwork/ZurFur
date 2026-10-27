@@ -1412,6 +1412,80 @@ describe('the plants', () => {
 		expect(reasons(check({ sources: [file] }))).toEqual(expected);
 	});
 
+	const toggleWith = (markup: string): SourceFile =>
+		realWith(
+			'src/lib/controls/Toggle.svelte',
+			'<div class="zf-toggle">',
+			`<div class="zf-toggle">${markup}`
+		);
+
+	it.each([
+		[
+			'<set>',
+			toggleWith('<svg><rect><set attributeName="href" to="/a.png" /></rect></svg>'),
+			'set'
+		],
+		[
+			'<animate>',
+			toggleWith('<svg><rect><animate attributeName="fill" dur="1s" /></rect></svg>'),
+			'animate'
+		],
+		[
+			'<animateMotion>',
+			toggleWith('<svg><rect><animateMotion path="M0 0" dur="1s" /></rect></svg>'),
+			'animatemotion'
+		],
+		[
+			'<animateTransform>',
+			toggleWith('<svg><rect><animateTransform attributeName="transform" dur="1s" /></rect></svg>'),
+			'animatetransform'
+		],
+		['<feImage>', toggleWith('<svg><filter id="f"><feImage /></filter></svg>'), 'feimage'],
+		['<fEIMAGE>', toggleWith('<svg><filter id="f"><fEIMAGE /></filter></svg>'), 'feimage'],
+		[
+			'<sET>',
+			toggleWith('<svg><rect><sET attributeName="mask" to="url(#m)" /></rect></svg>'),
+			'set'
+		],
+		[
+			'<svg:set>',
+			toggleWith('<svg><rect><svg:set attributeName="href" to="/a.png" /></rect></svg>'),
+			'set'
+		],
+		[
+			'a static <svelte:element this="animate">',
+			toggleWith('<svg><rect><svelte:element this="animate" attributeName="fill" /></rect></svg>'),
+			'animate'
+		],
+		[
+			"a static <svelte:element this={'svg:feImage'}>",
+			toggleWith('<svg><filter id="f"><svelte:element this={\'svg:feImage\'} /></filter></svg>'),
+			'feimage'
+		],
+		[
+			'<set> in a story helper',
+			realWith(
+				'src/stories/controls/ToggleHolder.svelte',
+				'<Toggle ',
+				'<svg><rect><set attributeName="cursor" to="auto" /></rect></svg>\n<Toggle '
+			),
+			'set'
+		],
+		[
+			'<feImage> in a gallery file',
+			realWith(
+				'src/gallery/GalleryPage.svelte',
+				'<style>',
+				'<svg><filter id="f"><feImage /></filter></svg>\n\n<style>'
+			),
+			'feimage'
+		]
+	] as const)('refuses %s in any file: no file renders it', (_label, file, element) => {
+		expect(check({ sources: [file] })).toEqual([
+			{ path: file.path, reason: 'an owned element in a file not listed for it', detail: element }
+		]);
+	});
+
 	it.each([
 		['<link>', '<link rel="stylesheet" href="/a.css" />', 'link'],
 		['<base>', '<base href="/" />', 'base'],

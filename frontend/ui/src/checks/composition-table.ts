@@ -73,10 +73,18 @@ export const OWNED_ELEMENTS = [
 	'video',
 	'audio',
 	'iframe',
-	'image'
+	'image',
+	'set',
+	'animate',
+	'animatemotion',
+	'animatetransform',
+	'feimage'
 ] as const;
 
-/** An owned element; `image` is SVG's (an HTML `<image>` reads as `img`). */
+/**
+ * An owned element, in lower case; `image` is SVG's (an HTML `<image>` reads as
+ * `img`). No file renders the SVG `set`, the animate elements or `feimage`.
+ */
 export type OwnedElement = (typeof OWNED_ELEMENTS)[number];
 
 /** The files that may render each owned element. */
@@ -125,7 +133,12 @@ export const OWNERS: Readonly<Record<OwnedElement, readonly Row[]>> = {
 	video: [],
 	audio: [],
 	iframe: [],
-	image: []
+	image: [],
+	set: [],
+	animate: [],
+	animatemotion: [],
+	animatetransform: [],
+	feimage: []
 };
 
 /** The files that may render a `<svelte:element>` whose `this` is not written out. */

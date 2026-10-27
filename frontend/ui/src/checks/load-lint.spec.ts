@@ -493,6 +493,60 @@ describe('the load bans over planted text', { timeout: 120_000 }, () => {
 		});
 	});
 
+	describe('no SVG animation element and no feImage in any .svelte file', () => {
+		/** A component whose script declares `s`, then `inner` inside an SVG rect. */
+		const inRect = (inner: string): string =>
+			component(`<svg viewBox="0 0 1 1"><rect width="1" height="1">${inner}</rect></svg>`);
+		/** A component whose script declares `s`, then `inner` inside an SVG filter. */
+		const inFilter = (inner: string): string =>
+			component(`<svg viewBox="0 0 1 1"><filter id="f">${inner}</filter></svg>`);
+
+		const elements: readonly (readonly [string, string])[] = [
+			['<set>', inRect('<set attributeName="href" to={s} />')],
+			['<animate>', inRect('<animate attributeName="fill" values={s} dur="1s" />')],
+			['<animateMotion>', inRect('<animateMotion path="M0 0" dur="1s" />')],
+			['<animateTransform>', inRect('<animateTransform attributeName="transform" dur="1s" />')],
+			['<feImage> with no href', inFilter('<feImage />')],
+			[
+				'<feImage><set> in a filter',
+				inFilter('<feImage><set attributeName="href" to={s} /></feImage>')
+			],
+			['<SET>', inRect('<SET attributeName="cursor" to={s} />')],
+			['<animatemotion>', inRect('<animatemotion path="M0 0" dur="1s" />')],
+			['<FeImAgE>', inFilter('<FeImAgE />')],
+			[
+				'svelte:element this="set"',
+				inRect('<svelte:element this="set" attributeName="mask" to={s} />')
+			],
+			[
+				"svelte:element this={'animateTransform'}",
+				inRect('<svelte:element this={\'animateTransform\'} attributeName="transform" />')
+			],
+			['svelte:element this={`feImage`}', inFilter('<svelte:element this={`feImage`} />')],
+			["svelte:element this={'svg:set'}", inRect("<svelte:element this={'svg:set'} to={s} />")],
+			[
+				'svelte:element this="svg:animate"',
+				inRect('<svelte:element this="svg:animate" values={s} />')
+			]
+		];
+
+		describe.each([
+			['a component', planted.componentSvelte],
+			['a story helper', planted.storyHelperSvelte]
+		])('in %s', (_set, filePath) => {
+			it.each(elements)('refuses %s', async (_label, code) => {
+				await expectRefused(filePath, code, MARKUP, mediaMessage);
+			});
+		});
+
+		it.each(['<set>', '<animate>', '<animateMotion>', '<animateTransform>', '<feImage>'])(
+			'names %s in its message',
+			(name) => {
+				expect(mediaMessage).toContain(name);
+			}
+		);
+	});
+
 	describe('no picture reaches a style or a loading attribute from a value', () => {
 		/** A component whose script declares `s`, a value under each attribute's name and a helper, then `markup`. */
 		const valued = (markup: string): string =>

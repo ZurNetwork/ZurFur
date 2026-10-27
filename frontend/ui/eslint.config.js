@@ -2079,7 +2079,7 @@ export const motionElementMessage =
 
 /** Why no markup holds media or a picture a stylesheet loads. */
 export const mediaMessage =
-	'No markup loads media of its own: no <picture>, <source>, <video>, <audio>, <iframe>, <object>, <embed> or <track>, no srcset, imagesrcset or poster, no SVG <image>, <use> or <feImage> with an href, no url() or other image function in a style attribute or style: directive, no value in a style attribute, no value in a style: directive but a few that never hold a picture, no background attribute, no input with a src, no value or url() but url(#…) in an SVG mask, filter, clip-path, fill, stroke, marker or cursor, and no <svelte:element> naming a prefixed tag such as svg:image.';
+	'No markup loads media of its own: no <picture>, <source>, <video>, <audio>, <iframe>, <object>, <embed> or <track>, no SVG <set>, <animate>, <animateMotion>, <animateTransform> or <feImage>, no srcset, imagesrcset or poster, no SVG <image> or <use> with an href, no url() or other image function in a style attribute or style: directive, no value in a style attribute, no value in a style: directive but a few that never hold a picture, no background attribute, no input with a src, no value or url() but url(#…) in an SVG mask, filter, clip-path, fill, stroke, marker or cursor, and no <svelte:element> naming a prefixed tag such as svg:image.';
 
 /** Why a component never reaches an inline style from code. */
 export const inlineStyleMessage =
@@ -2135,8 +2135,13 @@ const MOTION_ELEMENT_SYNTAX = [
 	}
 ];
 
-/** The media elements, in any letter case. */
-const MEDIA_TAGS = '/^(?:picture|source|video|audio|iframe|object|embed|track)$/i';
+/**
+ * The media elements and the SVG elements refused with them, in any letter
+ * case: feImage loads a picture, and set and the animate elements write a
+ * value into another attribute, a loading one included.
+ */
+const MEDIA_TAGS =
+	'/^(?:picture|source|video|audio|iframe|object|embed|track|set|animate|animatemotion|animatetransform|feimage)$/i';
 
 /** The functions that load a picture inside a CSS value, in any letter case. */
 const STYLE_LOAD = '/(?:^|[^a-z0-9_])(?:-webkit-)?(?:url|src|image|image-set|cross-fade)\\s*\\(/i';
@@ -2241,10 +2246,11 @@ const PREFIXED_ELEMENT = [
 ];
 
 /**
- * Media in markup: the media elements wherever they sit, as an element or a
- * component in any letter case and as <svelte:element> naming one by a static
- * string; srcset, imagesrcset and poster on anything; SVG image, use and
- * feImage with an href or any prefixed href; and a picture-loading function in
+ * Media in markup: the media elements and SVG's set, animate, animateMotion,
+ * animateTransform and feImage wherever they sit, as an element or a component
+ * in any letter case and as <svelte:element> naming one by a static string;
+ * srcset, imagesrcset and poster on anything; SVG image and use with an href
+ * or any prefixed href; and a picture-loading function in
  * the text or the string literals of a style attribute or a style: directive.
  */
 const MEDIA_SYNTAX = [
@@ -2268,7 +2274,7 @@ const MEDIA_SYNTAX = [
 	},
 	{
 		selector:
-			'SvelteElement[name.name=/^(?:image|use|feimage)$/i] > SvelteStartTag > :matches(SvelteAttribute, SvelteShorthandAttribute)[key.name=/^(?:[^:]*:)?href$/i]',
+			'SvelteElement[name.name=/^(?:image|use)$/i] > SvelteStartTag > :matches(SvelteAttribute, SvelteShorthandAttribute)[key.name=/^(?:[^:]*:)?href$/i]',
 		message: mediaMessage
 	},
 	...STYLE_HOLDERS.flatMap((holder) => [
