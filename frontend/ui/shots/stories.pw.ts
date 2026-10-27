@@ -1,10 +1,11 @@
 /**
  * The screenshot walker: every story and docs entry of the built Storybook,
  * in Paper dark and Paper light with motion stopped, checked for requests off
- * 127.0.0.1, page errors and Storybook's error display, then compared with its
- * reference picture unless it is tagged `no-shot`. Also: the manager page
- * under the same checks, and no reference picture left behind by a renamed or
- * removed entry.
+ * 127.0.0.1, page errors, SharedWorker, RTCPeerConnection and WebTransport
+ * constructions and Storybook's error display, then compared with its
+ * reference picture unless it is tagged `no-shot`, and checked again after
+ * it. Also: the manager page under the same checks, and no reference picture
+ * left behind by a renamed or removed entry.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -55,7 +56,7 @@ test('the manager page loads nothing off 127.0.0.1', async ({ context, page }) =
 	const viewMode = new URL(frame.url()).searchParams.get('viewMode') === 'docs' ? 'docs' : 'story';
 	expect(await waitForStorybook(frame, viewMode), "the manager's preview state").toBe('rendered');
 	await settle(page);
-	expectNoProblems(watch);
+	expectNoProblems(watch, 'on the manager page');
 });
 
 test('no reference picture names an entry or skin the walker does not shoot', () => {

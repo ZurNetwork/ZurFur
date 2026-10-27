@@ -1,12 +1,13 @@
 /**
  * The walk of one entry, proved: an entry tagged `no-shot` is still opened and
- * checked, and only its picture is left out.
+ * checked, and only its picture is left out; a shot entry is checked again
+ * after its picture, and a picture from a test that fails there is put back.
  */
-import { readFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { noShotTag, parseIndex, type Entry, type IndexItem } from '../storybook.ts';
-import { walkEntry } from '../watch.ts';
+import { entryAddress, noShotTag, parseIndex, type Entry, type IndexItem } from '../storybook.ts';
+import { expectRendered, putPictureBack, walkEntry } from '../watch.ts';
 
 const indexFile = path.join(import.meta.dirname, '..', '..', 'storybook-static', 'index.json');
 
@@ -70,5 +71,70 @@ test("Storybook's error display on a no-shot entry fails it", async ({ context, 
 	if (missing === undefined) throw new Error('the planted index holds no entry');
 	await expect(walkEntry(context, page, missing, 'dark')).rejects.toThrow(
 		"Storybook's preview state"
+	);
+});
+
+/** Plants an input that builds a SharedWorker once a picture hides its caret. */
+function plantConstructionAtPicture(): void {
+	document.addEventListener('DOMContentLoaded', () => {
+		const input = document.createElement('input');
+		document.body.append(input);
+		const observer = new MutationObserver(() => {
+			if (input.style.getPropertyValue('caret-color') !== 'transparent') return;
+			const code = new Blob([''], { type: 'text/javascript' });
+			Reflect.construct(SharedWorker, [URL.createObjectURL(code)]);
+		});
+		observer.observe(input, { attributeFilter: ['style'] });
+	});
+}
+
+test('a construction while the picture is taken fails the check after it', async ({
+	context,
+	page
+}) => {
+	// Light, so the missing-picture test above still finds no dark picture.
+	const entry = firstStory();
+	await context.addInitScript(plantConstructionAtPicture);
+	await page.goto(entryAddress(entry, 'light'));
+	await expectRendered(page, entry.viewMode, 'light');
+	const picture = test.info().snapshotPath(entry.id, 'light.png');
+	await page.screenshot({ path: picture, animations: 'disabled', caret: 'hide', scale: 'css' });
+	await expect(walkEntry(context, page, entry, 'light')).rejects.toThrow(
+		/after the picture[\s\S]*construction of SharedWorker/
+	);
+});
+
+test('a picture from a failed test is put back as it was', () => {
+	const folder = test.info().outputPath('references');
+	const written = path.join(folder, 'new-entry', 'dark.png');
+	mkdirSync(path.dirname(written), { recursive: true });
+	writeFileSync(written, 'written by the run');
+	putPictureBack(written, undefined);
+	expect(existsSync(path.dirname(written)), 'a new picture and its folder are gone').toBe(false);
+
+	const beside = path.join(folder, 'two-pictures', 'dark.png');
+	const sibling = path.join(folder, 'two-pictures', 'light.png');
+	mkdirSync(path.dirname(beside), { recursive: true });
+	writeFileSync(beside, 'written by the run');
+	writeFileSync(sibling, 'kept');
+	putPictureBack(beside, undefined);
+	expect(existsSync(beside), 'the new picture is gone').toBe(false);
+	expect(readFileSync(sibling, 'utf8'), 'its sibling stays').toBe('kept');
+
+	const changed = path.join(folder, 'changed', 'dark.png');
+	mkdirSync(path.dirname(changed), { recursive: true });
+	writeFileSync(changed, 'written by the run');
+	putPictureBack(changed, Buffer.from('the old picture'));
+	expect(readFileSync(changed, 'utf8'), 'a changed picture gets its old bytes').toBe(
+		'the old picture'
+	);
+
+	const unchanged = path.join(folder, 'unchanged', 'dark.png');
+	mkdirSync(path.dirname(unchanged), { recursive: true });
+	writeFileSync(unchanged, 'the same picture');
+	chmodSync(unchanged, 0o444);
+	putPictureBack(unchanged, Buffer.from('the same picture'));
+	expect(readFileSync(unchanged, 'utf8'), 'an unchanged picture is never written').toBe(
+		'the same picture'
 	);
 });

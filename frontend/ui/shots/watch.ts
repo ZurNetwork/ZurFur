@@ -1,10 +1,13 @@
 /**
- * The checks every screenshot test runs before its picture: no request leaves
- * the loopback server, no page throws, and Storybook rendered without its
- * error display; and the walk of one entry, which runs them. The walker and
- * the self-tests share them from here.
+ * The checks every screenshot test runs before its picture and again after
+ * it: no request leaves the loopback server, no page throws, no page builds a
+ * SharedWorker, RTCPeerConnection or WebTransport, and Storybook rendered
+ * without its error display; and the walk of one entry, which runs them. The
+ * walker and the self-tests share them from here.
  */
-import { expect, type BrowserContext, type Frame, type Page } from '@playwright/test';
+import { readFileSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { expect, test, type BrowserContext, type Frame, type Page } from '@playwright/test';
 import { entryAddress, isShot, type Entry, type Skin, type ViewMode } from './storybook.ts';
 
 /** The loopback port the static server listens on inside the container. */
@@ -40,12 +43,51 @@ function watchPage(page: Page, watch: Watch): void {
 }
 
 /**
+ * The constructors whose connections the request watch can't see (a shared
+ * worker's own requests, WebRTC's STUN and TURN, WebTransport's QUIC): each
+ * construction in a page is a problem.
+ */
+export const watchedConstructors = [
+	'SharedWorker',
+	'RTCPeerConnection',
+	'webkitRTCPeerConnection',
+	'WebTransport'
+] as const;
+
+/** The binding the init script reports a watched construction through. */
+const constructionBinding = '__zurfurShotsConstructed';
+
+/**
+ * Runs in every frame before its scripts: wraps each watched constructor the
+ * frame has so that every construction calls the binding with its name first.
+ */
+function reportConstructions([binding, names]: readonly [string, readonly string[]]): void {
+	for (const name of names) {
+		const original: unknown = Reflect.get(globalThis, name);
+		if (typeof original !== 'function') continue;
+		const reporting = new Proxy(original, {
+			construct(target, args, newTarget) {
+				const report: unknown = Reflect.get(globalThis, binding);
+				if (typeof report === 'function') Reflect.apply(report, globalThis, [name]);
+				return Reflect.construct(target, args, newTarget);
+			}
+		});
+		Reflect.defineProperty(globalThis, name, { value: reporting });
+	}
+}
+
+/**
  * Watches every page of the test's context: each request not to the loopback
- * server is aborted and recorded, as is every page error and off-host
- * websocket, in every frame. Call it before the first navigation.
+ * server is aborted and recorded, as is every page error, off-host websocket
+ * and construction of a watched constructor, in every frame. Call it before
+ * the first navigation.
  */
 export async function watchContext(context: BrowserContext, page: Page): Promise<Watch> {
 	const watch: Watch = { problems: new Set() };
+	await context.exposeBinding(constructionBinding, (_source, name: unknown) => {
+		const watched = watchedConstructors.find((known) => known === name);
+		watch.problems.add(`construction of ${watched ?? 'an unnamed constructor'}`);
+	});
 	await context.route('**/*', async (route) => {
 		const url = route.request().url();
 		if (isAllowedUrl(url)) {
@@ -67,13 +109,20 @@ export async function watchContext(context: BrowserContext, page: Page): Promise
 		watchPage(opened, watch);
 	});
 	if (!context.pages().includes(page)) watchPage(page, watch);
+	await context.addInitScript(reportConstructions, [
+		constructionBinding,
+		watchedConstructors
+	] as const);
 	await context.addInitScript(listenForDocsRendered);
 	return watch;
 }
 
-/** Fails the test when anything went wrong so far. */
-export function expectNoProblems(watch: Watch): void {
-	expect([...watch.problems], 'requests off 127.0.0.1, page errors or websockets').toEqual([]);
+/** Fails the test when anything went wrong so far; `moment` names the check in the failure. */
+export function expectNoProblems(watch: Watch, moment: string): void {
+	expect(
+		[...watch.problems],
+		`requests off 127.0.0.1, page errors, websockets or watched constructions, ${moment}`
+	).toEqual([]);
 }
 
 /** The flag the init script sets once Storybook says a docs page rendered. */
@@ -184,10 +233,41 @@ export async function expectRendered(page: Page, viewMode: ViewMode, skin: Skin)
 	});
 }
 
+/** A file's bytes, or undefined when it can't be read. */
+function bytesOf(file: string): Buffer | undefined {
+	try {
+		return readFileSync(file);
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Puts a reference picture back as it was before the picture was taken:
+ * removed (with its folder, once empty) when there was none, its old bytes
+ * when they changed, and left untouched otherwise, so a plain run writes
+ * nothing.
+ */
+export function putPictureBack(file: string, before: Buffer | undefined): void {
+	const now = bytesOf(file);
+	if (before !== undefined) {
+		if (now === undefined || !now.equals(before)) writeFileSync(file, before);
+		return;
+	}
+	if (now === undefined) return;
+	rmSync(file);
+	try {
+		rmdirSync(path.dirname(file));
+	} catch {
+		// The folder still holds the entry's other picture.
+	}
+}
+
 /**
  * Opens an entry in a skin and fails the test on a request off 127.0.0.1, a
- * page error or Storybook's error display, tagged `no-shot` or not; then, when
- * it is shot, compares it with its reference picture.
+ * page error, a watched construction or Storybook's error display, tagged
+ * `no-shot` or not; then, when it is shot, compares it with its reference
+ * picture and checks again for anything since.
  */
 export async function walkEntry(
 	context: BrowserContext,
@@ -198,8 +278,14 @@ export async function walkEntry(
 	const watch = await watchContext(context, page);
 	await page.goto(entryAddress(entry, skin));
 	await expectRendered(page, entry.viewMode, skin);
-	expectNoProblems(watch);
+	expectNoProblems(watch, 'before the picture');
 	if (!isShot(entry)) return;
-	// Last, so an update run never keeps a picture from a failed test.
-	await expect(page).toHaveScreenshot([entry.id, `${skin}.png`]);
+	const name = [entry.id, `${skin}.png`];
+	// The project sets only `snapshotPathTemplate`, which the screenshot uses too.
+	const picture = test.info().snapshotPath(...name);
+	const before = bytesOf(picture);
+	await expect(page).toHaveScreenshot(name);
+	// An update run never keeps a picture from a test that fails here.
+	if (watch.problems.size > 0) putPictureBack(picture, before);
+	expectNoProblems(watch, 'after the picture');
 }

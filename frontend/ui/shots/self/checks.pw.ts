@@ -4,7 +4,7 @@
  */
 import { expect, test } from '@playwright/test';
 import { imageGuardRefusals } from '../image-guard.ts';
-import { shotsOrigin, waitForStorybook, watchContext } from '../watch.ts';
+import { shotsOrigin, waitForStorybook, watchContext, watchedConstructors } from '../watch.ts';
 
 test('a missing reference picture fails the test', async ({ page }) => {
 	test.fail();
@@ -65,6 +65,62 @@ test("Storybook's error display is caught", async ({ context, page }) => {
 	await page.goto('/iframe.html?id=no-such-entry&viewMode=story&globals=skin:dark;motion:still');
 	expect(await waitForStorybook(page, 'story')).toBe('error-display');
 	expect([...watch.problems]).toEqual([]);
+});
+
+/** A served page, so the constructors that need a secure context have one. */
+const servedPage = '/iframe.html?id=no-such-entry&viewMode=story&globals=skin:dark;motion:still';
+
+/** Builds each watched constructor the page has and says which it built. */
+function buildEach(names: readonly string[]): string[] {
+	const built: string[] = [];
+	for (const name of names) {
+		const constructor: unknown = Reflect.get(globalThis, name);
+		if (typeof constructor !== 'function') continue;
+		const argument =
+			name === 'SharedWorker'
+				? URL.createObjectURL(new Blob([''], { type: 'text/javascript' }))
+				: name === 'WebTransport'
+					? 'https://example.org/transport'
+					: undefined;
+		const instance: unknown = Reflect.construct(
+			constructor,
+			argument === undefined ? [] : [argument]
+		);
+		for (const settled of ['ready', 'closed']) {
+			const promise: unknown =
+				Object(instance) === instance ? Reflect.get(Object(instance), settled) : undefined;
+			if (promise instanceof Promise) promise.catch(() => undefined);
+		}
+		built.push(name);
+	}
+	return built;
+}
+
+test('a SharedWorker, RTCPeerConnection or WebTransport built by the page is caught', async ({
+	context,
+	page
+}) => {
+	const watch = await watchContext(context, page);
+	await page.goto(servedPage);
+	const built = await page.evaluate(buildEach, watchedConstructors);
+	expect(built).toEqual(
+		expect.arrayContaining(['SharedWorker', 'RTCPeerConnection', 'WebTransport'])
+	);
+	await expect
+		.poll(() => [...watch.problems].sort())
+		.toEqual(built.map((name) => `construction of ${name}`).sort());
+});
+
+test('a SharedWorker built by a nested frame is caught', async ({ context, page }) => {
+	const watch = await watchContext(context, page);
+	await page.goto(servedPage);
+	await page.evaluate(() => {
+		const frame = document.createElement('iframe');
+		frame.title = 'nested';
+		frame.srcdoc = `<script>new SharedWorker(URL.createObjectURL(new Blob([''], { type: 'text/javascript' })))</script>`;
+		document.body.append(frame);
+	});
+	await expect.poll(() => [...watch.problems]).toEqual(['construction of SharedWorker']);
 });
 
 test('the guard refuses outside the image', () => {
