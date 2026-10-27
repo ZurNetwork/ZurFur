@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
+import { parse } from 'svelte/compiler';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { SAMPLE_SUBSTITUTIONS } from './tokens/copy';
 
 const uiRoot = fileURLToPath(new URL('../../', import.meta.url));
 
+/** The folder the stories live in, relative to the package. */
+const storiesFolder = 'src/stories';
+
 /** The folder the stories' fixtures live in, relative to the package. */
-const fixturesFolder = 'src/stories/fixtures';
+const fixturesFolder = `${storiesFolder}/fixtures`;
 
 /** The made-up handle and DID the design system's samples were swapped for. */
 const reservedSamples: readonly string[] = SAMPLE_SUBSTITUTIONS.map(
@@ -20,14 +24,16 @@ if (reservedDid === undefined) throw new Error('the reserved samples hold no DID
 /** The only top-level domains a fixture's handle may end in: reserved, so no real account matches. */
 const reservedEndings: readonly string[] = ['.test', '.example'];
 
-/** A fixture file, by its path relative to the package. */
+/** A fixture or stories file, by its path relative to the package. */
 interface FixtureFile {
 	readonly path: string;
 	readonly text: string;
 }
 
 export type FixtureRefusalReason =
-	'a DID other than the reserved sample' | 'a handle outside .test and .example';
+	| 'a DID other than the reserved sample'
+	| 'a handle outside .test and .example'
+	| 'a stories file that does not parse';
 
 export interface FixtureRefusal {
 	readonly path: string;
@@ -75,8 +81,8 @@ function plainName(name: ts.Node): string | undefined {
 	return undefined;
 }
 
-/** The value each handle-named field or variable holds, as every string written in it. */
-function handleFieldStrings(file: FixtureFile): readonly string[] {
+/** The value each handle-named field or variable in a `.ts` file holds, as every string written in it. */
+function scriptHandleStrings(file: FixtureFile): readonly string[] {
 	const source = ts.createSourceFile(file.path, file.text, ts.ScriptTarget.Latest, true);
 	const found: string[] = [];
 	const visit = (node: ts.Node): void => {
@@ -92,10 +98,90 @@ function handleFieldStrings(file: FixtureFile): readonly string[] {
 	return found;
 }
 
+type Fields = Readonly<Record<string, unknown>>;
+
+function isFields(value: unknown): value is Fields {
+	return Object(value) === value;
+}
+
+/** Every object in a parsed Svelte tree, each once. */
+function nodesOf(root: unknown): readonly Fields[] {
+	const seen = new Set<object>();
+	const found: Fields[] = [];
+	const visit = (value: unknown): void => {
+		if (Array.isArray(value)) {
+			for (const item of value) visit(item);
+			return;
+		}
+		if (!isFields(value) || seen.has(value)) return;
+		seen.add(value);
+		found.push(value);
+		for (const child of Object.values(value)) visit(child);
+	};
+	visit(root);
+	return found;
+}
+
+/** A string literal's value, a no-expression template's text, or a markup text's data. */
+function staticText(node: Fields): string | undefined {
+	if (node.type === 'Literal') return typeof node.value === 'string' ? node.value : undefined;
+	if (node.type === 'Text') return typeof node.data === 'string' ? node.data.trim() : undefined;
+	if (node.type !== 'TemplateLiteral') return undefined;
+	const { expressions, quasis } = node;
+	if (!Array.isArray(expressions) || expressions.length > 0 || !Array.isArray(quasis)) {
+		return undefined;
+	}
+	const quasi: unknown = quasis[0];
+	const value = isFields(quasi) ? quasi.value : undefined;
+	const cooked = isFields(value) ? value.cooked : undefined;
+	return typeof cooked === 'string' ? cooked : undefined;
+}
+
+/** The name a property key, a variable or an attribute spells: an identifier or a static string. */
+function svelteName(node: Fields): string | undefined {
+	if (node.type === 'Attribute') return typeof node.name === 'string' ? node.name : undefined;
+	const key =
+		node.type === 'Property' ? node.key : node.type === 'VariableDeclarator' ? node.id : undefined;
+	if (!isFields(key) || node.computed === true) return undefined;
+	if (key.type === 'Identifier') return typeof key.name === 'string' ? key.name : undefined;
+	return staticText(key);
+}
+
+/** What a property, a variable or an attribute holds. */
+function svelteValue(node: Fields): unknown {
+	if (node.type === 'Property' || node.type === 'Attribute') return node.value;
+	return node.type === 'VariableDeclarator' ? node.init : undefined;
+}
+
 /**
- * Every refusal in one fixture: any `did:` text but the reserved sample, any
- * `@name.domain` whose domain doesn't end in `.test` or `.example`, and the
- * same for a bare domain in a handle-named field or variable.
+ * The value each handle-named field, variable or attribute in a `.svelte`
+ * file holds, in its scripts and its markup, as every string written in it;
+ * or the parser's message when the file does not parse.
+ */
+function svelteHandleStrings(file: FixtureFile): readonly string[] | string {
+	let root: unknown;
+	try {
+		root = parse(file.text, { modern: true });
+	} catch (error) {
+		return error instanceof Error ? error.message : 'the parser gave up';
+	}
+	return nodesOf(root)
+		.filter((node) => {
+			const name = svelteName(node);
+			return name !== undefined && handleNamePattern.test(name);
+		})
+		.flatMap((node) => nodesOf(svelteValue(node)))
+		.flatMap((node) => {
+			const text = staticText(node);
+			return text === undefined ? [] : [text];
+		});
+}
+
+/**
+ * Every refusal in one fixture or stories file: any `did:` text but the
+ * reserved sample, any `@name.domain` whose domain doesn't end in `.test` or
+ * `.example`, anywhere in the text, and the same for a bare domain in a
+ * handle-named field or variable (or, in a stories file, attribute).
  */
 export function fixtureRefusals(file: FixtureFile): readonly FixtureRefusal[] {
 	const refusal = (reason: FixtureRefusalReason, text: string): FixtureRefusal => ({
@@ -103,9 +189,15 @@ export function fixtureRefusals(file: FixtureFile): readonly FixtureRefusal[] {
 		reason,
 		text
 	});
+	const handleStrings = file.path.endsWith('.svelte')
+		? svelteHandleStrings(file)
+		: scriptHandleStrings(file);
+	if (typeof handleStrings === 'string') {
+		return [refusal('a stories file that does not parse', handleStrings)];
+	}
 	const dids = [...file.text.matchAll(didPattern)].map(([text]) => text);
 	const atHandles = [...file.text.matchAll(atHandlePattern)].map(([text]) => text);
-	const fieldHandles = handleFieldStrings(file).filter((text) => domainPattern.test(text));
+	const fieldHandles = handleStrings.filter((text) => domainPattern.test(text));
 	return [
 		...dids
 			.filter((did) => did !== reservedDid)
@@ -116,22 +208,48 @@ export function fixtureRefusals(file: FixtureFile): readonly FixtureRefusal[] {
 	];
 }
 
-/** Every `.ts` file in the fixtures folder, or none while it doesn't exist. */
+/** Every `.ts` file in the fixtures folder and every stories file under the stories folder, sorted by path. */
 function realFixtures(): readonly FixtureFile[] {
-	const folder = `${uiRoot}${fixturesFolder}`;
-	const names = existsSync(folder) ? readdirSync(folder) : [];
+	const folder = `${uiRoot}${storiesFolder}`;
+	const names = existsSync(folder)
+		? readdirSync(folder, { recursive: true, encoding: 'utf8' })
+		: [];
 	return names
-		.filter((name) => name.endsWith('.ts'))
-		.map((name) => {
-			const filePath = `${fixturesFolder}/${name}`;
-			return { path: filePath, text: readFileSync(`${uiRoot}${filePath}`, 'utf8') };
-		});
+		.map((name) => `${storiesFolder}/${name}`)
+		.filter(
+			(filePath) =>
+				filePath.endsWith('.stories.svelte') ||
+				(filePath.startsWith(`${fixturesFolder}/`) &&
+					filePath.endsWith('.ts') &&
+					!filePath.slice(fixturesFolder.length + 1).includes('/'))
+		)
+		.sort()
+		.map((filePath) => ({ path: filePath, text: readFileSync(`${uiRoot}${filePath}`, 'utf8') }));
 }
 
 function reasonsFor(text: string): readonly FixtureRefusalReason[] {
 	return fixtureRefusals({ path: `${fixturesFolder}/people.ts`, text }).map(
 		(refusal) => refusal.reason
 	);
+}
+
+function storyReasonsFor(text: string): readonly FixtureRefusalReason[] {
+	return fixtureRefusals({ path: `${storiesFolder}/controls/Avatar.stories.svelte`, text }).map(
+		(refusal) => refusal.reason
+	);
+}
+
+/** A stories file with `script` in its module script and `markup` after it. */
+function storiesFile(script: string, markup: string): string {
+	return [
+		'<script module lang="ts">',
+		"\timport { defineMeta } from '@storybook/addon-svelte-csf';",
+		"\tconst { Story } = defineMeta({ title: 'Controls/Avatar' });",
+		`\t${script}`,
+		'</script>',
+		'',
+		markup
+	].join('\n');
 }
 
 describe('story fixtures', () => {
@@ -189,7 +307,87 @@ describe('story fixtures', () => {
 		expect(reasonsFor(text)).toEqual(['a handle outside .test and .example']);
 	});
 
-	it('passes every real fixture', () => {
+	it.each([
+		[
+			'@artist.test in the markup',
+			storiesFile('', '<Story name="Signed">Art by @artist.test</Story>')
+		],
+		[
+			'@artist.test in a script',
+			storiesFile("const artist = { handle: '@artist.test' };", '<Story name="Signed" />')
+		],
+		[
+			'the reserved DID in an arg',
+			storiesFile('', `<Story name="Owner" args={{ did: '${reservedDid}' }} />`)
+		],
+		[
+			'a bare handle in .example in an attribute',
+			storiesFile('', '<Story name="Owner" handle="studio.example" />')
+		],
+		['a handle attribute holding a name', storiesFile('', '<Story name="Owner" handle="Ash" />')],
+		[
+			'a real token page',
+			readFileSync(`${uiRoot}${storiesFolder}/tokens/Colour.stories.svelte`, 'utf8')
+		]
+	] as const)('passes a stories file with %s', (_label, text) => {
+		expect(storyReasonsFor(text)).toEqual([]);
+	});
+
+	it.each([
+		[
+			'another did:plc value in the markup',
+			storiesFile('', '<Story name="Owner">did:plc:zzzzzzzzzzzzzzzzzzzzzzzz</Story>')
+		],
+		[
+			'another did:plc value in a script',
+			storiesFile("const did = 'did:plc:zzzzzzzzzzzzzzzzzzzzzzzz';", '<Story name="Owner" />')
+		],
+		[
+			'another did:plc value in an arg',
+			storiesFile('', '<Story name="Owner" args={{ did: "did:plc:zzzzzzzzzzzzzzzzzzzzzzzz" }} />')
+		]
+	] as const)('refuses a stories file with %s', (_label, text) => {
+		expect(storyReasonsFor(text)).toEqual(['a DID other than the reserved sample']);
+	});
+
+	it.each([
+		[
+			'@someone.bsky.social in the markup',
+			storiesFile('', '<Story name="Signed">Art by @someone.bsky.social</Story>')
+		],
+		[
+			'@someone.bsky.social in a script',
+			storiesFile("const credit = 'Art by @someone.bsky.social';", '<Story name="Signed" />')
+		],
+		[
+			'a bare domain in a handle attribute',
+			storiesFile('', '<Story name="Owner" handle="someone.bsky.social" />')
+		],
+		[
+			'a bare domain in a handle arg',
+			storiesFile('', '<Story name="Owner" args={{ handle: \'someone.bsky.social\' }} />')
+		],
+		[
+			'a bare domain in a handle variable',
+			storiesFile("const ownerHandle = 'someone.bsky.social';", '<Story name="Owner" />')
+		]
+	] as const)('refuses a stories file with %s', (_label, text) => {
+		expect(storyReasonsFor(text)).toEqual(['a handle outside .test and .example']);
+	});
+
+	it('refuses a stories file that does not parse', () => {
+		expect(storyReasonsFor('<script module lang="ts">\n\tconst {')).toEqual([
+			'a stories file that does not parse'
+		]);
+	});
+
+	it('reads the stories files, not only the fixtures', () => {
+		expect(realFixtures().map((file) => file.path)).toContain(
+			`${storiesFolder}/tokens/Colour.stories.svelte`
+		);
+	});
+
+	it('passes every real fixture and stories file', () => {
 		expect(realFixtures().flatMap(fixtureRefusals)).toEqual([]);
 	});
 });
