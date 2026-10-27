@@ -115,7 +115,7 @@ interface Declaration {
 	readonly value: string;
 }
 
-/** A declaration, other than placement, in a rule whose target names no class. */
+/** A declaration, other than placement, in a rule whose target names no zf- class. */
 interface Unplaced extends Declaration {
 	/** The rule's selector, its white space folded to single spaces. */
 	readonly selector: string;
@@ -129,13 +129,13 @@ interface Scan {
 	readonly unplaced: Unplaced[];
 }
 
-/** The rule a declaration sits in: its selector, and whether its every target names a class or an element. */
+/** The rule a declaration sits in: its selector, and whether its every target names a zf- class or an element. */
 interface Enclosing {
 	readonly selector: string;
 	readonly named: boolean;
 }
 
-/** What a rule may set on a target that names no class: where the piece sits, never how it looks. */
+/** What a rule may set on a target that names no zf- class: where the piece sits, never how it looks. */
 const PLACEMENT_PROPERTIES: readonly string[] = [
 	'order',
 	'grid-column',
@@ -167,14 +167,15 @@ function collectClasses(node: unknown, into: Set<string>): void {
 }
 
 /**
- * True when a selector's target, its last compound, names a class or an
- * element (`*` names none); a `&` there stands for the enclosing rule's.
+ * True when a selector's target, its last compound, names a zf- class or an
+ * element; a paper or state class, a pseudo-class, an attribute or `*` names
+ * none, and a `&` there stands for the enclosing rule's.
  */
 function targetIsNamed(selector: AST.CSS.ComplexSelector, enclosingNamed: boolean): boolean {
 	const target = selector.children.at(-1)?.selectors ?? [];
 	return target.some(
 		(simple) =>
-			simple.type === 'ClassSelector' ||
+			(simple.type === 'ClassSelector' && simple.name.startsWith('zf-')) ||
 			(simple.type === 'TypeSelector' && simple.name !== '*') ||
 			(simple.type === 'NestingSelector' && enclosingNamed)
 	);
@@ -317,7 +318,7 @@ function findingsIn(css: string): readonly string[] {
 		.map((name) => `${name}: not a token`);
 	const unplaced = scan.unplaced.map(
 		({ selector, property, value }) =>
-			`${selector} { ${property}: ${value} }: only placement on a target that names no class`
+			`${selector} { ${property}: ${value} }: only placement on a target that names no zf- class`
 	);
 	return [...atRules, ...declarations, ...classes, ...tokens, ...unplaced];
 }
@@ -434,7 +435,25 @@ describe('the family-file rules', () => {
 			'a child styled in a media query',
 			'@media (pointer: coarse) { .zf-card > * { padding: 0; } }'
 		],
-		['a child styled in a nested rule', '.zf-card { & > * { color: var(--color-text); } }']
+		['a child styled in a nested rule', '.zf-card { & > * { color: var(--color-text); } }'],
+		[
+			'a size on a child named only by a paper class',
+			'.zf-dialog__actions > .placed { min-height: var(--size-control-lg); }'
+		],
+		[
+			'a colour on a child named only by a state class',
+			'.zf-card > .is-active { color: var(--color-text); }'
+		],
+		['a paper class styled on its own', '.placed { color: var(--color-text); }'],
+		[
+			'a paper class with a pseudo-class',
+			'.zf-card > .placed:hover { background: var(--color-hover); }'
+		],
+		['a nested state of a paper class', '.placed { &:hover { color: var(--color-text); } }'],
+		[
+			'a selector list with a target of a paper class',
+			'.zf-card, .zf-card > .placed { padding: var(--space-2); }'
+		]
 	])('refuse %s', (_, css) => {
 		expect(findingsIn(css).length).toBeGreaterThan(0);
 	});
@@ -458,7 +477,15 @@ describe('the family-file rules', () => {
 			'.zf-card > * { grid-column: 1 / -1; grid-row-start: 2; align-self: start; place-self: end; }'
 		],
 		['a child named by its element', '.zf-card img { display: block; }'],
-		['a nested state of its own class', '.zf-card { &:hover { color: var(--color-text); } }']
+		['a nested state of its own class', '.zf-card { &:hover { color: var(--color-text); } }'],
+		[
+			'a zf- class with a paper class in the target',
+			'.zf-dialog > .zf-dialog__body.placed { min-height: var(--size-control-lg); }'
+		],
+		[
+			'an order on a child named only by a paper class',
+			'.zf-dialog__actions > .placed { order: 1; }'
+		]
 	])('allow %s', (_, css) => {
 		expect(findingsIn(css)).toEqual([]);
 	});
