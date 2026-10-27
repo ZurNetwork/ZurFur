@@ -136,8 +136,7 @@ describe('PillSwitch', () => {
 	});
 
 	it('keeps the same DOM around the group when there is no shared type', () => {
-		const screen = renderSwitch({ options: mixed, testid: 'batch-filter' });
-		void screen;
+		renderSwitch({ options: mixed, testid: 'batch-filter' });
 		const group = page.getByTestId('batch-filter').element();
 		expect(group.parentElement?.classList.contains('zf-seg-row')).toBe(false);
 	});

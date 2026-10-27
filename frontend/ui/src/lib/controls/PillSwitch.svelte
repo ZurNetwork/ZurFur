@@ -1,5 +1,6 @@
 <script lang="ts" generics="Id extends string">
 	import { RadioGroup } from 'bits-ui';
+	import type { Snippet } from 'svelte';
 	import { useEnvironment } from '../environment/context';
 	import Icon from '../icons/Icon.svelte';
 	import { sharedType, typeOf } from './pill-type';
@@ -30,6 +31,9 @@
 
 	/** What describes the group: the shared type's id, when one is shown. */
 	const describedby = $derived(shared === undefined ? undefined : `${id}-type`);
+
+	/** The radio group, as a plain snippet to render in either place it can sit. */
+	const radioGroup: Snippet = group;
 
 	/** A choice asked for: unknown ids, the empty string and disabled options are ignored; the rest play the cue and ask the parent. */
 	function choose(next: string): void {
@@ -64,11 +68,12 @@
 	</div>
 {/snippet}
 
-<!-- bits-ui's `name` takes no undefined, so a root with a name is its own branch. A shared type is drawn once, before the piece, as the switch's own words. -->
-{#if shared === undefined}
+<!-- bits-ui's `name` takes no undefined, so a root with a name is its own branch. -->
+{#snippet group()}
 	{#if name === undefined}
 		<RadioGroup.Root
 			aria-label={label}
+			aria-describedby={describedby}
 			orientation="horizontal"
 			bind:value={() => value, choose}
 			{disabled}
@@ -77,6 +82,7 @@
 	{:else}
 		<RadioGroup.Root
 			aria-label={label}
+			aria-describedby={describedby}
 			orientation="horizontal"
 			bind:value={() => value, choose}
 			{disabled}
@@ -84,28 +90,14 @@
 			{child}
 		/>
 	{/if}
+{/snippet}
+
+<!-- A shared type is drawn once, before the piece, as the switch's own words. -->
+{#if shared === undefined}
+	{@render radioGroup()}
 {:else}
 	<div class="zf-seg-row">
 		<span class="zf-seg__type" id="{id}-type">{shared}</span>
-		{#if name === undefined}
-			<RadioGroup.Root
-				aria-label={label}
-				aria-describedby={describedby}
-				orientation="horizontal"
-				bind:value={() => value, choose}
-				{disabled}
-				{child}
-			/>
-		{:else}
-			<RadioGroup.Root
-				aria-label={label}
-				aria-describedby={describedby}
-				orientation="horizontal"
-				bind:value={() => value, choose}
-				{disabled}
-				{name}
-				{child}
-			/>
-		{/if}
+		{@render radioGroup()}
 	</div>
 {/if}

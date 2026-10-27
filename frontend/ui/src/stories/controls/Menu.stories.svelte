@@ -186,13 +186,13 @@ Keyboard:
 
 <Story
 	name="Release on a Row Chooses Nothing"
-	play={async ({ canvas, canvasElement, args }) => {
+	play={async ({ canvas, canvasElement, args, userEvent: user }) => {
 		const trigger = canvas.getByRole('button', { name: 'Actions' });
 		await untilPressable(trigger);
-		await userEvent.pointer({ keys: '[MouseLeft>]', target: trigger });
+		await user.pointer({ keys: '[MouseLeft>]', target: trigger });
 		const menu = await within(canvasElement.ownerDocument.body).findByRole('menu');
 		const row = within(menu).getByRole('menuitem', { name: 'Duplicate' });
-		await userEvent.pointer({ keys: '[/MouseLeft]', target: row });
+		await user.pointer({ keys: '[/MouseLeft]', target: row });
 		await expect(args.onSelect).not.toHaveBeenCalled();
 		await expect(menu).toBeVisible();
 	}}

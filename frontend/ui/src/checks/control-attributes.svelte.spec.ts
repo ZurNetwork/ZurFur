@@ -1,5 +1,5 @@
 import { page, userEvent } from 'vitest/browser';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { createRawSnippet } from 'svelte';
 import AcceptingDateField from './testing/AcceptingDateField.svelte';
@@ -93,6 +93,11 @@ const tabs: readonly TabItem<Choice>[] = [
 const pills: readonly PillOption<Choice>[] = [
 	{ id: 'one', label: 'One', icon: 'file', prefix: 'batch:' },
 	{ id: 'two', label: 'Two' }
+];
+/** Two types in one switch, so each option keeps its own type. */
+const mixedPills: readonly PillOption<Choice>[] = [
+	{ id: 'one', label: 'One', icon: 'file', prefix: 'batch:' },
+	{ id: 'two', label: 'Two', prefix: 'phase:' }
 ];
 const menuItems: readonly MenuItem<Choice>[] = [
 	{ id: 'one', label: 'One', icon: 'file' },
@@ -280,6 +285,20 @@ const FIXTURES: Readonly<Record<string, readonly Fixture[]>> = {
 					onChange: () => undefined
 				}).container,
 			steps: [['chosen', () => page.getByRole('radio', { name: 'Two' }).click()]]
+		},
+		{
+			label: 'with mixed types and a name',
+			render: () =>
+				render(AcceptingPillSwitch<Choice>, {
+					label: 'Batch',
+					options: mixedPills,
+					initial: 'one',
+					accepts: true,
+					name: 'batch',
+					testid: 'control',
+					onChange: () => undefined
+				}).container,
+			steps: [['chosen', () => page.getByRole('radio', { name: 'Two' }).click()]]
 		}
 	],
 	'Select.svelte': [
@@ -347,6 +366,9 @@ const FIXTURES: Readonly<Record<string, readonly Fixture[]>> = {
 				const narrow = document.createElement('div');
 				narrow.style.width = '120px';
 				document.body.append(narrow);
+				onTestFinished(() => {
+					narrow.remove();
+				});
 				return render(AcceptingScrollingTabs<Choice>, {
 					target: narrow,
 					props: {
