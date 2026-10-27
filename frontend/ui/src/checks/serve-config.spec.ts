@@ -725,15 +725,21 @@ const guardVariables: ReadonlyMap<string, string> = new Map([
 /**
  * The port rule's one spelling: the gallery's port, printed by `gallery-port.ts`.
  * It may stand only inside a `sh -c '…'` body under `env -i`, so it runs in the
- * clean environment.
+ * clean environment, and only in a script that pins it.
  */
 const portArgument = '"$(node gallery-port.ts)"';
+
+/**
+ * What a `sh -c` body runs before `exec`: Kit's generated files, which every
+ * install skips and Storybook doesn't write, synced in the clean environment.
+ */
+const syncFirst = 'svelte-kit sync && ';
 
 /**
  * Each guarded script's program, its required arguments (a flag, or a flag
  * and its value) and the arguments it may also carry. Any other argument is
  * refused, so no flag that opens or reports can slip in beside the pinned ones.
- * `inShell` scripts run their command as `sh -c 'exec …'` under `env -i`.
+ * `inShell` scripts run `sh -c 'svelte-kit sync && exec …'` under `env -i`.
  */
 interface GuardedCommand {
 	readonly program: readonly string[];
@@ -761,7 +767,7 @@ const guardedScripts: Readonly<Record<string, GuardedCommand>> = {
 		program: ['storybook', 'build'],
 		required: [['-c', '.storybook'], ['-o', 'storybook-static'], ['--disable-telemetry']],
 		optional: [['--quiet']],
-		inShell: false
+		inShell: true
 	},
 	test: { program: ['vitest'], required: [['--run']], optional: [], inShell: false },
 	'test:unit': { program: ['vitest'], required: [], optional: [], inShell: false }
@@ -808,23 +814,34 @@ function shellBodyText(words: readonly string[]): string | undefined {
 	return shell === 'sh' && flag === '-c' ? shellBody.exec(body)?.[1] : undefined;
 }
 
+/** True when the command pins the port rule as an argument. */
+function pinsPortRule(command: GuardedCommand): boolean {
+	return command.required.some((shape) => shape.includes(portArgument));
+}
+
 /**
- * Why a `sh -c` body is not `exec` then the pinned command: it runs under
- * `env -i`, so the port rule's one `$(…)` may stand here, and nothing else
- * that ends, starts or substitutes a command.
+ * Why a `sh -c` body is not `svelte-kit sync && exec` then the pinned command:
+ * it runs under `env -i`, so the sync's one `&&` and, in a script that pins
+ * it, the port rule's one `$(…)` may stand here, and nothing else that ends,
+ * starts or substitutes a command.
  */
 function shellBodyRefusals(text: string, command: GuardedCommand): readonly string[] {
-	if (commandBreaks.test(text.replace(portArgument, ''))) {
+	if (!text.startsWith(syncFirst)) {
+		return ["it does not run its command as sh -c 'svelte-kit sync && exec …'"];
+	}
+	const rest = text.slice(syncFirst.length);
+	const checked = pinsPortRule(command) ? rest.replace(portArgument, '') : rest;
+	if (commandBreaks.test(checked)) {
 		return ['it holds a character that ends or starts a command inside sh -c'];
 	}
-	const [exec, ...words] = scriptWords(text) ?? [];
-	if (exec !== 'exec') return ["it does not run its command as sh -c 'exec …'"];
+	const [exec, ...words] = scriptWords(rest) ?? [];
+	if (exec !== 'exec') return ["it does not run its command as sh -c 'svelte-kit sync && exec …'"];
 	return commandRefusals(words, command);
 }
 
 /**
  * Why one script is not `env -i`, exactly the guard's variables, then its
- * pinned command (inside `sh -c 'exec …'` for an `inShell` script). The
+ * pinned command (inside `sh -c 'svelte-kit sync && exec …'` for an `inShell` script). The
  * caller's shell expands every word but a single-quoted `sh -c` body, so none
  * of them may end, start or substitute a command.
  */
@@ -860,7 +877,10 @@ function guardedScriptRefusals(script: string, command: GuardedCommand): readonl
 	];
 	if (!command.inShell) return [...variableRefusals, ...commandRefusals(commandWords, command)];
 	if (body === undefined || commandWords.length !== 3) {
-		return [...variableRefusals, "it does not run its command as sh -c 'exec …'"];
+		return [
+			...variableRefusals,
+			"it does not run its command as sh -c 'svelte-kit sync && exec …'"
+		];
 	}
 	return [...variableRefusals, ...shellBodyRefusals(body, command)];
 }
@@ -921,11 +941,14 @@ describe("ui's guarded scripts", () => {
 
 	const guard = [...guardVariables].map(([name, value]) => `${name}=${value}`).join(' ');
 	const storybookCommand = `storybook dev -c .storybook --host 127.0.0.1 --port ${portArgument} --exact-port --no-open --ci --no-version-updates --disable-telemetry`;
-	const storybook = `env -i ${guard} sh -c 'exec ${storybookCommand}'`;
+	const storybook = `env -i ${guard} sh -c '${syncFirst}exec ${storybookCommand}'`;
+	const buildCommand =
+		'storybook build -c .storybook -o storybook-static --disable-telemetry --quiet';
+	const buildStorybook = `env -i ${guard} sh -c '${syncFirst}exec ${buildCommand}'`;
 	const scripts = {
 		dev: 'vite dev',
 		storybook,
-		'build-storybook': `env -i ${guard} storybook build -c .storybook -o storybook-static --disable-telemetry --quiet`,
+		'build-storybook': buildStorybook,
 		test: `env -i ${guard} vitest --run`,
 		'test:unit': `env -i ${guard} vitest`
 	};
@@ -1018,7 +1041,7 @@ describe("ui's guarded scripts", () => {
 
 	const callerShell = "it holds a character that ends or starts a command in the caller's shell";
 	const insideShell = 'it holds a character that ends or starts a command inside sh -c';
-	const notShell = "it does not run its command as sh -c 'exec …'";
+	const notShell = "it does not run its command as sh -c 'svelte-kit sync && exec …'";
 
 	it.each([
 		[
@@ -1066,10 +1089,28 @@ describe("ui's guarded scripts", () => {
 			storybook.replace(" --disable-telemetry'", " --disable-telemetry; storybook dev'"),
 			insideShell
 		],
-		['sh -c without exec', storybook.replace("'exec ", "'"), notShell],
+		['sh -c without exec', storybook.replace('&& exec ', '&& '), notShell],
+		['the sync dropped', storybook.replace(syncFirst, ''), notShell],
+		['the sync after a semicolon', storybook.replace(' && ', '; '), notShell],
+		['the sync given a flag', storybook.replace(' sync ', ' sync --help '), notShell],
+		[
+			'another command in place of the sync',
+			storybook.replace('svelte-kit sync', 'rm -rf x'),
+			notShell
+		],
+		[
+			'the sync after exec',
+			`env -i ${guard} sh -c 'exec ${storybookCommand} && svelte-kit sync'`,
+			notShell
+		],
+		[
+			'a second && after the command',
+			storybook.replace(" --disable-telemetry'", " --disable-telemetry && storybook dev'"),
+			insideShell
+		],
 		[
 			'the body unquoted, so the caller expands it',
-			storybook.replace("'exec ", 'exec ').replace(/'$/, ''),
+			storybook.replace(`'${syncFirst}`, syncFirst).replace(/'$/, ''),
 			callerShell
 		],
 		['a flag after the body', `${storybook} --host 0.0.0.0`, notShell],
@@ -1079,7 +1120,7 @@ describe("ui's guarded scripts", () => {
 			callerShell
 		],
 		['sh -c without its body', `env -i ${guard} sh -c`, notShell],
-		['a backslash', storybook.replace("'exec ", "\\'exec "), 'it holds a backslash']
+		['a backslash', storybook.replace(`'${syncFirst}`, `\\'${syncFirst}`), 'it holds a backslash']
 	])('refuses a storybook script with %s', (_label, script, reason) => {
 		expect(guardedManifestRefusals(changed('storybook', script))).toContainEqual(
 			`storybook: ${reason}`
@@ -1087,13 +1128,42 @@ describe("ui's guarded scripts", () => {
 	});
 
 	it.each([
-		['test', `env -i ${guard} sh -c 'exec vitest --run'`, 'test: it runs sh, not vitest'],
+		['exec alone', `env -i ${guard} sh -c 'exec vitest --run'`, 'it runs sh, not vitest'],
+		['the sync', `env -i ${guard} sh -c '${syncFirst}exec vitest --run'`, callerShell]
+	])(
+		'refuses a sh -c body with %s in test, which is not a shell script',
+		(_label, script, reason) => {
+			expect(guardedManifestRefusals(changed('test', script))).toContainEqual(`test: ${reason}`);
+		}
+	);
+
+	it.each([
+		['run outside sh -c, so nothing syncs', `env -i ${guard} ${buildCommand}`, notShell],
+		['the sync dropped', buildStorybook.replace(syncFirst, ''), notShell],
+		['sh -c without exec', buildStorybook.replace('&& exec ', '&& '), notShell],
 		[
-			'build-storybook',
-			`env -i ${guard} sh -c 'exec storybook build -c .storybook -o storybook-static --disable-telemetry'`,
-			'build-storybook: it runs sh -c, not storybook build'
+			'the port rule, which only the dev server pins',
+			buildStorybook.replace(' --quiet', ` --quiet ${portArgument}`),
+			insideShell
+		],
+		[
+			'a second command after the build',
+			buildStorybook.replace(" --quiet'", " --quiet && storybook dev'"),
+			insideShell
+		],
+		[
+			'--disable-telemetry dropped',
+			buildStorybook.replace(' --disable-telemetry', ''),
+			'it does not pass --disable-telemetry'
+		],
+		[
+			'another output folder',
+			buildStorybook.replace('-o storybook-static', '-o ../out'),
+			'it passes -o ../out'
 		]
-	] as const)('refuses a sh -c body in %s, which runs no port rule', (name, script, refusal) => {
-		expect(guardedManifestRefusals(changed(name, script))).toContainEqual(refusal);
+	])('refuses a build-storybook script with %s', (_label, script, reason) => {
+		expect(guardedManifestRefusals(changed('build-storybook', script))).toContainEqual(
+			`build-storybook: ${reason}`
+		);
 	});
 });
