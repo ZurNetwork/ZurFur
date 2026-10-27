@@ -77,6 +77,7 @@
 - 2026102305 decided — Invoices, Batches and Boards — Split-Off Invoices, Commission Batches and the Batch-Tag Filter
 - 2026102306 decided — Posting — a Pipeline of Stages and a Browser PostyBirb
 - 2026102501 decided — Tags as the Base of Search — Typed Tags, Aliases, Implications and Named Batches
+- 2026102601 decided — A Home Screen Web App — the Manifest First, the Service Worker with Notifications and a First-Load Budget
 
 ## entities/
 - 786439 current — User
