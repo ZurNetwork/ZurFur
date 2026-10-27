@@ -20,7 +20,7 @@
   "fs": [
     {
       "name": "Avatar.svelte",
-      "role": "someone's picture in a circle, or the first letter, number or emoji of their name, in one of six tones and three sizes; with the name and handle beside it, or alone and read out as the name; only a picture that passes the picture check loads",
+      "role": "someone's picture in a circle, or the first letter, number or emoji of their name, in one of six tones and three sizes; with the name and handle beside it, or alone and read out as the name, hidden only when the name is empty; only a picture that passes the picture check loads",
       "node": false
     },
     {
@@ -70,7 +70,7 @@
     },
     {
       "name": "Spinner.svelte",
-      "role": "a ring that turns through the seam: a status with its words, or the glyph alone (what Button's busy state holds)",
+      "role": "a ring that turns through the seam: a status always on the page that holds the ring and its words only while `active` (a page mounts it once and changes `active`), or the glyph alone (what Button's busy state holds)",
       "node": false
     },
     {
@@ -80,7 +80,7 @@
     },
     {
       "name": "StatusPill.svelte",
-      "role": "a pill of one or two parts, each with a label, tone and optional icon, and a quiet fact beside it",
+      "role": "a pill of one or two parts, read with a pause between them, each with a label, tone and optional icon, and a quiet fact beside it",
       "node": false
     },
     {
@@ -90,7 +90,7 @@
     },
     {
       "name": "ToastStack.svelte",
-      "role": "the place toasts sit: a labelled region fixed at the bottom right, holding an always-there polite live region that holds the toasts",
+      "role": "the place toasts sit: a labelled region fixed at the bottom right, holding an always-there polite live region (`zf-toast-stack__live`) that holds the toasts",
       "node": false
     },
     {

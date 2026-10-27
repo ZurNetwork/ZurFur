@@ -1189,6 +1189,23 @@
       "governs": "decisions 9 to 11: motion and sound that feel alive, with the Still and reduced-motion stops"
     }
   ],
+  "frontend/ui/src/lib/surfaces": [
+    {
+      "page": 39944194,
+      "title": "Frontend Stack — Server-Only Effect & the Runes Seam",
+      "governs": "the surfaces take plain typed data, the picture and pin-point mints among it, and report plain values; they never see an Effect"
+    },
+    {
+      "page": 65110018,
+      "title": "Comments & Markup — One Comment Entity, Pins and Threads (the Bluesky Mechanism, Privately)",
+      "governs": "decision 2: Pin is a markup pin's mark on the art, at a point normalized from 0 to 1 (PinPoint), opening its thread"
+    },
+    {
+      "page": 2026102301,
+      "title": "The Front Door and the Voice — Sections over the Tree, the One-Page Commission and an Interface That Feels Alive",
+      "governs": "decisions 9, 10 and 12: the surfaces feel alive only through the seam (Spinner turns, Skeleton breathes, Pin squishes), go still under reduced motion and the motion switch, and are loaders a page fits to where they appear"
+    }
+  ],
   "frontend/web/src/lib/server": [
     {
       "page": 23592962,

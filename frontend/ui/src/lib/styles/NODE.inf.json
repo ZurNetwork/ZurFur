@@ -10,7 +10,7 @@
   ],
   "conventions": [
     "Components take colour, space, shape and depth from the semantic tokens; times and easings are written only in `tokens.css`, the style scan's one exempt file.",
-    "The controls' looks are the seven family stylesheets in `controls/` and the surfaces' the eight in `surfaces/`, each imported by `index.ts`; each folder's node holds its rules, and `checks/family-css.spec` holds both folders to them.",
+    "The controls' looks are the seven family stylesheets in `controls/` and the surfaces' the eight in `surfaces/`, each imported by `index.ts`; each folder's node holds its rules, and `checks/family-css.spec` holds both folders to them, refuses any other folder under `styles/`, and allows only placement on a rule whose target names no class.",
     "`base.css` holds the one shared utility class any component may write, `.zf-sr` (words for screen readers only); every other look belongs to a family.",
     "`tokens.json` is the design system's file byte for byte but two identifier samples, swapped for reserved examples by the recorded copy step (`yarn tokens:copy <version>`, `checks/tokens/copy.ts`, pinned by a masked hash); it is never edited by hand.",
     "`tokens.additions.json` holds tokens pending the next design system revision (today `easing-linear`); the generator refuses an addition that the main file already has.",
