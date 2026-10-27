@@ -50,6 +50,11 @@
 		color: var(--color-text);
 	}
 
+	/* Code in the design system's mono; a bare element selector, so a component's own font wins. */
+	:global(code, kbd, samp) {
+		font-family: var(--font-mono);
+	}
+
 	/*
 	 * A docs page around its stories wears the skin too, so the toggle switches the whole page.
 	 * Only Storybook's own docs chrome is painted here, never a story's content.
