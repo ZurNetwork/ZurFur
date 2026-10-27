@@ -4,18 +4,89 @@ import { parseCss } from 'svelte/compiler';
 import type { AST } from 'svelte/compiler';
 import { PAPER_CLASSES } from '../lib/styles/paper-classes';
 
-const stylesFolder = new URL('../lib/styles/', import.meta.url);
-const controlsFolder = new URL('controls/', stylesFolder);
+const libFolder = new URL('../lib/', import.meta.url);
+const stylesFolder = new URL('styles/', libFolder);
 
-/** Everything in the family folder, by name. */
-const folderEntries = readdirSync(controlsFolder).sort();
+/** The two family folders, each with exactly the files it holds. */
+const FAMILY_FOLDERS = {
+	controls: [
+		'button.css',
+		'check.css',
+		'field.css',
+		'menu.css',
+		'tabs.css',
+		'tip.css',
+		'toggle.css'
+	],
+	surfaces: [
+		'card.css',
+		'dialog.css',
+		'label.css',
+		'loading.css',
+		'mature.css',
+		'message.css',
+		'pin.css',
+		'toast.css'
+	]
+} as const;
 
-/** Every family file, by name. */
-const familyFiles = folderEntries.filter((name) => name.endsWith('.css'));
+type FamilyFolder = keyof typeof FAMILY_FOLDERS;
 
-function readFamily(name: string): string {
-	return readFileSync(new URL(name, controlsFolder), 'utf8');
+const folderNames = Object.keys(FAMILY_FOLDERS) as FamilyFolder[];
+
+/** Everything in a family folder, by name. */
+function entriesOf(folder: FamilyFolder): readonly string[] {
+	return readdirSync(new URL(`${folder}/`, stylesFolder)).sort();
 }
+
+/** What a family folder holds that it shouldn't, or lacks; empty when it is exactly right. */
+function folderFindings(
+	entries: readonly string[],
+	expected: readonly string[]
+): readonly string[] {
+	const allowed = [...expected, 'NODE.inf.json'];
+	const extra = entries
+		.filter((name) => !allowed.includes(name))
+		.map((name) => `${name}: not a family`);
+	const missing = expected
+		.filter((name) => !entries.includes(name))
+		.map((name) => `${name}: missing`);
+	return [...extra, ...missing];
+}
+
+/** Every family file, as `folder/name`. */
+const familyFiles = folderNames.flatMap((folder) =>
+	FAMILY_FOLDERS[folder].map((name) => `${folder}/${name}`)
+);
+
+function readStyle(path: string): string {
+	return readFileSync(new URL(path, stylesFolder), 'utf8');
+}
+
+/** Every stylesheet under `src/lib/`, as a path from it. */
+function stylesheetsInLib(): readonly string[] {
+	return readdirSync(libFolder, { recursive: true, encoding: 'utf8' })
+		.filter((path) => path.endsWith('.css'))
+		.map((path) => path.split('\\').join('/'))
+		.sort();
+}
+
+/** The one stylesheet that may name MatureCover's classes. */
+const MATURE_FILE = 'styles/surfaces/mature.css';
+
+/** Where a stylesheet other than mature.css names MatureCover; empty when it doesn't. */
+function matureFindings(path: string, css: string): readonly string[] {
+	if (path === MATURE_FILE) return [];
+	return /zf-mature/i.test(css) ? [`${path}: names zf-mature outside ${MATURE_FILE}`] : [];
+}
+
+/** The custom properties tokens.css defines. */
+const TOKEN_NAMES = new Set(
+	[...readStyle('tokens.css').matchAll(/(--[a-z0-9-]+)\s*:/g)].map((match) => match[1] ?? '')
+);
+
+/** The state classes the surfaces' components set. */
+const STATE_CLASSES: readonly string[] = ['is-active', 'is-revealed', 'is-hidden', 'is-resolved'];
 
 interface Declaration {
 	readonly property: string;
@@ -70,7 +141,7 @@ function scanCss(css: string): Scan {
 
 /** The properties a family file may never move: the paper classes and the motion seam own them. */
 const MOVING_PROPERTY =
-	/(?<![\w-])(?:translate|transform|box-shadow|top|left|width|all)(?![\w-])/gi;
+	/(?<![\w-])(?:translate|transform|scale|rotate|opacity|filter|box-shadow|top|left|width|height|all)(?![\w-])/gi;
 
 /** A hex colour, or a colour function. */
 const RAW_COLOUR =
@@ -152,38 +223,72 @@ function findingsIn(css: string): readonly string[] {
 	});
 	const paperClasses: readonly string[] = PAPER_CLASSES;
 	const classes = [...scan.classes]
-		.filter((name) => !name.startsWith('zf-') && !paperClasses.includes(name))
-		.map((name) => `.${name}: neither a bundle zf- class nor a paper class`);
-	return [...atRules, ...declarations, ...classes];
+		.filter(
+			(name) =>
+				!name.startsWith('zf-') && !paperClasses.includes(name) && !STATE_CLASSES.includes(name)
+		)
+		.map((name) => `.${name}: neither a bundle zf- class, a paper class nor a state class`);
+	const tokens = scan.declarations
+		.flatMap(({ value }) =>
+			[...value.matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1] ?? '')
+		)
+		.filter((name) => !TOKEN_NAMES.has(name))
+		.map((name) => `${name}: not a token`);
+	return [...atRules, ...declarations, ...classes, ...tokens];
 }
 
-describe('the control family files', () => {
-	it('are the seven families', () => {
-		expect(familyFiles).toEqual([
-			'button.css',
-			'check.css',
-			'field.css',
-			'menu.css',
-			'tabs.css',
-			'tip.css',
-			'toggle.css'
-		]);
+describe('the family files', () => {
+	it.each(folderNames)('%s holds exactly its families, beside nothing but its node', (folder) => {
+		expect(folderFindings(entriesOf(folder), FAMILY_FOLDERS[folder])).toEqual([]);
 	});
 
-	it("sit beside nothing but the folder's node", () => {
-		expect(folderEntries.filter((name) => !familyFiles.includes(name))).toEqual(['NODE.inf.json']);
-	});
-
-	it.each(familyFiles)('%s keeps to tokens, paper classes and colour fades', (name) => {
-		expect(findingsIn(readFamily(name))).toEqual([]);
+	it.each(familyFiles)('%s keeps to tokens, paper and state classes, and colour fades', (path) => {
+		expect(findingsIn(readStyle(path))).toEqual([]);
 	});
 
 	it('are each imported by the styles entry', () => {
-		const entry = readFileSync(new URL('index.ts', stylesFolder), 'utf8');
-		const imported = [...entry.matchAll(/^import '\.\/controls\/([^']+)';$/gm)].map(
+		const entry = readStyle('index.ts');
+		const imported = [...entry.matchAll(/^import '\.\/((?:controls|surfaces)\/[^']+)';$/gm)].map(
 			(match) => match[1]
 		);
-		expect(familyFiles.filter((name) => !imported.includes(name))).toEqual([]);
+		expect(familyFiles.filter((path) => !imported.includes(path))).toEqual([]);
+	});
+});
+
+describe("MatureCover's classes", () => {
+	it('are named in no stylesheet under src/lib but mature.css', () => {
+		const sheets = stylesheetsInLib();
+		expect(sheets).toContain(MATURE_FILE);
+		const found = sheets.flatMap((path) =>
+			matureFindings(path, readFileSync(new URL(path, libFolder), 'utf8'))
+		);
+		expect(found).toEqual([]);
+	});
+
+	it('are named in mature.css, so the scan reads the right file', () => {
+		expect(readStyle('surfaces/mature.css')).toContain('.zf-mature');
+	});
+
+	it('refuse a .zf-mature__art rule in card.css', () => {
+		const css = '.zf-mature__art { filter: none; }';
+		expect(matureFindings('styles/surfaces/card.css', css).length).toBeGreaterThan(0);
+	});
+
+	it('refuse a class list that reaches into MatureCover', () => {
+		const css = '[class*="zf-mature"] { filter: none; }';
+		expect(matureFindings('styles/paper.css', css).length).toBeGreaterThan(0);
+	});
+});
+
+describe('the family folders', () => {
+	it('refuse a ninth file among the surfaces', () => {
+		const entries = [...FAMILY_FOLDERS.surfaces, 'NODE.inf.json', 'extra.css'];
+		expect(folderFindings(entries, FAMILY_FOLDERS.surfaces)).toEqual(['extra.css: not a family']);
+	});
+
+	it('refuse a missing family', () => {
+		const entries = FAMILY_FOLDERS.controls.filter((name) => name !== 'tip.css');
+		expect(folderFindings(entries, FAMILY_FOLDERS.controls)).toEqual(['tip.css: missing']);
 	});
 });
 
@@ -198,6 +303,16 @@ describe('the family-file rules', () => {
 		['a transition of top', '.zf-btn { transition: top var(--duration-fast); }'],
 		['a transition of width', '.zf-btn { transition: width var(--duration-fast); }'],
 		['a transition of all', '.zf-btn { transition: all var(--duration-fast); }'],
+		['a transition of scale', '.zf-pin { transition: scale var(--duration-fast); }'],
+		['a transition of rotate', '.zf-spinner { transition-property: rotate; }'],
+		['a transition of opacity', '.zf-backdrop { transition: opacity var(--duration-dim); }'],
+		['a transition of filter', '.zf-mature__art { transition: filter var(--duration-slow); }'],
+		['a transition of height', '.zf-skeleton { transition: height var(--duration-base); }'],
+		[
+			'keyframes in a surface file',
+			'.zf-skeleton { display: block; } @keyframes zf-breathe { to { opacity: 0.55; } }'
+		],
+		['an unknown token', '.zf-card { padding: var(--space-7); }'],
 		['outline: none', '.zf-tab:focus-visible { outline: none; }'],
 		['outline: 0', '.zf-tab:focus-visible { outline: 0; }'],
 		['a hex colour', '.zf-btn { color: #fff; }'],
@@ -224,6 +339,7 @@ describe('the family-file rules', () => {
 		['the focus ring', '.zf-btn:focus-visible { outline: 2px solid var(--color-focus); }'],
 		['a hairline border', '.zf-btn { border: 1px solid transparent; color: currentColor; }'],
 		['a paper class', '.zf-btn.placed:hover { background: var(--color-hover); }'],
+		['a state class', '.zf-pin.is-active { scale: 1.15; }'],
 		['a percentage and a unitless number', '.zf-btn { left: calc(100% - 2px); opacity: 0.55; }']
 	])('allow %s', (_, css) => {
 		expect(findingsIn(css)).toEqual([]);

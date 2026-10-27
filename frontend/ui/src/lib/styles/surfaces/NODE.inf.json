@@ -1,0 +1,67 @@
+{
+  "path": "frontend/ui/src/lib/styles/surfaces",
+  "charted": "2026-10-27",
+  "short": "The surfaces' looks, one stylesheet per family",
+  "is": "Eight family stylesheets ported from the design system's bundle onto tokens: card, dialog, toast, message, loading, label, mature and pin. The styles entry imports each, after the control families.",
+  "type": "code",
+  "tags": [
+    "category:ui",
+    "category:source"
+  ],
+  "conventions": [
+    "Each file owns fixed families (a class belongs to family F when it is exactly F or starts with `F__` or `F--`): card `zf-card`; dialog `zf-backdrop`, `zf-dialog`; toast `zf-toast`, `zf-toast-stack`; message `zf-inline`, `zf-empty`; loading `zf-spinner`, `zf-spinner-wrap`, `zf-skeleton`, `zf-skeleton-lines`; label `zf-badge`, `zf-status`, `zf-pill`, `zf-vis`, `zf-avatar`, `zf-avatar-wrap`, `zf-handle`; mature `zf-mature`; pin `zf-pin`. No file names another family's class; the state classes `is-active`, `is-revealed`, `is-hidden` and `is-resolved` may appear.",
+    "A look composes the paper classes rather than rewriting them: Card is `.obj` and keeps only its padding and text colour; Dialog and Toast are notes (`color-note`, `elevation-note`).",
+    "Everything comes from tokens: no raw colour, time, easing or length, except `0`, 1px borders, the 2px focus ring, percentages and unitless numbers. A size the bundle writes raw takes the nearest token, or a `calc` of tokens and unitless numbers when that keeps the bundle's size; a media query writes `breakpoint-sm`'s 480px, since it can't read a custom property.",
+    "Motion belongs to the seam: no `animation` or keyframes, and no `transition` of `translate`, `transform`, `scale`, `rotate`, `opacity`, `filter`, `box-shadow`, `top`, `left`, `width`, `height` or `all`. The spinner turns and the skeleton breathes only through `loop`, the backdrop fades only through `dim`.",
+    "Pin keeps `transform: translate(-50%, -50%)` for its place; hovered or open it grows by a static `scale: 1.15`. The dialog's backdrop and note are fixed siblings; under 480px the modal docks to the bottom and its actions stack through their own grid, the last on top.",
+    "`zf-mature` is named in no stylesheet under `src/lib/` but `mature.css`. Its placeholders (hidden, withheld, ask: `.zf-mature.is-hidden`) have a solid `color-border-strong` hairline edge.",
+    "`family-css.spec` scans every stylesheet here against these rules, and checks that exactly these eight exist, that nothing but this node sits beside them, and that the styles entry imports each."
+  ],
+  "entry_points": [
+    "dialog.css",
+    "label.css"
+  ],
+  "fs": [
+    {
+      "name": "card.css",
+      "role": "Card",
+      "node": false
+    },
+    {
+      "name": "dialog.css",
+      "role": "Dialog: the backdrop, the modal note and the drawer",
+      "node": false
+    },
+    {
+      "name": "label.css",
+      "role": "Badge, StatusPill, VisibilityMarker, Avatar and the handle",
+      "node": false
+    },
+    {
+      "name": "loading.css",
+      "role": "Spinner (the ring and its status form) and Skeleton",
+      "node": false
+    },
+    {
+      "name": "mature.css",
+      "role": "MatureCover: the veil, the panel and the placeholders",
+      "node": false
+    },
+    {
+      "name": "message.css",
+      "role": "InlineMessage and EmptyState",
+      "node": false
+    },
+    {
+      "name": "pin.css",
+      "role": "Pin",
+      "node": false
+    },
+    {
+      "name": "toast.css",
+      "role": "Toast and the toast stack",
+      "node": false
+    }
+  ],
+  "notes": []
+}

@@ -1,0 +1,42 @@
+/* Pin: a numbered mark on the art; it sits centred on its point and grows a little when hovered or open. */
+.zf-pin {
+	position: absolute;
+	transform: translate(-50%, -50%);
+	display: grid;
+	place-items: center;
+	box-sizing: border-box;
+	width: var(--size-pin);
+	height: var(--size-pin);
+	padding: 0;
+	font: inherit;
+	font-size: var(--text-xs);
+	line-height: 1;
+	font-weight: var(--weight-bold);
+	color: var(--color-on-pin);
+	background: var(--color-pin);
+	border: 2px solid var(--color-pin-ring);
+	border-radius: var(--radius-full);
+	box-shadow: 0 0 0 2px var(--color-pin-halo);
+	cursor: pointer;
+}
+
+.zf-pin:hover,
+.zf-pin.is-active {
+	scale: 1.15;
+}
+
+.zf-pin.is-active {
+	box-shadow:
+		0 0 0 2px var(--color-pin-halo),
+		0 0 0 var(--space-1) var(--color-pin-ring);
+}
+
+.zf-pin.is-resolved {
+	color: var(--color-pin-ring);
+	background: var(--color-pin-halo);
+}
+
+.zf-pin:focus-visible {
+	outline: 2px solid var(--color-focus);
+	outline-offset: var(--space-1);
+}

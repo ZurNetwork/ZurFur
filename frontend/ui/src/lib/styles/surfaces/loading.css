@@ -1,0 +1,56 @@
+/* Spinner: a ring with a gap; it turns only through the motion seam. */
+.zf-spinner {
+	display: inline-block;
+	flex: none;
+	width: var(--size-icon-sm);
+	height: var(--size-icon-sm);
+	border: var(--space-half) solid currentColor;
+	border-right-color: transparent;
+	border-radius: var(--radius-full);
+}
+
+/* The status form: the ring beside its label. */
+.zf-spinner-wrap {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-width: 0;
+	font-size: var(--text-sm);
+	line-height: var(--leading-sm);
+	color: var(--color-text-muted);
+}
+
+.zf-spinner-wrap__label {
+	min-width: 0;
+}
+
+/* Skeleton: the shape of what's coming; it breathes only through the motion seam. */
+.zf-skeleton {
+	display: block;
+	background: var(--color-skeleton);
+	border-radius: var(--radius-xs);
+}
+
+.zf-skeleton--text {
+	width: 100%;
+	height: var(--space-3);
+}
+
+.zf-skeleton--rect {
+	width: 100%;
+	height: calc(var(--space-12) * 2);
+	border-radius: var(--radius-md);
+}
+
+.zf-skeleton--circle {
+	width: var(--size-avatar-md);
+	height: var(--size-avatar-md);
+	border-radius: var(--radius-full);
+}
+
+.zf-skeleton-lines {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	width: 100%;
+}

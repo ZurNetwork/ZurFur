@@ -1,0 +1,12 @@
+/* Card: an object sheet laid on the page. `.obj` gives its colour, corners and lift. */
+.zf-card {
+	box-sizing: border-box;
+	min-width: 0;
+	padding: var(--space-4);
+	color: var(--color-text);
+}
+
+.zf-card--flush {
+	padding: 0;
+	overflow: hidden;
+}
