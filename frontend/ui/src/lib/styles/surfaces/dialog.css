@@ -85,10 +85,6 @@
 		grid-template-columns: 1fr;
 	}
 
-	.zf-dialog:not(.zf-dialog--drawer) .zf-dialog__actions > * {
-		min-height: var(--size-control-lg);
-	}
-
 	.zf-dialog:not(.zf-dialog--drawer) .zf-dialog__actions > :nth-last-child(2) {
 		order: 1;
 	}

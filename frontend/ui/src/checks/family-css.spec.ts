@@ -54,6 +54,22 @@ function folderFindings(
 	return [...extra, ...missing];
 }
 
+/** Every folder under styles/ (anything there but a plain file), by name. */
+function foldersInStyles(): readonly string[] {
+	return readdirSync(stylesFolder, { withFileTypes: true })
+		.filter((entry) => !entry.isFile())
+		.map((entry) => entry.name)
+		.sort();
+}
+
+/** The folders under styles/ that aren't family folders; empty when there are none. */
+function strayFolders(names: readonly string[]): readonly string[] {
+	const families: readonly string[] = folderNames;
+	return names
+		.filter((name) => !families.includes(name))
+		.map((name) => `${name}/: not a family folder`);
+}
+
 /** Every family file, as `folder/name`. */
 const familyFiles = folderNames.flatMap((folder) =>
 	FAMILY_FOLDERS[folder].map((name) => `${folder}/${name}`)
@@ -93,11 +109,40 @@ interface Declaration {
 	readonly value: string;
 }
 
+/** A declaration, other than placement, in a rule whose target names no class. */
+interface Unplaced extends Declaration {
+	/** The rule's selector, its white space folded to single spaces. */
+	readonly selector: string;
+}
+
 interface Scan {
+	readonly source: string;
 	readonly classes: Set<string>;
 	readonly declarations: Declaration[];
 	readonly atRules: string[];
+	readonly unplaced: Unplaced[];
 }
+
+/** The rule a declaration sits in: its selector, and whether its every target names a class or an element. */
+interface Enclosing {
+	readonly selector: string;
+	readonly named: boolean;
+}
+
+/** What a rule may set on a target that names no class: where the piece sits, never how it looks. */
+const PLACEMENT_PROPERTIES: readonly string[] = [
+	'order',
+	'grid-column',
+	'grid-column-start',
+	'grid-column-end',
+	'grid-row',
+	'grid-row-start',
+	'grid-row-end',
+	'grid-area',
+	'align-self',
+	'justify-self',
+	'place-self'
+];
 
 type CssNode = AST.CSS.Atrule | AST.CSS.Rule | AST.CSS.Declaration;
 
@@ -115,28 +160,72 @@ function collectClasses(node: unknown, into: Set<string>): void {
 	}
 }
 
-function visit(nodes: readonly CssNode[], scan: Scan): void {
+/**
+ * True when a selector's target, its last compound, names a class or an
+ * element (`*` names none); a `&` there stands for the enclosing rule's.
+ */
+function targetIsNamed(selector: AST.CSS.ComplexSelector, enclosingNamed: boolean): boolean {
+	const target = selector.children.at(-1)?.selectors ?? [];
+	return target.some(
+		(simple) =>
+			simple.type === 'ClassSelector' ||
+			(simple.type === 'TypeSelector' && simple.name !== '*') ||
+			(simple.type === 'NestingSelector' && enclosingNamed)
+	);
+}
+
+function visit(nodes: readonly CssNode[], scan: Scan, enclosing: Enclosing): void {
 	for (const node of nodes) {
 		switch (node.type) {
-			case 'Declaration':
-				scan.declarations.push({ property: node.property.toLowerCase(), value: node.value });
+			case 'Declaration': {
+				const declaration = { property: node.property.toLowerCase(), value: node.value };
+				scan.declarations.push(declaration);
+				if (!enclosing.named && !PLACEMENT_PROPERTIES.includes(declaration.property)) {
+					scan.unplaced.push({ ...declaration, selector: enclosing.selector });
+				}
 				break;
-			case 'Rule':
+			}
+			case 'Rule': {
 				collectClasses(node.prelude, scan.classes);
-				visit(node.block.children, scan);
+				const rule: Enclosing = {
+					selector: scan.source.slice(node.prelude.start, node.prelude.end).replace(/\s+/g, ' '),
+					named: node.prelude.children.every((selector) => targetIsNamed(selector, enclosing.named))
+				};
+				visit(node.block.children, scan, rule);
 				break;
+			}
 			case 'Atrule':
 				scan.atRules.push(node.name.toLowerCase());
-				if (node.block) visit(node.block.children, scan);
+				if (node.block) visit(node.block.children, scan, enclosing);
 				break;
 		}
 	}
 }
 
 function scanCss(css: string): Scan {
-	const scan: Scan = { classes: new Set(), declarations: [], atRules: [] };
-	visit(parseCss(css).children, scan);
+	const scan: Scan = {
+		source: css,
+		classes: new Set(),
+		declarations: [],
+		atRules: [],
+		unplaced: []
+	};
+	visit(parseCss(css).children, scan, { selector: '', named: false });
 	return scan;
+}
+
+/**
+ * The rules known to set more than placement on a target that names no class,
+ * by family file and selector. The list only shrinks: each entry must still
+ * match a rule.
+ */
+const KNOWN_UNPLACED: readonly { readonly file: string; readonly selector: string }[] = [
+	{ file: 'surfaces/toast.css', selector: '.zf-toast-stack, .zf-toast-stack > *' }
+];
+
+/** The known selectors for one family file. */
+function knownUnplacedIn(path: string): readonly string[] {
+	return KNOWN_UNPLACED.filter((known) => known.file === path).map((known) => known.selector);
 }
 
 /** The properties a family file may never move: the paper classes and the motion seam own them. */
@@ -184,8 +273,8 @@ const NAMED_COLOURS = new Set(
 	whitesmoke yellow yellowgreen`.split(/\s+/)
 );
 
-/** What one family file breaks, as readable lines; empty when it keeps every rule. */
-function findingsIn(css: string): readonly string[] {
+/** What one family file breaks, as readable lines, the known selectors aside; empty when it keeps every rule. */
+function findingsIn(css: string, knownSelectors: readonly string[] = []): readonly string[] {
 	const scan = scanCss(css);
 	const atRules = scan.atRules
 		.filter((name) => name.endsWith('keyframes'))
@@ -234,7 +323,13 @@ function findingsIn(css: string): readonly string[] {
 		)
 		.filter((name) => !TOKEN_NAMES.has(name))
 		.map((name) => `${name}: not a token`);
-	return [...atRules, ...declarations, ...classes, ...tokens];
+	const unplaced = scan.unplaced
+		.filter(({ selector }) => !knownSelectors.includes(selector))
+		.map(
+			({ selector, property, value }) =>
+				`${selector} { ${property}: ${value} }: only placement on a target that names no class`
+		);
+	return [...atRules, ...declarations, ...classes, ...tokens, ...unplaced];
 }
 
 describe('the family files', () => {
@@ -242,8 +337,17 @@ describe('the family files', () => {
 		expect(folderFindings(entriesOf(folder), FAMILY_FOLDERS[folder])).toEqual([]);
 	});
 
+	it('sit in no folder under styles/ but the family folders', () => {
+		expect(strayFolders(foldersInStyles())).toEqual([]);
+	});
+
 	it.each(familyFiles)('%s keeps to tokens, paper and state classes, and colour fades', (path) => {
-		expect(findingsIn(readStyle(path))).toEqual([]);
+		expect(findingsIn(readStyle(path), knownUnplacedIn(path))).toEqual([]);
+	});
+
+	it.each(KNOWN_UNPLACED)('still need $file’s known rule $selector', ({ file, selector }) => {
+		const found = scanCss(readStyle(file)).unplaced.map((unplaced) => unplaced.selector);
+		expect(found).toContain(selector);
 	});
 
 	it('are each imported by the styles entry', () => {
@@ -286,6 +390,12 @@ describe('the family folders', () => {
 		expect(folderFindings(entries, FAMILY_FOLDERS.surfaces)).toEqual(['extra.css: not a family']);
 	});
 
+	it('refuse a third folder under styles/', () => {
+		expect(strayFolders(['controls', 'layout', 'surfaces'])).toEqual([
+			'layout/: not a family folder'
+		]);
+	});
+
 	it('refuse a missing family', () => {
 		const entries = FAMILY_FOLDERS.controls.filter((name) => name !== 'tip.css');
 		expect(folderFindings(entries, FAMILY_FOLDERS.controls)).toEqual(['tip.css: missing']);
@@ -326,7 +436,20 @@ describe('the family-file rules', () => {
 		['a px length', '.zf-btn { width: 16px; }'],
 		['a rem length', '.zf-btn { padding: 0.5rem; }'],
 		['an em length', '.zf-btn { gap: 1em; }'],
-		['a class from elsewhere', '.button { color: var(--color-text); }']
+		['a class from elsewhere', '.button { color: var(--color-text); }'],
+		['a size on every child', '.zf-dialog__actions > * { min-height: var(--size-control-lg); }'],
+		[
+			'a colour on a child picked by place',
+			'.zf-dialog__actions > :nth-last-child(2) { color: var(--color-text); }'
+		],
+		['a margin beside a placement', '.zf-card > * { grid-column: 1 / -1; margin: 0; }'],
+		['a child styled by a pseudo-class over a class', '.zf-card :is(.zf-btn) { margin: 0; }'],
+		['a child styled by an attribute', '.zf-card > [hidden] { display: block; }'],
+		[
+			'a child styled in a media query',
+			'@media (pointer: coarse) { .zf-card > * { padding: 0; } }'
+		],
+		['a child styled in a nested rule', '.zf-card { & > * { color: var(--color-text); } }']
 	])('refuse %s', (_, css) => {
 		expect(findingsIn(css).length).toBeGreaterThan(0);
 	});
@@ -340,7 +463,17 @@ describe('the family-file rules', () => {
 		['a hairline border', '.zf-btn { border: 1px solid transparent; color: currentColor; }'],
 		['a paper class', '.zf-btn.placed:hover { background: var(--color-hover); }'],
 		['a state class', '.zf-pin.is-active { scale: 1.15; }'],
-		['a percentage and a unitless number', '.zf-btn { left: calc(100% - 2px); opacity: 0.55; }']
+		['a percentage and a unitless number', '.zf-btn { left: calc(100% - 2px); opacity: 0.55; }'],
+		[
+			'an order on a child picked by place',
+			'.zf-dialog__actions > :nth-last-child(2) { order: 1; }'
+		],
+		[
+			'the grid placements on every child',
+			'.zf-card > * { grid-column: 1 / -1; grid-row-start: 2; align-self: start; place-self: end; }'
+		],
+		['a child named by its element', '.zf-card img { display: block; }'],
+		['a nested state of its own class', '.zf-card { &:hover { color: var(--color-text); } }']
 	])('allow %s', (_, css) => {
 		expect(findingsIn(css)).toEqual([]);
 	});

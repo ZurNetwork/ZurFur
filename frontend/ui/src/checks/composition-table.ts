@@ -214,7 +214,7 @@ export const EXCEPTIONS: readonly Exception[] = [
 		file: 'src/lib/styles/controls/menu.css',
 		elements: [],
 		families: ['zf-icon'],
-		reason: "a menu row's icon takes the row's colour, the danger row's included"
+		reason: "a menu row's icon is muted, and the danger row's icon takes the danger colour"
 	}
 ];
 

@@ -63,7 +63,11 @@ export type CompositionRefusalReason =
 	| 'a deep bits-ui path'
 	| 'a computed import'
 	| 'a bits-ui link or image part'
-	| 'a bits-ui namespace used other than by its parts';
+	| 'a bits-ui namespace used other than by its parts'
+	| 'a family listed by two stylesheet rows'
+	| 'a stylesheet row for a family a component styles itself'
+	| 'a Spinner rendered other than as a glyph'
+	| 'an import of the package entry from inside the library';
 
 /** Why a file, the entry or the table is refused, and what it named. */
 export interface CompositionRefusal {
@@ -80,7 +84,7 @@ export interface CompositionInput {
 	readonly entry: string;
 	/** The `.svelte` and `.ts` files the check reads, by path relative to the package. */
 	readonly sources: readonly SourceFile[];
-	/** The family stylesheets. */
+	/** The stylesheets under `src/lib/`: one in a styles folder needs its row, any other writes only the shared families. */
 	readonly stylesheets: readonly SourceFile[];
 	readonly table: CompositionTable;
 	readonly knownExceptions: readonly Pick<Exception, 'file' | 'elements' | 'families'>[];
@@ -123,10 +127,27 @@ interface Facts {
 	readonly pageElements: ReadonlySet<string>;
 	/** Every `zf-` class token the file writes. */
 	readonly classes: ReadonlySet<string>;
+	/** The classes a `.svelte` file's own `<style>` block names. */
+	readonly styled: ReadonlySet<string>;
 	readonly imports: readonly ImportRecord[];
 	/** What the namespace walk found wrong with how bits-ui's names are used. */
 	readonly bitsUses: readonly Finding[];
+	/** Each `<Spinner>` tag not given the literal `kind="glyph"`. */
+	readonly spinnerTags: readonly string[];
+	/** Each use of a Spinner import as a value rather than as a tag. */
+	readonly spinnerValues: readonly string[];
 }
+
+/** Spinner, the one glyph with a second form. */
+const SPINNER_FILE = 'src/lib/surfaces/Spinner.svelte';
+
+/** Where the package entry resolves from inside the library: the folder, `index`, `index.ts` and `index.js`. */
+const ENTRY_TARGETS: readonly string[] = [
+	'src/lib',
+	'src/lib/index',
+	'src/lib/index.ts',
+	'src/lib/index.js'
+];
 
 /** Every `zf-` class token in a text: `zf-` and what follows, not inside a longer word. */
 const CLASS_TOKEN = /(?<![\w-])zf-[\w-]*/g;
@@ -166,10 +187,14 @@ function isOwnedElement(name: string): name is OwnedElement {
 	return OWNED_ELEMENTS.some((owned) => owned === name);
 }
 
-/** An element's owned name: lowercased, and an `<image>` outside `<svg>` read as `img`, as the HTML parser does. */
+/**
+ * An element's owned name: lowercased, read after its last `:` (so `svg:image`
+ * is SVG's `image`), and an `<image>` outside `<svg>` read as `img`, as the
+ * HTML parser does.
+ */
 function elementName(raw: string, inSvg: boolean): string {
-	const lower = raw.toLowerCase();
-	return lower === 'image' && !inSvg ? 'img' : lower;
+	const local = raw.toLowerCase().split(':').at(-1) ?? '';
+	return local === 'image' && !inSvg ? 'img' : local;
 }
 
 /** The classes in every selector of a stylesheet, `:is()`, `:not()` and `:where()` included. */
@@ -294,7 +319,7 @@ function visitsOf(root: Fields): readonly Visit[] {
 		if (!isFields(value) || seen.has(value)) return;
 		seen.add(value);
 		visits.push({ node: value, parent, key, inSvg });
-		const name = typeof value.name === 'string' ? value.name.toLowerCase() : '';
+		const name = typeof value.name === 'string' ? elementName(value.name, true) : '';
 		const childInSvg = inSvg || (value.type === 'RegularElement' && name === 'svg');
 		for (const [childKey, child] of Object.entries(value)) {
 			if (childKey !== 'metadata' && childKey !== 'loc') walk(child, value, childKey, childInSvg);
@@ -424,9 +449,94 @@ function emptyFacts(filePath: string, unparsed: string | undefined): Facts {
 		dynamicElements: 0,
 		pageElements: new Set(),
 		classes: new Set(),
+		styled: new Set(),
 		imports: [],
-		bitsUses: []
+		bitsUses: [],
+		spinnerTags: [],
+		spinnerValues: []
 	};
+}
+
+/** Where a `$lib` or relative specifier points, as a path from the package; undefined for any other. */
+function resolvedPath(from: string, source: string): string | undefined {
+	const bare = source.split(/[?#]/)[0] ?? '';
+	const isLib = bare === '$lib' || bare.startsWith('$lib/');
+	if (!isLib && !bare.startsWith('.')) return undefined;
+	const joined = isLib
+		? path.posix.join('src/lib', bare.slice('$lib'.length))
+		: path.posix.join(path.posix.dirname(from), bare);
+	return joined.replace(/\/+$/, '');
+}
+
+/** True for a specifier that reaches the package entry: `@zurfur/ui`, or a path to it. */
+function isEntrySpecifier(from: string, source: string): boolean {
+	return source === '@zurfur/ui' || ENTRY_TARGETS.includes(resolvedPath(from, source) ?? '');
+}
+
+/** The local names a file binds Spinner to, from its own file or from the package entry. */
+function spinnerLocals(filePath: string, imports: readonly ImportRecord[]): ReadonlySet<string> {
+	const locals = imports.flatMap(({ source, typeOnly, names }) => {
+		if (typeOnly || source === undefined) return [];
+		const fromEntry = isEntrySpecifier(filePath, source);
+		const fromFile = resolvedPath(filePath, source) === SPINNER_FILE;
+		return names
+			.filter(
+				({ imported }) =>
+					(fromEntry && imported === 'Spinner') || (fromFile && imported === 'default')
+			)
+			.map(({ local }) => local);
+	});
+	return new Set(locals);
+}
+
+/** True when a tag's attributes hold no spread and exactly one `kind`, the literal `kind="glyph"`. */
+function isLiteralGlyph(attributes: unknown): boolean {
+	const list: readonly unknown[] = Array.isArray(attributes) ? attributes : [];
+	if (list.some((attribute) => isFields(attribute) && attribute.type === 'SpreadAttribute')) {
+		return false;
+	}
+	const kinds = list.filter((attribute) => isFields(attribute) && attribute.name === 'kind');
+	const [kind] = kinds;
+	if (kinds.length !== 1 || !isFields(kind) || kind.type !== 'Attribute') return false;
+	const parts: readonly unknown[] = Array.isArray(kind.value) ? kind.value : [];
+	return parts.length === 1 && attributeTexts(parts).join('') === 'glyph';
+}
+
+/** Each Spinner tag not given the literal glyph, and each use of a Spinner import as a value. */
+function spinnerUsesOf(
+	visits: readonly Visit[],
+	locals: ReadonlySet<string>
+): Pick<Facts, 'spinnerTags' | 'spinnerValues'> {
+	const spinnerTags: string[] = [];
+	const spinnerValues: string[] = [];
+	const declares = ['ImportSpecifier', 'ImportDefaultSpecifier', 'ImportNamespaceSpecifier'];
+	for (const { node, parent, key } of visits) {
+		const name = typeof node.name === 'string' ? node.name : '';
+		if (node.type === 'Component') {
+			const isSpinner = locals.has(name) || name === 'Spinner' || name.endsWith('.Spinner');
+			if (isSpinner && !isLiteralGlyph(node.attributes)) spinnerTags.push(`<${name}>`);
+			continue;
+		}
+		if (node.type !== 'Identifier' || !locals.has(name) || parent === undefined) continue;
+		const isTypeQuery = parent.type === 'TSTypeQuery' && key === 'exprName';
+		const isPropertyName =
+			(parent.type === 'MemberExpression' && key === 'property' && parent.computed !== true) ||
+			(parent.type === 'Property' &&
+				key === 'key' &&
+				parent.computed !== true &&
+				parent.shorthand !== true);
+		if (declares.includes(String(parent.type)) || isTypeQuery || isPropertyName) continue;
+		spinnerValues.push(name);
+	}
+	return { spinnerTags, spinnerValues };
+}
+
+/** The classes a parsed `.svelte` file's own `<style>` block names. */
+function ownStyleClasses(root: Fields): ReadonlySet<string> {
+	const styled = new Set<string>();
+	const sheet = root.css;
+	selectorClasses(isFields(sheet) ? sheet.children : [], styled);
+	return styled;
 }
 
 /** What the rules read off a `.svelte` file. */
@@ -504,8 +614,10 @@ function svelteFacts(file: SourceFile): Facts {
 		dynamicElements,
 		pageElements,
 		classes,
+		styled: ownStyleClasses(root),
 		imports,
-		bitsUses
+		bitsUses,
+		...spinnerUsesOf(visits, spinnerLocals(file.path, imports))
 	};
 }
 
@@ -615,13 +727,18 @@ function libraryImports(facts: Facts, exported: readonly ExportedComponent[]): r
 				(name) => exported.find((component) => component.name === name.imported)?.file ?? []
 			);
 		}
-		if (!record.source.endsWith('.svelte')) return [];
-		const target = record.source.startsWith('$lib/')
-			? `src/lib/${record.source.slice('$lib/'.length)}`
-			: path.posix.join(path.posix.dirname(facts.path), record.source);
-		const isPath = record.source.startsWith('.') || record.source.startsWith('$lib/');
-		return isPath && target.startsWith('src/lib/') ? [target] : [];
+		const target = resolvedPath(facts.path, record.source);
+		const isLibrarySvelte = target?.startsWith('src/lib/') === true && target.endsWith('.svelte');
+		return isLibrarySvelte ? [target] : [];
 	});
+}
+
+/** The specifiers by which a library file imports the package entry. */
+function entryImports(facts: Facts): readonly string[] {
+	if (!facts.path.startsWith('src/lib/')) return [];
+	return facts.imports.flatMap(({ source }) =>
+		source !== undefined && isEntrySpecifier(facts.path, source) ? [source] : []
+	);
 }
 
 /** The refusals of the bits-ui rule in one file's imports. */
@@ -667,9 +784,11 @@ function bitsImportRefusals(facts: Facts, table: CompositionTable): readonly Fin
  * Every refusal of the lego rule: each export has a kind, a simple component
  * holds only glyphs and internal pieces, a composite composes and draws no
  * owned element, owned elements and `zf-` families stay with the files the
- * table lists, stories compose and carry their component's kind, bits-ui
- * names stay with their files and its link and image parts with none, and
- * the exceptions only shrink.
+ * table lists, each family has one stylesheet row and none for a family a
+ * component styles itself, Spinner is held only as the glyph, no library file
+ * imports the package entry, stories compose and carry their component's
+ * kind, bits-ui names stay with their files and its link and image parts with
+ * none, and the exceptions only shrink.
  */
 export function compositionRefusals(input: CompositionInput): readonly CompositionRefusal[] {
 	const { table } = input;
@@ -717,6 +836,15 @@ export function compositionRefusals(input: CompositionInput): readonly Compositi
 			}
 		}
 	}
+	const stylesheetRows = Object.entries(table.families).filter(([file]) => file.endsWith('.css'));
+	const homes = new Map<Family, string>();
+	for (const [file, families] of stylesheetRows) {
+		for (const family of families) {
+			const home = homes.get(family);
+			if (home === undefined) homes.set(family, file);
+			else refuse(file, 'a family listed by two stylesheet rows', `${family}, also in ${home}`);
+		}
+	}
 
 	// Each source file.
 	for (const file of input.sources) {
@@ -760,6 +888,34 @@ export function compositionRefusals(input: CompositionInput): readonly Compositi
 			refuse(file.path, refusal.reason, refusal.detail);
 		}
 		for (const use of facts.bitsUses) refuse(file.path, use.reason, use.detail);
+		for (const source of entryImports(facts)) {
+			refuse(file.path, 'an import of the package entry from inside the library', source);
+		}
+
+		// A family a component styles in its own <style> has no stylesheet row.
+		for (const [sheet, sheetFamilies] of stylesheetRows) {
+			for (const family of sheetFamilies) {
+				if ([...facts.styled].some((name) => inFamily(name, family))) {
+					refuse(
+						sheet,
+						'a stylesheet row for a family a component styles itself',
+						`${family}, styled in ${file.path}`
+					);
+				}
+			}
+		}
+
+		// Spinner is held only as the glyph, by a tag that says so in plain text.
+		if (file.path !== SPINNER_FILE) {
+			for (const tag of facts.spinnerTags) {
+				refuse(file.path, 'a Spinner rendered other than as a glyph', tag);
+			}
+		}
+		if (file.path.startsWith('src/lib/')) {
+			for (const name of facts.spinnerValues) {
+				refuse(file.path, 'a Spinner rendered other than as a glyph', name);
+			}
+		}
 
 		// The rows that name this file must still be needed.
 		for (const exception of exceptions) {
@@ -844,9 +1000,11 @@ export function compositionRefusals(input: CompositionInput): readonly Compositi
 		}
 	}
 
-	// The family stylesheets.
+	// The stylesheets: one in a styles folder by its row, any other by the shared families.
 	for (const sheet of input.stylesheets) {
-		const listed = rowFor(table.families, sheet.path);
+		const listed =
+			rowFor(table.families, sheet.path) ??
+			(isFamilyStylesheet(sheet.path) ? undefined : table.sharedFamilies);
 		if (listed === undefined) {
 			refuse(sheet.path, 'a family stylesheet with no row', sheet.path);
 			continue;
@@ -902,9 +1060,14 @@ function isReadSource(filePath: string): boolean {
 	return isCode && !isSpec && !isCheck;
 }
 
-/** True for a family stylesheet: `src/lib/styles/controls/*.css` and `src/lib/styles/surfaces/*.css`. */
+/** True for a family stylesheet: a `.css` file in any folder under `src/lib/styles/`. */
 function isFamilyStylesheet(filePath: string): boolean {
-	return /^src\/lib\/styles\/(?:controls|surfaces)\/[^/]+\.css$/.test(filePath);
+	return /^src\/lib\/styles\/.+\/[^/]+\.css$/.test(filePath);
+}
+
+/** True for a stylesheet the check reads: every `.css` file under `src/lib/`. */
+function isLibraryStylesheet(filePath: string): boolean {
+	return filePath.startsWith('src/lib/') && filePath.endsWith('.css');
 }
 
 function read(filePath: string): SourceFile {
@@ -913,7 +1076,7 @@ function read(filePath: string): SourceFile {
 
 const allFiles = [...listFiles('src')].sort();
 const realSources = allFiles.filter(isReadSource).map(read);
-const realStylesheets = allFiles.filter(isFamilyStylesheet).map(read);
+const realStylesheets = allFiles.filter(isLibraryStylesheet).map(read);
 const realEntry = readFileSync(`${uiRoot}${entryPath}`, 'utf8');
 
 /** The check over `sources` and `stylesheets`, with the real entry, table and known list unless given. */
@@ -991,10 +1154,22 @@ describe('the lego check', () => {
 			expect.arrayContaining(['src/checks', 'src/gallery', 'src/lib', 'src/routes', 'src/stories'])
 		);
 		expect(realSources.some((source) => source.path.startsWith('src/checks/testing/'))).toBe(true);
-		expect(realStylesheets.length).toBeGreaterThan(0);
+		const sheets = realStylesheets.map((sheet) => sheet.path);
+		expect(sheets).toEqual(
+			expect.arrayContaining([
+				'src/lib/styles/base.css',
+				'src/lib/motion/paper-moves.css',
+				'src/lib/styles/controls/button.css',
+				'src/lib/styles/surfaces/dialog.css'
+			])
+		);
 	});
 
-	it('names only files that exist, the surface stylesheets aside until they land', () => {
+	it('reads Spinner from the file the entry exports it from', () => {
+		expect(exportedComponents(realEntry)).toContainEqual({ name: 'Spinner', file: SPINNER_FILE });
+	});
+
+	it('names only files that exist', () => {
 		const named = [
 			...Object.keys(TABLE.families),
 			...Object.keys(TABLE.bitsUi),
@@ -1005,10 +1180,7 @@ describe('the lego check', () => {
 			...TABLE.exceptions.map((row) => row.file),
 			...TABLE.dynamicElement.map((row) => row.file)
 		];
-		const missing = named.filter(
-			(file) => !file.startsWith('src/lib/styles/surfaces/') && !existsSync(`${uiRoot}${file}`)
-		);
-		expect(missing).toEqual([]);
+		expect(named.filter((file) => !existsSync(`${uiRoot}${file}`))).toEqual([]);
 	});
 
 	it('gives each family one library file and keeps rows to the library', () => {
@@ -1024,13 +1196,19 @@ describe('the lego check', () => {
 			.flatMap(([, families]) => families);
 		const unstyled = Object.entries(FAMILIES)
 			.filter(([file]) => file.endsWith('.svelte'))
-			.flatMap(([file, families]) =>
-				families.filter(
+			.flatMap(([file, families]) => {
+				const styled = factsOf(read(file)).styled;
+				return families.filter(
 					(family) =>
-						!stylesheetFamilies.includes(family) && !read(file).text.includes(`.${family}`)
-				)
-			);
+						!stylesheetFamilies.includes(family) &&
+						![...styled].some((name) => inFamily(name, family))
+				);
+			});
 		expect(unstyled).toEqual([]);
+	});
+
+	it("reads a component's own <style> with the parser, so Icon styles zf-icon itself", () => {
+		expect([...factsOf(read('src/lib/icons/Icon.svelte')).styled]).toContain('zf-icon');
 	});
 
 	it('keeps the known exceptions to the table, so a fixed one leaves both', () => {
@@ -1337,7 +1515,10 @@ describe('the plants', () => {
 			"a zf- class outside the file's families"
 		]);
 		const inStyle = `${bannerMarkup}\n<style>\n\t:global(.zf-btn) { margin: 0; }\n</style>`;
-		expect(checkBanner(bannerScript, inStyle)).toEqual(["a zf- class outside the file's families"]);
+		expect(checkBanner(bannerScript, inStyle)).toEqual([
+			"a zf- class outside the file's families",
+			'a stylesheet row for a family a component styles itself'
+		]);
 		const dynamicFamily = `${bannerMarkup}\n<div class={\`zf-\${String(1)}\`}></div>`;
 		expect(checkBanner(bannerScript, dynamicFamily)).toEqual([
 			"a zf- class outside the file's families"
@@ -1351,18 +1532,78 @@ describe('the plants', () => {
 	});
 
 	it.each([
-		['by a relative path', "import Button from './Button.svelte';"],
-		['through $lib', "import Button from '$lib/controls/Button.svelte';"],
-		['through the package', "import { Button } from '@zurfur/ui';"]
-	] as const)('refuses a simple component that holds another component %s', (_label, line) => {
-		const toggle = realWith(
-			'src/lib/controls/Toggle.svelte',
-			"import { Switch } from 'bits-ui';",
-			`import { Switch } from 'bits-ui';\n\t${line}`
+		['by a relative path', "import Button from './Button.svelte';", []],
+		['through $lib', "import Button from '$lib/controls/Button.svelte';", []],
+		[
+			'through the package',
+			"import { Button } from '@zurfur/ui';",
+			['an import of the package entry from inside the library']
+		]
+	] as const)(
+		'refuses a simple component that holds another component %s',
+		(_label, line, alsoRefused) => {
+			const toggle = realWith(
+				'src/lib/controls/Toggle.svelte',
+				"import { Switch } from 'bits-ui';",
+				`import { Switch } from 'bits-ui';\n\t${line}`
+			);
+			expect(reasons(check({ sources: [toggle] }))).toEqual([
+				...alsoRefused,
+				'a simple component that holds another component'
+			]);
+		}
+	);
+
+	it.each([
+		['../index.ts', 'src/lib/surfaces/Badge.svelte'],
+		['../index.js', 'src/lib/surfaces/Badge.svelte'],
+		['../index', 'src/lib/surfaces/Badge.svelte'],
+		['..', 'src/lib/surfaces/Badge.svelte'],
+		['../', 'src/lib/surfaces/Badge.svelte'],
+		['$lib', 'src/lib/surfaces/Badge.svelte'],
+		['$lib/index.ts', 'src/lib/surfaces/Badge.svelte'],
+		['../index.ts', 'src/lib/surfaces/choices.ts'],
+		['.', 'src/lib/extra.ts'],
+		['./', 'src/lib/extra.ts'],
+		['./index.ts', 'src/lib/extra.ts']
+	] as const)('refuses an import of the package entry by %s in %s', (specifier, filePath) => {
+		const forms = [
+			`import { Toggle } from '${specifier}';`,
+			`import type { EntryShape } from '${specifier}';`,
+			`export { Toggle } from '${specifier}';`,
+			`export * from '${specifier}';`
+		];
+		for (const line of forms) {
+			const file = filePath.endsWith('.svelte')
+				? realWith(filePath, "import Icon from '../icons/Icon.svelte';", line)
+				: { path: filePath, text: `${line}\n` };
+			expect(check({ sources: [file] })).toContainEqual({
+				path: filePath,
+				reason: 'an import of the package entry from inside the library',
+				detail: specifier
+			});
+		}
+	});
+
+	it('refuses a simple component holding a Toggle through the package entry', () => {
+		const badge = realWith(
+			'src/lib/surfaces/Badge.svelte',
+			"import Icon from '../icons/Icon.svelte';",
+			"import Icon from '../icons/Icon.svelte';\n\timport { Toggle } from '../index.ts';"
 		);
-		expect(reasons(check({ sources: [toggle] }))).toEqual([
-			'a simple component that holds another component'
+		const holding = {
+			path: badge.path,
+			text: badge.text.replace('<span>{label}</span>', '<span>{label}</span>\n\t<Toggle />')
+		};
+		expect(reasons(check({ sources: [holding] }))).toEqual([
+			'an import of the package entry from inside the library'
 		]);
+	});
+
+	it('leaves a stories file its import of the package', () => {
+		const stories = read('src/stories/surfaces/Spinner.stories.svelte');
+		expect(stories.text).toContain("from '@zurfur/ui'");
+		expect(check({ sources: [stories] })).toEqual([]);
 	});
 
 	it('refuses a library component that is neither exported nor internal', () => {
@@ -1395,6 +1636,129 @@ describe('the plants', () => {
 	it('refuses a family stylesheet with no row', () => {
 		const sheet = { path: 'src/lib/styles/surfaces/sheet.css', text: '.zf-sheet { margin: 0; }' };
 		expect(reasons(check({ stylesheets: [sheet] }))).toEqual(['a family stylesheet with no row']);
+	});
+
+	it('refuses a stylesheet in a third styles folder', () => {
+		const shelf = {
+			path: 'src/lib/styles/layout/shelf.css',
+			text: '.zf-shelf .zf-btn { min-height: 99px; }'
+		};
+		expect(reasons(check({ stylesheets: [shelf] }))).toEqual(['a family stylesheet with no row']);
+	});
+
+	it('holds a stylesheet outside the styles folders to the shared families', () => {
+		for (const filePath of ['src/lib/styles/paper.css', 'src/lib/motion/paper-moves.css']) {
+			const sheet = (css: string): SourceFile => ({ path: filePath, text: css });
+			expect(check({ stylesheets: [sheet('.zf-sr { margin: 0; }')] })).toEqual([]);
+			expect(check({ stylesheets: [sheet('.placed .zf-btn { margin: 0; }')] })).toEqual([
+				{ path: filePath, reason: "a zf- class outside the file's families", detail: 'zf-btn' }
+			]);
+		}
+	});
+
+	it('refuses a family listed by two stylesheet rows', () => {
+		const messageCss = 'src/lib/styles/surfaces/message.css';
+		const table: CompositionTable = {
+			...TABLE,
+			families: { ...TABLE.families, [messageCss]: ['zf-inline', 'zf-empty', 'zf-btn'] }
+		};
+		expect(check({ table })).toEqual([
+			{
+				path: messageCss,
+				reason: 'a family listed by two stylesheet rows',
+				detail: 'zf-btn, also in src/lib/styles/controls/button.css'
+			}
+		]);
+	});
+
+	it('refuses a stylesheet row for a family a component styles in its own <style>', () => {
+		const menuCss = 'src/lib/styles/controls/menu.css';
+		const table: CompositionTable = {
+			...TABLE,
+			families: { ...TABLE.families, [menuCss]: ['zf-menu', 'zf-icon'] },
+			exceptions: EXCEPTIONS.filter((row) => row.file !== menuCss)
+		};
+		expect(check({ table, sources: [read('src/lib/icons/Icon.svelte')] })).toEqual([
+			{
+				path: menuCss,
+				reason: 'a stylesheet row for a family a component styles itself',
+				detail: 'zf-icon, styled in src/lib/icons/Icon.svelte'
+			}
+		]);
+	});
+
+	it.each([
+		['the status form', '<Spinner kind="status" label="x" />'],
+		['no kind', '<Spinner />'],
+		['the glyph as an expression', "<Spinner kind={'glyph'} />"],
+		['a spread beside the glyph', '<Spinner kind="glyph" {...{ kind: \'status\' }} />'],
+		['the glyph by a binding', '<Spinner bind:kind />']
+	] as const)('refuses Button holding Spinner by %s', (_label, tag) => {
+		const button = realWith('src/lib/controls/Button.svelte', '<Spinner kind="glyph" />', tag);
+		expect(check({ sources: [button] })).toEqual([
+			{ path: button.path, reason: 'a Spinner rendered other than as a glyph', detail: '<Spinner>' }
+		]);
+	});
+
+	it('refuses Spinner held under another name, as a tag or as a value', () => {
+		const renamed = realWith(
+			'src/lib/controls/Button.svelte',
+			"import Spinner from '../surfaces/Spinner.svelte';",
+			"import Ring from '../surfaces/Spinner.svelte';"
+		);
+		const aliased = {
+			path: renamed.path,
+			text: renamed.text.replace('<Spinner kind="glyph" />', '<Ring kind="status" label="x" />')
+		};
+		expect(check({ sources: [aliased] })).toEqual([
+			{ path: aliased.path, reason: 'a Spinner rendered other than as a glyph', detail: '<Ring>' }
+		]);
+		const handedOn = realWith(
+			'src/lib/controls/Button.svelte',
+			"import Spinner from '../surfaces/Spinner.svelte';",
+			"import Spinner from '../surfaces/Spinner.svelte';\n\tconst Ring = Spinner;"
+		);
+		expect(check({ sources: [handedOn] })).toEqual([
+			{ path: handedOn.path, reason: 'a Spinner rendered other than as a glyph', detail: 'Spinner' }
+		]);
+	});
+
+	it('refuses the status Spinner in a stories file as a tag, and leaves it to the story args', () => {
+		const stories = realWith(
+			'src/stories/surfaces/Spinner.stories.svelte',
+			'<Spinner kind="glyph" />',
+			'<Spinner kind="status" label="x" />'
+		);
+		expect(reasons(check({ sources: [stories] }))).toEqual([
+			'a Spinner rendered other than as a glyph'
+		]);
+	});
+
+	it.each([
+		[
+			'a prefixed static svelte:element in Card',
+			'src/lib/surfaces/Card.svelte',
+			'<svg><svelte:element this={\'svg:image\'} href="/a.png" /></svg>'
+		],
+		[
+			'a prefixed tag in Card',
+			'src/lib/surfaces/Card.svelte',
+			'<svg><svg:image href="/a.png" /></svg>'
+		],
+		[
+			'a prefixed static link in Card',
+			'src/lib/surfaces/Card.svelte',
+			'<svg><svelte:element this="svg:a" href="/" /></svg>'
+		]
+	] as const)('refuses %s by the name after its prefix', (_label, filePath, markup) => {
+		const card = realWith(
+			filePath,
+			'<svelte:element this={element}',
+			`${markup}\n<svelte:element this={element}`
+		);
+		expect(reasons(check({ sources: [card] }))).toEqual([
+			'an owned element in a file not listed for it'
+		]);
 	});
 
 	it.each([
