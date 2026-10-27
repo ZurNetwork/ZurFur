@@ -2828,7 +2828,7 @@ describe("the pattern's bans in what ships", { timeout: 120_000 }, () => {
 					handing(part('', `{#snippet ONCLICK()}{raw}{/snippet}${inner}`))
 				],
 				['words inside the part', handing(part('', `${inner}{raw}`))],
-				['an {#if} inside the part', handing(part('', `{#if raw}${inner}{/if}`))],
+				['an {#if} inside the part', handing(part('', `{#if raw}{raw}{/if}${inner}`))],
 				[
 					'a child snippet with no parameter inside the part',
 					handing(part('', '{#snippet child()}<button>{raw}</button>{/snippet}'))
