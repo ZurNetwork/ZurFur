@@ -50,6 +50,10 @@
 	padding: 0 var(--space-2);
 	border: 1px solid var(--color-border-strong);
 	border-radius: var(--radius-sm);
+}
+
+/* The select keeps the lift's own transition, so only the text input fades its border. */
+.zf-input {
 	transition: border-color var(--duration-fast) var(--easing-standard);
 }
 
@@ -72,8 +76,7 @@
 }
 
 .zf-input input,
-.zf-input textarea,
-.zf-select select {
+.zf-input textarea {
 	flex: 1;
 	min-width: 0;
 	height: 100%;
@@ -94,14 +97,8 @@
 	opacity: 1;
 }
 
-/* A select still on its placeholder reads muted, like a text field's. */
-.zf-select select:has(> option:disabled:checked) {
-	color: var(--color-text-muted);
-}
-
 .zf-input input:disabled,
-.zf-input textarea:disabled,
-.zf-select select:disabled {
+.zf-input textarea:disabled {
 	cursor: not-allowed;
 }
 
@@ -138,22 +135,36 @@
 	color: var(--color-text-muted);
 }
 
-.zf-select select {
-	appearance: none;
-	padding-right: var(--space-6);
+/* The select's trigger is the slip itself: a button that reads as a field. */
+.zf-select {
+	margin: 0;
+	font: inherit;
+	font-size: var(--text-md);
+	line-height: var(--leading-md);
+	color: var(--color-text);
+	text-align: start;
 	cursor: pointer;
 }
 
-.zf-select select option {
-	background: var(--color-surface-raised);
-	color: var(--color-text);
+.zf-select:disabled {
+	cursor: not-allowed;
+}
+
+.zf-select__value {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Nothing chosen: the placeholder reads muted, like a text field's. */
+.zf-select__value--empty {
+	color: var(--color-text-muted);
 }
 
 .zf-select__chevron {
-	position: absolute;
-	right: var(--space-2);
 	display: inline-flex;
-	pointer-events: none;
 	color: var(--color-text-muted);
 }
 

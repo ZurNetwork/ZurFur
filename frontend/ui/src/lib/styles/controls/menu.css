@@ -1,4 +1,4 @@
-/* Menu: the note it opens and its pick rows. */
+/* Menu and the select's list: the note they open and its pick rows. */
 .zf-menu {
 	display: flex;
 	flex-direction: column;
@@ -55,6 +55,20 @@
 .zf-menu__label {
 	flex: 1;
 	min-width: 0;
+}
+
+/* The select's list: at least as wide as its field, scrolling inside past eight rows. */
+.zf-select__list {
+	min-width: var(--bits-select-anchor-width);
+	max-height: calc(var(--size-control) * 8);
+	overflow-y: auto;
+}
+
+/* The highlighted option lifts as a row under the pointer does; focus stays on the field. */
+.zf-select__option[data-highlighted]:not([aria-selected='true']) {
+	background: var(--color-object);
+	box-shadow: var(--elevation-art);
+	translate: 0 calc(-1 * var(--space-rise));
 }
 
 @media (pointer: coarse) {

@@ -5,11 +5,11 @@ import { createRawSnippet } from 'svelte';
 import AcceptingDateField from './testing/AcceptingDateField.svelte';
 import AcceptingMenu from './testing/AcceptingMenu.svelte';
 import AcceptingPillSwitch from './testing/AcceptingPillSwitch.svelte';
+import AcceptingSelect from './testing/AcceptingSelect.svelte';
 import AcceptingTabs from './testing/AcceptingTabs.svelte';
 import Button from '../lib/controls/Button.svelte';
 import Checkbox from '../lib/controls/Checkbox.svelte';
 import IconButton from '../lib/controls/IconButton.svelte';
-import Select from '../lib/controls/Select.svelte';
 import TextInput from '../lib/controls/TextInput.svelte';
 import Toggle from '../lib/controls/Toggle.svelte';
 import { isCalendarDay, type CalendarDay } from '../lib/controls/calendar-day.ts';
@@ -285,18 +285,42 @@ const FIXTURES: Readonly<Record<string, readonly Fixture[]>> = {
 		{
 			label: 'with a placeholder, hint, error and name',
 			render: () =>
-				render(Select<Choice>, {
+				render(AcceptingSelect<Choice>, {
 					label: 'Pick',
 					options: selectOptions,
-					value: undefined,
-					onChange: () => undefined,
+					initial: undefined,
 					placeholder: 'Choose one',
 					hint: 'A hint',
 					error: 'An error',
 					name: 'pick',
-					testid: 'control'
+					testid: 'control',
+					onChange: () => undefined
 				}).container,
-			steps: [['chosen', () => page.getByTestId('control').selectOptions('two')]]
+			steps: [
+				[
+					'opened',
+					async () => {
+						await page.getByTestId('control').click();
+						await expect.element(page.getByRole('listbox')).toBeInTheDocument();
+					}
+				],
+				[
+					'with an option highlighted',
+					async () => {
+						await page.getByRole('option', { name: 'Two' }).hover();
+						await expect
+							.element(page.getByRole('option', { name: 'Two' }))
+							.toHaveAttribute('data-highlighted');
+					}
+				],
+				[
+					'chosen',
+					async () => {
+						await page.getByRole('option', { name: 'Two' }).click();
+						await expect.element(page.getByTestId('control')).toHaveTextContent('Two');
+					}
+				]
+			]
 		}
 	],
 	'Tabs.svelte': [

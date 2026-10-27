@@ -1,7 +1,10 @@
 <script lang="ts" generics="V extends string">
-	import { tick } from 'svelte';
+	import { Select as Listbox } from 'bits-ui';
+	import type { Attachment } from 'svelte/attachments';
+	import { useEnvironment } from '../environment/context';
 	import Icon from '../icons/Icon.svelte';
 	import FieldFrame from './FieldFrame.svelte';
+	import { portalTarget } from './floating';
 	import type { FieldIds, SelectOption } from './types';
 
 	interface Props {
@@ -11,13 +14,14 @@
 		readonly value: V | undefined;
 		/** Handed the option's value; the parent decides whether `value` follows. */
 		readonly onChange: (value: V) => void;
-		/** A disabled first option, shown while nothing is chosen. */
+		/** Shown in muted ink while nothing is chosen. */
 		readonly placeholder?: string | undefined;
 		readonly hint?: string | undefined;
 		readonly error?: string | undefined;
 		readonly disabled?: boolean;
+		/** Marks the field required for screen readers; the browser does not block a form on it. */
 		readonly required?: boolean;
-		/** With a name, a form can post the choice; without one it never does. */
+		/** With a name and a chosen value, a form posts the choice; otherwise it posts nothing. */
 		readonly name?: string | undefined;
 		readonly testid?: string | undefined;
 	}
@@ -36,62 +40,165 @@
 		testid
 	}: Props = $props();
 
-	/** Where the shown option sits in the list, the placeholder counted; -1 when nothing fits. */
-	const shownIndex = $derived.by(() => {
-		const found = options.findIndex((option) => option.value === value);
-		if (placeholder === undefined) return found;
-		return found === -1 ? 0 : found + 1;
-	});
+	const { moves, sounds } = useEnvironment();
+	const id = $props.id();
+	const listId = `${id}-list`;
 
-	/** Shows the option `value` names, again whenever `value` or the options change. */
-	function show(select: HTMLSelectElement): void {
-		select.selectedIndex = shownIndex;
-	}
+	/** The option `value` names, if any. */
+	const chosen = $derived(options.find((option) => option.value === value));
+
+	/** The options as bits-ui reads them, so typing a letter finds one while the list is closed. */
+	const items = $derived(options.map((option) => ({ value: option.value, label: option.label })));
+
+	/** The name the hidden input posts under: none until a value is chosen, as a native select's placeholder. */
+	const postedName = $derived(value === undefined ? '' : (name ?? ''));
 
 	const classes = $derived([
 		'zf-select',
 		'slip',
+		!disabled && 'lift',
 		error !== undefined && 'zf-select--invalid',
 		disabled && 'zf-select--disabled'
 	]);
 
-	/**
-	 * A choice: looks the DOM's text up in the options and hands the parent that
-	 * option's value, then shows whatever `value` says next.
-	 */
-	async function choose(
-		event: Event & { readonly currentTarget: HTMLSelectElement }
-	): Promise<void> {
-		const select = event.currentTarget;
-		const chosen = options.find((option) => option.value === select.value);
-		if (chosen !== undefined) onChange(chosen.value);
-		await tick();
-		select.selectedIndex = shownIndex;
+	/** The trigger's element, once it is mounted. */
+	let anchor: HTMLElement | undefined = $state();
+	const portalTo = $derived(anchor === undefined ? undefined : portalTarget(anchor));
+	/** Keeps the trigger's element while it is mounted, so the list knows which skin it opens in. */
+	const remember: Attachment<HTMLElement> = (element) => {
+		anchor = element;
+		return () => {
+			anchor = undefined;
+		};
+	};
+
+	/** The open list's own element, while it is mounted. */
+	let list: HTMLElement | undefined;
+	/** Keeps the open list's element, so a highlighted row can be scrolled into it. */
+	const keepList: Attachment<HTMLElement> = (element) => {
+		list = element;
+		return () => {
+			list = undefined;
+		};
+	};
+
+	/** Scrolls the list, and only the list, so the row at `index` shows whole. */
+	function reveal(index: number): void {
+		const row = list?.children.item(index);
+		if (list === undefined || !(row instanceof HTMLElement)) return;
+		const rowBox = row.getBoundingClientRect();
+		const listBox = list.getBoundingClientRect();
+		if (rowBox.top < listBox.top) list.scrollTop -= listBox.top - rowBox.top;
+		else if (rowBox.bottom > listBox.bottom) list.scrollTop += rowBox.bottom - listBox.bottom;
+	}
+
+	/** A string bits-ui hands back: looked up in the options; unknown, empty or already shown, it asks nothing. */
+	function choose(next: string): void {
+		const asked = options.find((option) => option.value === next);
+		if (next === '' || asked === undefined || asked.value === value) return;
+		onChange(asked.value);
+	}
+
+	/** The option a press in the open list began on; forgotten at every open and close and after every release. */
+	let pressed: V | undefined;
+
+	function forget(): void {
+		pressed = undefined;
+	}
+
+	/** A release on `option`: it chooses only when the press began on that same option. */
+	function release(event: PointerEvent, option: V): void {
+		const same = pressed === option;
+		forget();
+		if (!same) event.preventDefault();
+	}
+
+	/** Whether the list was last shown open, so each cue plays once per change. */
+	let shownOpen = false;
+
+	/** An open or a close: forgets any press and plays its cue. */
+	function openChanged(next: boolean): void {
+		forget();
+		if (next === shownOpen) return;
+		shownOpen = next;
+		sounds.play(next ? 'open' : 'close');
 	}
 </script>
 
 <FieldFrame {label} {hint} {error}>
 	{#snippet children(ids: FieldIds)}
-		<span class={classes}>
-			<select
-				onchange={choose}
-				aria-labelledby={ids.labelId}
-				aria-describedby={ids.describedBy}
-				aria-invalid={ids.invalid}
-				data-testid={testid}
-				{name}
-				{disabled}
-				{required}
-				{@attach show}
-			>
-				{#if placeholder !== undefined}
-					<option value="" disabled>{placeholder}</option>
-				{/if}
-				{#each options as option (option.value)}
-					<option value={option.value}>{option.label}</option>
-				{/each}
-			</select>
-			<span class="zf-select__chevron"><Icon name="chevron-down" /></span>
-		</span>
+		<Listbox.Root
+			type="single"
+			bind:value={() => value ?? '', choose}
+			onOpenChange={openChanged}
+			{items}
+			{disabled}
+			name={postedName}
+			autocomplete="off"
+		>
+			<Listbox.Trigger>
+				{#snippet child({ props }: { readonly props: Record<string, unknown> })}
+					<button
+						{...props}
+						class={classes}
+						role="combobox"
+						aria-controls={props['aria-expanded'] === 'true' ? listId : undefined}
+						aria-labelledby={ids.labelId}
+						aria-describedby={ids.describedBy}
+						aria-invalid={ids.invalid}
+						aria-required={required ? 'true' : undefined}
+						data-testid={testid}
+						{@attach remember}
+					>
+						<span class={['zf-select__value', chosen === undefined && 'zf-select__value--empty']}
+							>{chosen?.label ?? placeholder ?? ''}</span
+						>
+						<span class="zf-select__chevron"><Icon name="chevron-down" /></span>
+					</button>
+				{/snippet}
+			</Listbox.Trigger>
+			{#if portalTo !== undefined}
+				<Listbox.Portal to={portalTo}>
+					<Listbox.Content id={listId} align="start">
+						{#snippet child({ props, wrapperProps })}
+							<div {...wrapperProps}>
+								<div
+									{...props}
+									class="zf-menu zf-select__list"
+									aria-labelledby={ids.labelId}
+									onpointerdowncapture={forget}
+									{@attach moves.note('in-place')}
+									{@attach keepList}
+								>
+									{#each options as option, index (option.value)}
+										<Listbox.Item
+											value={option.value}
+											label={option.label}
+											onpointerdown={() => {
+												pressed = option.value;
+											}}
+											onpointerup={(event) => {
+												release(event, option.value);
+											}}
+											onpointercancel={forget}
+											onHighlight={() => {
+												reveal(index);
+											}}
+										>
+											{#snippet child({ props, selected })}
+												<div {...props} class="zf-menu__item zf-select__option pick">
+													<span class="zf-menu__label">{option.label}</span>
+													{#if selected}<Icon name="check" />{/if}
+												</div>
+											{/snippet}
+										</Listbox.Item>
+									{/each}
+								</div>
+							</div>
+						{/snippet}
+					</Listbox.Content>
+				</Listbox.Portal>
+			{/if}
+		</Listbox.Root>
 	{/snippet}
 </FieldFrame>
