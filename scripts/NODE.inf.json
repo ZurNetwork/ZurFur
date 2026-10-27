@@ -1,6 +1,6 @@
 {
   "path": "scripts",
-  "charted": "2026-10-26",
+  "charted": "2026-10-27",
   "short": "Shell backing just recipes and hooks",
   "is": "Shell scripts backing the `just` dev-loop recipes and jj/session hooks — not cargo tests, but scripted proofs and glue for the manual dev loop.",
   "type": "code",
@@ -53,6 +53,21 @@
     {
       "name": "dev-log.sh",
       "role": "the wrapper every dev recipe runs through: the terminal keeps its bytes, logs/<name>/<UTC stamp>.log gets them as plain text (a pipe through tee and a SIGINT-proof stripper, never script(1)), logs/latest/<name>.log links the newest, 10 kept, 0600 (tested by dev-log.test.sh)",
+      "node": false
+    },
+    {
+      "name": "gallery-image-pins.test.sh",
+      "role": "pins the Justfile's PLAYWRIGHT_IMAGE (exactly the pinned image, its tag the locked @playwright/test's), the gallery-shots and gallery-shots-run recipes line for line, and the container flags on gallery-shots.sh's run line; each pin's failure proved on a doctored copy",
+      "node": false
+    },
+    {
+      "name": "gallery-shots.sh",
+      "role": "the gallery's screenshot run (just gallery-shots, gallery-shots-run): every story and docs page in both skins, in the pinned Playwright image (PLAYWRIGHT_IMAGE, run by its digest) under Podman or Docker with no network, a read-only root, no capabilities and only HOME, TZ, ZURFUR_GALLERY_IMAGE and, with --ci, CI set; mounts the gallery build, frontend/ui/shots, ui's package.json and frontend/node_modules read-only and a fresh, empty shots/output (plus the references with --update) read-write; refuses a bad argument or pin, a tag other than the locked and installed Playwright, a missing build or install, and an image whose RepoDigests lack the digest; after --update, walks the references and refuses links, special files, non-PNG and oversized files (tested by gallery-shots.test.sh)",
+      "node": false
+    },
+    {
+      "name": "gallery-shots.test.sh",
+      "role": "tests for gallery-shots.sh in a fixture repository against stub podman and docker runtimes, offline: the exact run argv (plain, --ci, --update; Podman, Docker, Docker's Podman shim), every refusal, the fresh output folder, the pull and RepoDigests check, the reference walk and Playwright's exit code",
       "node": false
     },
     {
