@@ -29,7 +29,7 @@ const UI_3A_CONTROLS: readonly string[] = [
  * The exported controls that have no stories yet. It only shrinks: each name
  * leaves once its stories land, and no name joins it.
  */
-const PENDING: readonly string[] = ['IconButton', 'Icon', 'Checkbox', 'Toggle', 'PillSwitch'];
+const PENDING: readonly string[] = [];
 
 /** A component the public entry exports as `export { default as Name } from '….svelte'`. */
 interface ExportedComponent {
