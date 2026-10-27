@@ -2,7 +2,8 @@
 # Pins the gallery's screenshot image and its wiring: the Justfile's one
 # PLAYWRIGHT_IMAGE line, its tag version against the @playwright/test that
 # frontend/yarn.lock locks, the `gallery-shots` and `gallery-shots-run` recipes
-# line for line, and the container flags on gallery-shots.sh's run line. Each
+# line for line, and the container flags on gallery-shots.sh's run line and its
+# Podman line. Each
 # pin's failure is proved on a doctored copy in a temporary folder. Run
 # directly, or via `just scripts-test`; `--root <dir>` checks another tree.
 set -eu
@@ -115,6 +116,20 @@ for flag in "--network none" "--read-only" "--cap-drop ALL" "--security-opt no-n
     esac
 done
 
+podman_lines="$(grep -c '^    run_flags+=(--userns=keep-id ' "$script" || true)"
+podman_line="$(grep '^    run_flags+=(--userns=keep-id ' "$script" | tr '()' '  ' || true)"
+if [ "$podman_lines" = 1 ]; then
+    ok "gallery-shots.sh has one Podman line"
+else
+    fail "gallery-shots.sh has one Podman line" "$podman_lines lines start 'run_flags+=(--userns=keep-id '"
+fi
+for flag in "--userns=keep-id" "--http-proxy=false" "--no-hosts"; do
+    case " $podman_line " in
+        *" $flag "*) ok "the Podman line names $flag" ;;
+        *) fail "the Podman line names $flag" "line: $podman_line" ;;
+    esac
+done
+
 # --- each pin fails on a doctored copy --------------------------------------------
 
 if [ "$prove" = 1 ]; then
@@ -187,6 +202,14 @@ run_flags=(run "
     done
     proves "the run line names --network none" scripts/gallery-shots.sh "run_flags=(run " "--network none" "--network host"
     proves "the run line names --init" scripts/gallery-shots.sh "run_flags=(run " "--init)" "--initx)"
+    podman_prefix="    run_flags+=(--userns=keep-id "
+    proves "gallery-shots.sh has one Podman line" scripts/gallery-shots.sh "$podman_prefix" "$podman_prefix" \
+        "${podman_prefix}--cap-add ALL)
+$podman_prefix"
+    for flag in "--http-proxy=false" "--no-hosts"; do
+        proves "the Podman line names $flag" scripts/gallery-shots.sh "$podman_prefix" " $flag" ""
+    done
+    proves "the Podman line names --no-hosts" scripts/gallery-shots.sh "$podman_prefix" "--no-hosts)" "--no-hostsx)"
 fi
 
 if [ "$failures" -gt 0 ]; then

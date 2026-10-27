@@ -1,9 +1,10 @@
 #!/bin/sh
 # Tests for scripts/gallery-shots.sh against a stub `podman` and `docker` in a
 # fixture repository, offline and with no container runtime: the exact run
-# argv (plain, --ci, --update; Podman, Docker and Docker's Podman shim), every
-# refusal before the run, a fresh output folder, the image's pull and
-# RepoDigests check, the reference walk and Playwright's exit code. The script
+# argv and the runtime line (plain, --ci, --update; Podman, Docker and
+# Docker's Podman shim), every refusal before the run, a fresh output folder,
+# the image's pull and RepoDigests check, the output walk after the run, the
+# reference walk and Playwright's exit code. The script
 # runs under a PATH of the stubs and a few linked tools only, so the host's own
 # runtime is never found. Run directly, or via `just scripts-test`. Needs bash
 # and mkfifo.
@@ -13,7 +14,7 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 under_test="$script_dir/gallery-shots.sh"
 bash_bin="$(command -v bash)"
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+trap 'chmod -R u+rwx "$work" 2>/dev/null; rm -rf "$work"' EXIT
 failures=0
 
 ok() { echo "ok   $1"; }
@@ -29,7 +30,7 @@ image_ref="mcr.microsoft.com/playwright@sha256:$digest"
 # --- the tools the script may use, and the stubs ---------------------------------
 mkdir -p "$work/tools" "$work/ctl" "$work/log" "$work/stubs-podman" "$work/stubs-docker" \
     "$work/stubs-shim" "$work/stubs-none" "$work/outside"
-for tool in awk sort wc tr grep rm mkdir id od cat ls touch; do
+for tool in awk sort wc tr grep rm mkdir id od cat ls touch chmod; do
     tool_path="$(command -v "$tool" || true)"
     case "$tool_path" in
         /*) ln -s "$tool_path" "$work/tools/$tool" ;;
@@ -45,11 +46,13 @@ done
 #   present         the image is in local storage (a pull creates it)
 #   repodigests     what `image inspect --format` prints (default: the reference asked for)
 #   run-exit        the run's exit code (default 0)
+#   plant           shell commands the run sources in the output folder (under
+#                   the host's PATH), as code in the container could
 # Every call appends "<name> <args>" to $work/log/calls; a run also saves its
 # argv one per line (run.argv, from `run` on) and what the output folder held
 # when it started (output-at-run).
 {
-    printf '#!/bin/sh\nctl=%s\nlog=%s\nrepo=%s\n' "$work/ctl" "$work/log" "$work/repo"
+    printf '#!/bin/sh\nctl=%s\nlog=%s\nrepo=%s\nhost_path=%s\n' "$work/ctl" "$work/log" "$work/repo" "$PATH"
     cat <<'STUB'
 name="${0##*/}"
 printf '%s\n' "$name $*" >>"$log/calls"
@@ -71,6 +74,9 @@ case "$1" in
         printf '%s\n' "$name" >"$log/run.runtime"
         printf '%s\n' "$@" >"$log/run.argv"
         ls -A "$repo/frontend/ui/shots/output" >"$log/output-at-run"
+        if [ -f "$ctl/plant" ]; then
+            (PATH="$host_path" && cd "$repo/frontend/ui/shots/output" && . "$ctl/plant")
+        fi
         exit "$(cat "$ctl/run-exit" 2>/dev/null || echo 0)"
         ;;
     *)
@@ -87,7 +93,8 @@ echo "podman version 6.1.4" >"$work/ctl/version.podman"
 
 # fresh: a new fixture repository and clean stub state (the image present).
 fresh() {
-    rm -rf "$work/repo" "$work/log" "$work/ctl/present" "$work/ctl/repodigests" "$work/ctl/run-exit"
+    chmod -R u+rwx "$work/outside" "$work/repo" 2>/dev/null || true
+    rm -rf "$work/repo" "$work/log" "$work/ctl/present" "$work/ctl/repodigests" "$work/ctl/run-exit" "$work/ctl/plant"
     mkdir -p "$work/log" "$work/repo/scripts" "$work/repo/frontend/ui/storybook-static" \
         "$work/repo/frontend/ui/shots" "$work/repo/frontend/node_modules/@playwright/test"
     touch "$work/ctl/present"
@@ -142,7 +149,7 @@ expected_argv() {
     printf '%s\n' run --rm --platform linux/amd64 --network none --read-only \
         --tmpfs /tmp:rw,nosuid,size=2g --cap-drop ALL --security-opt no-new-privileges --init
     if [ "$1" = podman ]; then
-        printf '%s\n' --userns=keep-id --http-proxy=false
+        printf '%s\n' --userns=keep-id --http-proxy=false --no-hosts
     else
         printf '%s\n' --user "$(id -u):$(id -g)"
     fi
@@ -169,15 +176,18 @@ expected_argv() {
 }
 
 # expect_argv <name> <runtime> <podman|docker> <plain|ci|update>: the run
-# exited 0, through <runtime>, with exactly that argv.
+# exited 0, through <runtime>, with exactly that argv, and the script said
+# which runtime and which flags it chose.
 expect_argv() {
     want="$(expected_argv "$3" "$4")"
     got="$(cat "$work/log/run.argv" 2>/dev/null || echo '(no run)')"
     runtime="$(cat "$work/log/run.runtime" 2>/dev/null || echo '(none)')"
-    if [ "$code" = 0 ] && [ "$runtime" = "$2" ] && [ "$got" = "$want" ]; then
+    line="gallery-shots: running in $2 ($3 flags)"
+    if [ "$code" = 0 ] && [ "$runtime" = "$2" ] && [ "$got" = "$want" ] &&
+        printf '%s\n' "$out" | grep -qxF -- "$line"; then
         ok "$1"
     else
-        fail "$1" "exit $code, runtime $runtime; $out
+        fail "$1" "exit $code, runtime $runtime; wanted the line '$line'; $out
 --- argv got:
 $got
 --- argv wanted:
@@ -475,6 +485,125 @@ if [ "$code" = 0 ]; then
     ok "without --update there is no walk"
 else
     fail "without --update there is no walk" "exit $code; $out"
+fi
+
+# --- the output walk ----------------------------------------------------------
+
+# Code in the container may leave links or special files in the output folder,
+# which CI uploads on a failure: after every run the script removes each (the
+# link itself, never its target), names it and exits 1.
+out_prefix="gallery-shots: removed frontend/ui/shots/output"
+# expect_lines <name> <want exit> <line…>: exit <want exit>, each line in the output.
+expect_lines() {
+    name="$1"
+    want="$2"
+    shift 2
+    missing=""
+    for line in "$@"; do
+        printf '%s\n' "$out" | grep -qxF -- "$line" || missing="$missing
+  $line"
+    done
+    if [ "$code" = "$want" ] && [ -z "$missing" ]; then
+        ok "$name"
+    else
+        fail "$name" "exit $code (want $want); missing:$missing
+$out"
+    fi
+}
+# expect_gone <name> <path…>: no such entry in the output folder, link or not.
+expect_gone() {
+    name="$1"
+    shift
+    left=""
+    for path in "$@"; do
+        if [ -e "$shots/output/$path" ] || [ -L "$shots/output/$path" ]; then left="$left $path"; fi
+    done
+    if [ -z "$left" ]; then ok "$name"; else fail "$name" "left:$left; $(ls -laR "$shots/output" 2>&1)"; fi
+}
+
+fresh
+echo secret >"$work/outside/secret"
+mkdir -p "$work/outside/target"
+echo keep >"$work/outside/target/keep.txt"
+png "$work/outside/good.png" "$one" "$one"
+cat >"$work/ctl/plant" <<PLANT
+ln -s '$work/outside/secret' leak.png
+ln -s /nonexistent/x dangling.png
+ln -s '$work/outside/target' dirlink
+mkfifo pipe.png
+mkdir -p results/a
+cp '$work/outside/good.png' results/a/actual.png
+ln -s '$work/outside/secret' results/a/expected.png
+mkdir locked
+ln -s '$work/outside/secret' locked/hidden.png
+chmod 000 locked
+PLANT
+run_script stubs-podman run
+expect_lines "links, a FIFO and an unreadable folder left in the output are named, and the run exits 1" 1 \
+    "$out_prefix/leak.png: a symlink" \
+    "$out_prefix/dangling.png: a symlink" \
+    "$out_prefix/dirlink: a symlink" \
+    "$out_prefix/pipe.png: not a regular file or folder" \
+    "$out_prefix/results/a/expected.png: a symlink" \
+    "$out_prefix/locked: an unreadable folder" \
+    "gallery-shots: 6 finding(s) in frontend/ui/shots/output"
+expect_gone "each of them is removed" leak.png dangling.png dirlink pipe.png results/a/expected.png locked
+if [ -f "$shots/output/results/a/actual.png" ] && [ ! -L "$shots/output/results/a/actual.png" ] &&
+    [ "$(cat "$work/outside/secret")" = secret ] && [ -f "$work/outside/target/keep.txt" ]; then
+    ok "the plain PNG stays, and no link's target is touched"
+else
+    fail "the plain PNG stays, and no link's target is touched" "$(ls -laR "$shots/output" "$work/outside" 2>&1)"
+fi
+
+for mode in --ci --update; do
+    fresh
+    echo "ln -s '$work/outside' leak.png" >"$work/ctl/plant"
+    run_script stubs-podman run "$mode"
+    expect_lines "the output walk runs with $mode too" 1 "$out_prefix/leak.png: a symlink"
+    expect_gone "the output walk removes the link with $mode" leak.png
+done
+
+fresh
+echo "ln -s '$work/outside' leak.png" >"$work/ctl/plant"
+echo 3 >"$work/ctl/run-exit"
+run_script stubs-podman run
+expect_lines "a link in the output exits 1 even when Playwright failed" 1 "$out_prefix/leak.png: a symlink"
+
+fresh
+png "$work/outside/good.png" "$one" "$one"
+echo "mkdir -p results/b && cp '$work/outside/good.png' results/b/diff.png && echo x >results/b/notes.txt" >"$work/ctl/plant"
+run_script stubs-podman run
+if [ "$code" = 0 ] && [ -f "$shots/output/results/b/diff.png" ] && [ -f "$shots/output/results/b/notes.txt" ]; then
+    ok "plain files and folders in the output pass the walk and stay"
+else
+    fail "plain files and folders in the output pass the walk and stay" "exit $code; $out"
+fi
+
+fresh
+cat >"$work/ctl/plant" <<PLANT
+mkdir stuck
+ln -s '$work/outside' stuck/leak.png
+chmod 555 stuck
+PLANT
+run_script stubs-podman run
+expect_lines "a link in a folder it can't change is named, and the output folder goes whole" 1 \
+    "gallery-shots: could not remove frontend/ui/shots/output/stuck/leak.png: a symlink" \
+    "gallery-shots: removed frontend/ui/shots/output whole: an entry in it could not be removed"
+if [ ! -e "$shots/output" ] && [ ! -L "$shots/output" ] && [ -d "$work/outside" ]; then
+    ok "nothing of that output folder is left; the link's target stays"
+else
+    fail "nothing of that output folder is left; the link's target stays" "$(ls -laR "$shots" 2>&1)"
+fi
+
+fresh
+mkdir -p "$shots/output/locked/deeper"
+echo stale >"$shots/output/locked/deeper/old.png"
+chmod 000 "$shots/output/locked/deeper" "$shots/output/locked"
+run_script stubs-podman run
+if [ "$code" = 0 ] && [ ! -s "$work/log/output-at-run" ]; then
+    ok "an unreadable folder a run left behind is cleared before the next run"
+else
+    fail "an unreadable folder a run left behind is cleared before the next run" "exit $code; $out"
 fi
 
 if [ "$failures" -gt 0 ]; then

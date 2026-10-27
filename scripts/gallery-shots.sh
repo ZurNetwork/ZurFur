@@ -9,13 +9,18 @@
 # argument, a pin off the pattern, a tag version other than the one locked for
 # @playwright/test, playwright and playwright-core and installed, a missing
 # gallery build or install, no Podman or Docker, an image whose RepoDigests lack
-# the pinned digest. The container gets read-only mounts of the build, the
-# shots folder, ui's package.json and frontend/node_modules, and read-write
-# mounts of a fresh, empty shots/output (and, with --update, the references);
-# nothing else. After it exits, --update walks the references without following
-# links and refuses links, special files, non-PNG files and oversized ones.
-# Exits with Playwright's code, or 1 when the walk found anything.
+# the pinned digest. It then names the runtime and its flags in one line. The
+# container gets read-only mounts of the build, the shots folder, ui's
+# package.json and frontend/node_modules, and read-write mounts of a fresh,
+# empty shots/output (and, with --update, the references); nothing else. After
+# it exits, every run walks shots/output without following links and removes
+# each link (never its target), special file and unreadable folder, naming
+# each; when one can't be removed, the whole output folder goes. Then --update
+# walks the references the same way and refuses links, special files, non-PNG
+# files and oversized ones. Exits with Playwright's code, or 1 when either walk
+# found anything.
 set -euo pipefail
+shopt -s nullglob
 
 usage='usage: gallery-shots.sh run [--update] [--ci]'
 
@@ -177,6 +182,7 @@ elif command -v docker >/dev/null 2>&1; then
 else
     refuse "no container runtime: install Podman or Docker"
 fi
+echo "gallery-shots: running in $runtime ($flavour flags)" >&2
 
 if ! "$runtime" image inspect "$image_ref" >/dev/null 2>&1; then
     echo "gallery-shots: pulling $image_ref" >&2
@@ -202,15 +208,44 @@ if [ "$update" = 1 ]; then
     fi
     mkdir -p -- "$references"
 fi
-# A fresh, empty output folder: whatever a run left there (links included) goes.
-rm -rf -- "$output"
+# children <folder>: every entry in it, dotfiles included, one per array item.
+children() {
+    local entry
+    entries=()
+    for entry in "$1"/* "$1"/.*; do
+        case "${entry##*/}" in . | ..) continue ;; esac
+        entries+=("$entry")
+    done
+}
+
+# force_remove <path>: removes <path> and everything under it, links never
+# followed; first makes each real folder in it the owner's to read and change.
+force_remove() {
+    local entry
+    if [ -d "$1" ] && [ ! -L "$1" ]; then
+        chmod u+rwx -- "$1" 2>/dev/null || true
+        local -a entries
+        children "$1"
+        for entry in "${entries[@]}"; do
+            force_remove "$entry"
+        done
+    fi
+    rm -rf -- "$1" 2>/dev/null || true
+}
+
+# A fresh, empty output folder: whatever a run left there (links, unreadable
+# folders) goes.
+force_remove "$output"
+if [ -e "$output" ] || [ -L "$output" ]; then
+    refuse "could not empty frontend/ui/shots/output"
+fi
 mkdir -- "$output"
 
 # --- the run ------------------------------------------------------------------------
 
 run_flags=(run --rm --platform linux/amd64 --network none --read-only --tmpfs /tmp:rw,nosuid,size=2g --cap-drop ALL --security-opt no-new-privileges --init)
 if [ "$flavour" = podman ]; then
-    run_flags+=(--userns=keep-id --http-proxy=false)
+    run_flags+=(--userns=keep-id --http-proxy=false --no-hosts)
 else
     run_flags+=(--user "$(id -u):$(id -g)")
 fi
@@ -239,6 +274,69 @@ set +e
 "$runtime" "${run_flags[@]}" "${mounts[@]}" -w /work/frontend/ui "${environment[@]}" "$image_ref" "${command[@]}"
 status=$?
 set -e
+
+# --- the output walk ----------------------------------------------------------------
+
+# CI uploads shots/output on a failure, and the upload follows links: whatever
+# the container left there that is not a plain file or a folder goes.
+cleaned=0
+stuck=0
+# removed <path> <why>: names <path>, gone or not.
+removed() {
+    if [ -e "$1" ] || [ -L "$1" ]; then
+        echo "gallery-shots: could not remove ${1#"$root/"}: $2" >&2
+        stuck=1
+    else
+        echo "gallery-shots: removed ${1#"$root/"}: $2" >&2
+    fi
+    cleaned=$((cleaned + 1))
+}
+
+# walk_output <folder>: every entry below it, links never followed.
+walk_output() {
+    local entry
+    local -a entries
+    children "$1"
+    for entry in "${entries[@]}"; do
+        if [ -L "$entry" ]; then
+            rm -f -- "$entry" 2>/dev/null || true
+            removed "$entry" "a symlink"
+        elif [ -d "$entry" ]; then
+            if [ -r "$entry" ] && [ -x "$entry" ]; then
+                walk_output "$entry"
+            else
+                force_remove "$entry"
+                removed "$entry" "an unreadable folder"
+            fi
+        elif [ ! -f "$entry" ]; then
+            rm -f -- "$entry" 2>/dev/null || true
+            removed "$entry" "not a regular file or folder"
+        fi
+    done
+}
+
+if [ -L "$output" ] || { [ -e "$output" ] && [ ! -d "$output" ]; }; then
+    force_remove "$output"
+    removed "$output" "not a folder"
+elif [ -d "$output" ]; then
+    if [ -r "$output" ] && [ -x "$output" ]; then
+        walk_output "$output"
+    else
+        force_remove "$output"
+        removed "$output" "an unreadable folder"
+    fi
+fi
+if [ "$stuck" = 1 ]; then
+    force_remove "$output"
+    if [ -e "$output" ] || [ -L "$output" ]; then
+        echo "gallery-shots: could not remove frontend/ui/shots/output whole" >&2
+    else
+        echo "gallery-shots: removed frontend/ui/shots/output whole: an entry in it could not be removed" >&2
+    fi
+fi
+if [ "$cleaned" -gt 0 ]; then
+    echo "gallery-shots: $cleaned finding(s) in frontend/ui/shots/output" >&2
+fi
 
 # --- the reference walk -------------------------------------------------------------
 
@@ -304,11 +402,12 @@ walk() {
 }
 
 if [ "$update" = 1 ]; then
-    shopt -s nullglob
     walk "$references"
     if [ "$findings" -gt 0 ]; then
         echo "gallery-shots: $findings finding(s) in frontend/ui/shots/__screenshots__" >&2
-        exit 1
     fi
+fi
+if [ "$cleaned" -gt 0 ] || [ "$findings" -gt 0 ]; then
+    exit 1
 fi
 exit "$status"
