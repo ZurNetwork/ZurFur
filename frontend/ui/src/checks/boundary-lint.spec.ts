@@ -1910,7 +1910,8 @@ describe('the file sets', { timeout: 120_000 }, () => {
 		expect(config.linterOptions?.noInlineConfig).toBe(true);
 	});
 
-	it('lints every real file under src/ clean', async () => {
+	// The whole tree takes over two minutes on CI's runner, past the block's limit.
+	it('lints every real file under src/ clean', { timeout: 600_000 }, async () => {
 		const results = await realLinter.lintFiles(['src']);
 		const problems = results.flatMap((result) =>
 			result.messages.map(
