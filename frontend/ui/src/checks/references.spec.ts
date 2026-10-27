@@ -53,6 +53,47 @@ function png(
 	]);
 }
 
+/** `bytes` with the byte at `index` flipped. */
+function flipped(bytes: Buffer, index: number): Buffer {
+	const copy = Buffer.from(bytes);
+	copy.writeUInt8(copy.readUInt8(index) ^ 0xff, index);
+	return copy;
+}
+
+/** A valid 2×2 greyscale PNG whose pixel stream is split over `parts` IDAT chunks. */
+function splitPng(parts: number): Buffer {
+	const stream = deflateSync(Buffer.from([0, 0x10, 0x20, 0, 0x30, 0x40]));
+	const step = Math.ceil(stream.length / parts);
+	const idats = Array.from({ length: parts }, (_unused, index) =>
+		chunk('IDAT', stream.subarray(index * step, (index + 1) * step))
+	);
+	return Buffer.concat([signature, header(2, 2), ...idats, chunk('IEND', Buffer.alloc(0))]);
+}
+
+/** A zlib stream of stored blocks: `empty` empty blocks, then `raw` in one final block. */
+function storedZlib(raw: Buffer, empty: number): Buffer {
+	const emptyBlock = Buffer.from([0x00, 0x00, 0x00, 0xff, 0xff]);
+	const finalHeader = Buffer.alloc(5);
+	finalHeader.writeUInt8(0x01, 0);
+	finalHeader.writeUInt16LE(raw.length, 1);
+	finalHeader.writeUInt16LE(raw.length ^ 0xffff, 3);
+	let low = 1;
+	let high = 0;
+	for (const byte of raw) {
+		low = (low + byte) % 65521;
+		high = (high + low) % 65521;
+	}
+	const adler = Buffer.alloc(4);
+	adler.writeUInt32BE(high * 65536 + low);
+	return Buffer.concat([
+		Buffer.from([0x78, 0x01]),
+		...Array.from({ length: empty }, () => emptyBlock),
+		finalHeader,
+		raw,
+		adler
+	]);
+}
+
 let fixtureCount = 0;
 
 /** Writes a reference folder holding `files` (relative path to bytes) and returns its path. */
@@ -163,6 +204,62 @@ describe('the reference-picture check', () => {
 		],
 		['a tIME chunk', { 'a/dark.png': png([chunk('tIME', Buffer.alloc(7))]) }, 'metadata'],
 		['an eXIf chunk', { 'a/dark.png': png([chunk('eXIf', Buffer.from('MM\0*'))]) }, 'metadata'],
+		['an iCCP chunk', { 'a/dark.png': png([chunk('iCCP', Buffer.from('p\0\0x'))]) }, 'metadata'],
+		[
+			'a private prVt chunk',
+			{ 'a/dark.png': png([chunk('prVt', Buffer.from('anything'))]) },
+			'metadata'
+		],
+		['a PLTE chunk', { 'a/dark.png': png([chunk('PLTE', Buffer.alloc(3))]) }, 'metadata'],
+		['a bad IDAT CRC', { 'a/dark.png': flipped(png(), png().length - 13) }, 'bad-crc'],
+		['a bad IHDR CRC', { 'a/dark.png': flipped(png(), 32) }, 'bad-crc'],
+		[
+			'a second IDAT stream before IEND',
+			{
+				'a/dark.png': Buffer.concat([
+					png().subarray(0, -12),
+					chunk('IDAT', Buffer.from('DATABASE_URL=postgres://u:p@h/db')),
+					chunk('IEND', Buffer.alloc(0))
+				])
+			},
+			'pixel-stream'
+		],
+		[
+			'IDAT chunks split by a second IHDR',
+			{
+				'a/dark.png': Buffer.concat([
+					signature,
+					header(2, 2),
+					splitPng(2).subarray(33, 33 + 12 + 7),
+					header(2, 2),
+					splitPng(2).subarray(33 + 12 + 7, -12),
+					chunk('IEND', Buffer.alloc(0))
+				])
+			},
+			'not-png'
+		],
+		[
+			'a pixel stream short of the size IHDR gives',
+			{ 'a/dark.png': png([], { width: 3, height: 2 }) },
+			'pixel-stream'
+		],
+		[
+			'a pixel stream that does not inflate',
+			{
+				'a/dark.png': Buffer.concat([
+					signature,
+					header(2, 2),
+					chunk('IDAT', Buffer.from('not zlib')),
+					chunk('IEND', Buffer.alloc(0))
+				])
+			},
+			'pixel-stream'
+		],
+		[
+			'a PNG with no IDAT',
+			{ 'a/dark.png': Buffer.concat([signature, header(2, 2), chunk('IEND', Buffer.alloc(0))]) },
+			'pixel-stream'
+		],
 		[
 			'bytes after IEND',
 			{ 'a/dark.png': Buffer.concat([png(), Buffer.from('trailer')]) },
@@ -176,14 +273,42 @@ describe('the reference-picture check', () => {
 		expect(run([folder]).code).toBe(1);
 	});
 
+	it('passes a pixel stream split over several IDAT chunks', () => {
+		expect(pngFindings('a/dark.png', splitPng(3))).toEqual([]);
+	});
+
+	it('refuses a private zrFr chunk with an iCCP chunk, naming both', () => {
+		const planted = png([
+			chunk('zrFr', Buffer.from('DATABASE_URL=postgres://u:p@h/db')),
+			chunk('iCCP', Buffer.from('p\0\0x'))
+		]);
+		const findings = pngFindings('a/dark.png', planted);
+		expect(findings.map((finding) => finding.rule)).toEqual(['metadata', 'metadata']);
+		expect(findings.map((finding) => finding.found).join('\n')).toMatch(/zrFr[\s\S]*iCCP/);
+	});
+
+	it('names an unprintable chunk type by its bytes', () => {
+		const planted = png([chunk('a\nb\x1b', Buffer.alloc(0))]);
+		const found = pngFindings('a/dark.png', planted).map((finding) => finding.found);
+		expect(found).toEqual([expect.stringContaining('0x610a621b')]);
+	});
+
 	it('exactly 4096 px a side and exactly 1 MiB pass', () => {
-		const square = png([], { width: 4096, height: 4096 });
+		const squareRows = Buffer.alloc(4096 * (4096 + 1));
+		const square = Buffer.concat([
+			signature,
+			header(4096, 4096),
+			chunk('IDAT', deflateSync(squareRows)),
+			chunk('IEND', Buffer.alloc(0))
+		]);
 		expect(pngFindings('a/dark.png', square)).toEqual([]);
+		// A 1×4 picture (8 bytes of rows) padded with empty stored blocks to exactly 1 MiB.
+		const fixedBytes = signature.length + 25 + 12 + 12 + 2 + 5 + 8 + 4;
 		const padded = Buffer.concat([
 			signature,
-			header(2, 2),
-			chunk('zzZz', Buffer.alloc(1024 * 1024 - png().length - 12)),
-			png().subarray(signature.length + 25)
+			header(1, 4),
+			chunk('IDAT', storedZlib(Buffer.alloc(8), (1024 * 1024 - fixedBytes) / 5)),
+			chunk('IEND', Buffer.alloc(0))
 		]);
 		expect(padded.length).toBe(1024 * 1024);
 		expect(checkReferences(referenceFolder({ 'a/dark.png': padded }))).toEqual({
