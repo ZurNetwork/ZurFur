@@ -44,16 +44,17 @@ function recipeLines(justfile: string, recipe: string): readonly string[] | unde
 
 /**
  * The gallery recipes, each with its exact body (trimmed, blank lines left
- * out): `gallery` runs ui's `storybook` script, which alone sets the host and
- * port; `gallery-build` runs `build-storybook`, then the built-output check in
- * its Storybook mode.
+ * out): `gallery` prints the address with the port rule under `env -i`, then
+ * runs ui's `storybook` script, which alone sets the host and port;
+ * `gallery-build` runs `build-storybook`, then the built-output check in its
+ * Storybook mode.
  */
 const galleryRecipes: ReadonlyMap<string, readonly string[]> = new Map([
 	[
 		'gallery',
 		[
 			'just frontend-install',
-			'@echo "Storybook (the component gallery): http://127.0.0.1:$(node frontend/ui/gallery-port.ts)"',
+			`@env -i PATH="$PATH" ZURFUR_GALLERY_PORT="\${ZURFUR_GALLERY_PORT-}" sh -c 'echo "Storybook (the component gallery): http://127.0.0.1:$(node frontend/ui/gallery-port.ts)"'`,
 			'yarn --cwd frontend/ui run storybook'
 		]
 	],
@@ -575,8 +576,7 @@ describe('the gallery recipes', () => {
 		expect(justfileRefusals(repoJustfile)).toEqual([]);
 	});
 
-	const echoLine =
-		'    @echo "Storybook (the component gallery): http://127.0.0.1:$(node frontend/ui/gallery-port.ts)"';
+	const echoLine = `    ${galleryRecipes.get('gallery')?.[1] ?? ''}`;
 	const storybookLine = '    yarn --cwd frontend/ui run storybook';
 	const buildLines = [
 		'    yarn --cwd frontend/ui run build-storybook',
@@ -614,6 +614,18 @@ describe('the gallery recipes', () => {
 		['a line with the network guard skipped', '    yarn --cwd frontend/ui exec storybook dev']
 	])('refuses gallery with %s', (_name, line) => {
 		expect(justfileRefusals(justfile(line))).toEqual(['gallery: the body is not its pinned lines']);
+	});
+
+	it.each([
+		[
+			"the port rule run with the recipe's whole environment",
+			'    @echo "Storybook (the component gallery): http://127.0.0.1:$(node frontend/ui/gallery-port.ts)"'
+		],
+		['another variable kept', echoLine.replace('env -i ', 'env -i DATABASE_URL="$DATABASE_URL" ')],
+		['another substitution', echoLine.replace('$(node frontend/ui/gallery-port.ts)', '$(cat .env)')]
+	])('refuses an address line with %s', (_name, line) => {
+		const changed = justfile(storybookLine).replace(echoLine, line);
+		expect(justfileRefusals(changed)).toEqual(['gallery: the body is not its pinned lines']);
 	});
 
 	it.each([
@@ -710,18 +722,24 @@ const guardVariables: ReadonlyMap<string, string> = new Map([
 	['STORYBOOK_TELEMETRY_URL', 'http://127.0.0.1:9']
 ]);
 
-/** The port rule's one spelling: the gallery's port, printed by `gallery-port.ts`. */
+/**
+ * The port rule's one spelling: the gallery's port, printed by `gallery-port.ts`.
+ * It may stand only inside a `sh -c '…'` body under `env -i`, so it runs in the
+ * clean environment.
+ */
 const portArgument = '"$(node gallery-port.ts)"';
 
 /**
  * Each guarded script's program, its required arguments (a flag, or a flag
  * and its value) and the arguments it may also carry. Any other argument is
  * refused, so no flag that opens or reports can slip in beside the pinned ones.
+ * `inShell` scripts run their command as `sh -c 'exec …'` under `env -i`.
  */
 interface GuardedCommand {
 	readonly program: readonly string[];
 	readonly required: readonly (readonly string[])[];
 	readonly optional: readonly (readonly string[])[];
+	readonly inShell: boolean;
 }
 
 const guardedScripts: Readonly<Record<string, GuardedCommand>> = {
@@ -736,60 +754,95 @@ const guardedScripts: Readonly<Record<string, GuardedCommand>> = {
 			['--no-version-updates'],
 			['--disable-telemetry']
 		],
-		optional: [['--ci']]
+		optional: [['--ci']],
+		inShell: true
 	},
 	'build-storybook': {
 		program: ['storybook', 'build'],
 		required: [['-c', '.storybook'], ['-o', 'storybook-static'], ['--disable-telemetry']],
-		optional: [['--quiet']]
+		optional: [['--quiet']],
+		inShell: false
 	},
-	test: { program: ['vitest'], required: [['--run']], optional: [] },
-	'test:unit': { program: ['vitest'], required: [], optional: [] }
+	test: { program: ['vitest'], required: [['--run']], optional: [], inShell: false },
+	'test:unit': { program: ['vitest'], required: [], optional: [], inShell: false }
 };
 
 /**
- * Splits a script into words at spaces, keeping double-quoted text (quotes
- * included) inside its word; undefined when a quote is left open.
+ * Splits a script into words at spaces, keeping single- or double-quoted text
+ * (quotes included) inside its word; undefined when a quote is left open.
  */
 function scriptWords(script: string): readonly string[] | undefined {
 	const words: string[] = [];
 	let word = '';
-	let quoted = false;
+	let quote = '';
 	for (const character of script) {
-		if (character === '"') quoted = !quoted;
-		if (character === ' ' && !quoted) {
+		if (quote === '' && (character === '"' || character === "'")) quote = character;
+		else if (character === quote) quote = '';
+		if (character === ' ' && quote === '') {
 			if (word !== '') words.push(word);
 			word = '';
 		} else {
 			word += character;
 		}
 	}
-	if (quoted) return undefined;
+	if (quote !== '') return undefined;
 	if (word !== '') words.push(word);
 	return words;
 }
 
 /**
- * Characters that would end the guarded command or start another, outside
- * the port rule: a second command after it runs with the caller's whole
+ * Characters that would end the guarded command or start another, or
+ * substitute one: outside `env -i`, a command runs with the caller's whole
  * environment.
  */
 const commandBreaks = /[;&|`\n<>]|\$\(/;
 
 const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
 
-/** Why one script is not `env -i`, exactly the guard's variables, then its pinned command. */
-function guardedScriptRefusals(script: string, command: GuardedCommand): readonly string[] {
-	if (commandBreaks.test(script.replace(portArgument, ''))) {
-		return ['it holds a character that ends or starts a command'];
+/** A `sh -c` body, single-quoted so the caller's shell expands nothing in it. */
+const shellBody = /^'([^']*)'$/;
+
+/** The body text when the command words start `sh -c '…'`, else undefined. */
+function shellBodyText(words: readonly string[]): string | undefined {
+	const [shell, flag, body = ''] = words;
+	return shell === 'sh' && flag === '-c' ? shellBody.exec(body)?.[1] : undefined;
+}
+
+/**
+ * Why a `sh -c` body is not `exec` then the pinned command: it runs under
+ * `env -i`, so the port rule's one `$(…)` may stand here, and nothing else
+ * that ends, starts or substitutes a command.
+ */
+function shellBodyRefusals(text: string, command: GuardedCommand): readonly string[] {
+	if (commandBreaks.test(text.replace(portArgument, ''))) {
+		return ['it holds a character that ends or starts a command inside sh -c'];
 	}
+	const [exec, ...words] = scriptWords(text) ?? [];
+	if (exec !== 'exec') return ["it does not run its command as sh -c 'exec …'"];
+	return commandRefusals(words, command);
+}
+
+/**
+ * Why one script is not `env -i`, exactly the guard's variables, then its
+ * pinned command (inside `sh -c 'exec …'` for an `inShell` script). The
+ * caller's shell expands every word but a single-quoted `sh -c` body, so none
+ * of them may end, start or substitute a command.
+ */
+function guardedScriptRefusals(script: string, command: GuardedCommand): readonly string[] {
+	if (script.includes('\\')) return ['it holds a backslash'];
 	const words = scriptWords(script);
 	if (words === undefined) return ['it leaves a quote open'];
 	const [env, clear, ...rest] = words;
-	if (env !== 'env' || clear !== '-i') return ['it does not start with env -i'];
 	const firstCommandWord = rest.findIndex((word) => !assignment.test(word));
 	const assignments = firstCommandWord === -1 ? rest : rest.slice(0, firstCommandWord);
 	const commandWords = firstCommandWord === -1 ? [] : rest.slice(firstCommandWord);
+	const body = command.inShell ? shellBodyText(commandWords) : undefined;
+	const bodyAt = words.length - commandWords.length + 2;
+	const callerWords = words.filter((_word, at) => body === undefined || at !== bodyAt);
+	if (callerWords.some((word) => commandBreaks.test(word))) {
+		return ["it holds a character that ends or starts a command in the caller's shell"];
+	}
+	if (env !== 'env' || clear !== '-i') return ['it does not start with env -i'];
 	const passed = assignments.map((word) => assignment.exec(word)?.slice(1) ?? []);
 	const names = passed.map(([name]) => name ?? '');
 	const variableRefusals = [
@@ -805,7 +858,11 @@ function guardedScriptRefusals(script: string, command: GuardedCommand): readonl
 			.filter((name, index) => names.indexOf(name) !== index)
 			.map((name) => `it passes ${name} twice`)
 	];
-	return [...variableRefusals, ...commandRefusals(commandWords, command)];
+	if (!command.inShell) return [...variableRefusals, ...commandRefusals(commandWords, command)];
+	if (body === undefined || commandWords.length !== 3) {
+		return [...variableRefusals, "it does not run its command as sh -c 'exec …'"];
+	}
+	return [...variableRefusals, ...shellBodyRefusals(body, command)];
 }
 
 /** Why a command line is not the pinned program with its required arguments and nothing unknown. */
@@ -863,7 +920,8 @@ describe("ui's guarded scripts", () => {
 	});
 
 	const guard = [...guardVariables].map(([name, value]) => `${name}=${value}`).join(' ');
-	const storybook = `env -i ${guard} storybook dev -c .storybook --host 127.0.0.1 --port ${portArgument} --exact-port --no-open --ci --no-version-updates --disable-telemetry`;
+	const storybookCommand = `storybook dev -c .storybook --host 127.0.0.1 --port ${portArgument} --exact-port --no-open --ci --no-version-updates --disable-telemetry`;
+	const storybook = `env -i ${guard} sh -c 'exec ${storybookCommand}'`;
 	const scripts = {
 		dev: 'vite dev',
 		storybook,
@@ -956,5 +1014,86 @@ describe("ui's guarded scripts", () => {
 		['an unguarded Vitest script', { scripts: { ...scripts, coverage: 'vitest --coverage' } }]
 	])('refuses %s', (_label, manifest) => {
 		expect(guardedManifestRefusals(manifest)).not.toEqual([]);
+	});
+
+	const callerShell = "it holds a character that ends or starts a command in the caller's shell";
+	const insideShell = 'it holds a character that ends or starts a command inside sh -c';
+	const notShell = "it does not run its command as sh -c 'exec …'";
+
+	it.each([
+		[
+			'the port rule outside env -i, run by the caller',
+			`env -i ${guard} ${storybookCommand}`,
+			callerShell
+		],
+		[
+			'the port rule passed in before env -i',
+			`ZURFUR_GALLERY_PORT=${portArgument} ${storybook}`,
+			callerShell
+		],
+		[
+			'the port rule as a variable after env -i',
+			storybook.replace('"${ZURFUR_GALLERY_PORT-}"', portArgument),
+			callerShell
+		],
+		[
+			'the sh -c body in double quotes, so the caller expands it',
+			`env -i ${guard} sh -c "exec ${storybookCommand.replace(portArgument, '$(node gallery-port.ts)')}"`,
+			callerShell
+		],
+		[
+			'another substitution in place of the port rule',
+			storybook.replace(portArgument, '"$(cat ~/.env)"'),
+			insideShell
+		],
+		[
+			'a second substitution beside the port rule',
+			storybook.replace(" --disable-telemetry'", " --disable-telemetry $(touch x)'"),
+			insideShell
+		],
+		[
+			'the port rule twice',
+			storybook.replace('--exact-port', `--exact-port ${portArgument}`),
+			insideShell
+		],
+		[
+			'a backtick substitution',
+			storybook.replace(portArgument, '"`node gallery-port.ts`"'),
+			insideShell
+		],
+		[
+			'a second command inside sh -c',
+			storybook.replace(" --disable-telemetry'", " --disable-telemetry; storybook dev'"),
+			insideShell
+		],
+		['sh -c without exec', storybook.replace("'exec ", "'"), notShell],
+		[
+			'the body unquoted, so the caller expands it',
+			storybook.replace("'exec ", 'exec ').replace(/'$/, ''),
+			callerShell
+		],
+		['a flag after the body', `${storybook} --host 0.0.0.0`, notShell],
+		[
+			'bash in place of sh, whose body the check does not read',
+			storybook.replace(' sh -c ', ' bash -c '),
+			callerShell
+		],
+		['sh -c without its body', `env -i ${guard} sh -c`, notShell],
+		['a backslash', storybook.replace("'exec ", "\\'exec "), 'it holds a backslash']
+	])('refuses a storybook script with %s', (_label, script, reason) => {
+		expect(guardedManifestRefusals(changed('storybook', script))).toContainEqual(
+			`storybook: ${reason}`
+		);
+	});
+
+	it.each([
+		['test', `env -i ${guard} sh -c 'exec vitest --run'`, 'test: it runs sh, not vitest'],
+		[
+			'build-storybook',
+			`env -i ${guard} sh -c 'exec storybook build -c .storybook -o storybook-static --disable-telemetry'`,
+			'build-storybook: it runs sh -c, not storybook build'
+		]
+	] as const)('refuses a sh -c body in %s, which runs no port rule', (name, script, refusal) => {
+		expect(guardedManifestRefusals(changed(name, script))).toContainEqual(refusal);
 	});
 });
