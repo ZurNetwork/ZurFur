@@ -75,7 +75,6 @@
 
 .zf-seg__prefix {
 	font-weight: var(--weight-regular);
-	opacity: 0.7;
 }
 
 /* A count is neutral and muted, never red. */
