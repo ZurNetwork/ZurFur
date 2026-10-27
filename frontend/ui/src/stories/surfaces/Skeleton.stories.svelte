@@ -1,9 +1,13 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import { expect } from 'storybook/test';
-	import { Skeleton, Spinner } from '@zurfur/ui';
+	import { expect, fn } from 'storybook/test';
+	import { Skeleton } from '@zurfur/ui';
 	import GalleryMotion from '../../gallery/GalleryMotion.svelte';
 	import { spinnerWords } from '../fixtures/surfaces.ts';
+	import LoadingHolder from './LoadingHolder.svelte';
+
+	/** The spy the helper hands its press to. */
+	const onStart = fn();
 
 	const { Story } = defineMeta({
 		title: 'Surfaces and Feedback/Skeleton',
@@ -43,15 +47,21 @@
 <Story name="Circle" args={{ shape: 'circle' }} />
 
 {#snippet withStatus(_args: unknown)}
-	<Spinner kind="status" label={spinnerWords.loading} active />
-	<Skeleton shape="lines" lines={3} testid="blank" />
+	<LoadingHolder action={spinnerWords.start} label={spinnerWords.loading} {onStart} />
 {/snippet}
 
 <Story
 	name="With a Status"
 	template={withStatus}
-	play={async ({ canvas }) => {
-		await expect(canvas.getByRole('status')).toHaveTextContent(spinnerWords.loading);
+	play={async ({ canvas, userEvent }) => {
+		onStart.mockClear();
+		const status = canvas.getByRole('status');
+		await expect(status).toBeEmptyDOMElement();
+		await expect(canvas.queryByTestId('blank')).toBeNull();
+		await userEvent.click(canvas.getByRole('button', { name: spinnerWords.start }));
+		await expect(onStart).toHaveBeenCalledTimes(1);
+		await expect(canvas.getByRole('status')).toBe(status);
+		await expect(status).toHaveTextContent(spinnerWords.loading);
 		await expect(canvas.getByTestId('blank')).toHaveAttribute('aria-hidden', 'true');
 	}}
 />

@@ -42,8 +42,8 @@ export const badgeTones: readonly BadgeTone[] = [
 	'taupe'
 ];
 
-/** What the spinner says while it works. */
-export const spinnerWords = { loading: 'Loading sketches' } as const;
+/** What the spinner says while it works, and the button that starts the work. */
+export const spinnerWords = { loading: 'Loading sketches', start: 'Load Sketches' } as const;
 
 /** What the toast stack is called. */
 export const toastStackWords = { label: 'Notifications' } as const;
