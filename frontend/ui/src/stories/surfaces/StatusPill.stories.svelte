@@ -9,7 +9,7 @@
 		tags: ['autodocs', 'simple'],
 		args: { parts: onePart },
 		argTypes: {
-			parts: { control: 'object' },
+			parts: { control: false },
 			fact: { table: { disable: true } },
 			testid: { table: { disable: true } }
 		},
