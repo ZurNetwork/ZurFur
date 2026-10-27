@@ -1,0 +1,195 @@
+/* Fields: the text input, the select and the date field, laid out with their label, hint and error. */
+.zf-field {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	min-width: 0;
+}
+
+.zf-field__label {
+	font-size: var(--text-sm);
+	line-height: var(--leading-sm);
+	font-weight: var(--weight-semibold);
+	color: var(--color-text);
+}
+
+/* Heard, not seen. */
+.zf-field__label--hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+.zf-field__hint {
+	font-size: var(--text-xs);
+	line-height: var(--leading-xs);
+	color: var(--color-text-muted);
+}
+
+.zf-field__error {
+	display: flex;
+	gap: var(--space-1);
+	align-items: center;
+	font-size: var(--text-xs);
+	line-height: var(--leading-xs);
+	color: var(--color-danger-text);
+}
+
+/* A field is a slip: `.slip` gives it the sheet and its shadow. */
+.zf-input,
+.zf-select {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	box-sizing: border-box;
+	height: var(--size-control);
+	padding: 0 var(--space-2);
+	border: 1px solid var(--color-border-strong);
+	border-radius: var(--radius-sm);
+	transition: border-color var(--duration-fast) var(--easing-standard);
+}
+
+/* The one focus ring sits on the field, so the control inside keeps its own quiet. */
+.zf-input:focus-within,
+.zf-select:focus-within {
+	outline: 2px solid var(--color-focus);
+	outline-offset: var(--space-half);
+}
+
+.zf-input--invalid,
+.zf-select--invalid {
+	border-color: var(--color-danger-text);
+}
+
+.zf-input--disabled,
+.zf-select--disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.zf-input input,
+.zf-input textarea,
+.zf-select select {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	outline-color: transparent;
+	background: transparent;
+	font: inherit;
+	font-size: var(--text-md);
+	line-height: var(--leading-md);
+	color: var(--color-text);
+}
+
+.zf-input input::placeholder,
+.zf-input textarea::placeholder {
+	color: var(--color-text-muted);
+	opacity: 1;
+}
+
+/* A select still on its placeholder reads muted, like a text field's. */
+.zf-select select:has(> option:disabled:checked) {
+	color: var(--color-text-muted);
+}
+
+.zf-input input:disabled,
+.zf-input textarea:disabled,
+.zf-select select:disabled {
+	cursor: not-allowed;
+}
+
+.zf-input--mono input,
+.zf-input--mono textarea {
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+}
+
+/* A textarea grows with its rows, from the top. */
+.zf-input--multi {
+	align-items: flex-start;
+	height: auto;
+	padding: var(--space-2);
+}
+
+.zf-input textarea {
+	height: auto;
+	resize: vertical;
+}
+
+.zf-input__prefix {
+	color: var(--color-text-muted);
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+}
+
+.zf-input__prefix + input {
+	margin-left: calc(-1 * var(--space-1));
+}
+
+.zf-input__icon {
+	display: inline-flex;
+	color: var(--color-text-muted);
+}
+
+.zf-select select {
+	appearance: none;
+	padding-right: var(--space-6);
+	cursor: pointer;
+}
+
+.zf-select select option {
+	background: var(--color-surface-raised);
+	color: var(--color-text);
+}
+
+.zf-select__chevron {
+	position: absolute;
+	right: var(--space-2);
+	display: inline-flex;
+	pointer-events: none;
+	color: var(--color-text-muted);
+}
+
+/* The date field: a slip like the text input, its segments in a row, the one in focus picked out. */
+.zf-date {
+	gap: 0;
+	cursor: text;
+	font-size: var(--text-md);
+	line-height: var(--leading-md);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.zf-date__segment {
+	padding: 0 var(--space-half);
+	border-radius: var(--radius-xs);
+	outline-color: transparent;
+	color: var(--color-text);
+	transition:
+		background-color var(--duration-fast) var(--easing-standard),
+		color var(--duration-fast) var(--easing-standard);
+}
+
+.zf-date__segment--empty {
+	color: var(--color-text-muted);
+}
+
+.zf-date__segment:focus {
+	background: var(--color-selected);
+	color: var(--color-accent-text);
+}
+
+.zf-date__literal {
+	color: var(--color-text-muted);
+}
+
+.zf-input--disabled .zf-date__segment {
+	cursor: not-allowed;
+}

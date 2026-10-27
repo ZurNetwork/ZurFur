@@ -1,0 +1,43 @@
+{
+  "path": "frontend/ui/src/lib/icons",
+  "charted": "2026-10-26",
+  "short": "Icon and its closed registry of shapes",
+  "is": "`Icon.svelte`, which draws one named icon as inline SVG, and `icons.ts`, the closed registry: 46 Lucide icons copied as shape data so they ship inline and self-hosted, the name list, the `isIconName` predicate and the two stroke weights.",
+  "type": "code",
+  "tags": [
+    "category:ui",
+    "category:source"
+  ],
+  "conventions": [
+    "The registry is closed. An `IconName` is one of the listed names and a string is checked with `isIconName`; nothing is fetched and no icon is injected as markup.",
+    "Icon draws and does nothing else: it takes a `name`, a `size` (the three icon size tokens) and a `weight` (regular, or heavy for the checkmark inside a checked control), and is hidden from assistive technology; a control that needs a name gives it a label of its own.",
+    "To add an icon, add its shapes and its name together; the licence note stays at the top of `icons.ts`."
+  ],
+  "entry_points": [
+    "Icon.svelte",
+    "icons.ts"
+  ],
+  "fs": [
+    {
+      "name": "Icon.svelte",
+      "role": "draws one icon from the registry at a size token and a stroke weight",
+      "node": false
+    },
+    {
+      "name": "Icon.svelte.spec.ts",
+      "role": "spec for Icon",
+      "node": false
+    },
+    {
+      "name": "icons.spec.ts",
+      "role": "spec for the registry",
+      "node": false
+    },
+    {
+      "name": "icons.ts",
+      "role": "`ICONS`, `ICON_NAMES`, `IconName`, `isIconName` and the stroke weights",
+      "node": false
+    }
+  ],
+  "notes": []
+}

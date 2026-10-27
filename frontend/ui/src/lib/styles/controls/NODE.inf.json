@@ -1,0 +1,60 @@
+{
+  "path": "frontend/ui/src/lib/styles/controls",
+  "charted": "2026-10-26",
+  "short": "The controls' looks, one stylesheet per family",
+  "is": "Seven family stylesheets ported from the design system's bundle onto tokens: button, field, check, toggle, tabs, menu and tip. The styles entry imports each.",
+  "type": "code",
+  "tags": [
+    "category:ui",
+    "category:source"
+  ],
+  "conventions": [
+    "A look is the bundle's `zf-` class name, composed with the paper classes (`placed`, `pick`, `piece`, `slip`, `glidex`) rather than rewriting their lifts and glides: primary, secondary and destructive buttons are placed; quiet buttons and plain icon buttons are picks; fields are slips; tabs and the switch are one piece with pick options; the menu is a note whose rows are picks; the toggle's thumb is placed and glides.",
+    "Everything comes from tokens: no raw colour, time, easing or length, except `0`, 1px borders, the 2px focus ring, percentages and unitless numbers. A size the bundle writes raw takes the nearest size token.",
+    "Motion belongs to the seam: no `animation` or keyframes, and no `transition` of `translate`, `transform`, `box-shadow`, `top`, `left`, `width` or `all`. Colour fades on tokens stay.",
+    "Resting states render from props; hover, focus and pressed come from interaction. Every focusable part shows the one focus ring, and none sets `outline: none` without a replacement.",
+    "`controls-css.spec` scans every stylesheet here against these rules, and checks that exactly these seven exist, that nothing but this node sits beside them, and that the styles entry imports each."
+  ],
+  "entry_points": [
+    "button.css",
+    "field.css"
+  ],
+  "fs": [
+    {
+      "name": "button.css",
+      "role": "Button and IconButton",
+      "node": false
+    },
+    {
+      "name": "check.css",
+      "role": "Checkbox",
+      "node": false
+    },
+    {
+      "name": "field.css",
+      "role": "the field frame and TextInput, Select and DateField",
+      "node": false
+    },
+    {
+      "name": "menu.css",
+      "role": "Menu",
+      "node": false
+    },
+    {
+      "name": "tabs.css",
+      "role": "Tabs and PillSwitch",
+      "node": false
+    },
+    {
+      "name": "tip.css",
+      "role": "the tooltip",
+      "node": false
+    },
+    {
+      "name": "toggle.css",
+      "role": "Toggle",
+      "node": false
+    }
+  ],
+  "notes": []
+}

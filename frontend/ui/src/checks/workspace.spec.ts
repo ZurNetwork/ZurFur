@@ -67,7 +67,8 @@ const singletons = [
 	'@sveltejs/kit',
 	'vite',
 	'@sveltejs/vite-plugin-svelte',
-	'vitest'
+	'vitest',
+	'bits-ui'
 ] as const;
 
 describe('the frontend workspace', () => {

@@ -1,0 +1,57 @@
+{
+  "path": "frontend/ui/src/checks/testing",
+  "charted": "2026-10-26",
+  "short": "Harness components for the specs",
+  "is": "Small Svelte components the control specs render: parents that accept a control's changes, a probe that reads the environment, and a provider that records every call into the seam.",
+  "type": "code",
+  "tags": [
+    "category:ui",
+    "category:source"
+  ],
+  "conventions": [
+    "Specs only: the checks tier, never imported by anything that ships. They import the controls and the seam by relative path, as a host would.",
+    "A harness that accepts changes keeps its own state and hands it back as the prop, so a spec drives the control the way a real parent does; a refusing parent is written in the spec itself.",
+    "`RecordingEnvironment.svelte` provides a frozen environment whose moves and cues call back with the move name, its arguments and the element it attached to; specs use it to prove a control calls the seam. It is one of the seam files with the second-change rule described in `lib/environment`."
+  ],
+  "entry_points": [
+    "RecordingEnvironment.svelte"
+  ],
+  "fs": [
+    {
+      "name": "AcceptingDateField.svelte",
+      "role": "a parent that accepts every change a DateField reports",
+      "node": false
+    },
+    {
+      "name": "AcceptingMenu.svelte",
+      "role": "a parent that accepts every open and close a Menu asks for",
+      "node": false
+    },
+    {
+      "name": "AcceptingPillSwitch.svelte",
+      "role": "a parent that accepts every choice a PillSwitch reports",
+      "node": false
+    },
+    {
+      "name": "AcceptingTabs.svelte",
+      "role": "a parent that accepts every tab a Tabs reports",
+      "node": false
+    },
+    {
+      "name": "EnvironmentProbe.svelte",
+      "role": "reads the environment at a given depth below the provider",
+      "node": false
+    },
+    {
+      "name": "RecordingEnvironment.svelte",
+      "role": "provides an environment that records each move attached and each cue played",
+      "node": false
+    },
+    {
+      "name": "RecordingEnvironment.svelte.spec.ts",
+      "role": "spec for the recording environment",
+      "node": false
+    }
+  ],
+  "notes": []
+}
