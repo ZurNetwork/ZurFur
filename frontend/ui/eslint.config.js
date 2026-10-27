@@ -1461,7 +1461,7 @@ const noProvideEnvironmentRule = {
 };
 
 /** The only files that may write <svelte:element>, relative to this package. */
-const SVELTE_ELEMENT_FILES = ['src/lib/surfaces/Card.svelte'];
+export const SVELTE_ELEMENT_FILES = ['src/lib/surfaces/Card.svelte'];
 
 /**
  * The files that may also hand their {#snippet child(…)} to one of our own
@@ -1923,7 +1923,11 @@ export const motionElementMessage =
 
 /** Why no markup holds media or a picture a stylesheet loads. */
 export const mediaMessage =
-	'No markup loads media of its own: no <picture>, <source>, <video>, <audio>, <iframe>, <object>, <embed> or <track>, no srcset, imagesrcset or poster, no SVG <image>, <use> or <feImage> with an href, and no url() or other image function in a style attribute or style: directive.';
+	'No markup loads media of its own: no <picture>, <source>, <video>, <audio>, <iframe>, <object>, <embed> or <track>, no srcset, imagesrcset or poster, no SVG <image>, <use> or <feImage> with an href, no url() or other image function in a style attribute or style: directive, no value in a style attribute, no value in a style: directive but a few that never hold a picture, no background attribute, no input with a src, no value or url() but url(#…) in an SVG mask, filter, clip-path, fill, stroke, marker or cursor, and no <svelte:element> naming a prefixed tag such as svg:image.';
+
+/** Why a component never reaches an inline style from code. */
+export const inlineStyleMessage =
+	"Components never reach an element's inline style from code: no .style, attributeStyleMap, or setAttribute or createAttribute naming style or background. Style it in markup, with a class or a token.";
 
 /** The timers' globals, bare and through window, self and globalThis. */
 const TIMER_GLOBALS = [
@@ -1939,6 +1943,9 @@ const TIMER_PROPERTIES = [{ object: 'AbortSignal', property: 'timeout', message:
 
 const IMAGE_GLOBAL = { name: 'Image', message: loadStarterMessage };
 const AUDIO_GLOBAL = { name: 'Audio', message: loadStarterMessage };
+
+/** The load starters every set but the checks refuses. */
+const STARTER_GLOBALS = [IMAGE_GLOBAL, AUDIO_GLOBAL];
 
 /** createElement and createElementNS on any object, destructured too. */
 const ELEMENT_PROPERTIES = ['createElement', 'createElementNS'].map((property) => ({
@@ -1982,6 +1989,102 @@ const STYLE_LOAD = '/(?:^|[^a-z0-9_])(?:-webkit-)?(?:url|src|image|image-set|cro
 const STYLE_HOLDERS = ['SvelteAttribute[key.name=/^style$/i]', 'SvelteStyleDirective'];
 
 /**
+ * The style: properties that may take a value from an expression. A property
+ * joins only if its CSS grammar can't hold a picture; widening the list gets a
+ * security review. Written in lower case, so any other letter case is refused.
+ */
+const STYLE_VALUE_PROPERTIES = [
+	'left',
+	'top',
+	'width',
+	'border-radius',
+	'box-shadow',
+	'font-family',
+	'font-size',
+	'font-weight',
+	'line-height',
+	'letter-spacing',
+	'background-color'
+];
+
+/** The style: properties that may take a value, as an exact-name pattern. */
+const STYLE_VALUE_NAMES = `/^(?:${STYLE_VALUE_PROPERTIES.join('|')})$/`;
+
+/** The SVG attributes that take a paint, mask, filter, marker or cursor, in any letter case. */
+const SVG_REFERENCE_ATTRIBUTES =
+	'/^(?:mask|filter|clip-path|fill|stroke|marker|marker-start|marker-mid|marker-end|cursor)$/i';
+
+/** A picture-loading function in an attribute's text, but a url() naming a #fragment. */
+const NON_FRAGMENT_LOAD =
+	'/(?:^|[^a-z0-9_])(?:-webkit-)?(?:url\\s*\\((?!\\s*[\'"]?\\s*#)|(?:src|image|image-set|cross-fade)\\s*\\()/i';
+
+/** An attribute or its shorthand, either written out or as `{name}`. */
+const ATTRIBUTE = ':matches(SvelteAttribute, SvelteShorthandAttribute)';
+
+/**
+ * A value reaching a style: a style attribute, on an element or a component,
+ * holding any expression or written as `{style}`, and a style: directive
+ * holding an expression or written as a shorthand, unless its property is on
+ * STYLE_VALUE_PROPERTIES. A static value goes through STYLE_LOAD instead.
+ */
+const STYLE_VALUES = [
+	{ selector: 'SvelteAttribute[key.name=/^style$/i] > SvelteMustacheTag', message: mediaMessage },
+	{ selector: 'SvelteShorthandAttribute[key.name=/^style$/i]', message: mediaMessage },
+	{
+		selector: `SvelteStyleDirective[shorthand=true]:not([key.name.name=${STYLE_VALUE_NAMES}])`,
+		message: mediaMessage
+	},
+	{
+		selector: `SvelteStyleDirective:not([key.name.name=${STYLE_VALUE_NAMES}]) > SvelteMustacheTag`,
+		message: mediaMessage
+	}
+];
+
+/**
+ * Attributes that load a picture from their value: the old background
+ * attribute, whatever it holds; src on an input, which loads as type="image";
+ * and the SVG paint, mask, filter, marker and cursor attributes holding an
+ * expression, or a picture-loading function but url(#…), each on anything and
+ * in any letter case.
+ */
+const LOADING_ATTRIBUTES = [
+	{ selector: `${ATTRIBUTE}[key.name=/^background$/i]`, message: mediaMessage },
+	{
+		selector: `SvelteElement[name.name=/^input$/i] > SvelteStartTag > ${ATTRIBUTE}[key.name=/^src$/i]`,
+		message: mediaMessage
+	},
+	{
+		selector: `SvelteAttribute[key.name=${SVG_REFERENCE_ATTRIBUTES}] > SvelteMustacheTag`,
+		message: mediaMessage
+	},
+	{
+		selector: `SvelteShorthandAttribute[key.name=${SVG_REFERENCE_ATTRIBUTES}]`,
+		message: mediaMessage
+	},
+	{
+		selector: `SvelteAttribute[key.name=${SVG_REFERENCE_ATTRIBUTES}] > SvelteLiteral[value=${NON_FRAGMENT_LOAD}]`,
+		message: mediaMessage
+	}
+];
+
+/**
+ * <svelte:element> naming a prefixed tag by any static text: inside an <svg>,
+ * `svg:image` or `svg:script` builds the real SVG element, which the exact-name
+ * bans above never see. Any string or template text in `this` holding a `:`.
+ */
+const PREFIXED_ELEMENT = [
+	{
+		selector: `SvelteElement[name.name='svelte:element'] > SvelteStartTag > SvelteAttribute[key.name='this'] > SvelteLiteral[value=/:/]`,
+		message: mediaMessage
+	},
+	{ selector: "SvelteSpecialDirective[kind='this'] Literal[value=/:/]", message: mediaMessage },
+	{
+		selector: "SvelteSpecialDirective[kind='this'] TemplateElement[value.cooked=/:/]",
+		message: mediaMessage
+	}
+];
+
+/**
  * Media in markup: the media elements wherever they sit, as an element or a
  * component in any letter case and as <svelte:element> naming one by a static
  * string; srcset, imagesrcset and poster on anything; SVG image, use and
@@ -2016,7 +2119,45 @@ const MEDIA_SYNTAX = [
 		{ selector: `${holder} SvelteLiteral[value=${STYLE_LOAD}]`, message: mediaMessage },
 		{ selector: `${holder} Literal[value=${STYLE_LOAD}]`, message: mediaMessage },
 		{ selector: `${holder} TemplateElement[value.raw=${STYLE_LOAD}]`, message: mediaMessage }
-	])
+	]),
+	...STYLE_VALUES,
+	...LOADING_ATTRIBUTES,
+	...PREFIXED_ELEMENT
+];
+
+/** A member named `name`, by dot, by a string key or by a template with no expressions. */
+const memberNamed = (/** @type {string} */ name) => [
+	`MemberExpression[computed=false][property.name='${name}']`,
+	`MemberExpression[computed=true][property.value='${name}']`,
+	`MemberExpression[computed=true][property.expressions.length=0][property.quasis.0.value.cooked='${name}']`,
+	`ObjectPattern > Property[key.name='${name}']`,
+	`ObjectPattern > Property[key.value='${name}']`
+];
+
+/**
+ * An element's inline style reached from code: the `style` and
+ * `attributeStyleMap` members, read or written, destructured too (a property
+ * assignment, setProperty, cssText and Object.assign all go through them), and
+ * setAttribute, setAttributeNS, createAttribute and createAttributeNS naming
+ * style or background by a static string in any letter case.
+ */
+const INLINE_STYLE_SYNTAX = [
+	...['style', 'attributeStyleMap'].flatMap(memberNamed).map((selector) => ({
+		selector,
+		message: inlineStyleMessage
+	})),
+	...namedByLiteral(
+		['setAttribute', 'createAttribute'],
+		0,
+		qualified('style|background'),
+		inlineStyleMessage
+	),
+	...namedByLiteral(
+		['setAttributeNS', 'createAttributeNS'],
+		1,
+		qualified('style|background'),
+		inlineStyleMessage
+	)
 ];
 
 /** ESLint's restricted-name rules, under names of their own. */
@@ -2032,27 +2173,28 @@ const loadPlugin = {
 
 /**
  * What each source set refuses here: the components and the seam take the
- * timers and both load starters, the motion adapter Image, Audio and every
- * element but a span, and every other set Image and both element calls.
+ * timers, both load starters, both element calls and any reach into an inline
+ * style, the motion adapter Image, Audio and every element but a span, and
+ * every other set Image, Audio and both element calls.
  */
 export const loadRules = {
 	components: {
-		globals: [...TIMER_GLOBALS, IMAGE_GLOBAL, AUDIO_GLOBAL],
+		globals: [...TIMER_GLOBALS, ...STARTER_GLOBALS],
 		properties: [...TIMER_PROPERTIES, ...ELEMENT_PROPERTIES],
-		syntax: []
+		syntax: INLINE_STYLE_SYNTAX
 	},
 	environment: {
-		globals: [...TIMER_GLOBALS, IMAGE_GLOBAL, AUDIO_GLOBAL],
+		globals: [...TIMER_GLOBALS, ...STARTER_GLOBALS],
 		properties: [...TIMER_PROPERTIES, ...ELEMENT_PROPERTIES],
-		syntax: []
+		syntax: INLINE_STYLE_SYNTAX
 	},
-	motion: { globals: [IMAGE_GLOBAL, AUDIO_GLOBAL], properties: [], syntax: MOTION_ELEMENT_SYNTAX },
-	lazy: { globals: [IMAGE_GLOBAL], properties: ELEMENT_PROPERTIES, syntax: [] },
-	routes: { globals: [IMAGE_GLOBAL], properties: ELEMENT_PROPERTIES, syntax: [] },
-	gallery: { globals: [IMAGE_GLOBAL], properties: ELEMENT_PROPERTIES, syntax: [] },
-	storage: { globals: [IMAGE_GLOBAL], properties: ELEMENT_PROPERTIES, syntax: [] },
-	stories: { globals: [IMAGE_GLOBAL], properties: ELEMENT_PROPERTIES, syntax: [] },
-	storybookBrowser: { globals: [IMAGE_GLOBAL], properties: ELEMENT_PROPERTIES, syntax: [] }
+	motion: { globals: STARTER_GLOBALS, properties: [], syntax: MOTION_ELEMENT_SYNTAX },
+	lazy: { globals: STARTER_GLOBALS, properties: ELEMENT_PROPERTIES, syntax: [] },
+	routes: { globals: STARTER_GLOBALS, properties: ELEMENT_PROPERTIES, syntax: [] },
+	gallery: { globals: STARTER_GLOBALS, properties: ELEMENT_PROPERTIES, syntax: [] },
+	storage: { globals: STARTER_GLOBALS, properties: ELEMENT_PROPERTIES, syntax: [] },
+	stories: { globals: STARTER_GLOBALS, properties: ELEMENT_PROPERTIES, syntax: [] },
+	storybookBrowser: { globals: STARTER_GLOBALS, properties: ELEMENT_PROPERTIES, syntax: [] }
 };
 
 /** Every .svelte file under src/, the checks' harnesses included. */

@@ -1,9 +1,11 @@
 /*
  * The load bans, over planted text: no timer in a component or the seam, no
  * load starter (Image, Audio, createElement, createElementNS) outside the
- * checks, the motion adapter building only spans, and no media markup or
- * picture-loading style in any .svelte file under src/. The HTML sinks these
- * sets refuse belong to the boundary rules; their cases here prove they hold.
+ * checks, the motion adapter building only spans, no inline style reached from
+ * a component's or the seam's code, and no media markup, picture-loading
+ * style or attribute, or prefixed <svelte:element> in any .svelte file under
+ * src/. The HTML sinks these sets refuse belong to the boundary rules; their
+ * cases here prove they hold.
  */
 import { describe, expect, it } from 'vitest';
 import { ESLint, type Linter } from 'eslint';
@@ -11,13 +13,16 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
 	fileSetOf,
+	inlineStyleMessage,
 	loadRules,
 	loadStarterMessage,
 	mediaMessage,
 	motionElementMessage,
 	rawHtmlMessage,
+	SVELTE_ELEMENT_FILES,
 	timerMessage
 } from '../../eslint.config.js';
+import { DYNAMIC_ELEMENT } from './composition-table';
 
 const uiRoot = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -36,6 +41,7 @@ const planted = {
 	routesSvelte: 'src/routes/LoadX.svelte',
 	stories: 'src/stories/load-x.ts',
 	storiesSvelte: 'src/stories/LoadX.stories.svelte',
+	storyHelperSvelte: 'src/stories/LoadX.svelte',
 	check: 'src/checks/load-planted.ts',
 	checkSvelte: 'src/checks/LoadX.svelte',
 	spec: 'src/lib/load-planted.spec.ts'
@@ -44,7 +50,8 @@ const planted = {
 /** Real files a case lints planted text at; the file on disk is never written. */
 const real = {
 	skinStore: 'src/gallery/skin-store.ts',
-	storybookPreview: '.storybook/preview.ts'
+	storybookPreview: '.storybook/preview.ts',
+	card: 'src/lib/surfaces/Card.svelte'
 } as const;
 
 const notOnDisk = (relative: string): boolean => !existsSync(`${uiRoot}${relative}`);
@@ -268,6 +275,31 @@ describe('the load bans over planted text', { timeout: 120_000 }, () => {
 			}
 		);
 
+		it.each(hostAndLazy)('refuses new Audio(value).play() in %s', async (_label, filePath) => {
+			await expectRefused(
+				filePath,
+				'export const r = (value: string) => new Audio(value).play();',
+				GLOBALS,
+				loadStarterMessage
+			);
+		});
+
+		it('refuses new Audio(value).play() in a story helper', async () => {
+			await expectRefused(
+				planted.storyHelperSvelte,
+				'<script lang="ts">\n\tconst value = \'x\';\n\tvoid new Audio(value).play();\n</script>\n\n<p>{value}</p>\n',
+				GLOBALS,
+				loadStarterMessage
+			);
+		});
+
+		it('gives every set but the checks Audio', () => {
+			const withoutAudio = Object.entries(loadRules)
+				.filter(([, rules]) => !rules.globals.some((entry) => entry.name === 'Audio'))
+				.map(([name]) => name);
+			expect(withoutAudio).toEqual([]);
+		});
+
 		it.each([
 			['a check', planted.check],
 			['a spec', planted.spec]
@@ -458,6 +490,235 @@ describe('the load bans over planted text', { timeout: 120_000 }, () => {
 			['an <a href>', component('<a href="/x">{s}</a>')]
 		])('allows %s', async (_label, code) => {
 			await expectAllowed(planted.componentSvelte, code);
+		});
+	});
+
+	describe('no picture reaches a style or a loading attribute from a value', () => {
+		/** A component whose script declares `s`, a value under each attribute's name and a helper, then `markup`. */
+		const valued = (markup: string): string =>
+			`<script lang="ts">\n\tconst s = 'x';\n\tconst background = s;\n\tconst style = s;\n\tconst fill = s;\n\tconst src = s;\n\tfunction backgroundOf(address: string): string {\n\t\treturn 'url(' + address + ')';\n\t}\n</script>\n\n<p>{s}{background}{style}{fill}{src}{backgroundOf(s)}</p>\n${markup}\n`;
+
+		const forms: readonly (readonly [string, string])[] = [
+			['style="background-image: {s}"', valued('<span style="background-image: {s}"></span>')],
+			['style={s}', valued('<span style={s}></span>')],
+			['STYLE={s}', valued('<span STYLE={s}></span>')],
+			['a shorthand {style}', valued('<span {style}></span>')],
+			['style={s} on a component', valued('<Thing style={s} />')],
+			['style={s} on <svelte:element>', valued('<svelte:element this="span" style={s} />')],
+			['style:background-image={s}', valued('<span style:background-image={s}></span>')],
+			[
+				'style:background-image={backgroundOf(s)}',
+				valued('<span style:background-image={backgroundOf(s)}></span>')
+			],
+			['style:background="var(--{s})"', valued('<span style:background="var(--{s})"></span>')],
+			['a shorthand style:background', valued('<span style:background></span>')],
+			['style:--art={s}', valued('<span style:--art={s}></span>')],
+			['style:mask={s}', valued('<span style:mask={s}></span>')],
+			['style:mask-image={s}', valued('<span style:mask-image={s}></span>')],
+			['style:-webkit-mask-image={s}', valued('<span style:-webkit-mask-image={s}></span>')],
+			['style:border-image={s}', valued('<span style:border-image={s}></span>')],
+			['style:border-image-source={s}', valued('<span style:border-image-source={s}></span>')],
+			['style:list-style={s}', valued('<span style:list-style={s}></span>')],
+			['style:list-style-image={s}', valued('<span style:list-style-image={s}></span>')],
+			['style:content={s}', valued('<span style:content={s}></span>')],
+			['style:cursor={s}', valued('<span style:cursor={s}></span>')],
+			['style:shape-outside={s}', valued('<span style:shape-outside={s}></span>')],
+			['style:filter={s}', valued('<span style:filter={s}></span>')],
+			['style:backdrop-filter={s}', valued('<span style:backdrop-filter={s}></span>')],
+			['style:clip-path={s}', valued('<span style:clip-path={s}></span>')],
+			['style:offset-path={s}', valued('<span style:offset-path={s}></span>')],
+			['style:LEFT={s}', valued('<span style:LEFT={s}></span>')],
+			[
+				'style:background-image|important={s}',
+				valued('<span style:background-image|important={s}></span>')
+			],
+			[
+				'<table background={s}>',
+				valued('<table background={s}><tbody><tr><td>x</td></tr></tbody></table>')
+			],
+			['background="./a.png"', valued('<div background="./a.png"></div>')],
+			['BACKGROUND={s}', valued('<div BACKGROUND={s}></div>')],
+			['a shorthand {background}', valued('<div {background}></div>')],
+			...[
+				'mask',
+				'filter',
+				'clip-path',
+				'fill',
+				'stroke',
+				'marker',
+				'marker-start',
+				'marker-mid',
+				'marker-end',
+				'cursor'
+			].map(
+				(name) =>
+					[
+						`SVG ${name}={s}`,
+						valued(`<svg viewBox="0 0 1 1"><rect width="1" height="1" ${name}={s} /></svg>`)
+					] as const
+			),
+			['SVG MASK={s}', valued('<svg viewBox="0 0 1 1"><rect MASK={s} /></svg>')],
+			['SVG a shorthand {fill}', valued('<svg viewBox="0 0 1 1"><rect {fill} /></svg>')],
+			[
+				'SVG fill="url(./a.svg#p)"',
+				valued('<svg viewBox="0 0 1 1"><rect fill="url(./a.svg#p)" /></svg>')
+			],
+			[
+				'SVG mask="url( \'x\')"',
+				valued('<svg viewBox="0 0 1 1"><rect mask="url( \'x\')" /></svg>')
+			],
+			['SVG FILTER="URL(x)"', valued('<svg viewBox="0 0 1 1"><rect FILTER="URL(x)" /></svg>')],
+			[
+				'SVG cursor="url(x), auto"',
+				valued('<svg viewBox="0 0 1 1"><rect cursor="url(x), auto" /></svg>')
+			],
+			[
+				'SVG clip-path="url(#a) url(b)"',
+				valued('<svg viewBox="0 0 1 1"><rect clip-path="url(#a) url(b)" /></svg>')
+			],
+			['<input type="image" src={s}>', valued('<input type="image" src={s} alt="x" />')],
+			['<INPUT src="./a.png">', valued('<INPUT type="image" src="./a.png" alt="x" />')],
+			['a shorthand {src} on an input', valued('<input type="image" {src} alt="x" />')]
+		];
+
+		describe.each([
+			['a component', planted.componentSvelte],
+			['a stories file', planted.storiesSvelte],
+			['a story helper', planted.storyHelperSvelte],
+			['a gallery file', planted.gallerySvelte]
+		])('in %s', (_set, filePath) => {
+			it.each(forms)('refuses %s', async (_label, code) => {
+				await expectRefused(filePath, code, MARKUP, mediaMessage);
+			});
+		});
+
+		it.each([
+			["Pin's style:left={…}", component('<span style:left={s}></span>')],
+			["Pin's style:top={…}", component('<span style:top={s}></span>')],
+			['a type page font directive', component('<span style:font-size={s}></span>')],
+			[
+				'a font family from a token',
+				component('<span style:font-family="var(--font-{s})"></span>')
+			],
+			['a colour swatch', component('<span style:background-color="var(--{s})"></span>')],
+			['a static style: directive', component('<span style:background="var(--x)">{s}</span>')],
+			['a static style attribute', component('<span style="color: red">{s}</span>')],
+			['fill="none"', component('<svg viewBox="0 0 1 1"><rect fill="none" />{s}</svg>')],
+			[
+				'stroke="currentColor"',
+				component('<svg viewBox="0 0 1 1"><rect stroke="currentColor" />{s}</svg>')
+			],
+			[
+				'clip-path="url(#c)"',
+				component('<svg viewBox="0 0 1 1"><rect clip-path="url(#c)" />{s}</svg>')
+			],
+			[
+				'mask="url(\'#m\')"',
+				component('<svg viewBox="0 0 1 1"><rect mask="url(\'#m\')" />{s}</svg>')
+			],
+			['an input with no src', component('<input type="text" value={s} />')]
+		])('allows %s', async (_label, code) => {
+			await expectAllowed(planted.componentSvelte, code);
+		});
+	});
+
+	describe("no component reaches an element's inline style from code", () => {
+		const writes: readonly (readonly [string, string])[] = [
+			['style.backgroundImage =', 'node.style.backgroundImage = value;'],
+			['style.setProperty', "node.style.setProperty('background-image', value);"],
+			['style.cssText =', 'node.style.cssText = value;'],
+			['Object.assign(node.style, …)', 'Object.assign(node.style, { backgroundImage: value });'],
+			["node['style']", "node['style'].backgroundImage = value;"],
+			['node[`style`]', 'node[`style`].backgroundImage = value;'],
+			['a destructured style', 'const { style } = node;\n\tstyle.backgroundImage = value;'],
+			['attributeStyleMap', "node.attributeStyleMap.set('background-image', value);"],
+			["setAttribute('style', …)", "node.setAttribute('style', value);"],
+			["setAttribute('STYLE', …)", "node.setAttribute('STYLE', value);"],
+			['setAttribute(`style`, …)', 'node.setAttribute(`style`, value);'],
+			["setAttribute('background', …)", "node.setAttribute('background', value);"],
+			["setAttributeNS(null, 'style', …)", "node.setAttributeNS(null, 'style', value);"],
+			["createAttribute('style')", "node.setAttributeNode(document.createAttribute('style'));"],
+			[
+				"createAttributeNS(null, 'background')",
+				"node.setAttributeNode(document.createAttributeNS(null, 'background'));"
+			]
+		];
+
+		const asModule = (body: string): string =>
+			`export function paint(node: HTMLElement, value: string): void {\n\t${body}\n}\n`;
+
+		describe.each([
+			['a component', planted.component],
+			['the seam', planted.environment]
+		])('in %s', (_set, filePath) => {
+			it.each(writes)('refuses %s', async (_label, body) => {
+				await expectRefused(filePath, asModule(body), SYNTAX, inlineStyleMessage);
+			});
+		});
+
+		it('refuses an {@attach} that writes node.style in a component', async () => {
+			await expectRefused(
+				planted.componentSvelte,
+				component('<span {@attach (node) => { node.style.backgroundImage = s; }}></span>'),
+				SYNTAX,
+				inlineStyleMessage
+			);
+		});
+
+		it.each([
+			['a check', planted.check],
+			['a spec', planted.spec]
+		])('allows node.style in %s', async (_label, filePath) => {
+			await expectAllowed(filePath, asModule('node.style.color = value;'));
+		});
+
+		it('allows setAttribute naming another attribute in a component', async () => {
+			await expectAllowed(planted.component, asModule("node.setAttribute('data-x', value);"));
+		});
+	});
+
+	describe('no <svelte:element> names a prefixed tag', () => {
+		const card = (markup: string): string =>
+			`<script lang="ts">\n\tconst src = './a.svg';\n</script>\n\n${markup}\n`;
+
+		it.each([
+			[
+				"this={'svg:image'} with an href",
+				card('<svg viewBox="0 0 1 1"><svelte:element this={\'svg:image\'} href={src} /></svg>')
+			],
+			[
+				"this={'svg:script'}",
+				card(
+					'<svg viewBox="0 0 1 1"><svelte:element this={\'svg:script\'}>{src}</svelte:element></svg>'
+				)
+			],
+			[
+				'this="svg:image"',
+				card('<svg viewBox="0 0 1 1"><svelte:element this="svg:image" href={src} /></svg>')
+			],
+			[
+				'this={`svg:image`}',
+				card('<svg viewBox="0 0 1 1"><svelte:element this={`svg:image`} href={src} /></svg>')
+			],
+			[
+				"this={'svg:' + 'image'}",
+				card("<svg viewBox=\"0 0 1 1\"><svelte:element this={'svg:' + 'image'} href={src} /></svg>")
+			]
+		])('refuses %s in Card, the one file allowed <svelte:element>', async (_label, code) => {
+			await expectRefused(real.card, code, MARKUP, mediaMessage);
+		});
+
+		it('refuses this="svg:image" in a story helper', async () => {
+			await expectRefused(
+				planted.storyHelperSvelte,
+				card('<svg viewBox="0 0 1 1"><svelte:element this="svg:image" href={src} /></svg>'),
+				MARKUP,
+				mediaMessage
+			);
+		});
+
+		it('lists the same files as the lego table', () => {
+			expect(SVELTE_ELEMENT_FILES).toEqual(DYNAMIC_ELEMENT.map((row) => row.file));
 		});
 	});
 
