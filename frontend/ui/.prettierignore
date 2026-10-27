@@ -8,6 +8,9 @@ bun.lockb
 # Miscellaneous
 /static/
 
+# Storybook's build output.
+storybook-static/
+
 # Node files are formatted by the nodes tool (canonical form); prettier must not fight it.
 **/NODE.inf.json
 

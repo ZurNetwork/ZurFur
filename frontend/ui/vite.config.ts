@@ -1,27 +1,79 @@
-import { configDefaults, defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig, type TestProjectInlineConfiguration } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { emulateMedia } from './src/checks/media-command.ts';
-
-const fallbackGalleryPort = 5190;
-
-/**
- * Reads the gallery's port from the raw `ZURFUR_GALLERY_PORT` text.
- * Only a plain decimal integer from 1 to 65535 counts; anything else, unset
- * included, falls back to 5190.
- */
-export function galleryPort(raw: string | undefined): number {
-	if (raw === undefined || !/^[0-9]+$/.test(raw)) return fallbackGalleryPort;
-	const port = Number(raw);
-	const isTcpPort = Number.isInteger(port) && port >= 1 && port <= 65535;
-	return isTcpPort ? port : fallbackGalleryPort;
-}
+import { galleryPort } from './gallery-port.ts';
 
 const port = galleryPort(process.env.ZURFUR_GALLERY_PORT);
 
-/** The one spec that emulates media features; it runs alone, after every other project. */
-const mediaSpec = 'src/checks/media.svelte.spec.ts';
+/** Storybook's config folder, and the address the story tests name for it. */
+const storybookConfigDir = '.storybook';
+const storybookUrl = `http://127.0.0.1:${String(port)}`;
+
+/** The story setup file: the preview's annotations, the accessibility addon's first. */
+const storybookSetupFile = '.storybook/vitest.setup.ts';
+
+/**
+ * Every story as a test in headless Chromium, in Paper dark and Lively. The
+ * test panel runs this project alone, renamed after the config folder.
+ */
+const storiesProject = {
+	extends: './vite.config.ts',
+	server: { strictPort: false },
+	plugins: [
+		storybookTest({
+			configDir: storybookConfigDir,
+			storybookUrl,
+			initialGlobals: { skin: 'dark', motion: 'lively' }
+		})
+	],
+	test: {
+		name: 'stories',
+		browser: {
+			enabled: true,
+			provider: playwright(),
+			instances: [{ browser: 'chromium', headless: true }]
+		},
+		setupFiles: [storybookSetupFile]
+	}
+} satisfies TestProjectInlineConfiguration;
+
+/**
+ * Every story again in Paper light with motion stopped, the page asking for
+ * light and reduced motion too. It runs after the other projects, since both
+ * story projects share the plugin's one cache folder.
+ */
+const storiesLightStillProject = {
+	extends: './vite.config.ts',
+	server: { strictPort: false },
+	plugins: [
+		storybookTest({
+			configDir: storybookConfigDir,
+			storybookUrl,
+			initialGlobals: { skin: 'light', motion: 'still' }
+		})
+	],
+	test: {
+		name: 'stories-light-still',
+		sequence: { groupOrder: 2 },
+		browser: {
+			enabled: true,
+			provider: playwright({
+				contextOptions: { reducedMotion: 'reduce', colorScheme: 'light' }
+			}),
+			instances: [{ browser: 'chromium', headless: true }]
+		},
+		setupFiles: [storybookSetupFile]
+	}
+} satisfies TestProjectInlineConfiguration;
+
+/** The specs that emulate media features; they run alone, after every other project but the stories in Paper light. */
+const mediaSpecs = [
+	'src/checks/media.svelte.spec.ts',
+	'src/stories/frame/FrameSkin.svelte.spec.ts'
+];
 
 export default defineConfig({
 	// Both servers bind IPv4 loopback only, on a port that must be free: a busy
@@ -39,7 +91,14 @@ export default defineConfig({
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
 			adapter: adapter({ strict: true }),
-			alias: { $gallery: 'src/gallery' }
+			alias: { $gallery: 'src/gallery' },
+			typescript: {
+				// svelte-check also reads Storybook's config and the port rule; paths are
+				// relative to the generated .svelte-kit/tsconfig.json.
+				config: (config) => {
+					config.include.push('../.storybook/*.ts', '../gallery-port.ts');
+				}
+			}
 		})
 	],
 	test: {
@@ -59,7 +118,7 @@ export default defineConfig({
 						instances: [{ browser: 'chromium', headless: true }]
 					},
 					include: ['src/**/*.svelte.{test,spec}.{js,ts}'],
-					exclude: [...configDefaults.exclude, mediaSpec]
+					exclude: [...configDefaults.exclude, ...mediaSpecs]
 				}
 			},
 			{
@@ -76,10 +135,14 @@ export default defineConfig({
 						instances: [{ browser: 'chromium', headless: true }],
 						commands: { emulateMedia }
 					},
-					include: [mediaSpec]
+					include: mediaSpecs
 				}
 			},
 
+			storiesProject,
+			// The panel runs one project, so Paper light with motion stopped runs from
+			// the command line only.
+			...(process.env.VITEST_STORYBOOK === 'true' ? [] : [storiesLightStillProject]),
 			{
 				extends: './vite.config.ts',
 				test: {

@@ -98,6 +98,30 @@ const DEN_HREF_PATTERN = {
 	message: DEN_HREF_IMPORT.message
 };
 
+/** Why the app never imports a development tool. */
+const DEV_TOOL_MESSAGE =
+	'Storybook, React, MDX, Testing Library, Playwright and axe are development tools: the app never imports them, and only specs may.';
+
+/**
+ * The development tools, by package: Storybook, React, MDX, Testing Library,
+ * Playwright and axe. The workspace hoists them, so only this ban keeps them
+ * out of the app's own files.
+ */
+const DEV_TOOL_PATTERNS = [
+	{ regex: '^(?:storybook|react|react-dom|playwright|axe-core)(?:/|$)', message: DEV_TOOL_MESSAGE },
+	{
+		regex: '^@(?:storybook|mdx-js|testing-library|playwright|axe-core)/',
+		message: DEV_TOOL_MESSAGE
+	}
+];
+
+/** The same packages loaded by a dynamic import of a literal name. */
+const DEV_TOOL_DYNAMIC_IMPORT = {
+	selector:
+		'ImportExpression[source.value=/^(?:(?:storybook|react|react-dom|playwright|axe-core)(?:\\u002F|$)|@(?:storybook|mdx-js|testing-library|playwright|axe-core)\\u002F)/i]',
+	message: DEV_TOOL_MESSAGE
+};
+
 /** Every file kind ESLint lints here, src/ and the package-root config files alike. */
 const LINTED_FILES = [
 	'**/*.js',
@@ -332,8 +356,8 @@ const webPlugin = {
  * One no-restricted-imports entry holding every ban a block's files answer
  * to: the allow-list always, and Effect's and the DenHref's bans where asked.
  * A later flat-config block replaces an earlier one's options for the same
- * rule, so each block carries its whole list. The test tools' bans join here,
- * as one more flag, when they land.
+ * rule, so each block carries its whole list. The development tools' ban
+ * lives apart, in the TypeScript twin of this rule (web/dev-tool-imports).
  *
  * @param {{ readonly effect: boolean, readonly denHref: boolean }} bans
  */
@@ -470,7 +494,8 @@ export default defineConfig(
 						"ImportDeclaration[source.value='@sveltejs/kit'] ImportSpecifier[imported.name='error'][local.name!='error']",
 					message:
 						"Import SvelteKit's error() as `error`: the literal-message rule keys on that name."
-				}
+				},
+				DEV_TOOL_DYNAMIC_IMPORT
 			]
 		}
 	},
@@ -530,6 +555,18 @@ export default defineConfig(
 		files: [...DEN_HREF_MINTERS, ...SPECS],
 		ignores: SERVER_SIDE,
 		rules: { 'no-restricted-imports': importRules({ effect: true, denHref: false }) }
+	},
+	{
+		// Every production file, above the seam and below it, never imports a
+		// development tool; specs and their harnesses keep what they use. The
+		// TypeScript twin of no-restricted-imports carries this ban, so it holds
+		// in one block beside the Effect and DenHref options of the core rule.
+		name: 'web/dev-tool-imports',
+		files: SOURCE_FILES,
+		ignores: SPECS,
+		rules: {
+			'@typescript-eslint/no-restricted-imports': ['error', { patterns: DEV_TOOL_PATTERNS }]
+		}
 	},
 	{
 		// Below the seam, only the Den path builder mints a DenHref.

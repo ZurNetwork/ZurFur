@@ -68,8 +68,79 @@ const singletons = [
 	'vite',
 	'@sveltejs/vite-plugin-svelte',
 	'vitest',
-	'bits-ui'
+	'bits-ui',
+	'storybook',
+	'@storybook/sveltekit',
+	'@storybook/svelte',
+	'@storybook/svelte-vite',
+	'@storybook/builder-vite',
+	'@storybook/addon-vitest',
+	'@storybook/addon-a11y',
+	'@storybook/addon-docs',
+	'@storybook/addon-svelte-csf',
+	'@playwright/test',
+	'playwright',
+	'playwright-core'
 ] as const;
+
+/** The packages Storybook releases together, at one version. */
+const storybookFamily = [
+	'storybook',
+	'@storybook/sveltekit',
+	'@storybook/svelte',
+	'@storybook/svelte-vite',
+	'@storybook/builder-vite',
+	'@storybook/addon-vitest',
+	'@storybook/addon-a11y',
+	'@storybook/addon-docs',
+	'@storybook/react-dom-shim'
+] as const;
+
+/** The first Storybook release with both October 2026 advisories fixed. */
+const storybookFloor = '10.6.2';
+
+/** Major, minor and patch of a plain release version; undefined for a prerelease or anything else. */
+function releaseNumbers(version: string): readonly [number, number, number] | undefined {
+	const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+	if (match === null) return undefined;
+	return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+/** Whether `version` is a release at or above `floor`, compared number by number. */
+function atLeast(version: string, floor: string): boolean {
+	const numbers = releaseNumbers(version);
+	const floorNumbers = releaseNumbers(floor);
+	if (numbers === undefined || floorNumbers === undefined) return false;
+	const [major, minor, patch] = numbers;
+	const [floorMajor, floorMinor, floorPatch] = floorNumbers;
+	const order =
+		Math.sign(major - floorMajor) || Math.sign(minor - floorMinor) || Math.sign(patch - floorPatch);
+	return order >= 0;
+}
+
+/** What is wrong with the Storybook family in `lock`: none locked, more than one version, or one under the floor. */
+function storybookLockProblems(lock: string): readonly string[] {
+	const locked = lockedVersions(lock);
+	if (!locked.has('storybook')) return ['storybook is not locked'];
+	const versions = new Set(storybookFamily.flatMap((name) => [...(locked.get(name) ?? [])]));
+	const several =
+		versions.size > 1 ? [`the family is locked at ${[...versions].sort().join(' and ')}`] : [];
+	const under = [...versions]
+		.filter((version) => !atLeast(version, storybookFloor))
+		.map((version) => `${version} is under ${storybookFloor}`);
+	return [...several, ...under];
+}
+
+/** A lockfile holding one block per `name@version`, in yarn's shape. */
+function lockFixture(entries: readonly (readonly [string, string])[]): string {
+	const blocks = entries.map(
+		([name, version]) => `"${name}@${version}":\n  version "${version}"\n`
+	);
+	return `# yarn lockfile v1\n\n${blocks.join('\n')}`;
+}
+
+const storybookFamilyAt = (version: string) =>
+	storybookFamily.map((name) => [name, version] as const);
 
 describe('the frontend workspace', () => {
 	it('locks one version each of the shared toolchain', () => {
@@ -101,6 +172,38 @@ describe('the frontend workspace', () => {
 				ranges: [expect.any(String)]
 			});
 		}
+	});
+
+	it('locks the Storybook family at one version, 10.6.2 or later', () => {
+		expect(storybookLockProblems(readFileSync(`${frontend}yarn.lock`, 'utf8'))).toEqual([]);
+	});
+
+	it('passes a Storybook family fixture at one version at or above the floor', () => {
+		expect(storybookLockProblems(lockFixture(storybookFamilyAt('10.6.2')))).toEqual([]);
+		expect(storybookLockProblems(lockFixture(storybookFamilyAt('10.10.0')))).toEqual([]);
+		expect(storybookLockProblems(lockFixture(storybookFamilyAt('11.0.0')))).toEqual([]);
+	});
+
+	it('refuses a Storybook family under 10.6.2', () => {
+		expect(storybookLockProblems(lockFixture(storybookFamilyAt('10.6.1')))).toEqual([
+			'10.6.1 is under 10.6.2'
+		]);
+		expect(storybookLockProblems(lockFixture(storybookFamilyAt('9.10.10')))).toEqual([
+			'9.10.10 is under 10.6.2'
+		]);
+		expect(storybookLockProblems(lockFixture(storybookFamilyAt('10.6.2-alpha.1')))).toEqual([
+			'10.6.2-alpha.1 is under 10.6.2'
+		]);
+	});
+
+	it('refuses two versions of one Storybook package', () => {
+		const lock = lockFixture([...storybookFamilyAt('10.6.2'), ['@storybook/addon-docs', '10.6.3']]);
+		expect(storybookLockProblems(lock)).toEqual(['the family is locked at 10.6.2 and 10.6.3']);
+	});
+
+	it('refuses a lock with no storybook', () => {
+		const lock = lockFixture(storybookFamilyAt('10.6.2').filter(([name]) => name !== 'storybook'));
+		expect(storybookLockProblems(lock)).toEqual(['storybook is not locked']);
 	});
 
 	it("pins web's @zurfur/ui to ui's version", () => {

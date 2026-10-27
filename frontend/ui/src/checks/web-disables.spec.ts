@@ -6,9 +6,13 @@ import { fileURLToPath } from 'node:url';
 /** web's source folder, beside ui in the frontend workspace. */
 const webSrc = fileURLToPath(new URL('../../../web/src/', import.meta.url));
 
-/** The rules that hold web's import bans: no comment may switch them off. */
+/**
+ * The rules that hold web's import bans, the development tools' ban included:
+ * no comment may switch them off.
+ */
 const GUARDED_RULES: ReadonlySet<string> = new Set([
 	'no-restricted-imports',
+	'@typescript-eslint/no-restricted-imports',
 	'web/import-specifiers'
 ]);
 
@@ -161,6 +165,16 @@ describe("web's disable comments", () => {
 		],
 		['the import ban', '// eslint-disable-next-line no-restricted-imports', 'guarded'],
 		['the specifier rule', '/* eslint-disable web/import-specifiers */', 'guarded'],
+		[
+			'the development tools ban',
+			'// eslint-disable-next-line @typescript-eslint/no-restricted-imports',
+			'guarded'
+		],
+		[
+			'the development tools ban in markup, with a reason',
+			'<!-- eslint-disable @typescript-eslint/no-restricted-imports -- because -->',
+			'guarded'
+		],
 		[
 			'the import ban among others',
 			'// eslint-disable-next-line no-unused-vars, no-restricted-imports -- because',

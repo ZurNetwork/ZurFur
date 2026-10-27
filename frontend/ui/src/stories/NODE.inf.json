@@ -1,0 +1,49 @@
+{
+  "path": "frontend/ui/src/stories",
+  "charted": "2026-10-26",
+  "short": "Storybook's stories, docs pages and frame",
+  "is": "The component gallery's content in Storybook: Svelte CSF stories files (`<group>/<Name>.stories.svelte`), MDX docs pages (`<group>/<Name>.mdx`), made-up fixtures (`fixtures/*.ts`), and `frame/`, the decorator every story renders in, which carries the toolbar's Skin and Motion choices onto the page.",
+  "type": "code",
+  "tags": [
+    "category:ui",
+    "category:source"
+  ],
+  "conventions": [
+    "A stories file imports only `@storybook/addon-svelte-csf`, `storybook/test` and `@zurfur/ui` by its public entry, plus relative files under `src/stories/` and `src/gallery/`; a path into `src/lib/`, `bits-ui` or any other package is refused (`src/checks/story-imports.spec.ts`). Stories carry no `<style>`, `style=` or `style:` and no `a11y` setting: looks come from the components and the frame.",
+    "Every string and text in a stories file is held to the docs-text rule, since Storybook renders a story's docs description as Markdown with raw HTML: no URL or `//` anywhere, no HTML tag outside inline code spans, and no Markdown link or image destination a browser reads as remote (`src/checks/story-imports.spec.ts`). A keyboard map is a plain list, `- Key: what it does`.",
+    "A story renders its control alone, or composed with other `@zurfur/ui` components, never hand-built markup standing in for one. A control that follows only its parent (`value`, `checked` or `open`) is shown through `controls/<Name>Holder.svelte`, which keeps what the control asks for, hands each callback to the story's spy first, and renders only that control with no style and no spread; the meta's `component` stays the control, so autodocs shows its props. Every control is a simple component, and a description that names the kind says so.",
+    "The folder is ESLint's `stories` file set, in the gallery host tier: the host's bans hold (no `fetch`, no storage, no remote or `javascript:` string, no raw HTML, no script markup, no inline handler, no dynamic import).",
+    "A docs page (`.mdx`, allowed only under `src/stories/`) holds only `import { Meta, Story } from '@storybook/addon-docs/blocks';`, `import * as X from './<Name>.stories.svelte';` from its own folder, one `<Meta of={X} />`, Markdown headings, plain prose, blank lines and `<Story of={X.<Story>} />` lines; any other import or JSX, `{` outside `of={…}`, `export`, an image, a link, raw HTML or a URL is refused (`src/checks/docs-pages.spec.ts`).",
+    "Every component `src/lib/index.ts` exports has a stories file whose `defineMeta.component` is that component imported from `@zurfur/ui`, and a contract spec; a pending list names the controls still waiting for stories and may only shrink (`src/checks/story-coverage.spec.ts`). Fixtures and stories files carry only the reserved sample DID and handles ending in `.test` or `.example`, a bare domain in a handle-named field, variable or attribute is refused too, and a stories file that does not parse is refused (`src/checks/story-fixtures.spec.ts`, which reads `fixtures/*.ts` and every `*.stories.svelte`).",
+    "Titles and story names are in Title Case (\"Tokens and Paper/Colour\", \"Controls/Button\"); the sidebar order is `.storybook/preview.ts`'s.",
+    "Storybook and the Vitest story projects run only through the package's scripts, under `env -i` and the network guard (see `frontend/ui`)."
+  ],
+  "entry_points": [
+    "frame/StoryFrame.svelte (the decorator every story renders in)",
+    "tokens/ (the six token docs pages)",
+    "controls/ (the eleven controls' stories)"
+  ],
+  "fs": [
+    {
+      "name": "controls/",
+      "role": "the controls' stories: <Name>.stories.svelte for each of the eleven exported controls (autodocs, a Playground, and play functions for the pointer, the keyboard, disabled and busy, plus a Focused story), <Name>Holder.svelte for each control that follows only its parent, and args.ts (each template's args: the control's own props)",
+      "node": false
+    },
+    {
+      "name": "fixtures/",
+      "role": "made-up words, options and days the stories share, readonly and typed: actions.ts (Button, Icon Button, Checkbox, Toggle, Pill Switch) and fields.ts (Text Input, Select, Tabs, Menu, Date Field)",
+      "node": false
+    },
+    {
+      "name": "frame/",
+      "role": "StoryFrame.svelte (sets data-skin and data-motion on <html> and on a wrapping div, the portal target, from the toolbar's globals, and paints a docs page's background and text from the skin's tokens), FrameSkin.svelte (resolves Follow the OS to the skin showing), globals.ts (parseSkinChoice and parseMotion: address text to closed unions, unknown text meaning Follow the OS and Lively) and their specs",
+      "node": false
+    },
+    {
+      "name": "tokens/",
+      "role": "the six token pages as docs pages: <Name>Page.svelte (the page body, also rendered by the old gallery's route wrapper), <Name>.stories.svelte (one Page story, showing only the skin the toolbar picks) and <Name>.mdx (its docs page), for Colour, Type, Space and Shape, Shadows, Motion and Sound, Paper",
+      "node": false
+    }
+  ],
+  "notes": []
+}

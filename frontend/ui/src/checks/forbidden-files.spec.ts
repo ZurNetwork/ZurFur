@@ -79,6 +79,13 @@ const tokenFiles: ReadonlySet<string> = new Set([
 	'lib/styles/tokens.additions.json'
 ]);
 
+/**
+ * The stories folder, the one place an MDX docs page may live: Storybook reads
+ * `.mdx` there, and the docs-pages check holds each one to its grammar.
+ */
+const storiesFolder = 'stories/';
+const docsPageExtension = '.mdx';
+
 /** A runes module, a `.svelte.ts` or `.svelte.js`: only the motion adapter keeps one. */
 const runesModule = /\.svelte\.[jt]s$/;
 
@@ -88,6 +95,7 @@ const runesFolder = 'lib/motion/';
 function isAllowedFile(relative: string, name: string): boolean {
 	if (name === nodeFileName || relative === pageShell) return true;
 	if (tokenFiles.has(relative)) return true;
+	if (relative.startsWith(storiesFolder) && name.endsWith(docsPageExtension)) return true;
 	const dot = name.lastIndexOf('.');
 	return dot !== -1 && allowedExtensions.has(name.slice(dot));
 }
@@ -253,6 +261,13 @@ describe('forbidden files', () => {
 		['a token file path written with backslashes as one name', 'lib\\styles\\tokens.json'],
 		['a backslash inside a file name', 'lib/x\\y.ts'],
 		['a backslash inside a folder name', 'lib/x\\y/z.ts'],
+		['an MDX page in lib', 'lib/Button.mdx'],
+		['an MDX page in the gallery', 'gallery/Colour.mdx'],
+		['an MDX page at the root', 'Colour.mdx'],
+		['an MDX page under a folder named like stories', 'lib/stories/Colour.mdx'],
+		['an MDX page in upper case', 'stories/tokens/Colour.MDX'],
+		['a Markdown page in stories', 'stories/tokens/Colour.md'],
+		['JSX in stories', 'stories/tokens/Colour.jsx'],
 		['a runes module in the seam', 'lib/environment/x.svelte.ts'],
 		['a runes module in a control', 'lib/controls/state.svelte.ts'],
 		['a runes module in the gallery', 'gallery/skin-store.svelte.ts'],
@@ -278,8 +293,90 @@ describe('forbidden files', () => {
 		['the token file', 'lib/styles/tokens.json'],
 		['the token additions file', 'lib/styles/tokens.additions.json'],
 		['a node file', 'NODE.inf.json'],
-		['a nested node file', 'lib/a/NODE.inf.json']
+		['a nested node file', 'lib/a/NODE.inf.json'],
+		['an MDX page in stories', 'stories/tokens/Colour.mdx'],
+		['an MDX page at the top of stories', 'stories/Intro.mdx']
 	])('allows %s', (_label, relative) => {
 		expect(forbiddenFiles([relative])).toEqual([]);
+	});
+});
+
+/**
+ * The entries Storybook's config folder may hold. Storybook also loads
+ * `middleware.{js,mjs,cjs}` (code in the dev server), `preview-head.html`,
+ * `preview-body.html` and `manager-head.html` from that folder with no key in
+ * `main.ts`, so any other entry, a folder or a link included, is refused.
+ */
+const configFolderFiles: ReadonlySet<string> = new Set([
+	'main.ts',
+	'preview.ts',
+	'manager.ts',
+	'vitest.setup.ts'
+]);
+
+interface FolderEntry {
+	readonly name: string;
+	readonly kind: EntryKind;
+}
+
+/** Why Storybook's config folder holds more, or less, than its four plain files. */
+function configFolderRefusals(entries: readonly FolderEntry[]): readonly string[] {
+	const extra = entries
+		.filter((entry) => entry.kind !== 'file' || !configFolderFiles.has(entry.name))
+		.map((entry) => `${entry.name} (${entry.kind}) is not one of the four config files`);
+	const present = new Set(
+		entries.filter((entry) => entry.kind === 'file').map((entry) => entry.name)
+	);
+	const missing = [...configFolderFiles]
+		.filter((name) => !present.has(name))
+		.map((name) => `${name} is missing`);
+	return [...extra, ...missing];
+}
+
+/** The entries directly in `folder`, each read with lstat so a link is never followed. */
+function folderEntries(folder: string): readonly FolderEntry[] {
+	return readdirSync(folder).map((name) => ({ name, kind: kindOf(path.join(folder, name)) }));
+}
+
+describe("Storybook's config folder", () => {
+	const configFiles: readonly FolderEntry[] = [...configFolderFiles].map((name) => ({
+		name,
+		kind: 'file'
+	}));
+
+	it('holds exactly its four files in the real tree', () => {
+		const folder = path.resolve(srcRoot(), '..', '.storybook');
+		expect(kindOf(folder)).toBe('folder');
+		expect(configFolderRefusals(folderEntries(folder))).toEqual([]);
+	});
+
+	it('passes the four files', () => {
+		expect(configFolderRefusals(configFiles)).toEqual([]);
+	});
+
+	it.each([
+		['dev-server middleware', 'middleware.js', 'file'],
+		['dev-server middleware as an ES module', 'middleware.mjs', 'file'],
+		['dev-server middleware as CommonJS', 'middleware.cjs', 'file'],
+		['a preview head', 'preview-head.html', 'file'],
+		['a preview body', 'preview-body.html', 'file'],
+		['a manager head', 'manager-head.html', 'file'],
+		['a folder', 'addons', 'folder'],
+		['a link', 'theme.ts', 'other'],
+		['main as JavaScript beside main.ts', 'main.js', 'file']
+	] as const)('refuses %s', (_label, name, kind) => {
+		expect(configFolderRefusals([...configFiles, { name, kind }])).toEqual([
+			`${name} (${kind}) is not one of the four config files`
+		]);
+	});
+
+	it('refuses a config file that is a link', () => {
+		const linked = configFiles.map((entry) =>
+			entry.name === 'preview.ts' ? { name: entry.name, kind: 'other' as const } : entry
+		);
+		expect(configFolderRefusals(linked)).toEqual([
+			'preview.ts (other) is not one of the four config files',
+			'preview.ts is missing'
+		]);
 	});
 });

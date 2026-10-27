@@ -13,10 +13,21 @@
  * `<script>` is remote. Remote means `http:`, `https:` or protocol-relative
  * (`//`, `\\`), read the way a browser reads a URL.
  *
+ * Doc comments under `src/lib/` (JSDoc in TypeScript and in Svelte scripts,
+ * and Svelte `@component` comments) hold no URL (`http:`, `https:`, `//`),
+ * no HTML tag outside an inline code span, and no Markdown link, image,
+ * reference or autolink destination that reads as remote (`/\host`, `\\host`,
+ * `\/\/host`): Storybook's docs pages render them as Markdown, raw HTML
+ * allowed. The stories spec holds every string in a stories file to the same
+ * rule.
+ *
  * Not caught: a URL built at run time from an expression, a spread
- * attribute, and a `<svelte:element this="style">`.
+ * attribute, a `<svelte:element this="style">`, and the doc comments of
+ * types a component takes from a package.
  */
 import type {
+	DocComment,
+	DocComments,
 	Head,
 	HttpEquivAttribute,
 	ParsedSource,
@@ -43,6 +54,9 @@ export type NetworkRule =
 	| 'http-equiv'
 	| 'head-outside-host'
 	| 'head-content'
+	| 'doc-url'
+	| 'doc-tag'
+	| 'doc-destination'
 	| 'unparsed';
 
 export interface NetworkFinding {
@@ -248,4 +262,76 @@ export function networkFindings(source: ParsedSource): readonly NetworkFinding[]
 		...inHttpEquivs,
 		...inHeads
 	];
+}
+
+/** The folder whose doc comments Storybook's docs pages render. */
+export const libFolder = 'src/lib/';
+
+/** A URL in a doc comment: `http:`, `https:` or `//`, in any letter case. */
+const docUrl = /https?:|\/\//i;
+
+/** The start of an HTML tag, a comment or a declaration, as Markdown passes raw HTML through. */
+const docTag = /<[A-Za-z/!?]/;
+
+/**
+ * The comment's text with each simple inline code span blanked: one backtick,
+ * text holding no backtick, backslash or line break, one backtick. A comment
+ * holding a backslash before a backtick or a run of two or more backticks is
+ * left whole, since a renderer may pair its spans otherwise.
+ */
+function outsideCodeSpans(text: string): string {
+	if (/\\`|``/.test(text)) return text;
+	return text.replace(/`[^`\\\n]*`/g, (span) => ' '.repeat(span.length));
+}
+
+/** Where a Markdown destination starts: after `](` (a link or image), `]:` (a reference definition) or `<` (an autolink). */
+const docDestinationStart = /\]\(|\]:|</g;
+
+/** A Markdown backslash escape, as the docs pages' renderer undoes it in a destination. */
+const markdownEscape = /\\([^0-9A-Za-z\s])/g;
+
+/**
+ * Each Markdown link, image, reference and autolink destination in `text`,
+ * from its start to the end of the text, as written and with backslash
+ * escapes undone. It over-reads on purpose: only a destination's start
+ * decides whether it is remote.
+ */
+export function markdownDestinations(text: string): readonly string[] {
+	return [...text.matchAll(docDestinationStart)].flatMap((match) => {
+		const destination = text.slice(match.index + match[0].length).replace(/^\s*</, '');
+		return [destination, destination.replace(markdownEscape, '$1')];
+	});
+}
+
+/** A rule docs text breaks. */
+export type DocTextRule = 'doc-url' | 'doc-tag' | 'doc-destination';
+
+/**
+ * The rules `text` breaks as docs text, which Storybook renders as Markdown
+ * with raw HTML allowed: a URL anywhere, an HTML tag outside inline code
+ * spans, or a Markdown destination a browser reads as remote.
+ */
+export function docTextRules(text: string): readonly DocTextRule[] {
+	const rules: readonly (DocTextRule | false)[] = [
+		docUrl.test(text) && 'doc-url',
+		docTag.test(outsideCodeSpans(text)) && 'doc-tag',
+		markdownDestinations(text).some(isRemote) && 'doc-destination'
+	];
+	return rules.filter((rule) => rule !== false);
+}
+
+function docFindings(comment: DocComment): readonly NetworkFinding[] {
+	const excerpt = comment.text.replace(/\s+/g, ' ').slice(0, 80);
+	return docTextRules(comment.text).map((rule) => ({ rule, found: excerpt, place: comment.place }));
+}
+
+/** The findings in one file's doc comments; only files under `src/lib/` are held to the rule. */
+export function docCommentFindings(path: string, read: DocComments): readonly NetworkFinding[] {
+	if (!path.startsWith(libFolder)) return [];
+	const unparsed = read.unparsed.map((failure): NetworkFinding => ({
+		rule: 'unparsed',
+		found: failure.reason,
+		place: failure.place
+	}));
+	return [...unparsed, ...read.comments.flatMap(docFindings)];
 }

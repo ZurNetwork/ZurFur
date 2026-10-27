@@ -7,40 +7,50 @@
 		readonly keyboard?: Snippet;
 		readonly motion?: Snippet;
 		readonly tests?: Snippet;
+		/** Pads the page, for a host that gives it no margin of its own. */
+		readonly framed?: boolean | undefined;
 	}
 
-	let { states, example, keyboard, motion, tests }: Props = $props();
+	let { states, example, keyboard, motion, tests, framed = false }: Props = $props();
 
 	const idPrefix = $props.id();
 </script>
 
-{#if states}
-	<section aria-labelledby="{idPrefix}-states">
-		<h2 id="{idPrefix}-states">States</h2>
-		{@render states()}
-	</section>
-{/if}
-{#if example}
-	<section aria-labelledby="{idPrefix}-example">
-		<h2 id="{idPrefix}-example">Live example</h2>
-		{@render example()}
-	</section>
-{/if}
-{#if keyboard}
-	<section aria-labelledby="{idPrefix}-keyboard">
-		<h2 id="{idPrefix}-keyboard">Keyboard</h2>
-		{@render keyboard()}
-	</section>
-{/if}
-{#if motion}
-	<section aria-labelledby="{idPrefix}-motion">
-		<h2 id="{idPrefix}-motion">Motion</h2>
-		{@render motion()}
-	</section>
-{/if}
-{#if tests}
-	<section aria-labelledby="{idPrefix}-tests">
-		<h2 id="{idPrefix}-tests">Tests</h2>
-		{@render tests()}
-	</section>
-{/if}
+<div class:framed>
+	{#if states}
+		<section aria-labelledby="{idPrefix}-states">
+			<h2 id="{idPrefix}-states">States</h2>
+			{@render states()}
+		</section>
+	{/if}
+	{#if example}
+		<section aria-labelledby="{idPrefix}-example">
+			<h2 id="{idPrefix}-example">Live Example</h2>
+			{@render example()}
+		</section>
+	{/if}
+	{#if keyboard}
+		<section aria-labelledby="{idPrefix}-keyboard">
+			<h2 id="{idPrefix}-keyboard">Keyboard</h2>
+			{@render keyboard()}
+		</section>
+	{/if}
+	{#if motion}
+		<section aria-labelledby="{idPrefix}-motion">
+			<h2 id="{idPrefix}-motion">Motion</h2>
+			{@render motion()}
+		</section>
+	{/if}
+	{#if tests}
+		<section aria-labelledby="{idPrefix}-tests">
+			<h2 id="{idPrefix}-tests">Tests</h2>
+			{@render tests()}
+		</section>
+	{/if}
+</div>
+
+<style>
+	.framed {
+		padding: var(--space-6);
+	}
+</style>

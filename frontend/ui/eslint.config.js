@@ -31,7 +31,8 @@ const typeCheckedRules = (configs) => {
 // ---------------------------------------------------------------------------
 // The file sets. Every source file under src/ lands in exactly one of them:
 // each set's `ignores` keeps it off the others, and the components' set takes
-// every file no other set names, so a new file can never land in none.
+// every file no other set names, so a new file can never land in none. One set
+// sits outside src/: Storybook's two config files that run in the browser.
 // ---------------------------------------------------------------------------
 
 /** Every file kind ESLint lints under src/, by extension. */
@@ -52,6 +53,15 @@ const GALLERY = ['src/gallery/**'];
 /** The gallery's stores, carved out of its frame: the only files that keep settings in localStorage. */
 const STORAGE = ['src/gallery/skin-store.ts'];
 
+/** Storybook's stories and the frame they render in: the gallery host, beside the routes. */
+const STORIES = ['src/stories/**'];
+
+/** Storybook's config files that run in the browser: the preview's, and the manager's on its own origin. */
+const STORYBOOK_BROWSER = ['.storybook/preview.ts', '.storybook/manager.ts'];
+
+/** Storybook's config files that run in Node or only hand the preview over, with the package-root config files' rules. */
+const STORYBOOK_NODE = ['.storybook/main.ts', '.storybook/vitest.setup.ts'];
+
 /** The one place motion libraries may be imported. */
 const MOTION = ['src/lib/motion/**'];
 
@@ -67,12 +77,23 @@ export const fileSets = {
 	routes: { files: ROUTES, ignores: CHECKS },
 	gallery: { files: GALLERY, ignores: [...CHECKS, ...STORAGE] },
 	storage: { files: STORAGE, ignores: CHECKS },
+	stories: { files: STORIES, ignores: CHECKS },
+	storybookBrowser: { files: STORYBOOK_BROWSER, ignores: [] },
 	motion: { files: MOTION, ignores: CHECKS },
 	lazy: { files: LAZY, ignores: CHECKS },
 	environment: { files: ENVIRONMENT, ignores: CHECKS },
 	components: {
 		files: CODE,
-		ignores: [...CHECKS, ...ROUTES, ...GALLERY, ...STORAGE, ...MOTION, ...LAZY, ...ENVIRONMENT]
+		ignores: [
+			...CHECKS,
+			...ROUTES,
+			...GALLERY,
+			...STORAGE,
+			...STORIES,
+			...MOTION,
+			...LAZY,
+			...ENVIRONMENT
+		]
 	}
 };
 
@@ -84,6 +105,8 @@ const FILE_SET_NAMES = [
 	'routes',
 	'gallery',
 	'storage',
+	'stories',
+	'storybookBrowser',
 	'motion',
 	'lazy',
 	'environment',
@@ -122,7 +145,8 @@ const matchesAny = (globs, relative) => globs.some((glob) => globPattern(glob).t
 /**
  * The file set a path lands in, read from `fileSets` as ESLint reads it; the
  * path is relative to this package, with forward slashes. Undefined for a path
- * no set names (outside src/, or not a code file).
+ * no set names (outside src/ and the browser-side Storybook config, or not a
+ * code file).
  *
  * @param {string} relative
  * @returns {FileSetName | undefined}
@@ -157,6 +181,8 @@ const TIER_OF_SET = {
 	routes: 'host',
 	gallery: 'host',
 	storage: 'host',
+	stories: 'host',
+	storybookBrowser: 'host',
 	checks: 'checks'
 };
 
@@ -1006,7 +1032,8 @@ const LAZY_SYNTAX = [
 	...SHIPPED_SYNTAX,
 	...COMPONENT_MOTION_SYNTAX
 ];
-const ROUTES_SYNTAX = [...COMMON_SYNTAX, ...ANY_GLOB, ANY_DYNAMIC_IMPORT, ...HOST_STORAGE.syntax];
+/** The host's syntax bans outside its frame and stores: the pages, the stories and the browser-side Storybook config. */
+const HOST_SYNTAX = [...COMMON_SYNTAX, ...ANY_GLOB, ANY_DYNAMIC_IMPORT, ...HOST_STORAGE.syntax];
 const GALLERY_SYNTAX = [
 	...COMMON_SYNTAX,
 	...GLOB_EXCEPT_PAGE_METAS,
@@ -1720,6 +1747,20 @@ const uiPlugin = {
 };
 
 /**
+ * The host's rules outside its frame and stores: no network, no storage of any
+ * kind, no raw HTML or script markup, no environment, no dynamic or glob
+ * import, and relative imports only within the shipped and host tiers.
+ */
+const HOST_RULES = {
+	tier: /** @type {const} */ ('host'),
+	globals: HOST_GLOBALS,
+	properties: [...HOST_PROPERTIES, ANIMATE_PROPERTY],
+	imports: HOST_IMPORTS,
+	syntax: HOST_SYNTAX,
+	seam: { motionImport: false, provideEnvironment: false }
+};
+
+/**
  * Each source set's tier, its options for the four restricted rules, and
  * which of the seam's import rules it takes: no import reaching the motion
  * adapter (every shipped set but the adapter itself) and no provideEnvironment
@@ -1760,14 +1801,7 @@ export const boundaryRules = {
 		syntax: COMPONENT_SYNTAX,
 		seam: { motionImport: true, provideEnvironment: false }
 	},
-	routes: {
-		tier: /** @type {const} */ ('host'),
-		globals: HOST_GLOBALS,
-		properties: [...HOST_PROPERTIES, ANIMATE_PROPERTY],
-		imports: HOST_IMPORTS,
-		syntax: ROUTES_SYNTAX,
-		seam: { motionImport: false, provideEnvironment: false }
-	},
+	routes: HOST_RULES,
 	gallery: {
 		tier: /** @type {const} */ ('host'),
 		globals: HOST_GLOBALS,
@@ -1783,7 +1817,9 @@ export const boundaryRules = {
 		imports: HOST_IMPORTS,
 		syntax: STORE_SYNTAX,
 		seam: { motionImport: false, provideEnvironment: false }
-	}
+	},
+	stories: HOST_RULES,
+	storybookBrowser: HOST_RULES
 };
 
 /**
@@ -1837,9 +1873,19 @@ function boundaryBlocks(name) {
 	];
 }
 
-/** Every set but the checks: the components, their three carve-outs, the host and its stores. */
+/** Every set but the checks: the components, their three carve-outs, the host, its stores and the browser-side Storybook config. */
 /** @type {readonly (keyof typeof boundaryRules)[]} */
-const SOURCE_SETS = ['components', 'motion', 'lazy', 'environment', 'routes', 'gallery', 'storage'];
+const SOURCE_SETS = [
+	'components',
+	'motion',
+	'lazy',
+	'environment',
+	'routes',
+	'gallery',
+	'storage',
+	'stories',
+	'storybookBrowser'
+];
 
 export default defineConfig(
 	includeIgnoreFile(gitignorePath),
@@ -1862,6 +1908,34 @@ export default defineConfig(
 		// The package-root config files run in Node and sit outside the TS program.
 		files: ['*.ts', '*.js'],
 		languageOptions: { globals: globals.node }
+	},
+	{
+		name: 'ui/storybook-node-config',
+		// Storybook's main config runs in Node, and the story tests' setup only
+		// hands the preview to Vitest: both take the package-root config files' rules.
+		files: STORYBOOK_NODE,
+		languageOptions: { globals: globals.node }
+	},
+	{
+		name: 'ui/storybook-unused-vars',
+		// The TypeScript-aware twin of no-unused-vars, which reads parameter names
+		// in a function type as unused variables.
+		files: ['.storybook/*.ts'],
+		rules: { 'no-unused-vars': 'off', '@typescript-eslint/no-unused-vars': 'error' }
+	},
+	{
+		name: 'ui/story-template-args',
+		// A story's template snippet is handed (args, context), and the rule reads every
+		// snippet parameter as checked, a leading one included. A story that reads only
+		// the context names the first one exactly `_args`; nothing else is let through.
+		files: ['src/stories/**/*.stories.svelte'],
+		rules: { '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_args$' }] }
+	},
+	{
+		name: 'ui/storybook-browser-config',
+		// The preview and the manager run in the browser, under the host's bans below.
+		files: STORYBOOK_BROWSER,
+		languageOptions: { globals: globals.browser }
 	},
 	{
 		name: 'ui/source-globals',

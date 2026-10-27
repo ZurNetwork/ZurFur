@@ -73,7 +73,8 @@ function kindOf(relative: string): FileKind {
 	const isCheck =
 		posix.startsWith('checks/') || posix.endsWith('.spec.ts') || posix.endsWith('.svelte.spec.ts');
 	if (isCheck) return 'check';
-	if (posix.startsWith('routes/') || posix.startsWith('gallery/')) return 'host';
+	const isHost = ['routes/', 'gallery/', 'stories/'].some((folder) => posix.startsWith(folder));
+	if (isHost) return 'host';
 	return 'component';
 }
 
@@ -122,13 +123,43 @@ function isLooser(target: FileKind, importer: FileKind): boolean {
 	return kindsStrictestFirst.indexOf(target) > kindsStrictestFirst.indexOf(importer);
 }
 
+/**
+ * The development tools: Storybook, React, MDX, Testing Library, Playwright
+ * and axe, each by package name. They stay devDependencies, and component code
+ * never imports one, whatever the manifest says.
+ */
+const devToolPackages: ReadonlySet<string> = new Set([
+	'storybook',
+	'react',
+	'react-dom',
+	'playwright',
+	'axe-core'
+]);
+
+/** The scopes whose every package is a development tool. */
+const devToolScopes: readonly string[] = [
+	'@storybook/',
+	'@mdx-js/',
+	'@testing-library/',
+	'@playwright/',
+	'@axe-core/'
+];
+
+function isDevTool(name: string): boolean {
+	return devToolPackages.has(name) || devToolScopes.some((scope) => name.startsWith(scope));
+}
+
 /** Kit's virtual modules and ui's aliases: lint decides who may use them. */
 const aliasPattern = /^\$(app|env|lib|gallery)(\/|$)/;
 
 /** The files outside src/ that a check may import. */
-const checkImportableFiles = ['vite.config.ts', 'eslint.config.js', 'package.json'].map((file) =>
-	path.join(uiRoot, file)
-);
+const checkImportableFiles = [
+	'vite.config.ts',
+	'eslint.config.js',
+	'package.json',
+	'gallery-port.ts',
+	'.storybook/main.ts'
+].map((file) => path.join(uiRoot, file));
 
 /** The packages the controls wrap, which only a component's own `.svelte` file may import. */
 const wrappedPackages = /^(?:bits-ui|@internationalized\/[^/]+)$/;
@@ -195,6 +226,7 @@ function refusalOf(file: SourceFile, specifier: string, manifest: Manifest): str
 	}
 	if (aliasPattern.test(specifier)) return undefined;
 	const name = packageName(specifier);
+	if (kind === 'component' && isDevTool(name)) return 'a development tool in component code';
 	if (wrappedPackages.test(name) && !mayImportWrapped(file.relative)) {
 		return 'a wrapped package outside a .svelte file in src/lib';
 	}
@@ -293,6 +325,90 @@ describe('declared imports', () => {
 		expect(importRefusals(realSourceFiles(), manifest)).toEqual([]);
 	});
 
+	describe('the development tools', () => {
+		it('keeps every development tool out of dependencies and peerDependencies', () => {
+			expect([...manifest.runtime].filter(isDevTool)).toEqual([]);
+		});
+
+		it('declares Storybook as a devDependency', () => {
+			expect([...manifest.dev].filter(isDevTool)).toContain('storybook');
+		});
+
+		it.each([
+			['storybook', 'storybook'],
+			['storybook/test', 'storybook'],
+			['@storybook/addon-svelte-csf', '@storybook/addon-svelte-csf'],
+			['react', 'react'],
+			['react/jsx-runtime', 'react'],
+			['react-dom', 'react-dom'],
+			['@mdx-js/react', '@mdx-js/react'],
+			['@testing-library/dom', '@testing-library/dom'],
+			['@playwright/test', '@playwright/test'],
+			['playwright', 'playwright'],
+			['axe-core', 'axe-core'],
+			['@axe-core/playwright', '@axe-core/playwright']
+		])('reads %s as the development tool %s', (specifier, name) => {
+			expect(packageName(specifier)).toBe(name);
+			expect(isDevTool(name)).toBe(true);
+		});
+
+		it.each([['reactive'], ['@vitest/browser-playwright'], ['playwright-core'], ['@zurfur/ui']])(
+			'reads %s as no development tool',
+			(name) => {
+				expect(isDevTool(name)).toBe(false);
+			}
+		);
+
+		it.each([
+			[
+				'storybook/test in a component',
+				'lib/X.svelte',
+				'<script lang="ts">\n\timport { fn } from \'storybook/test\';\n</script>\n'
+			],
+			['storybook/test in a module', 'lib/x.ts', "import { fn } from 'storybook/test';"],
+			['@storybook/svelte in the motion adapter', 'lib/motion/x.ts', "import '@storybook/svelte';"],
+			['react in the lazy loader', 'lib/lazy/x.ts', "export const r = import('react');"],
+			['react-dom in a stray file', 'x.ts', "import 'react-dom';"],
+			['@mdx-js/react', 'lib/x.ts', "export * from '@mdx-js/react';"],
+			['@testing-library/dom', 'lib/x.ts', "import '@testing-library/dom';"],
+			['@playwright/test', 'lib/x.ts', "import '@playwright/test';"],
+			['playwright', 'lib/x.ts', "import 'playwright';"],
+			['axe-core', 'lib/x.ts', "import 'axe-core';"],
+			['@axe-core/playwright', 'lib/x.ts', "import '@axe-core/playwright';"]
+		])('refuses %s', (_label, relative, text) => {
+			expect(refusalsFor(relative, text).map((refusal) => refusal.reason)).toEqual([
+				'a development tool in component code'
+			]);
+		});
+
+		it('refuses storybook/test in a component even when the manifest lists it as a dependency', () => {
+			const forged = manifestOf({
+				name: manifest.name,
+				dependencies: { storybook: '10.6.2' },
+				devDependencies: {}
+			});
+			const file: SourceFile = {
+				relative: 'lib/x.ts',
+				text: "import { fn } from 'storybook/test';"
+			};
+			expect(importRefusals([file], forged).map((refusal) => refusal.reason)).toEqual([
+				'a development tool in component code'
+			]);
+		});
+
+		it.each([
+			[
+				'a stories file',
+				'stories/controls/X.stories.svelte',
+				'<script module lang="ts">\n\timport { fn } from \'storybook/test\';\n</script>\n'
+			],
+			['a stories fixture', 'stories/fixtures/x.ts', "import { fn } from 'storybook/test';"],
+			['a spec', 'lib/X.svelte.spec.ts', "import { fn } from 'storybook/test';"]
+		])('allows storybook/test in %s', (_label, relative, text) => {
+			expect(refusalsFor(relative, text)).toEqual([]);
+		});
+	});
+
 	it.each([
 		['an undeclared package', 'lib/x.ts', "import { superForm } from 'sveltekit-superforms';"],
 		['a dev-only package in component code', 'lib/x.ts', "import { expect } from 'vitest';"],
@@ -337,6 +453,7 @@ describe('declared imports', () => {
 		['a stray file importing a page', 'foo.ts', "import './routes/x';"],
 		['the frame importing a check', 'gallery/x.ts', "import '../checks/x';"],
 		['a page importing a spec', 'routes/x.ts', "import '../gallery/x.spec';"],
+		['a component importing a story', 'lib/x.ts', "import '../stories/frame/x';"],
 		["a component's script re-exporting a check", 'lib/X.svelte', svelteReexport]
 	])('refuses %s, a relative import into a looser file set', (_label, relative, text) => {
 		expect(refusalsFor(relative, text).map((refusal) => refusal.reason)).toEqual([
@@ -437,6 +554,7 @@ describe('declared imports', () => {
 		it.each([
 			['bits-ui in a gallery route', 'routes/components/toggle/+page.svelte', bitsInPage],
 			['bits-ui in the gallery frame', 'gallery/X.svelte', bitsInPage],
+			['bits-ui in a stories file', 'stories/controls/X.stories.svelte', bitsInPage],
 			['bits-ui in a check harness', 'checks/testing/Harness.svelte', bitsInPage],
 			[
 				'bits-ui in the control types',
@@ -499,6 +617,13 @@ describe('declared imports', () => {
 		['a relative file inside src', 'lib/x.ts', "import { y } from './y';"],
 		['a dev-only package in a spec', 'lib/x.spec.ts', "import { expect } from 'vitest';"],
 		['a dev-only package in the host', 'gallery/x.ts', "import { page } from 'vitest/browser';"],
+		['a dev-only package in a story', 'stories/x.ts', "import { fn } from 'storybook/test';"],
+		[
+			'a check importing the main Storybook config',
+			'checks/x.spec.ts',
+			"import '../../.storybook/main.ts';"
+		],
+		['a check importing the port rule', 'checks/x.spec.ts', "import '../../gallery-port.ts';"],
 		['a Node built-in in a check', 'checks/x.spec.ts', "import path from 'node:path';"],
 		['the package itself', 'routes/x.ts', "import * as ui from '@zurfur/ui';"],
 		['a Kit alias', 'gallery/x.ts', "import { resolve } from '$app/paths';"],

@@ -38,7 +38,8 @@ const BARE_ROOT = /^(?:\/|\.\/?|\.\.(?:\/\.\.)*\/?)$/;
 
 /**
  * Whether `text` is a same-origin path: `/`, `./` or `../` (repeated) and at least one segment,
- * with no backslash, whitespace, control character, encoded slash, `//` or dot segment in the path.
+ * with no backslash, whitespace, control character, encoded slash, doubled slash or dot segment in
+ * the path.
  */
 export function isSameOriginPath(text: string): text is SameOriginPath {
 	if (UNSAFE_CHARACTER.test(text) || ENCODED_SEPARATOR.test(text)) return false;
