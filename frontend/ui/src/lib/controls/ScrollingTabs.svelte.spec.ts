@@ -218,6 +218,30 @@ describe('ScrollingTabs', () => {
 		expect(panelIds()).toEqual(['panel-comms']);
 	});
 
+	it('takes a back press that follows a forward step before the list reports its scroll', async () => {
+		const box = boxOf(260);
+		renderTabs(box);
+		const list = tabList();
+		await vi.waitFor(() => {
+			expect(atEnd(stepButton('Earlier tabs'))).toBe(true);
+		});
+		await restsAt(list, 0);
+		let scrolls = 0;
+		list.addEventListener('scroll', () => {
+			scrolls += 1;
+		});
+		stepButton('More tabs').click();
+		const stepped = list.scrollLeft;
+		stepButton('Earlier tabs').click();
+		const returned = list.scrollLeft;
+		expect(scrolls).toBe(0);
+		expect(stepped).toBeGreaterThan(1);
+		expect(returned).toBeLessThanOrEqual(1);
+		await frames();
+		await restsAt(list, 0);
+		expect(atEnd(stepButton('Earlier tabs'))).toBe(true);
+	});
+
 	it('disables each step at its end, and both when every tab fits', async () => {
 		const box = boxOf(260);
 		renderTabs(box);
