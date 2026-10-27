@@ -126,6 +126,62 @@ function tokenColour(token: string, scope: Element = document.body): string {
 	return colour;
 }
 
+/** A copy in the page wearing `skin`, removed after each test. */
+function aCopy(skin: 'dark' | 'light'): HTMLElement {
+	const copy = document.createElement('div');
+	copy.setAttribute('data-skin', skin);
+	copy.setAttribute('data-copy', '');
+	document.body.append(copy);
+	return copy;
+}
+
+/** An outline as computed: its style, width, colour and offset. */
+interface Ring {
+	readonly style: string;
+	readonly width: string;
+	readonly colour: string;
+	readonly offset: string;
+}
+
+/** The outline `element` shows, as computed. */
+function ringOf(element: Element): Ring {
+	const style = getComputedStyle(element);
+	return {
+		style: style.outlineStyle,
+		width: style.outlineWidth,
+		colour: style.outlineColor,
+		offset: style.outlineOffset
+	};
+}
+
+/** The one focus ring a highlighted option shows, in `colour`. */
+function theRing(colour: string): Ring {
+	return { style: 'solid', width: '2px', colour, offset: '-2px' };
+}
+
+/** How far `element` is raised off its place by its `translate`, in pixels. */
+function riseOf(element: Element): number {
+	const translate = getComputedStyle(element).translate;
+	if (translate === 'none') return 0;
+	const [, y = '0px'] = translate.split(' ');
+	return 0 - Number.parseFloat(y);
+}
+
+/** The viewport's box, in the page's coordinates. */
+function theViewport(): DOMRect {
+	return new DOMRect(0, 0, window.innerWidth, window.innerHeight);
+}
+
+/** Whether `inner` lies wholly inside `outer`, give or take a pixel. */
+function liesInside(inner: DOMRect, outer: DOMRect): boolean {
+	return (
+		inner.top >= outer.top - 1 &&
+		inner.left >= outer.left - 1 &&
+		inner.bottom <= outer.bottom + 1 &&
+		inner.right <= outer.right + 1
+	);
+}
+
 afterEach(() => {
 	document.documentElement.removeAttribute('data-skin');
 	for (const left of document.querySelectorAll('[data-copy], [data-form]')) left.remove();
@@ -265,22 +321,93 @@ describe('Select', () => {
 		expect(document.activeElement).toBe(theTrigger());
 	});
 
-	it('lifts the highlighted option off the list, as a row under the pointer', async () => {
+	it.each([['dark'], ['light']] as const)(
+		'rings the highlighted option in the %s skin, the chosen one too, and lifts one not yet chosen',
+		async (skin) => {
+			const copy = aCopy(skin);
+			render(Select<Visibility>, {
+				target: copy,
+				props: {
+					label: 'Who can see this',
+					options: VISIBILITY,
+					value: 'public',
+					onChange: () => undefined
+				}
+			});
+			const focus = tokenColour('--color-focus', copy);
+			await keyOpen();
+			await vi.waitFor(() => {
+				expect(option('Everyone').hasAttribute('data-highlighted')).toBe(true);
+			});
+			expect(option('Everyone').getAttribute('aria-selected')).toBe('true');
+			expect(ringOf(option('Everyone'))).toEqual(theRing(focus));
+			expect(ringOf(option('Followers only')).style).toBe('none');
+			expect(ringOf(option('Only me')).style).toBe('none');
+			const resting = getComputedStyle(option('Only me')).boxShadow;
+			await userEvent.keyboard('{ArrowDown}');
+			expect(option('Followers only').hasAttribute('data-highlighted')).toBe(true);
+			expect(ringOf(option('Followers only'))).toEqual(theRing(focus));
+			expect(ringOf(option('Everyone')).style).toBe('none');
+			expect(ringOf(option('Only me')).style).toBe('none');
+			await vi.waitFor(() => {
+				const lit = option('Followers only');
+				expect(getComputedStyle(lit).boxShadow).not.toBe(resting);
+				expect(riseOf(lit)).toBeGreaterThan(0);
+			});
+		}
+	);
+
+	it('rings each skin in its own focus colour', () => {
+		expect(tokenColour('--color-focus', aCopy('dark'))).not.toBe(
+			tokenColour('--color-focus', aCopy('light'))
+		);
+	});
+
+	it('keeps the ring on the highlighted option under Still, where the lift is gone', async () => {
+		const copy = aCopy('dark');
+		copy.setAttribute('data-motion', 'still');
 		render(Select<Visibility>, {
-			label: 'Who can see this',
-			options: VISIBILITY,
-			value: 'public',
-			onChange: () => undefined
+			target: copy,
+			props: {
+				label: 'Who can see this',
+				options: VISIBILITY,
+				value: 'public',
+				onChange: () => undefined
+			}
 		});
-		await keyOpen();
-		const resting = getComputedStyle(option('Only me')).boxShadow;
+		const focus = tokenColour('--color-focus', copy);
+		const list = await keyOpen();
+		expect(list.closest('[data-motion="still"]')).toBe(copy);
+		await vi.waitFor(() => {
+			expect(ringOf(option('Everyone'))).toEqual(theRing(focus));
+		});
 		await userEvent.keyboard('{ArrowDown}');
 		expect(option('Followers only').hasAttribute('data-highlighted')).toBe(true);
-		await vi.waitFor(() => {
-			const lit = getComputedStyle(option('Followers only'));
-			expect(lit.boxShadow).not.toBe(resting);
-			expect(lit.translate).not.toBe('none');
+		expect(ringOf(option('Followers only'))).toEqual(theRing(focus));
+		expect(riseOf(option('Followers only'))).toBe(0);
+		expect(ringOf(option('Everyone')).style).toBe('none');
+	});
+
+	it('moves the ring with the pointer', async () => {
+		const copy = aCopy('dark');
+		render(Select<Visibility>, {
+			target: copy,
+			props: {
+				label: 'Who can see this',
+				options: VISIBILITY,
+				value: 'public',
+				onChange: () => undefined
+			}
 		});
+		const focus = tokenColour('--color-focus', copy);
+		await keyOpen();
+		await userEvent.hover(option('Only me'));
+		await vi.waitFor(() => {
+			expect(option('Only me').hasAttribute('data-highlighted')).toBe(true);
+		});
+		expect(ringOf(option('Only me'))).toEqual(theRing(focus));
+		expect(ringOf(option('Everyone')).style).toBe('none');
+		await userEvent.unhover(option('Only me'));
 	});
 
 	it('closes on Escape, choosing nothing and keeping focus', async () => {
@@ -690,6 +817,48 @@ describe('Select', () => {
 		expect(document.scrollingElement?.scrollTop ?? 0).toBe(0);
 	});
 
+	it('caps its list by the room on screen, scrolling inside, with the last option shown whole', async () => {
+		const many: readonly SelectOption<string>[] = Array.from({ length: 12 }, (_, index) => ({
+			value: `stage-${String(index + 1)}`,
+			label: `Stage ${String(index + 1)}`
+		}));
+		const roomy = { width: window.innerWidth, height: window.innerHeight };
+		await page.viewport(320, 256);
+		try {
+			render(Select<string>, {
+				label: 'Stage',
+				options: many,
+				value: 'stage-1',
+				onChange: () => undefined
+			});
+			await userEvent.unhover(theTrigger());
+			await vi.waitFor(() => {
+				expect(riseOf(theTrigger())).toBe(0);
+			});
+			const list = await keyOpen();
+			const wrapper = list.parentElement;
+			if (wrapper === null) throw new Error('the list has no wrapper');
+			await vi.waitFor(() => {
+				expect(liesInside(list.getBoundingClientRect(), theViewport())).toBe(true);
+				expect(liesInside(wrapper.getBoundingClientRect(), theViewport())).toBe(true);
+			});
+			expect(list.scrollHeight).toBeGreaterThan(list.clientHeight);
+			for (let step = 1; step < many.length; step += 1) {
+				await userEvent.keyboard('{ArrowDown}');
+			}
+			expect(option('Stage 12').hasAttribute('data-highlighted')).toBe(true);
+			await vi.waitFor(() => {
+				const box = list.getBoundingClientRect();
+				const last = option('Stage 12').getBoundingClientRect();
+				expect(last.top).toBeGreaterThanOrEqual(box.top - 1);
+				expect(last.bottom).toBeLessThanOrEqual(box.bottom + 1);
+			});
+			expect(liesInside(list.getBoundingClientRect(), theViewport())).toBe(true);
+		} finally {
+			await page.viewport(roomy.width, roomy.height);
+		}
+	});
+
 	it.each([
 		['light', 'dark'],
 		['dark', 'light']
@@ -763,6 +932,50 @@ describe('Select', () => {
 			disabled: true
 		});
 		expect(theTrigger().classList.contains('lift')).toBe(false);
+	});
+
+	it('lifts its slip on point while it can be changed, and never squishes', async () => {
+		const calls: SeamCall[] = [];
+		render(
+			Select<Visibility>,
+			{
+				label: 'Who can see this',
+				options: VISIBILITY,
+				value: 'public',
+				onChange: () => undefined
+			},
+			{ wrapper: RecordingEnvironment, wrapperProps: { onRecord: (call) => calls.push(call) } }
+		);
+		expect(riseOf(theTrigger())).toBe(0);
+		await userEvent.hover(theTrigger());
+		await vi.waitFor(() => {
+			expect(riseOf(theTrigger())).toBeGreaterThan(0);
+		});
+		await pressOpen();
+		pointer('pointerup', theTrigger());
+		await userEvent.keyboard('{Escape}');
+		await closed();
+		await page.getByRole('combobox').click();
+		await page.getByRole('option', { name: 'Only me' }).click();
+		await closed();
+		await userEvent.unhover(theTrigger());
+		expect(calls.filter((call) => call.kind === 'sound')).toHaveLength(4);
+		expect(calls.filter((call) => call.kind === 'move' && call.move === 'squish')).toEqual([]);
+	});
+
+	it('stays down on point while disabled', async () => {
+		render(Select<Visibility>, {
+			label: 'Who can see this',
+			options: VISIBILITY,
+			value: 'public',
+			onChange: () => undefined,
+			disabled: true
+		});
+		await userEvent.hover(theTrigger());
+		expect(theTrigger().matches(':hover')).toBe(true);
+		await pause(300);
+		expect(riseOf(theTrigger())).toBe(0);
+		await userEvent.unhover(theTrigger());
 	});
 
 	it('puts its test id on the trigger', async () => {
