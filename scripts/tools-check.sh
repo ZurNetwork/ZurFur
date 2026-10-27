@@ -50,6 +50,7 @@ bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7
 EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
 crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b
 extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3
+actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
 "
 
 pin_error() {
@@ -144,6 +145,10 @@ check_step_input bufbuild/buf-action version "$BUF_VERSION"
 check_step_input extractions/setup-just just-version "$JUST_VERSION"
 # No checkout leaves its token in .git/config for later steps to read.
 check_step_input actions/checkout persist-credentials false "CI safety rule"
+# The one upload is the screenshot run's PNG files, kept 7 days: a wider path or a
+# longer retention fails.
+check_step_input actions/upload-artifact path 'frontend/ui/shots/output/**/*.png' "CI safety rule"
+check_step_input actions/upload-artifact retention-days 7 "CI safety rule"
 
 # The guarded install's exact text: the INSTALL_COMMAND the install guard
 # exports, from its one `export const INSTALL_COMMAND = '<command>';` line.
@@ -183,6 +188,11 @@ fi
 #     subcommand create, policies, set, init, config, workspace, self-update
 #     or dlx (each fetches and runs a package, changes which yarn runs, or
 #     runs any yarn command);
+#   - no `container:` key and no `services:` key anywhere (a job's, a
+#     step's or deeper), and no word docker or podman, in any letter case,
+#     bare, by path or quoted, in a `run:` or a `shell:` outside its shell
+#     comments: a workflow's own text starts no container (the screenshot
+#     script and the test suites start theirs);
 #   - every `run:` is a step's (a `defaults: run:` block aside), so a shape
 #     this reader can't follow fails rather than hiding an install;
 #   - every `uses:` is a step's, so a job-level `uses:` (a reusable workflow
@@ -360,10 +370,18 @@ ci_safety() {
         # yarn_scan <text> — sets n_cmds (shell commands in <text>), n_inst
         # (those holding a yarn install), inst_frozen/inst_ignore (whether
         # every install carries the flag), and bad[1..n_bad] (every other
-        # installer, refused yarn subcommand or --use-yarnrc, once each).
-        function yarn_scan(text,    lines, nl, i, ln, cmds, nc, j, c, w, nw, k, m, a, n_sub, bound, is_inst, f, g) {
+        # installer, refused yarn subcommand, --use-yarnrc, docker or podman,
+        # once each).
+        function yarn_scan(text,    lines, nl, i, ln, cmds, nc, j, c, w, nw, k, m, a, n_sub, bound, is_inst, f, g, rt) {
             n_cmds = 0; n_inst = 0; inst_frozen = 1; inst_ignore = 1
             n_bad = 0; split("", bad_seen)
+            # A container runtime by name, its line continuations joined and
+            # its quotes and backslashes gone, as the shell would read the word.
+            rt = text
+            gsub(/\\\n/, "", rt)
+            rt = tolower(unquote(strip_comments(rt)))
+            if (rt ~ /(^|[^a-z0-9_])docker([^a-z0-9_]|$)/) add_bad("docker in a run: or shell: (scripts/gallery-shots.sh alone names the container runtime)")
+            if (rt ~ /(^|[^a-z0-9_])podman([^a-z0-9_]|$)/) add_bad("podman in a run: or shell: (scripts/gallery-shots.sh alone names the container runtime)")
             gsub(/\\\n/, " ", text)
             text = strip_comments(text)
             nl = split(text, lines, "\n")
@@ -554,6 +572,8 @@ ci_safety() {
             if (line !~ /^[ \t]*(-[ \t]+)?(run|shell)[ \t]*:/) {
                 shape = key_shape(line)
                 if (shape != "") problem(FILENAME, FNR, shape ", a shape tools-check cannot read")
+                if (line ~ /(^|[ \t{,])container[ \t]*:/) problem(FILENAME, FNR, "a container: key (no job or step runs in a container image)")
+                if (line ~ /(^|[ \t{,])services[ \t]*:/) problem(FILENAME, FNR, "a services: key (no job starts service containers)")
             }
             # A shell: (in a step or under defaults) runs its command too; its
             # value, continuation lines included, is scanned like a run:.

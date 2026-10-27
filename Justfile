@@ -498,7 +498,9 @@ check:
 # one-time `yarn --cwd frontend/ui playwright install chromium` for web's and
 # ui's browser-mode component tests (one hoisted Playwright serves both), and
 # the `buf` CLI at BUF_VERSION for the contract lint
-# (https://buf.build/docs/installation — a single Go binary).
+# (https://buf.build/docs/installation — a single Go binary). The gallery's
+# screenshots (`just gallery-shots-run`) need Podman or Docker, as the
+# testcontainers tests already do, and pull the pinned PLAYWRIGHT_IMAGE once.
 # The npm lockfiles' 7-day floor is CI-only (its npm-lock job): it compares
 # against a PR's base; `just npm-lock-review <rev>` runs it by hand. The
 # licence sweep (`just npm-licences`) runs here, before the advisory scan.
@@ -535,6 +537,8 @@ gate:
     yarn --cwd frontend/ui run build
     node frontend/ui/src/checks/built-output.ts frontend/ui/build
     just gallery-build
+    yarn --cwd frontend/ui run test:shots
+    just gallery-shots-run
     just engineer-tools-test
     just npm-licences
     just npm-advisories

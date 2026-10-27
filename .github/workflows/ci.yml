@@ -439,7 +439,10 @@ jobs:
   # The @zurfur/ui component library: the install guard's own tests, then its
   # type check, lint, browser-mode component tests and gallery build, then the
   # built-output check over that build, then the Storybook gallery's build and
-  # its built-output check (`just gallery-build`).
+  # its built-output check (`just gallery-build`), then the screenshot run's
+  # unit tests and the run itself (`just gallery-shots-run --ci`). On a
+  # failure, only the run's PNG files under frontend/ui/shots/output are uploaded,
+  # kept 7 days; nothing from the job is published.
   ui:
     name: ui
     needs: [changes, npm-lock]
@@ -479,3 +482,20 @@ jobs:
       - run: yarn run build-storybook
       # Refuses remote loads and ZURFUR_ or DATABASE_URL text in the Storybook build.
       - run: node src/checks/built-output.ts --storybook storybook-static
+      # The screenshot run's own unit tests: the static server and the image guard.
+      - run: yarn run test:shots
+      # just, at the version the Justfile pins, for the screenshot run.
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: '1.49.0'
+      # The screenshots against the committed pictures, in the pinned Playwright image with no network.
+      - run: just gallery-shots-run --ci
+        working-directory: .
+      # On a failure only, the run's PNG files and nothing else, kept 7 days.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: gallery-shots-failures
+          path: frontend/ui/shots/output/**/*.png
+          retention-days: 7
+          if-no-files-found: ignore
