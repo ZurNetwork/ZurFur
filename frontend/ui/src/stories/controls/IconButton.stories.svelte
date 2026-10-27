@@ -20,7 +20,7 @@
 			size: { control: 'inline-radio', options: ['md', 'sm'] },
 			pressed: { control: 'boolean' },
 			expanded: { control: 'boolean' },
-			disabled: { control: 'boolean' },
+			disabled: { control: 'select', options: [false, true, 'focusable'] },
 			controls: { table: { disable: true } },
 			testid: { table: { disable: true } }
 		},
@@ -28,7 +28,7 @@
 			layout: 'centered',
 			docs: {
 				description: {
-					component: `A simple component: a square button that shows only an icon, for toolbars, rows and close buttons. Its label is its accessible name, and it shows as a tip on hover and on keyboard focus, so say what it does. Quiet sits in toolbars and rows, Secondary has an edge. Pressed is for on and off tools. Expanded is for a button that shows or hides something.
+					component: `A simple component: a square button that shows only an icon, for toolbars, rows and close buttons. Its label is its accessible name, and it shows as a tip on hover and on keyboard focus, so say what it does. Quiet sits in toolbars and rows, Secondary has an edge. Pressed is for on and off tools. Expanded is for a button that shows or hides something. Disabled takes it out of the tab order; Focusable While Disabled keeps it there, named and tipped, for a button that only does nothing for now, such as a step at its end.
 
 Keyboard:
 
@@ -103,6 +103,25 @@ Keyboard:
 		await expect(button).toBeDisabled();
 		await userEvent.click(button);
 		await expect(args.onPress).not.toHaveBeenCalled();
+	}}
+/>
+
+<Story
+	name="Focusable While Disabled"
+	args={{ disabled: 'focusable' }}
+	play={async ({ args, canvas, canvasElement, userEvent }) => {
+		const screen = within(canvasElement.ownerDocument.body);
+		await userEvent.tab();
+		const button = canvas.getByRole('button', { name: copyTool.label });
+		await expect(button).toHaveFocus();
+		await expect(button).toHaveAttribute('aria-disabled', 'true');
+		await expect(button).not.toHaveAttribute('disabled');
+		await waitFor(() => expect(screen.getByText(copyTool.label)).toBeVisible());
+		await userEvent.keyboard('{Enter}');
+		await userEvent.keyboard(' ');
+		await userEvent.click(button);
+		await expect(args.onPress).not.toHaveBeenCalled();
+		await expect(button).toHaveFocus();
 	}}
 />
 

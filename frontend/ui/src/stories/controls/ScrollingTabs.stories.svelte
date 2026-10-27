@@ -25,7 +25,7 @@
 
 Keyboard:
 
-- Tab: reaches the tab showing, then the forward step
+- Tab: reaches the back step, the tab showing, then the forward step; a step at its end keeps its place and does nothing
 - ← and →: move to the previous or next tab and show it; the tab comes fully into view
 - Home and End: move to the first or last tab and show it
 - Enter or Space on a step: moves the row by one tab`
@@ -53,11 +53,11 @@ Keyboard:
 		return [...list.children].filter((child) => child instanceof HTMLElement);
 	}
 
-	/** Presses `button` until it is disabled, at most `presses` times. */
-	async function pressUntilDisabled(button: HTMLElement, presses: number): Promise<void> {
-		if (presses === 0 || button.hasAttribute('disabled')) return;
+	/** Presses `button` until it says it is at its end, at most `presses` times. */
+	async function pressUntilAtEnd(button: HTMLElement, presses: number): Promise<void> {
+		if (presses === 0 || button.getAttribute('aria-disabled') === 'true') return;
 		await userEvent.click(button);
-		await pressUntilDisabled(button, presses - 1);
+		await pressUntilAtEnd(button, presses - 1);
 	}
 </script>
 
@@ -123,21 +123,25 @@ Keyboard:
 		const list = canvas.getByRole('tablist');
 		const back = canvas.getByRole('button', { name: TAB_STEP_WORDS.back });
 		const forward = canvas.getByRole('button', { name: TAB_STEP_WORDS.forward });
-		await expect(back).toBeDisabled();
-		await expect(forward).toBeEnabled();
-		await pressUntilDisabled(forward, SCROLLING_TABS.length);
+		await expect(back).toHaveAttribute('aria-disabled', 'true');
+		await expect(forward).not.toHaveAttribute('aria-disabled');
+		await pressUntilAtEnd(forward, SCROLLING_TABS.length);
 		await waitFor(async () => {
-			await expect(forward).toBeDisabled();
+			await expect(forward).toHaveAttribute('aria-disabled', 'true');
 		});
-		await expect(back).toBeEnabled();
+		await expect(forward).toHaveFocus();
+		await expect(forward).not.toHaveAttribute('disabled');
+		await expect(back).not.toHaveAttribute('aria-disabled');
 		await expect(
 			Math.abs(list.scrollLeft - (list.scrollWidth - list.clientWidth))
 		).toBeLessThanOrEqual(1);
-		await pressUntilDisabled(back, SCROLLING_TABS.length);
+		await pressUntilAtEnd(back, SCROLLING_TABS.length);
 		await waitFor(async () => {
-			await expect(back).toBeDisabled();
+			await expect(back).toHaveAttribute('aria-disabled', 'true');
 		});
-		await expect(forward).toBeEnabled();
+		await expect(back).toHaveFocus();
+		await expect(back).not.toHaveAttribute('disabled');
+		await expect(forward).not.toHaveAttribute('aria-disabled');
 		await expect(list.scrollLeft).toBeLessThanOrEqual(1);
 	}}
 />
@@ -147,6 +151,8 @@ Keyboard:
 	play={async ({ canvas, args }) => {
 		const list = canvas.getByRole('tablist');
 		const items = tabsOf(list);
+		await userEvent.tab();
+		await expect(canvas.getByRole('button', { name: TAB_STEP_WORDS.back })).toHaveFocus();
 		await userEvent.tab();
 		await expect(canvas.getByRole('tab', { name: 'Gallery 24' })).toHaveFocus();
 		for (const item of items.slice(1)) {
@@ -174,6 +180,7 @@ Keyboard:
 <Story
 	name="Steps Never Choose"
 	play={async ({ canvas, args }) => {
+		await userEvent.tab();
 		await userEvent.tab();
 		await userEvent.tab();
 		await expect(canvas.getByRole('button', { name: TAB_STEP_WORDS.forward })).toHaveFocus();

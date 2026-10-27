@@ -73,6 +73,37 @@ function stepButton(name: string): HTMLButtonElement {
 	return found;
 }
 
+/** Whether a step button says it stands at its end; it stays focusable there. */
+function atEnd(button: HTMLButtonElement): boolean {
+	return button.getAttribute('aria-disabled') === 'true';
+}
+
+/** Waits for two frames, so a scroll's event has been handled. */
+async function frames(): Promise<void> {
+	await new Promise((resolve) => requestAnimationFrame(resolve));
+	await new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+/**
+ * Presses Enter on the step named `name` while it holds focus, until it stands
+ * at its end, at most `presses` times; each press must move the list.
+ */
+async function enterUntilAtEnd(name: string, list: HTMLElement, presses: number): Promise<void> {
+	const button = stepButton(name);
+	for (
+		let left = presses;
+		left > 0 && document.activeElement === button && !atEnd(button);
+		left -= 1
+	) {
+		const before = list.scrollLeft;
+		await userEvent.keyboard('{Enter}');
+		await vi.waitFor(() => {
+			expect(list.scrollLeft).not.toBe(before);
+		});
+		await frames();
+	}
+}
+
 /** The tab list. */
 function tabList(): HTMLElement {
 	const [found] = page.getByRole('tablist').elements();
@@ -170,7 +201,7 @@ describe('ScrollingTabs', () => {
 		const items = tabsOf(list);
 		list.scrollLeft = furthest(list);
 		await vi.waitFor(() => {
-			expect(stepButton('More tabs').disabled).toBe(true);
+			expect(atEnd(stepButton('More tabs'))).toBe(true);
 		});
 		const last = items.length - 1;
 		const lastStart = startOf(list, items[last] ?? list);
@@ -192,35 +223,68 @@ describe('ScrollingTabs', () => {
 		renderTabs(box);
 		const list = tabList();
 		await vi.waitFor(() => {
-			expect(stepButton('Earlier tabs').disabled).toBe(true);
+			expect(atEnd(stepButton('Earlier tabs'))).toBe(true);
 		});
-		expect(stepButton('More tabs').disabled).toBe(false);
+		expect(atEnd(stepButton('More tabs'))).toBe(false);
 		list.scrollLeft = furthest(list);
 		await vi.waitFor(() => {
-			expect(stepButton('More tabs').disabled).toBe(true);
+			expect(atEnd(stepButton('More tabs'))).toBe(true);
 		});
-		expect(stepButton('Earlier tabs').disabled).toBe(false);
+		expect(atEnd(stepButton('Earlier tabs'))).toBe(false);
 		list.scrollLeft = list.scrollLeft / 2;
 		await vi.waitFor(() => {
-			expect(stepButton('More tabs').disabled).toBe(false);
+			expect(atEnd(stepButton('More tabs'))).toBe(false);
 		});
 		const wide = boxOf(1400);
 		renderTabs(wide, { label: 'Wide', words: { back: 'Back wide', forward: 'Forward wide' } });
 		await vi.waitFor(() => {
-			expect(stepButton('Back wide').disabled).toBe(true);
+			expect(atEnd(stepButton('Back wide'))).toBe(true);
 		});
-		expect(stepButton('Forward wide').disabled).toBe(true);
+		expect(atEnd(stepButton('Forward wide'))).toBe(true);
+	});
+
+	it('keeps focus on each step at its end, says so, and moves nothing on another press', async () => {
+		const box = boxOf(260);
+		renderTabs(box);
+		const list = tabList();
+		await vi.waitFor(() => {
+			expect(atEnd(stepButton('More tabs'))).toBe(false);
+		});
+		stepButton('More tabs').focus();
+		await enterUntilAtEnd('More tabs', list, sections.length);
+		const forward = stepButton('More tabs');
+		expect(document.activeElement).toBe(forward);
+		expect(forward.getAttribute('aria-disabled')).toBe('true');
+		expect(forward.hasAttribute('disabled')).toBe(false);
+		const end = list.scrollLeft;
+		expect(Math.abs(end - furthest(list))).toBeLessThanOrEqual(1);
+		await userEvent.keyboard('{Enter}');
+		await frames();
+		expect(list.scrollLeft).toBe(end);
+		expect(document.activeElement).toBe(forward);
+		stepButton('Earlier tabs').focus();
+		await enterUntilAtEnd('Earlier tabs', list, sections.length);
+		const back = stepButton('Earlier tabs');
+		expect(document.activeElement).toBe(back);
+		expect(back.getAttribute('aria-disabled')).toBe('true');
+		expect(back.hasAttribute('disabled')).toBe(false);
+		expect(list.scrollLeft).toBeLessThanOrEqual(1);
+		const start = list.scrollLeft;
+		await userEvent.keyboard('{Enter}');
+		await frames();
+		expect(list.scrollLeft).toBe(start);
+		expect(document.activeElement).toBe(back);
 	});
 
 	it('keeps up with the room: a box that grows stops needing the steps', async () => {
 		const box = boxOf(260);
 		renderTabs(box);
 		await vi.waitFor(() => {
-			expect(stepButton('More tabs').disabled).toBe(false);
+			expect(atEnd(stepButton('More tabs'))).toBe(false);
 		});
 		box.style.width = '1400px';
 		await vi.waitFor(() => {
-			expect(stepButton('More tabs').disabled).toBe(true);
+			expect(atEnd(stepButton('More tabs'))).toBe(true);
 		});
 	});
 
@@ -228,7 +292,7 @@ describe('ScrollingTabs', () => {
 		const box = boxOf(260);
 		renderTabs(box);
 		await vi.waitFor(() => {
-			expect(stepButton('More tabs').disabled).toBe(false);
+			expect(atEnd(stepButton('More tabs'))).toBe(false);
 		});
 		tab('Gallery').focus();
 		await userEvent.tab();
@@ -346,7 +410,7 @@ describe('ScrollingTabs', () => {
 		const list = tabList();
 		const items = tabsOf(list);
 		await vi.waitFor(() => {
-			expect(stepButton('More tabs').disabled).toBe(false);
+			expect(atEnd(stepButton('More tabs'))).toBe(false);
 		});
 		stepButton('More tabs').click();
 		await vi.waitFor(() => {

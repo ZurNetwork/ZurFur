@@ -35,7 +35,7 @@
 		icon={ICONS[step.side]}
 		label={stepWords[step.side]}
 		size="sm"
-		disabled={step.atEdge}
+		disabled={step.atEdge ? 'focusable' : false}
 		onPress={step.step}
 	/>
 {/snippet}
