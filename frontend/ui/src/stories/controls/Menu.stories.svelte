@@ -20,7 +20,7 @@
 		title: 'Controls/Menu',
 		component: Menu,
 		render: template,
-		tags: ['autodocs'],
+		tags: ['autodocs', 'simple'],
 		args: {
 			trigger: WORDS_TRIGGER,
 			items: COMMISSION_ACTIONS,

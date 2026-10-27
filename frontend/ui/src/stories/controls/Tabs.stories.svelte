@@ -10,7 +10,7 @@
 		title: 'Controls/Tabs',
 		component: Tabs,
 		render: template,
-		tags: ['autodocs'],
+		tags: ['autodocs', 'simple'],
 		args: {
 			label: TABS_LABEL,
 			tabs: PROFILE_TABS,

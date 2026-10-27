@@ -12,7 +12,7 @@
 	const { Story } = defineMeta({
 		title: 'Controls/Icon Button',
 		component: IconButton,
-		tags: ['autodocs'],
+		tags: ['autodocs', 'simple'],
 		args: { icon: copyTool.icon, label: copyTool.label, onPress: fn() },
 		argTypes: {
 			icon: { control: 'select', options: [...ICON_NAMES] },

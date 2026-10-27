@@ -10,7 +10,7 @@
 		title: 'Controls/Text Input',
 		component: TextInput,
 		render: template,
-		tags: ['autodocs'],
+		tags: ['autodocs', 'simple'],
 		args: {
 			label: TEXT_WORDS.title,
 			value: '',

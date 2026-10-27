@@ -6,7 +6,7 @@
 	const { Story } = defineMeta({
 		title: 'Controls/Icon',
 		component: Icon,
-		tags: ['autodocs'],
+		tags: ['autodocs', 'simple'],
 		args: { name: 'send' },
 		argTypes: {
 			name: { control: 'select', options: [...ICON_NAMES] },

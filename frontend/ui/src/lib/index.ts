@@ -63,6 +63,13 @@ export type {
 	SelectOption,
 	TabItem
 } from './controls/types.ts';
-export { NO_MOVES, type MoveName, type Moves, type NoteOrigin } from './environment/moves.ts';
+export type { FeedbackAction } from './surfaces/types.ts';
+export {
+	NO_MOVES,
+	type LoopKind,
+	type MoveName,
+	type Moves,
+	type NoteOrigin
+} from './environment/moves.ts';
 export { NO_SOUNDS, type SoundCue, type Sounds } from './environment/sounds.ts';
 export { STILL_ENVIRONMENT, provideEnvironment, type Environment } from './environment/context.ts';
