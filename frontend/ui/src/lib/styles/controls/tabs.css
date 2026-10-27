@@ -77,6 +77,22 @@
 	font-weight: var(--weight-regular);
 }
 
+/* A type every choice shares is shown once, muted and in the mono face, beside the piece. */
+.zf-seg-row {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2);
+	max-width: 100%;
+}
+
+.zf-seg__type {
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+	line-height: var(--leading-sm);
+	color: var(--color-text-muted);
+}
+
 /* A count is neutral and muted, never red. */
 .zf-tab__count {
 	min-width: var(--space-4);
