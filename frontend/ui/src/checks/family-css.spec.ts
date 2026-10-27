@@ -214,20 +214,6 @@ function scanCss(css: string): Scan {
 	return scan;
 }
 
-/**
- * The rules known to set more than placement on a target that names no class,
- * by family file and selector. The list only shrinks: each entry must still
- * match a rule.
- */
-const KNOWN_UNPLACED: readonly { readonly file: string; readonly selector: string }[] = [
-	{ file: 'surfaces/toast.css', selector: '.zf-toast-stack, .zf-toast-stack > *' }
-];
-
-/** The known selectors for one family file. */
-function knownUnplacedIn(path: string): readonly string[] {
-	return KNOWN_UNPLACED.filter((known) => known.file === path).map((known) => known.selector);
-}
-
 /** The properties a family file may never move: the paper classes and the motion seam own them. */
 const MOVING_PROPERTY =
 	/(?<![\w-])(?:translate|transform|scale|rotate|opacity|filter|box-shadow|top|left|width|height|all)(?![\w-])/gi;
@@ -273,8 +259,8 @@ const NAMED_COLOURS = new Set(
 	whitesmoke yellow yellowgreen`.split(/\s+/)
 );
 
-/** What one family file breaks, as readable lines, the known selectors aside; empty when it keeps every rule. */
-function findingsIn(css: string, knownSelectors: readonly string[] = []): readonly string[] {
+/** What one family file breaks, as readable lines; empty when it keeps every rule. */
+function findingsIn(css: string): readonly string[] {
 	const scan = scanCss(css);
 	const atRules = scan.atRules
 		.filter((name) => name.endsWith('keyframes'))
@@ -323,12 +309,10 @@ function findingsIn(css: string, knownSelectors: readonly string[] = []): readon
 		)
 		.filter((name) => !TOKEN_NAMES.has(name))
 		.map((name) => `${name}: not a token`);
-	const unplaced = scan.unplaced
-		.filter(({ selector }) => !knownSelectors.includes(selector))
-		.map(
-			({ selector, property, value }) =>
-				`${selector} { ${property}: ${value} }: only placement on a target that names no class`
-		);
+	const unplaced = scan.unplaced.map(
+		({ selector, property, value }) =>
+			`${selector} { ${property}: ${value} }: only placement on a target that names no class`
+	);
 	return [...atRules, ...declarations, ...classes, ...tokens, ...unplaced];
 }
 
@@ -342,12 +326,7 @@ describe('the family files', () => {
 	});
 
 	it.each(familyFiles)('%s keeps to tokens, paper and state classes, and colour fades', (path) => {
-		expect(findingsIn(readStyle(path), knownUnplacedIn(path))).toEqual([]);
-	});
-
-	it.each(KNOWN_UNPLACED)('still need $file’s known rule $selector', ({ file, selector }) => {
-		const found = scanCss(readStyle(file)).unplaced.map((unplaced) => unplaced.selector);
-		expect(found).toContain(selector);
+		expect(findingsIn(readStyle(path))).toEqual([]);
 	});
 
 	it('are each imported by the styles entry', () => {

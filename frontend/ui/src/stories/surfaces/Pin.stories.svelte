@@ -24,7 +24,7 @@
 			layout: 'centered',
 			docs: {
 				description: {
-					component: `A simple component: a numbered mark on a piece of art, for a note about one spot. It sits on its point, given as fractions of the art's width and height, and a point off the art draws no pin. Its name is read out instead of the mark, so the name says the number too. Open means its thread is showing.
+					component: `A simple component: a numbered mark on a piece of art, for a note about one spot. It sits on its point, given as fractions of the art's width and height, and a point off the art draws no pin. Its name is read out instead of the mark, so the name says the number too, and the spot in words, such as Pin 1: Left ear, since where it sits on the art is not read out. Open means its thread is showing.
 
 Keyboard:
 

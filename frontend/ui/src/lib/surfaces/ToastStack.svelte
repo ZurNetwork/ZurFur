@@ -12,7 +12,7 @@
 </script>
 
 <section class="zf-toast-stack" aria-label={label}>
-	<div aria-live="polite">
+	<div class="zf-toast-stack__live" aria-live="polite">
 		{@render children?.()}
 	</div>
 </section>

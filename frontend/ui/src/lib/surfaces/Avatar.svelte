@@ -51,14 +51,13 @@
 	const shownPicture = $derived(checkedPicture === failedPicture ? undefined : checkedPicture);
 	const shownName = $derived(typeof name === 'string' ? name : '');
 	const initial = $derived(initialOf(shownName));
-	const isolatedName = $derived(
-		`${FIRST_STRONG_ISOLATE}${shownName.replace(BIDI_CONTROLS, '')}${POP_DIRECTIONAL_ISOLATE}`
-	);
+	const heardName = $derived(shownName.replace(BIDI_CONTROLS, ''));
+	const isolatedName = $derived(`${FIRST_STRONG_ISOLATE}${heardName}${POP_DIRECTIONAL_ISOLATE}`);
 	/**
-	 * Whether the circle is read out as the name: only alone, and only when the name has something
-	 * to show. Beside its text, or with nothing to show, it is hidden.
+	 * Whether the circle is read out as the name: only alone, and only when the name, without its
+	 * bidi controls and outer white space, isn't empty. Beside its text, or with no name, it is hidden.
 	 */
-	const isReadAsName = $derived(!textShown && initial !== undefined);
+	const isReadAsName = $derived(!textShown && heardName.trim() !== '');
 	const classes = $derived([
 		'zf-avatar',
 		`zf-avatar--${avatarSizeOf(size)}`,

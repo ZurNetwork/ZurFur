@@ -5,7 +5,7 @@
 	import { toastStackWords } from '../fixtures/surfaces.ts';
 
 	const { Story } = defineMeta({
-		title: 'Surfaces and Feedback/ToastStack',
+		title: 'Surfaces and Feedback/Toast Stack',
 		component: ToastStack,
 		tags: ['autodocs', 'simple', 'layer', 'phone-320'],
 		argTypes: {

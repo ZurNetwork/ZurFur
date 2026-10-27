@@ -31,7 +31,16 @@
 		0 0 0 var(--space-1) var(--color-pin-ring);
 }
 
+/*
+ * Focused: from its edge out, a halo band, a gold band, a halo band, then a ring
+ * outline, so the pin's own two colours show on any art. In forced colours the
+ * shadows drop and the outline stays.
+ */
 .zf-pin:focus-visible {
-	outline: 2px solid var(--color-focus);
-	outline-offset: var(--space-1);
+	box-shadow:
+		0 0 0 2px var(--color-pin-halo),
+		0 0 0 var(--space-1) var(--color-focus),
+		0 0 0 calc(var(--space-1) + 2px) var(--color-pin-halo);
+	outline: 2px solid var(--color-pin-ring);
+	outline-offset: calc(var(--space-1) + 2px);
 }

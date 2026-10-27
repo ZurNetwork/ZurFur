@@ -14,7 +14,7 @@ import {
 export const cardWords = {
 	title: 'Sona Ref Sheet',
 	note: 'Front, side and back, flats done',
-	article: 'Comm update',
+	article: 'Comm Update',
 	articleNote: 'Lineart is in, colours next',
 	action: 'Open the ref'
 } as const;

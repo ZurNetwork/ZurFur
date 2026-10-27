@@ -24,6 +24,16 @@ function segmentsIn(root: HTMLElement): readonly Element[] {
 	return [...root.querySelectorAll('.zf-pill__seg')];
 }
 
+/** The words a part shows, without the pause read out before a second part. */
+function shownLabel(segment: Element | undefined): string | undefined {
+	return segment?.lastElementChild?.textContent.trim();
+}
+
+/** The text of an element as read in order, its runs of white space folded to one. */
+function readText(element: Element): string {
+	return element.textContent.replace(/\s+/g, ' ').trim();
+}
+
 describe('StatusPill', () => {
 	it('draws one part with its label, tone and icon', () => {
 		render(StatusPill, { parts: [working], testid: 'pill' });
@@ -40,17 +50,37 @@ describe('StatusPill', () => {
 		expect(rest).toEqual([]);
 		expect(first?.classList.contains('zf-status--progress')).toBe(true);
 		expect(second?.classList.contains('zf-status--waiting')).toBe(true);
-		expect(second?.textContent.trim()).toBe('Waiting on Mika');
+		expect(shownLabel(second)).toBe('Waiting on Mika');
 	});
 
-	it('separates its parts by layout: a border, and no separator text', () => {
+	it('separates its parts by layout: a border, and no separator drawn', () => {
 		render(StatusPill, { parts: [working, waiting], testid: 'pill' });
 		const pill = byTestId('pill');
 		const [, second] = segmentsIn(pill);
 		if (second === undefined) throw new Error('the second part is missing');
 		expect(getComputedStyle(second).borderLeftWidth).toBe('1px');
-		expect(pill.textContent.replace(/\s+/g, ' ').trim()).toBe('Sketching Waiting on Mika');
 		expect(pill.textContent).not.toContain(MIDDLE_DOT);
+		const drawn = [...pill.querySelectorAll('span')].filter(
+			(span) => !span.classList.contains('zf-sr') && span.children.length === 0
+		);
+		expect(drawn.map((span) => span.textContent.trim())).toEqual(['Sketching', 'Waiting on Mika']);
+	});
+
+	it('reads its two parts with a pause between them, for screen readers only', () => {
+		render(StatusPill, { parts: [working, waiting], testid: 'pill' });
+		const pill = byTestId('pill');
+		expect(readText(pill)).toBe('Sketching, Waiting on Mika');
+		const pauses = [...pill.querySelectorAll('.zf-sr')];
+		expect(pauses.map((pause) => pause.textContent)).toEqual([', ']);
+		expect(pauses[0]?.parentElement).toBe(segmentsIn(pill)[1]);
+	});
+
+	it('reads one part with no pause', () => {
+		render(StatusPill, { parts: [working], testid: 'pill' });
+		const pill = byTestId('pill');
+		expect(readText(pill)).toBe('Sketching');
+		expect(pill.textContent).not.toContain(',');
+		expect(pill.querySelector('.zf-sr')).toBeNull();
 	});
 
 	it('draws at most two parts', () => {
@@ -107,7 +137,7 @@ describe('StatusPill', () => {
 		const pill = byTestId('pill');
 		const [first, second] = segmentsIn(pill);
 		expect(first?.textContent.trim()).toBe(markup);
-		expect(second?.textContent.trim()).toBe(markup);
+		expect(shownLabel(second)).toBe(markup);
 		expect(pill.querySelector('.zf-status__fact')?.textContent.trim()).toBe(markup);
 		expect(page.getByText(markup).elements()).toHaveLength(3);
 	});

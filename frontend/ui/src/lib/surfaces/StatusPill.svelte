@@ -4,7 +4,7 @@
 	import type { StatusFact, StatusParts } from './types';
 
 	interface Props {
-		/** One part, or two side by side; the pill never draws a third. */
+		/** One part, or two side by side, read with a pause between; the pill never draws a third. */
 		readonly parts: StatusParts;
 		/** A quiet line beside the pill. */
 		readonly fact?: StatusFact | undefined;
@@ -23,6 +23,7 @@
 			{#each shownParts as part, index (index)}
 				{@const icon = iconOf(part.icon)}
 				<span class="zf-pill__seg zf-status--{statusToneOf(part.tone)}">
+					{#if index > 0}<span class="zf-sr">,&#32;</span>{/if}
 					{#if icon !== undefined}<Icon name={icon} size="sm" />{/if}
 					<span>{part.label}</span>
 				</span>

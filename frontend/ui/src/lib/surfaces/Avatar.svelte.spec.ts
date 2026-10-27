@@ -193,19 +193,63 @@ describe('Avatar', () => {
 		expect(circle.querySelector('bdi')).not.toBeNull();
 	});
 
-	it.each(['', '...', '!?', ' '])('draws a blank, hidden circle for the name %j', (name) => {
+	it.each(['', ' ', '\u202E', `\u2066 ${PDI}`])(
+		'alone, draws a blank, hidden circle for the empty name %j',
+		(name) => {
+			const shown = {
+				name,
+				size: 'md',
+				tone: 'neutral',
+				textShown: false,
+				testid: 'avatar'
+			} as const;
+			render(Avatar, shown);
+			const circle = circleOf('avatar');
+			expect(circle.getAttribute('aria-hidden')).toBe('true');
+			expect(circle.getAttribute('role')).toBeNull();
+			expect(circle.textContent.trim()).toBe('');
+			expect(page.getByRole('img').elements()).toEqual([]);
+		}
+	);
+
+	it.each([
+		['...', false],
+		['...', true],
+		['!?', false],
+		['!?', true]
+	] as const)(
+		'alone, is an image named %j even with no letter to show (picture %j)',
+		async (name, withPicture) => {
+			const shown = {
+				name,
+				picture: withPicture ? fixturePicture() : undefined,
+				size: 'md',
+				tone: 'neutral',
+				textShown: false,
+				testid: 'avatar'
+			} as const;
+			render(Avatar, shown);
+			const circle = circleOf('avatar');
+			expect(circle.getAttribute('role')).toBe('img');
+			expect(circle.getAttribute('aria-hidden')).toBeNull();
+			expect(circle.getAttribute('aria-label')).toBe(`${FSI}${name}${PDI}`);
+			const named = page.getByRole('img', {
+				name: new RegExp(`^${FSI}?${name.replace(/[.?!]/g, '\\$&')}${PDI}?$`)
+			});
+			await expect.element(named).toBeInTheDocument();
+		}
+	);
+
+	it.each(['...', '!?'])('beside its text, hides the circle for the name %j', (name) => {
 		const shown = {
 			name,
 			size: 'md',
 			tone: 'neutral',
-			textShown: false,
+			textShown: true,
 			testid: 'avatar'
 		} as const;
 		render(Avatar, shown);
-		const circle = circleOf('avatar');
-		expect(circle.getAttribute('aria-hidden')).toBe('true');
-		expect(circle.getAttribute('role')).toBeNull();
-		expect(circle.textContent.trim()).toBe('');
+		expect(circleOf('avatar').getAttribute('aria-hidden')).toBe('true');
 		expect(page.getByRole('img').elements()).toEqual([]);
 	});
 

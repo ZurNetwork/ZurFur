@@ -17,6 +17,17 @@ function liveRegion(container: HTMLElement): Element {
 	return found;
 }
 
+/** How an element stacks what it holds. */
+function stackingOf(element: Element) {
+	const style = getComputedStyle(element);
+	return {
+		display: style.display,
+		direction: style.flexDirection,
+		align: style.alignItems,
+		gap: style.rowGap
+	};
+}
+
 describe('ToastStack', () => {
 	it('is a region named by its label', async () => {
 		render(ToastStack, { label: 'Notifications' });
@@ -26,6 +37,17 @@ describe('ToastStack', () => {
 	it('draws its family class on the region', () => {
 		const { container } = render(ToastStack, { label: 'Notifications' });
 		expect(container.querySelector('section')?.classList.contains('zf-toast-stack')).toBe(true);
+	});
+
+	it('lays out its live region by its own class, stacking the toasts like the region', () => {
+		const { container } = render(ToastStack, { label: 'Notifications' });
+		const live = liveRegion(container);
+		expect(live.classList.contains('zf-toast-stack__live')).toBe(true);
+		const region = container.querySelector('section');
+		expect(region).not.toBeNull();
+		if (region === null) return;
+		expect(stackingOf(live)).toEqual(stackingOf(region));
+		expect(stackingOf(live)).toMatchObject({ display: 'flex', direction: 'column' });
 	});
 
 	it('has its polite live region while empty', () => {

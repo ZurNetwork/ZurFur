@@ -1,10 +1,12 @@
 import { page, userEvent } from 'vitest/browser';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import type { ComponentProps } from 'svelte';
 import RecordingEnvironment from '../../checks/testing/RecordingEnvironment.svelte';
 import Pin from './Pin.svelte';
 import { pinPointOf, type PinPoint } from './pin-point.ts';
+import { contrastRatio, parseColor, type Rgba } from '../../gallery/contrast/contrast.ts';
+import { SKIN_ATTRIBUTE, type Skin } from '../styles/environment.ts';
 import '../styles/index.ts';
 
 type SeamCall = Parameters<ComponentProps<typeof RecordingEnvironment>['onRecord']>[0];
@@ -155,5 +157,115 @@ describe('Pin', () => {
 	it('shows no word of its own', () => {
 		const { container } = render(Pin, pinProps());
 		expect(container.textContent.trim()).toBe('3');
+	});
+});
+
+/** The look a pin wears around its edge: its outline and its rings of shadow. */
+interface EdgeLook {
+	readonly outlineStyle: string;
+	readonly outlineWidth: string;
+	readonly outlineColor: string;
+	readonly outlineOffset: string;
+	readonly boxShadow: string;
+}
+
+function edgeLookOf(element: Element): EdgeLook {
+	const style = getComputedStyle(element);
+	return {
+		outlineStyle: style.outlineStyle,
+		outlineWidth: style.outlineWidth,
+		outlineColor: style.outlineColor,
+		outlineOffset: style.outlineOffset,
+		boxShadow: style.boxShadow
+	};
+}
+
+/** One computed shadow ring: its colour and how far it spreads past the edge, in pixels. */
+interface Band {
+	readonly color: Rgba;
+	readonly spread: number;
+}
+
+/** A colour read from computed text, or a failed test. */
+function colorOf(text: string): Rgba {
+	const color = parseColor(text);
+	if (color.kind !== 'read') throw new Error(color.reason);
+	return color.value;
+}
+
+/** The token colour as the page resolves it on `element`. */
+function tokenColor(element: Element, name: string): Rgba {
+	const probe = document.createElement('span');
+	probe.style.color = `var(${name})`;
+	element.append(probe);
+	const color = colorOf(getComputedStyle(probe).color);
+	probe.remove();
+	return color;
+}
+
+/** The computed `box-shadow` as rings, each a colour and a spread with no offset or blur. */
+function bandsOf(boxShadow: string): readonly Band[] {
+	if (boxShadow === 'none') return [];
+	const layers = boxShadow.split(/,(?![^(]*\))/).map((layer) => layer.trim());
+	return layers.map((layer) => {
+		const match = /^(rgba?\([^)]*\)) 0px 0px 0px (\d+(?:\.\d+)?)px$/.exec(layer);
+		if (match === null) throw new Error(`${layer} is not a plain ring`);
+		const [, color = '', spread = ''] = match;
+		return { color: colorOf(color), spread: Number(spread) };
+	});
+}
+
+function pixels(text: string): number {
+	return Number(text.replace(/px$/, ''));
+}
+
+describe('Pin focused by keyboard', () => {
+	afterEach(() => {
+		document.documentElement.removeAttribute(SKIN_ATTRIBUTE);
+	});
+
+	it.each<Skin>(['dark', 'light'])(
+		'in the %s skin, rings itself in its own two colours, at least 9:1 apart, outside its gold',
+		async (skin) => {
+			document.documentElement.setAttribute(SKIN_ATTRIBUTE, skin);
+			render(Pin, pinProps());
+			await userEvent.tab();
+			const pin = byTestId('pin');
+			expect(pin.matches(':focus-visible')).toBe(true);
+			const look = edgeLookOf(pin);
+			const ring = tokenColor(pin, '--color-pin-ring');
+			const halo = tokenColor(pin, '--color-pin-halo');
+
+			expect(look.outlineStyle).toBe('solid');
+			expect(pixels(look.outlineWidth)).toBeGreaterThanOrEqual(2);
+			expect(colorOf(look.outlineColor)).toEqual(ring);
+
+			const bands = [...bandsOf(look.boxShadow)].sort((one, other) => one.spread - other.spread);
+			const outer = bands.at(-1);
+			const under = bands.at(-2);
+			expect(outer).toBeDefined();
+			expect(under).toBeDefined();
+			if (outer === undefined || under === undefined) return;
+			expect(outer.color).toEqual(halo);
+			expect(outer.spread - under.spread).toBeGreaterThanOrEqual(2);
+			expect(pixels(look.outlineOffset)).toBe(outer.spread);
+			expect(contrastRatio(colorOf(look.outlineColor), outer.color)).toBeGreaterThanOrEqual(9);
+			expect(under.color).toEqual(tokenColor(pin, '--color-focus'));
+		}
+	);
+
+	it('looks unlike the resting pin and unlike the open one', async () => {
+		render(Pin, pinProps({ testid: 'resting', label: 'Resting' }));
+		render(Pin, pinProps({ testid: 'open', label: 'Open', open: true }));
+		render(Pin, pinProps({ testid: 'focused', label: 'Focused' }));
+		await userEvent.tab();
+		await userEvent.tab();
+		await userEvent.tab();
+		const focused = byTestId('focused');
+		expect(focused.matches(':focus-visible')).toBe(true);
+		const look = edgeLookOf(focused);
+		expect(look).not.toEqual(edgeLookOf(byTestId('resting')));
+		expect(look).not.toEqual(edgeLookOf(byTestId('open')));
+		expect(look.boxShadow).not.toBe(edgeLookOf(byTestId('open')).boxShadow);
 	});
 });

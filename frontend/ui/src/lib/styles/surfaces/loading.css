@@ -9,6 +9,13 @@
 	border-radius: var(--radius-full);
 }
 
+/* Forced colours paint a transparent border in the text colour: the gap takes the page's colour instead. */
+@media (forced-colors: active) {
+	.zf-spinner {
+		border-right-color: Canvas;
+	}
+}
+
 /* The status form: the ring beside its label. */
 .zf-spinner-wrap {
 	display: inline-flex;

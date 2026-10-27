@@ -20,7 +20,7 @@
 			layout: 'centered',
 			docs: {
 				description: {
-					component: `A simple component: a small tag for a short fact, such as a state, a kind or a count of something. It takes six tones: Neutral is the default, Accent marks what is chosen, and Iris, Crown, Rose and Taupe sort things by colour. The label is plain text and gets cut short when it is too long. An icon can sit before it.`
+					component: `A simple component: a small tag for a short fact, such as a state, a kind or a count of something. It takes six tones: Neutral is the default, Accent marks what is chosen, and Iris, Crown, Rose and Taupe tell kinds apart. The label names the kind, and the tone only repeats it. The label is plain text and gets cut short when it is too long. An icon can sit before it.`
 				}
 			}
 		}

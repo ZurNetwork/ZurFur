@@ -60,7 +60,7 @@
 
 /* The stack: bottom-right on desktop; its live region stacks the toasts the same way. */
 .zf-toast-stack,
-.zf-toast-stack > * {
+.zf-toast-stack__live {
 	display: flex;
 	flex-direction: column;
 	align-items: flex-end;
@@ -79,7 +79,7 @@
 /* Phones (480px is `breakpoint-sm`): full width at the bottom. */
 @media (max-width: 480px) {
 	.zf-toast-stack,
-	.zf-toast-stack > * {
+	.zf-toast-stack__live {
 		align-items: stretch;
 	}
 

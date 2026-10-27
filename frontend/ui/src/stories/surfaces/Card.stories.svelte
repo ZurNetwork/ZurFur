@@ -1,6 +1,6 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import { fn } from 'storybook/test';
+	import { expect, fn } from 'storybook/test';
 	import { Button, Card, Skeleton } from '@zurfur/ui';
 	import type { CardElement, CardPadding } from '@zurfur/ui';
 	import { cardList, cardWords } from '../fixtures/surfaces.ts';
@@ -20,13 +20,13 @@
 		render: template,
 		tags: ['autodocs', 'simple'],
 		argTypes: {
-			as: { control: 'inline-radio', options: ['div', 'section', 'article', 'li'] },
+			as: { control: 'inline-radio', options: ['div', 'section', 'article'] },
 			padding: { control: 'inline-radio', options: ['default', 'none'] }
 		},
 		parameters: {
 			docs: {
 				description: {
-					component: `A simple component: a sheet laid on the page, for one thing you act on, such as a comm, a ref or a piece. It has no title or action slots of its own, so it holds whatever it is given. Only objects are cards. A group of things is never one card. It is a div unless you ask for a section, an article or a list item; any other element becomes a div. No padding is for a card that holds a picture edge to edge.`
+					component: `A simple component: a sheet laid on the page, for one thing you act on, such as a comm, a ref or a piece. It has no title or action slots of its own, so it holds whatever it is given. Only objects are cards. A group of things is never one card. It is a div unless you ask for a section, an article or a list item; any other element becomes a div. A list item belongs inside a list, as In a List shows. No padding is for a card that holds a picture edge to edge.`
 				}
 			}
 		}
@@ -54,7 +54,7 @@
 {/snippet}
 
 {#snippet inAList(_args: Shown)}
-	<ul>
+	<ul role="list">
 		{#each cardList as work (work)}
 			<Card as="li">
 				<p>{work}</p>
@@ -76,6 +76,15 @@
 
 <Story name="As an Article" template={article} />
 
-<Story name="In a List" template={inAList} />
+<Story
+	name="In a List"
+	template={inAList}
+	play={async ({ canvas }) => {
+		const list = canvas.getByRole('list');
+		await expect(list.tagName).toBe('UL');
+		await expect(list).toHaveAttribute('role', 'list');
+		await expect(canvas.getAllByRole('listitem')).toHaveLength(cardList.length);
+	}}
+/>
 
 <Story name="With Actions" template={withActions} />

@@ -785,10 +785,10 @@ function bitsImportRefusals(facts: Facts, table: CompositionTable): readonly Fin
  * holds only glyphs and internal pieces, a composite composes and draws no
  * owned element, owned elements and `zf-` families stay with the files the
  * table lists, each family has one stylesheet row and none for a family a
- * component styles itself, Spinner is held only as the glyph, no library file
- * imports the package entry, stories compose and carry their component's
- * kind, bits-ui names stay with their files and its link and image parts with
- * none, and the exceptions only shrink.
+ * component styles itself, a simple file holds Spinner only as the glyph, no
+ * library file imports the package entry, stories compose and carry their
+ * component's kind, bits-ui names stay with their files and its link and image
+ * parts with none, and the exceptions only shrink.
  */
 export function compositionRefusals(input: CompositionInput): readonly CompositionRefusal[] {
 	const { table } = input;
@@ -801,6 +801,15 @@ export function compositionRefusals(input: CompositionInput): readonly Compositi
 	const internalFiles = new Set<string>(table.internal.map((row) => row.file));
 	const glyphFiles = new Set<string>(
 		exported.filter((component) => table.glyphs.includes(component.name)).map((c) => c.file)
+	);
+	/** The simple library files, exported or internal, that may hold Spinner only as the glyph. */
+	const glyphOnlyFiles = new Set<string>(
+		[
+			...exported
+				.filter((component) => rowFor(table.kinds, component.name) === 'simple')
+				.map((component) => component.file),
+			...internalFiles
+		].filter((path) => path !== SPINNER_FILE)
 	);
 	const exceptionsFor = (filePath: string): readonly Exception[] =>
 		table.exceptions.filter((exception) => exception.file === filePath);
@@ -905,13 +914,11 @@ export function compositionRefusals(input: CompositionInput): readonly Compositi
 			}
 		}
 
-		// Spinner is held only as the glyph, by a tag that says so in plain text.
-		if (file.path !== SPINNER_FILE) {
+		// A simple file holds Spinner only as the glyph, by a tag that says so in plain text.
+		if (glyphOnlyFiles.has(file.path)) {
 			for (const tag of facts.spinnerTags) {
 				refuse(file.path, 'a Spinner rendered other than as a glyph', tag);
 			}
-		}
-		if (file.path.startsWith('src/lib/')) {
 			for (const name of facts.spinnerValues) {
 				refuse(file.path, 'a Spinner rendered other than as a glyph', name);
 			}
@@ -1218,6 +1225,12 @@ describe('the lego check', () => {
 
 	it('passes a composite that lays out library components, its own family and plain text', () => {
 		expect(checkBanner(bannerScript, bannerMarkup)).toEqual([]);
+	});
+
+	it('passes a composite that shows a loading status, as a tag or handed on as a value', () => {
+		const script = `${bannerScript}\n\timport Spinner from './Spinner.svelte';\n\tconst Ring = Spinner;`;
+		const markup = `${bannerMarkup}\n<Spinner kind="status" label="Saving" active />\n<Ring kind="glyph" />`;
+		expect(checkBanner(script, markup)).toEqual([]);
 	});
 
 	it('passes a composite built from another composite', () => {
@@ -1689,6 +1702,7 @@ describe('the plants', () => {
 
 	it.each([
 		['the status form', '<Spinner kind="status" label="x" />'],
+		['the active status form', '<Spinner kind="status" label="x" active />'],
 		['no kind', '<Spinner />'],
 		['the glyph as an expression', "<Spinner kind={'glyph'} />"],
 		['a spread beside the glyph', '<Spinner kind="glyph" {...{ kind: \'status\' }} />'],
@@ -1723,15 +1737,33 @@ describe('the plants', () => {
 		]);
 	});
 
-	it('refuses the status Spinner in a stories file as a tag, and leaves it to the story args', () => {
+	it('leaves a stories file the status Spinner as a tag', () => {
 		const stories = realWith(
 			'src/stories/surfaces/Spinner.stories.svelte',
 			'<Spinner kind="glyph" />',
-			'<Spinner kind="status" label="x" />'
+			'<Spinner kind="status" label="x" active />'
 		);
-		expect(reasons(check({ sources: [stories] }))).toEqual([
-			'a Spinner rendered other than as a glyph'
-		]);
+		expect(check({ sources: [stories] })).toEqual([]);
+	});
+
+	it('refuses the status Spinner in an internal piece, which is simple', () => {
+		const [internal] = TABLE.internal;
+		expect(internal).toBeDefined();
+		if (internal === undefined) return;
+		const piece = read(internal.file);
+		const script = "\timport Spinner from '../surfaces/Spinner.svelte';";
+		const planted = {
+			path: piece.path,
+			text: piece.text
+				.replace(/<script([^>]*)>/, `<script$1>\n${script}`)
+				.concat('\n<Spinner kind="status" label="x" active />\n')
+		};
+		expect(planted.text).not.toBe(piece.text);
+		expect(check({ sources: [planted] })).toContainEqual({
+			path: piece.path,
+			reason: 'a Spinner rendered other than as a glyph',
+			detail: '<Spinner>'
+		});
 	});
 
 	it.each([

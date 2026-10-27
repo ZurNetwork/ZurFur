@@ -17,19 +17,60 @@ function byTestId(testid: string): HTMLElement {
 
 describe('Spinner', () => {
 	it('is a status named by its words', async () => {
-		render(Spinner, { kind: 'status', label: 'Loading sketches' });
+		render(Spinner, { kind: 'status', label: 'Loading sketches', active: true });
 		const status = page.getByRole('status');
 		await expect.element(status).toBeInTheDocument();
 		await expect.element(status).toHaveTextContent('Loading sketches');
 	});
 
+	it('mounts its status empty while inactive, then fills that same node when active', async () => {
+		const screen = render(Spinner, { kind: 'status', label: 'Loading sketches', active: false });
+		const before = page.getByRole('status').element();
+		expect(before.textContent.trim()).toBe('');
+		expect(before.querySelector('.zf-spinner')).toBeNull();
+		await screen.rerender({ active: true });
+		const after = page.getByRole('status').element();
+		expect(after).toBe(before);
+		expect(after.textContent.trim()).toBe('Loading sketches');
+		expect(after.querySelector('.zf-spinner')).not.toBeNull();
+	});
+
+	it('empties that same node again when it stops', async () => {
+		const screen = render(Spinner, { kind: 'status', label: 'Loading sketches', active: true });
+		const before = page.getByRole('status').element();
+		await screen.rerender({ active: false });
+		const after = page.getByRole('status').element();
+		expect(after).toBe(before);
+		expect(after.textContent.trim()).toBe('');
+		expect(after.querySelector('.zf-spinner')).toBeNull();
+	});
+
+	it.each(['true', 1, {}])('stays empty for the active value %o', (stranger) => {
+		render(Spinner, {
+			kind: 'status',
+			label: 'Loading sketches',
+			active: stranger as boolean
+		});
+		const status = page.getByRole('status').element();
+		expect(status.textContent.trim()).toBe('');
+		expect(status.querySelector('.zf-spinner')).toBeNull();
+	});
+
 	it('hides its ring from screen readers', () => {
-		const { container } = render(Spinner, { kind: 'status', label: 'Loading sketches' });
+		const { container } = render(Spinner, {
+			kind: 'status',
+			label: 'Loading sketches',
+			active: true
+		});
 		expect(container.querySelector('.zf-spinner')?.getAttribute('aria-hidden')).toBe('true');
 	});
 
 	it('keeps its words for screen readers only by default', () => {
-		const { container } = render(Spinner, { kind: 'status', label: 'Loading sketches' });
+		const { container } = render(Spinner, {
+			kind: 'status',
+			label: 'Loading sketches',
+			active: true
+		});
 		const label = container.querySelector('.zf-spinner-wrap__label');
 		expect(label?.classList.contains('zf-sr')).toBe(true);
 	});
@@ -38,6 +79,7 @@ describe('Spinner', () => {
 		const { container } = render(Spinner, {
 			kind: 'status',
 			label: 'Loading sketches',
+			active: true,
 			labelShown: true
 		});
 		const label = container.querySelector('.zf-spinner-wrap__label');
@@ -49,7 +91,12 @@ describe('Spinner', () => {
 		'shows its words written as an image tag as text, with no image (shown %j)',
 		(labelShown) => {
 			const markup = '<img src=x onerror=alert(1)>';
-			const { container } = render(Spinner, { kind: 'status', label: markup, labelShown });
+			const { container } = render(Spinner, {
+				kind: 'status',
+				label: markup,
+				active: true,
+				labelShown
+			});
 			expect(container.querySelector('img')).toBeNull();
 			expect(container.querySelector('.zf-spinner-wrap__label')?.textContent).toBe(markup);
 			expect(page.getByRole('status').element().textContent.trim()).toBe(markup);
@@ -75,7 +122,7 @@ describe('Spinner', () => {
 		const calls: SeamCall[] = [];
 		const { container } = render(
 			Spinner,
-			{ kind: 'status', label: 'Loading sketches' },
+			{ kind: 'status', label: 'Loading sketches', active: true },
 			{ wrapper: RecordingEnvironment, wrapperProps: { onRecord: (call) => calls.push(call) } }
 		);
 		const ring = container.querySelector('.zf-spinner');
@@ -95,18 +142,32 @@ describe('Spinner', () => {
 		]);
 	});
 
+	it('records nothing while inactive', () => {
+		const calls: SeamCall[] = [];
+		render(
+			Spinner,
+			{ kind: 'status', label: 'Loading sketches', active: false },
+			{ wrapper: RecordingEnvironment, wrapperProps: { onRecord: (call) => calls.push(call) } }
+		);
+		expect(calls).toEqual([]);
+	});
+
 	it('records nothing else: no sound, no other move', () => {
 		const calls: SeamCall[] = [];
 		render(
 			Spinner,
-			{ kind: 'status', label: 'Loading sketches' },
+			{ kind: 'status', label: 'Loading sketches', active: true },
 			{ wrapper: RecordingEnvironment, wrapperProps: { onRecord: (call) => calls.push(call) } }
 		);
 		expect(calls).toHaveLength(1);
 	});
 
 	it('draws without an environment, and stays still', () => {
-		const { container } = render(Spinner, { kind: 'status', label: 'Loading sketches' });
+		const { container } = render(Spinner, {
+			kind: 'status',
+			label: 'Loading sketches',
+			active: true
+		});
 		expect(container.querySelector('.zf-spinner')).not.toBeNull();
 	});
 });

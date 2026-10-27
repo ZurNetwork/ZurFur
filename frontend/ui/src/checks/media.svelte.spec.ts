@@ -2,7 +2,8 @@
  * Every spec that emulates media features lives here, in the client-media
  * project, which runs alone after every other project: the skins against the
  * OS colour scheme and the root attribute, reduced motion, a Still column
- * beside a Lively one, and the command's own refusals.
+ * beside a Lively one, the spinner's gap in forced colours, and the command's
+ * own refusals.
  */
 import { commands } from 'vitest/browser';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -28,7 +29,11 @@ const mounted: Element[] = [];
 afterEach(async () => {
 	for (const element of mounted.splice(0)) element.remove();
 	root.removeAttribute(SKIN_ATTRIBUTE);
-	const reset = await commands.emulateMedia({ colorScheme: null, reducedMotion: null });
+	const reset = await commands.emulateMedia({
+		colorScheme: null,
+		reducedMotion: null,
+		forcedColors: null
+	});
 	expect(reset).toEqual({ kind: 'applied' });
 });
 
@@ -181,6 +186,30 @@ describe('a Still column beside a Lively one', () => {
 	});
 });
 
+describe('forced colours', () => {
+	it("keep the spinner's gap: its right edge differs from the other three", async () => {
+		await emulate({ forcedColors: 'active' }, '(forced-colors: active)');
+		const ring = mount('<span class="zf-spinner"></span>').firstElementChild;
+		expect(ring).not.toBeNull();
+		if (ring === null) return;
+		const style = getComputedStyle(ring);
+		const right = style.borderRightColor;
+		expect({
+			top: style.borderTopColor === right,
+			bottom: style.borderBottomColor === right,
+			left: style.borderLeftColor === right
+		}).toEqual({ top: false, bottom: false, left: false });
+	});
+
+	it('are handed back to the browser by the test before', () => {
+		expect(matchMedia('(forced-colors: active)').matches).toBe(false);
+	});
+
+	it('can be set to none', async () => {
+		await emulate({ forcedColors: 'none' }, '(forced-colors: none)');
+	});
+});
+
 describe('the emulateMedia command', () => {
 	/** Sends a payload the command's type refuses, as a page could. */
 	const send = (payload: unknown) => commands.emulateMedia(payload as MediaSettings);
@@ -188,7 +217,9 @@ describe('the emulateMedia command', () => {
 	it.each([
 		['a colour scheme of no-preference', { colorScheme: 'no-preference' }],
 		['an unknown key', { colourScheme: 'dark' }],
-		['forced colours', { forcedColors: 'active' }],
+		['forced colours it does not know', { forcedColors: 'yes' }],
+		['forced colours of true', { forcedColors: true }],
+		['forced colours beside an unknown key', { forcedColors: 'active', contrast: 'more' }],
 		['a reduced motion it does not know', { reducedMotion: 'yes' }],
 		['a known key beside an unknown one', { colorScheme: 'dark', media: 'print' }],
 		['a list', ['dark']],
