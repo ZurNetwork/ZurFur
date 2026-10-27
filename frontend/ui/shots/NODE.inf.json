@@ -40,7 +40,7 @@
     },
     {
       "name": "self/",
-      "role": "the self-tests (project self): a missing reference fails, an off-host request, websocket and page error are caught in the page and a nested frame, Storybook's error display is caught, a `no-shot` entry is still opened and fails on an off-host request, a page error or Storybook's error display, with only its picture left out, the guard refuses outside the image",
+      "role": "the self-tests (project self): a missing reference fails, an off-host request, websocket and page error are caught in the page and a nested frame, Storybook's error display is caught, a `no-shot` entry is still opened and fails on an off-host request, a page error or Storybook's error display, with only its picture left out, the guard refuses outside the image, and the `phone-320` tag gives 320×568, every other entry 1280×900",
       "node": false
     },
     {
