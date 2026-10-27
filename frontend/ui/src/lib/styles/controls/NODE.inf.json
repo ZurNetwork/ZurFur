@@ -1,6 +1,6 @@
 {
   "path": "frontend/ui/src/lib/styles/controls",
-  "charted": "2026-10-26",
+  "charted": "2026-10-27",
   "short": "The controls' looks, one stylesheet per family",
   "is": "Seven family stylesheets ported from the design system's bundle onto tokens: button, field, check, toggle, tabs, menu and tip. The styles entry imports each.",
   "type": "code",
@@ -9,7 +9,7 @@
     "category:source"
   ],
   "conventions": [
-    "A look is the bundle's `zf-` class name, composed with the paper classes (`placed`, `pick`, `piece`, `slip`, `glidex`) rather than rewriting their lifts and glides: primary, secondary and destructive buttons are placed; quiet buttons and plain icon buttons are picks; fields are slips; tabs and the switch are one piece with pick options; the menu is a note whose rows are picks; the toggle's thumb is placed and glides.",
+    "A look is the bundle's `zf-` class name, composed with the paper classes (`placed`, `pick`, `piece`, `slip`, `lift`, `glidex`) rather than rewriting their lifts and glides: primary, secondary and destructive buttons are placed; quiet buttons and plain icon buttons are picks; fields are slips, and Select's slip lifts while it can be changed; tabs and the switch are one piece with pick options; the menu and the select's list are a note whose rows are picks; the toggle's thumb is placed and glides.",
     "Everything comes from tokens: no raw colour, time, easing or length, except `0`, 1px borders, the 2px focus ring, percentages and unitless numbers. A size the bundle writes raw takes the nearest size token.",
     "Motion belongs to the seam: no `animation` or keyframes, and no `transition` of `translate`, `transform`, `box-shadow`, `top`, `left`, `width` or `all`. Colour fades on tokens stay.",
     "Resting states render from props; hover, focus and pressed come from interaction. Every focusable part shows the one focus ring, and none sets `outline: none` without a replacement.",
@@ -32,7 +32,7 @@
     },
     {
       "name": "field.css",
-      "role": "the field frame and TextInput, Select and DateField",
+      "role": "the field frame, TextInput, Select's trigger and its list, and DateField",
       "node": false
     },
     {
@@ -42,7 +42,7 @@
     },
     {
       "name": "tabs.css",
-      "role": "Tabs and PillSwitch",
+      "role": "Tabs with its stepping row, and PillSwitch with its shared type",
       "node": false
     },
     {

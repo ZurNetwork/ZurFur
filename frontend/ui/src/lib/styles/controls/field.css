@@ -1,4 +1,4 @@
-/* Fields: the text input, the select and the date field, laid out with their label, hint and error. */
+/* Fields: the text input, the select (its trigger and its list) and the date field, laid out with their label, hint and error. */
 .zf-field {
 	display: flex;
 	flex-direction: column;
@@ -50,6 +50,10 @@
 	padding: 0 var(--space-2);
 	border: 1px solid var(--color-border-strong);
 	border-radius: var(--radius-sm);
+}
+
+/* The select keeps the lift's own transition, so only the text input fades its border. */
+.zf-input {
 	transition: border-color var(--duration-fast) var(--easing-standard);
 }
 
@@ -72,8 +76,7 @@
 }
 
 .zf-input input,
-.zf-input textarea,
-.zf-select select {
+.zf-input textarea {
 	flex: 1;
 	min-width: 0;
 	height: 100%;
@@ -94,14 +97,8 @@
 	opacity: 1;
 }
 
-/* A select still on its placeholder reads muted, like a text field's. */
-.zf-select select:has(> option:disabled:checked) {
-	color: var(--color-text-muted);
-}
-
 .zf-input input:disabled,
-.zf-input textarea:disabled,
-.zf-select select:disabled {
+.zf-input textarea:disabled {
 	cursor: not-allowed;
 }
 
@@ -138,23 +135,60 @@
 	color: var(--color-text-muted);
 }
 
-.zf-select select {
-	appearance: none;
-	padding-right: var(--space-6);
+/* The select's trigger is the slip itself: a button that reads as a field. */
+.zf-select {
+	margin: 0;
+	font: inherit;
+	font-size: var(--text-md);
+	line-height: var(--leading-md);
+	color: var(--color-text);
+	text-align: start;
 	cursor: pointer;
 }
 
-.zf-select select option {
-	background: var(--color-surface-raised);
-	color: var(--color-text);
+.zf-select:disabled {
+	cursor: not-allowed;
+}
+
+.zf-select__value {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Nothing chosen: the placeholder reads muted, like a text field's. */
+.zf-select__value--empty {
+	color: var(--color-text-muted);
 }
 
 .zf-select__chevron {
-	position: absolute;
-	right: var(--space-2);
 	display: inline-flex;
-	pointer-events: none;
 	color: var(--color-text-muted);
+}
+
+/* The select's list: at least as wide as its field, scrolling inside past eight rows or the room on screen. */
+.zf-select__list {
+	min-width: var(--bits-select-anchor-width);
+	max-block-size: min(
+		calc(var(--size-control) * 8),
+		calc(var(--bits-select-content-available-height) - 2 * var(--space-1))
+	);
+	overflow-y: auto;
+}
+
+/* The option Enter would choose shows the one focus ring; focus stays on the field. */
+.zf-select__option[data-highlighted] {
+	outline: 2px solid var(--color-focus);
+	outline-offset: calc(-1 * var(--space-half));
+}
+
+/* A highlighted option not yet chosen also lifts, as a row under the pointer does. */
+.zf-select__option[data-highlighted]:not([aria-selected='true']) {
+	background: var(--color-object);
+	box-shadow: var(--elevation-art);
+	translate: 0 calc(-1 * var(--space-rise));
 }
 
 /* The date field: a slip like the text input, its segments in a row, the one in focus picked out. */

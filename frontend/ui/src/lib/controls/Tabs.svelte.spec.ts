@@ -242,6 +242,16 @@ describe('Tabs', () => {
 		expect(tab('OCs').className.split(' ').sort()).toEqual(['pick', 'zf-tab']);
 	});
 
+	it('draws no row, no steps and no snapping without a stepper', () => {
+		const { container } = renderTabsAndContainer();
+		const list = page.getByRole('tablist').element();
+		expect(container.querySelector('.zf-tabs-row')).toBeNull();
+		expect(container.querySelector('.zf-tabs--step')).toBeNull();
+		expect(list.parentElement?.classList.contains('zf-tabview')).toBe(true);
+		expect(getComputedStyle(list).scrollSnapType).toBe('none');
+		expect(container.querySelectorAll('button')).toHaveLength(sections.length);
+	});
+
 	it('scrolls sideways when its tabs outgrow the screen', () => {
 		const copy = document.createElement('div');
 		copy.setAttribute('data-copy', '');

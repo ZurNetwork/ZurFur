@@ -11,6 +11,12 @@ type SeamCall = Parameters<ComponentProps<typeof RecordingEnvironment>['onRecord
 
 type Batch = 'all' | 'spooky_sketches' | 'stickers';
 
+const mixed: readonly PillOption<Batch>[] = [
+	{ id: 'all', label: 'All' },
+	{ id: 'spooky_sketches', label: 'spooky_sketches', prefix: 'batch:' },
+	{ id: 'stickers', label: 'stickers', prefix: 'phase:' }
+];
+
 const batches: readonly PillOption<Batch>[] = [
 	{ id: 'all', label: 'All' },
 	{ id: 'spooky_sketches', label: 'spooky_sketches', prefix: 'batch:' },
@@ -75,7 +81,7 @@ describe('PillSwitch', () => {
 				.getByRole('radio')
 				.elements()
 				.map((found) => found.textContent.trim())
-		).toEqual(['All', 'batch: spooky_sketches', 'batch: stickers']);
+		).toEqual(['All', 'spooky_sketches', 'stickers']);
 		await expect
 			.element(page.getByRole('radio', { name: 'All' }))
 			.toHaveAttribute('aria-checked', 'true');
@@ -84,12 +90,55 @@ describe('PillSwitch', () => {
 			.toHaveAttribute('aria-checked', 'false');
 	});
 
-	it('shows a typed option’s type muted before its word', () => {
+	it('shows a type every typed option shares once, beside the switch, and the options drop it', () => {
 		renderSwitch();
+		const types = [...document.querySelectorAll('.zf-seg__type')];
+		expect(types.map((found) => found.textContent)).toEqual(['batch:']);
+		const group = page.getByRole('radiogroup', { name: 'Batch' }).element();
+		const [type] = types;
+		expect(type?.id).not.toBe('');
+		expect(group.getAttribute('aria-describedby')).toBe(type?.id);
+		expect(group.previousElementSibling).toBe(type);
+		expect(group.parentElement?.tagName).toBe('DIV');
+		expect(group.parentElement?.classList.contains('zf-seg-row')).toBe(true);
+		expect(document.querySelectorAll('.zf-seg__prefix')).toHaveLength(0);
+		expect(radio('stickers').classList.contains('zf-seg__opt--typed')).toBe(true);
+		expect(radio('All').classList.contains('zf-seg__opt--typed')).toBe(false);
+	});
+
+	it('keeps each option’s own muted type before its word when the types differ', () => {
+		renderSwitch({ options: mixed });
+		expect(document.querySelectorAll('.zf-seg__type')).toHaveLength(0);
+		const group = page.getByRole('radiogroup', { name: 'Batch' }).element();
+		expect(group.hasAttribute('aria-describedby')).toBe(false);
+		expect(
+			page
+				.getByRole('radio')
+				.elements()
+				.map((found) => found.textContent.trim())
+		).toEqual(['All', 'batch: spooky_sketches', 'phase: stickers']);
 		const typed = radio('stickers');
 		expect(typed.classList.contains('zf-seg__opt--typed')).toBe(true);
-		expect(typed.querySelector('.zf-seg__prefix')?.textContent).toBe('batch:');
+		expect(typed.querySelector('.zf-seg__prefix')?.textContent).toBe('phase:');
 		expect(radio('All').querySelector('.zf-seg__prefix')).toBeNull();
+	});
+
+	it('shows no type when no option is typed, or the type is empty', () => {
+		const empty: readonly PillOption<Batch>[] = [
+			{ id: 'all', label: 'All', prefix: '' },
+			{ id: 'stickers', label: 'stickers' }
+		];
+		renderSwitch({ options: empty });
+		expect(document.querySelectorAll('.zf-seg__type, .zf-seg__prefix')).toHaveLength(0);
+		const group = page.getByRole('radiogroup', { name: 'Batch' }).element();
+		expect(group.hasAttribute('aria-describedby')).toBe(false);
+		expect(radio('All').classList.contains('zf-seg__opt--typed')).toBe(false);
+	});
+
+	it('keeps the same DOM around the group when there is no shared type', () => {
+		renderSwitch({ options: mixed, testid: 'batch-filter' });
+		const group = page.getByTestId('batch-filter').element();
+		expect(group.parentElement?.classList.contains('zf-seg-row')).toBe(false);
 	});
 
 	it('hands the parent the id a click asks for, as the typed id', async () => {
@@ -257,6 +306,20 @@ describe('PillSwitch', () => {
 		});
 		await expect.element(page.getByRole('radiogroup', { name: words })).toBeInTheDocument();
 		expect(radio(words).textContent).toContain(words);
+		expect(screen.container.querySelector('.zf-seg__type')?.textContent).toBe(words);
+		expect(screen.container.querySelector('img')).toBeNull();
+	});
+
+	it('shows markup in a type among mixed types as text', () => {
+		const words = '<img src=x onerror=alert(1)>';
+		const options: readonly PillOption<Batch>[] = [
+			{ id: 'all', label: 'All', prefix: words },
+			{ id: 'stickers', label: 'stickers', prefix: 'phase:' }
+		];
+		const screen = render(AcceptingPillSwitch<Batch>, {
+			props: { label: 'Batch', options, initial: 'all', accepts: true, onChange: () => undefined }
+		});
+		expect(screen.container.querySelector('.zf-seg__prefix')?.textContent).toBe(words);
 		expect(screen.container.querySelector('img')).toBeNull();
 	});
 

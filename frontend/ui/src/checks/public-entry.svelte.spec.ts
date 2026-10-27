@@ -24,6 +24,7 @@ describe('the public entry', () => {
 			'PillSwitch',
 			'SKIN_ATTRIBUTE',
 			'STILL_ENVIRONMENT',
+			'ScrollingTabs',
 			'Select',
 			'Tabs',
 			'TextInput',
