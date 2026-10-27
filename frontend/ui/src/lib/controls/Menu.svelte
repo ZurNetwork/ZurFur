@@ -26,8 +26,7 @@
 
 	/** The trigger's element, once it is mounted. */
 	let anchor: HTMLElement | undefined = $state();
-	const portalTo = $derived(anchor === undefined ? undefined : portalTarget(anchor));
-	/** Keeps the trigger's element while it is mounted, so the menu knows which skin it opens in. */
+	/** Keeps the trigger's element while it is mounted: the menu opens in its skin, placed by it. */
 	const remember: Attachment<HTMLElement> = (element) => {
 		anchor = element;
 		return () => {
@@ -108,10 +107,11 @@
 	{:else}
 		<Tooltip words={trigger.label} trigger={child} />
 	{/if}
-	{#if portalTo !== undefined}
-		<DropdownMenu.Portal to={portalTo}>
+	{#if anchor !== undefined}
+		<DropdownMenu.Portal to={portalTarget(anchor)}>
 			<DropdownMenu.Content
 				align="start"
+				customAnchor={anchor}
 				onOpenAutoFocus={focusMenu}
 				onCloseAutoFocus={keepFocusWhileOpen}
 			>

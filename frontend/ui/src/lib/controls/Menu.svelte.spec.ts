@@ -284,6 +284,29 @@ describe('Menu', () => {
 		});
 	});
 
+	it.each([
+		['words to an icon', actions, more],
+		['an icon to words', more, actions]
+	])(
+		'stays shown with focus inside when its trigger changes from %s while open',
+		async (_, from, to) => {
+			const spies: Spies = { onOpenChange: vi.fn(), onSelect: vi.fn() };
+			const props = { trigger: from, items, testid: 'trigger', ...spies };
+			const { rerender } = render(AcceptingMenu<Action>, props);
+			byTestId('trigger').focus();
+			await userEvent.keyboard('{Enter}');
+			await vi.waitFor(() => {
+				expect(document.activeElement).toBe(menuItem('Rename'));
+			});
+			await rerender({ trigger: to });
+			await pause(300);
+			const menu = openMenu();
+			expect(menu).toBeDefined();
+			expect(menu?.contains(document.activeElement)).toBe(true);
+			expect(spies.onOpenChange.mock.calls).toEqual([[true]]);
+		}
+	);
+
 	it('moves with the arrows, skips a disabled item, finds by typing and chooses on Enter', async () => {
 		const { onSelect, onOpenChange } = renderAccepting();
 		byTestId('trigger').focus();
