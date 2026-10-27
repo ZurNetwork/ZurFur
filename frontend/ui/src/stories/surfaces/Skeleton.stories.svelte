@@ -16,7 +16,7 @@
 		parameters: {
 			docs: {
 				description: {
-					component: `A simple component: a blank in the shape of what is on its way, so the page does not jump when it lands. Lines draws text bars, the last one shorter, and a count that is not a whole number from 1 to 10 draws one bar. Rectangle fills the width of its parent, for a picture. Circle is for an avatar. It breathes while it waits, stops under Still and reduced motion, and is hidden from screen readers.`
+					component: `A simple component: a blank in the shape of what is on its way, so the page does not jump when it lands. Lines draws text bars, the last one shorter, and a count that is not a whole number from 1 to 12 draws one bar. Rectangle fills the width of its parent, for a picture. Circle is for an avatar. It breathes while it waits, stops under Still and reduced motion, and is hidden from screen readers.`
 				}
 			}
 		}
