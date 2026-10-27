@@ -32,17 +32,17 @@
     },
     {
       "name": "field.css",
-      "role": "the field frame, TextInput, Select's trigger and DateField",
+      "role": "the field frame, TextInput, Select's trigger and its list, and DateField",
       "node": false
     },
     {
       "name": "menu.css",
-      "role": "Menu and Select's list",
+      "role": "Menu",
       "node": false
     },
     {
       "name": "tabs.css",
-      "role": "Tabs, ScrollingTabs' row and PillSwitch with its shared type",
+      "role": "Tabs with its stepping row, and PillSwitch with its shared type",
       "node": false
     },
     {
