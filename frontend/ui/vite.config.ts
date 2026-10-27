@@ -80,6 +80,9 @@ export default defineConfig({
 	// port is an error, never a silent move to the next one.
 	server: { host: '127.0.0.1', port, strictPort: true },
 	preview: { host: '127.0.0.1', port, strictPort: true },
+	// Pre-bundle the controls' libraries up front: found mid-run, they make Vite
+	// reload the browser specs, and a spec loaded twice fails.
+	optimizeDeps: { include: ['bits-ui', '@internationalized/date'] },
 	plugins: [
 		sveltekit({
 			compilerOptions: {

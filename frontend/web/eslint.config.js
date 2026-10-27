@@ -1,4 +1,5 @@
 import prettier from 'eslint-config-prettier';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import js from '@eslint/js';
 import svelte from 'eslint-plugin-svelte';
@@ -120,6 +121,259 @@ const DEV_TOOL_DYNAMIC_IMPORT = {
 		'ImportExpression[source.value=/^(?:(?:storybook|react|react-dom|playwright|axe-core)(?:\\u002F|$)|@(?:storybook|mdx-js|testing-library|playwright|axe-core)\\u002F)/i]',
 	message: DEV_TOOL_MESSAGE
 };
+
+/** Every file kind ESLint lints here, src/ and the package-root config files alike. */
+const LINTED_FILES = [
+	'**/*.js',
+	'**/*.mjs',
+	'**/*.cjs',
+	'**/*.ts',
+	'**/*.mts',
+	'**/*.cts',
+	'**/*.svelte'
+];
+
+/**
+ * The packages web declares, read from its own manifest when the config
+ * loads: `dependencies` and `devDependencies`.
+ *
+ * @returns {string[]}
+ */
+function declaredPackages() {
+	const manifest = JSON.parse(
+		readFileSync(path.resolve(import.meta.dirname, 'package.json'), 'utf8')
+	);
+	const section = (key) => Object.keys(Object(manifest[key]));
+	return [...section('dependencies'), ...section('devDependencies')];
+}
+
+/** `text` as a regular expression that matches it literally. */
+const literally = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The declared packages, each alone or with a subpath, as a regular expression. */
+const DECLARED = `(?:${declaredPackages().map(literally).join('|')})(?:/|$)`;
+
+/** What web may import besides its packages: Node's built-ins, Kit's aliases and relative paths. */
+const LOCAL = '(?:node:|\\$(?:app|lib|env)(?:/|$)|\\.{1,2}(?:/|$))';
+
+const UNDECLARED_MESSAGE = 'Import only packages web declares; `@zurfur/ui` wraps bits-ui.';
+
+/**
+ * Any import that is neither a declared package nor local, read
+ * case-sensitively, so no other spelling reaches past the manifest's names.
+ */
+const UNDECLARED_IMPORT = {
+	regex: `^(?!${DECLARED})(?!${LOCAL})`,
+	caseSensitive: true,
+	message: UNDECLARED_MESSAGE
+};
+
+/** The allow-list for a dynamic import, which no-restricted-imports never reads. */
+const ALLOWED_SPECIFIER = new RegExp(`^(?:${DECLARED}|${LOCAL})`, 'u');
+
+/** The app's source folder and the folder `$lib` names. */
+const SOURCE_ROOT = path.resolve(import.meta.dirname, 'src');
+const LIB_ROOT = path.join(SOURCE_ROOT, 'lib');
+
+/**
+ * A field of an AST node, or undefined when there is none.
+ *
+ * @param {unknown} node
+ * @param {string} key
+ * @returns {unknown}
+ */
+const fieldOf = (node, key) => (Object(node) === node ? Reflect.get(Object(node), key) : undefined);
+
+/**
+ * The text of a string literal, or of a template literal with no expressions.
+ *
+ * @param {unknown} node
+ * @returns {string | undefined}
+ */
+function staticTextOf(node) {
+	const type = fieldOf(node, 'type');
+	if (type === 'Literal') {
+		const value = fieldOf(node, 'value');
+		return typeof value === 'string' ? value : undefined;
+	}
+	if (type !== 'TemplateLiteral') return undefined;
+	const expressions = fieldOf(node, 'expressions');
+	const quasis = fieldOf(node, 'quasis');
+	if (!Array.isArray(expressions) || expressions.length > 0 || !Array.isArray(quasis)) {
+		return undefined;
+	}
+	const cooked = fieldOf(fieldOf(quasis[0], 'value'), 'cooked');
+	return typeof cooked === 'string' ? cooked : undefined;
+}
+
+/** `specifier`'s path segments, split on either slash. */
+const segmentsOf = (specifier) => specifier.split(/[/\\]/u);
+
+/** Whether `specifier` is relative: `.`, `..`, or either followed by a slash. */
+const isRelative = (specifier) => /^\.{1,2}(?:\/|$)/u.test(specifier);
+
+/** Whether `specifier` is `$lib` or under it. */
+const isLib = (specifier) => /^\$lib(?:\/|$)/u.test(specifier);
+
+/**
+ * Where a relative or `$lib` specifier lands, its query and hash dropped as
+ * Vite drops them; undefined for any other specifier.
+ *
+ * @param {string} specifier
+ * @param {string} folder the importing file's folder
+ * @returns {string | undefined}
+ */
+function landingOf(specifier, folder) {
+	const bare = specifier.replace(/[?#].*$/su, '');
+	if (isLib(bare)) return path.join(LIB_ROOT, bare.slice('$lib'.length));
+	if (isRelative(bare)) return path.resolve(folder, bare);
+	return undefined;
+}
+
+/** Whether `target` is the source folder or inside it. */
+function isInsideSource(target) {
+	const relative = path.relative(SOURCE_ROOT, target);
+	const leaves = relative === '..' || relative.startsWith(`..${path.sep}`);
+	return !leaves && !path.isAbsolute(relative);
+}
+
+/** The spec harness that builds Kit's real server-side fetch. */
+const KIT_FETCH_HARNESS = 'src/lib/testing/kit-fetch.ts';
+
+/** The Kit internals that harness imports, which no exports map offers. */
+const KIT_INTERNALS = [
+	'../../../../node_modules/@sveltejs/kit/src/runtime/server/fetch.js',
+	'../../../../node_modules/@sveltejs/kit/src/runtime/server/cookie.js'
+];
+
+/** @type {import('eslint').Rule.RuleModule} */
+const importSpecifiersRule = {
+	meta: {
+		type: 'problem',
+		docs: {
+			description:
+				'An import names a package by its name and a local file inside src/; a dynamic import answers to the allow-list.'
+		},
+		schema: [
+			{
+				type: 'object',
+				properties: { internals: { type: 'array', items: { type: 'string' } } },
+				additionalProperties: false
+			}
+		],
+		messages: {
+			nodeModules:
+				'Import a package by its name, never through a node_modules path ({{specifier}}).',
+			dotSegment: 'A package, $app, $env or node: import holds no . or .. segment ({{specifier}}).',
+			outside:
+				'A relative or $lib import never leaves src/ ({{specifier}}): import a package by its name.',
+			undeclared: UNDECLARED_MESSAGE
+		}
+	},
+	create(context) {
+		const folder = path.dirname(context.filename);
+		const importerInSource = isInsideSource(context.filename);
+		const listed = fieldOf(context.options[0], 'internals');
+		/** The exact static specifiers this file may import past the path checks. */
+		const internals = new Set(Array.isArray(listed) ? listed : []);
+
+		/**
+		 * @param {import('eslint').Rule.Node} node
+		 * @param {unknown} source
+		 * @param {boolean} dynamic
+		 */
+		function check(node, source, dynamic) {
+			const specifier = staticTextOf(source);
+			if (specifier === undefined) return;
+			if (!dynamic && internals.has(specifier)) return;
+			/** @param {'nodeModules' | 'dotSegment' | 'outside' | 'undeclared'} messageId */
+			const report = (messageId) => {
+				context.report({ node, messageId, data: { specifier } });
+			};
+			const segments = segmentsOf(specifier);
+			if (segments.some((segment) => /^node_modules(?:[?#]|$)/iu.test(segment))) {
+				report('nodeModules');
+				return;
+			}
+			const local = isRelative(specifier) || isLib(specifier);
+			if (!local) {
+				const named = segmentsOf(specifier.replace(/^node:/u, ''));
+				if (named.some((segment) => segment === '.' || segment === '..')) {
+					report('dotSegment');
+					return;
+				}
+			}
+			const landing = landingOf(specifier, folder);
+			const governed = isLib(specifier) || importerInSource;
+			if (landing !== undefined && governed && !isInsideSource(landing)) {
+				report('outside');
+				return;
+			}
+			if (dynamic && !ALLOWED_SPECIFIER.test(specifier)) report('undeclared');
+		}
+
+		/** @param {import('eslint').Rule.Node} node */
+		const checkStatic = (node) => {
+			check(node, fieldOf(node, 'source'), false);
+		};
+
+		return {
+			ImportDeclaration: checkStatic,
+			ExportAllDeclaration: checkStatic,
+			ExportNamedDeclaration: checkStatic,
+			/** @param {import('eslint').Rule.Node} node */
+			ImportExpression(node) {
+				check(node, fieldOf(node, 'source'), true);
+			},
+			/**
+			 * Reads `source` when it holds a string literal, else the older
+			 * `argument.literal`, so the check keeps working across both shapes.
+			 *
+			 * @param {import('eslint').Rule.Node} node
+			 */
+			TSImportType(node) {
+				const source = fieldOf(node, 'source');
+				const holdsString =
+					fieldOf(source, 'type') === 'Literal' && typeof fieldOf(source, 'value') === 'string';
+				const specifier = holdsString ? source : fieldOf(fieldOf(node, 'argument'), 'literal');
+				check(node, specifier, false);
+			},
+			/** @param {import('eslint').Rule.Node} node */
+			TSExternalModuleReference(node) {
+				check(node, fieldOf(node, 'expression'), false);
+			}
+		};
+	}
+};
+
+/** web's own rules, as an inline plugin. */
+const webPlugin = {
+	meta: { name: 'web' },
+	rules: { 'import-specifiers': importSpecifiersRule }
+};
+
+/**
+ * One no-restricted-imports entry holding every ban a block's files answer
+ * to: the allow-list always, and Effect's and the DenHref's bans where asked.
+ * A later flat-config block replaces an earlier one's options for the same
+ * rule, so each block carries its whole list. The development tools' ban
+ * lives apart, in the TypeScript twin of this rule (web/dev-tool-imports).
+ *
+ * @param {{ readonly effect: boolean, readonly denHref: boolean }} bans
+ */
+function importRules({ effect, denHref }) {
+	return [
+		'error',
+		{
+			paths: [...(effect ? EFFECT_IMPORTS : []), ...(denHref ? [DEN_HREF_IMPORT] : [])],
+			patterns: [
+				UNDECLARED_IMPORT,
+				...(effect ? EFFECT_PATTERNS : []),
+				...(denHref ? [DEN_HREF_PATTERN] : [])
+			]
+		}
+	];
+}
 
 export default defineConfig(
 	includeIgnoreFile(gitignorePath),
@@ -260,35 +514,54 @@ export default defineConfig(
 		}
 	},
 	{
+		// Every file imports only the packages web declares. The blocks below
+		// replace this one's options for their files, each carrying the
+		// allow-list beside its own bans; a file none of them names (a server
+		// spec, the Den path builder, a config file) keeps the allow-list alone.
+		name: 'web/declared-imports',
+		files: LINTED_FILES,
+		rules: { 'no-restricted-imports': importRules({ effect: false, denHref: false }) }
+	},
+	{
+		// Every file's specifiers, static and dynamic: no node_modules path, no
+		// . or .. in a package name, no relative or $lib path out of src/, and a
+		// dynamic import answers to the same allow-list as a static one.
+		name: 'web/import-specifiers',
+		files: LINTED_FILES,
+		plugins: { web: webPlugin },
+		rules: { 'web/import-specifiers': 'error' }
+	},
+	{
+		// The spec harness for Kit's server fetch reaches Kit's internals by path
+		// on purpose; it may import exactly these two, statically, and nothing
+		// else past the checks.
+		name: 'web/kit-internals',
+		files: [KIT_FETCH_HARNESS],
+		rules: { 'web/import-specifiers': ['error', { internals: KIT_INTERNALS }] }
+	},
+	{
 		// DD 39944194 containment: Effect exists only below the runes seam —
 		// src/lib/server/** and *.server.ts. Everything above the seam receives
 		// plain data and never sees a fiber. And only the Den path builder mints
 		// a DenHref (see DEN_HREF_IMPORT).
+		name: 'web/client-imports',
 		files: SOURCE_FILES,
 		ignores: [...SERVER_SIDE, ...DEN_HREF_MINTERS, ...SPECS],
-		rules: {
-			'no-restricted-imports': [
-				'error',
-				{
-					paths: [...EFFECT_IMPORTS, DEN_HREF_IMPORT],
-					patterns: [...EFFECT_PATTERNS, DEN_HREF_PATTERN]
-				}
-			]
-		}
+		rules: { 'no-restricted-imports': importRules({ effect: true, denHref: true }) }
 	},
 	{
 		// Above the seam, the DenHref minters and the specs keep only the Effect ban.
+		name: 'web/minter-and-spec-imports',
 		files: [...DEN_HREF_MINTERS, ...SPECS],
 		ignores: SERVER_SIDE,
-		rules: {
-			'no-restricted-imports': ['error', { paths: EFFECT_IMPORTS, patterns: EFFECT_PATTERNS }]
-		}
+		rules: { 'no-restricted-imports': importRules({ effect: true, denHref: false }) }
 	},
 	{
 		// Every production file, above the seam and below it, never imports a
 		// development tool; specs and their harnesses keep what they use. The
 		// TypeScript twin of no-restricted-imports carries this ban, so it holds
 		// in one block beside the Effect and DenHref options of the core rule.
+		name: 'web/dev-tool-imports',
 		files: SOURCE_FILES,
 		ignores: SPECS,
 		rules: {
@@ -297,11 +570,10 @@ export default defineConfig(
 	},
 	{
 		// Below the seam, only the Den path builder mints a DenHref.
+		name: 'web/server-imports',
 		files: SERVER_SIDE,
 		ignores: [...DEN_HREF_MINTERS, ...SPECS],
-		rules: {
-			'no-restricted-imports': ['error', { paths: [DEN_HREF_IMPORT], patterns: [DEN_HREF_PATTERN] }]
-		}
+		rules: { 'no-restricted-imports': importRules({ effect: false, denHref: true }) }
 	},
 	{
 		// Override or add rule settings here, such as:

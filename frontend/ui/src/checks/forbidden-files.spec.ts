@@ -86,6 +86,12 @@ const tokenFiles: ReadonlySet<string> = new Set([
 const storiesFolder = 'stories/';
 const docsPageExtension = '.mdx';
 
+/** A runes module, a `.svelte.ts` or `.svelte.js`: only the motion adapter keeps one. */
+const runesModule = /\.svelte\.[jt]s$/;
+
+/** The one folder, relative to src/, whose files may be runes modules. */
+const runesFolder = 'lib/motion/';
+
 function isAllowedFile(relative: string, name: string): boolean {
 	if (name === nodeFileName || relative === pageShell) return true;
 	if (tokenFiles.has(relative)) return true;
@@ -109,7 +115,14 @@ function forbiddenFiles(paths: readonly string[]): readonly string[] {
 		);
 		const hasForbiddenFolder = folders.some((folder) => forbiddenFolders.has(folder));
 		const hasBackslash = segments.some((segment) => segment.includes('\\'));
-		return hasForbiddenName || hasForbiddenFolder || hasBackslash || !isAllowedFile(relative, name);
+		const isStrayRunesModule = runesModule.test(name) && !relative.startsWith(runesFolder);
+		return (
+			hasForbiddenName ||
+			hasForbiddenFolder ||
+			hasBackslash ||
+			isStrayRunesModule ||
+			!isAllowedFile(relative, name)
+		);
 	});
 }
 
@@ -254,7 +267,13 @@ describe('forbidden files', () => {
 		['an MDX page under a folder named like stories', 'lib/stories/Colour.mdx'],
 		['an MDX page in upper case', 'stories/tokens/Colour.MDX'],
 		['a Markdown page in stories', 'stories/tokens/Colour.md'],
-		['JSX in stories', 'stories/tokens/Colour.jsx']
+		['JSX in stories', 'stories/tokens/Colour.jsx'],
+		['a runes module in the seam', 'lib/environment/x.svelte.ts'],
+		['a runes module in a control', 'lib/controls/state.svelte.ts'],
+		['a runes module in the gallery', 'gallery/skin-store.svelte.ts'],
+		['a runes module at the root', 'x.svelte.ts'],
+		['a runes module named like the adapter', 'lib/motionx/x.svelte.ts'],
+		['a JavaScript runes module in the adapter', 'lib/motion/x.svelte.js']
 	])('refuses %s', (_label, relative) => {
 		expect(forbiddenFiles([relative])).toEqual([relative]);
 	});
@@ -267,7 +286,9 @@ describe('forbidden files', () => {
 		['a folder named like a server', 'lib/servers/x.ts'],
 		['the page shell', 'app.html'],
 		['a type declaration', 'lib/x.d.ts'],
-		['a runes module', 'lib/x.svelte.ts'],
+		['a runes module in the motion adapter', 'lib/motion/x.svelte.ts'],
+		['a nested runes module in the motion adapter', 'lib/motion/deep/x.svelte.ts'],
+		['a component spec', 'lib/controls/Toggle.svelte.spec.ts'],
 		['a stylesheet', 'lib/styles/tokens.css'],
 		['the token file', 'lib/styles/tokens.json'],
 		['the token additions file', 'lib/styles/tokens.additions.json'],

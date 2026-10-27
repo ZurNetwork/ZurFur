@@ -10,7 +10,7 @@
   ],
   "conventions": [
     "Two vitest projects split by filename — `*.svelte.spec.ts` runs in real Chromium (`src/lib/server/**` excluded), every other `*.spec.ts` in node; `expect.requireAssertions` on.",
-    "Specs sit next to code but drop the `+` for routes (`page.server.spec.ts`). eslint IS the rulebook enforcer: `effect` imports banned outside `src/lib/server/**` and `*.server.ts`; production code may not throw, mention `null`, or use type assertions (brand mints under `src/lib/types/**` are the one exemption; `src/lib/testing/**` is spec-only).",
+    "Specs sit next to code but drop the `+` for routes (`page.server.spec.ts`). eslint IS the rulebook enforcer: a file may import only the packages web declares (so `bits-ui` and the date library stay inside `@zurfur/ui`), Node built-ins, Kit's `$app`, `$lib` and `$env`, and relative paths; its own rule `web/import-specifiers` refuses, static or dynamic, any `node_modules` segment, a `.` or `..` segment in any non-relative, non-`$lib` specifier, and a relative or `$lib` path out of `src/` (the Kit fetch harness alone may import two named Kit internals), and holds a dynamic import to the same allow-list; no comment outside `generated/` may disable either import rule, nor be a bare disable (a check in `@zurfur/ui` reads every file); `effect` imports banned outside `src/lib/server/**` and `*.server.ts`; production code may not throw, mention `null`, or use type assertions (brand mints under `src/lib/types/**` are the one exemption; `src/lib/testing/**` is spec-only).",
     "Dev port 5174 strictPort (Caddy depends on it; `ZURFUR_WEB_PORT` overrides).",
     "The protobuf tree here regenerates with `buf generate` run from `contract/`, not from a yarn script."
   ],
@@ -42,7 +42,7 @@
     },
     {
       "name": "eslint.config.js",
-      "role": "type-aware lint + the review rulebook as enforced rules",
+      "role": "type-aware lint + the review rulebook as enforced rules; its import allow-list (declared packages only) is also read by a check in `@zurfur/ui`",
       "node": false
     },
     {

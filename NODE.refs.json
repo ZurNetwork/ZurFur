@@ -1146,6 +1146,37 @@
       "governs": "the package's place in the client tier: plain SvelteKit, nothing server-side"
     }
   ],
+  "frontend/ui/src/lib/controls": [
+    {
+      "page": 39944194,
+      "title": "Frontend Stack — Server-Only Effect & the Runes Seam",
+      "governs": "components above the seam take plain typed data and report plain values, and never see an Effect"
+    },
+    {
+      "page": 2026102301,
+      "title": "The Front Door and the Voice — Sections over the Tree, the One-Page Commission and an Interface That Feels Alive",
+      "governs": "decisions 9 to 11: controls that feel alive (a press squishes and springs back), play a sound on the person's own taps, and go still under reduced motion and the motion switch"
+    }
+  ],
+  "frontend/ui/src/lib/environment": [
+    {
+      "page": 39944194,
+      "title": "Frontend Stack — Server-Only Effect & the Runes Seam",
+      "governs": "components above the seam get plain data: the environment is plain moves and sounds, with no Effect in a component"
+    },
+    {
+      "page": 2026102301,
+      "title": "The Front Door and the Voice — Sections over the Tree, the One-Page Commission and an Interface That Feels Alive",
+      "governs": "decisions 9 to 11: the seam through which motion and sound reach every control, still unless the host provides them, so reduced motion and the switches can stop them"
+    }
+  ],
+  "frontend/ui/src/lib/icons": [
+    {
+      "page": 39944194,
+      "title": "Frontend Stack — Server-Only Effect & the Runes Seam",
+      "governs": "components above the seam get plain data: the icons are plain shape data, drawn inline"
+    }
+  ],
   "frontend/ui/src/lib/styles": [
     {
       "page": 39944194,

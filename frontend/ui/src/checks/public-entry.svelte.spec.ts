@@ -7,16 +7,37 @@ describe('the public entry', () => {
 		expect(published).toBe(source);
 	});
 
-	it('exports exactly the paper lists, the environment and the token model', () => {
+	it('exports exactly the paper lists, the environment names, the token model, the icons, the first controls, the link, day and locale mints and the motion seam', () => {
 		expect(Object.keys(published).sort()).toEqual([
+			'Button',
+			'Checkbox',
+			'DateField',
+			'ICON_NAMES',
+			'Icon',
+			'IconButton',
 			'MOTION_ATTRIBUTE',
+			'Menu',
+			'NO_MOVES',
+			'NO_SOUNDS',
 			'PAPER_CLASSES',
 			'PAPER_MOVES',
+			'PillSwitch',
 			'SKIN_ATTRIBUTE',
+			'STILL_ENVIRONMENT',
+			'Select',
+			'Tabs',
+			'TextInput',
+			'Toggle',
 			'findToken',
+			'isCalendarDay',
+			'isIconName',
+			'isLinkHref',
+			'isLocaleTag',
+			'isSameOriginPath',
 			'isTokenName',
 			'parseSkin',
 			'parseTokenModel',
+			'provideEnvironment',
 			'resolveToken',
 			'valueIn'
 		]);

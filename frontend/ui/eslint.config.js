@@ -5,6 +5,7 @@ import svelte from 'eslint-plugin-svelte';
 import { defineConfig, includeIgnoreFile } from 'eslint/config';
 import globals from 'globals';
 import ts from 'typescript-eslint';
+import { PAPER_MOVES } from './src/lib/motion/paper-moves.ts';
 
 const gitignorePath = path.resolve(import.meta.dirname, '.gitignore');
 
@@ -67,6 +68,9 @@ const MOTION = ['src/lib/motion/**'];
 /** The one place heavy libraries may be loaded, and only by dynamic import. */
 const LAZY = ['src/lib/lazy/**'];
 
+/** The seam components read their moves and sounds through: the one home of Svelte's context. */
+const ENVIRONMENT = ['src/lib/environment/**'];
+
 /** Each set's `files` and `ignores`, by name. */
 export const fileSets = {
 	checks: { files: CHECKS, ignores: [] },
@@ -77,9 +81,19 @@ export const fileSets = {
 	storybookBrowser: { files: STORYBOOK_BROWSER, ignores: [] },
 	motion: { files: MOTION, ignores: CHECKS },
 	lazy: { files: LAZY, ignores: CHECKS },
+	environment: { files: ENVIRONMENT, ignores: CHECKS },
 	components: {
 		files: CODE,
-		ignores: [...CHECKS, ...ROUTES, ...GALLERY, ...STORAGE, ...STORIES, ...MOTION, ...LAZY]
+		ignores: [
+			...CHECKS,
+			...ROUTES,
+			...GALLERY,
+			...STORAGE,
+			...STORIES,
+			...MOTION,
+			...LAZY,
+			...ENVIRONMENT
+		]
 	}
 };
 
@@ -95,6 +109,7 @@ const FILE_SET_NAMES = [
 	'storybookBrowser',
 	'motion',
 	'lazy',
+	'environment',
 	'components'
 ];
 
@@ -145,7 +160,7 @@ export function fileSetOf(relative) {
 
 // ---------------------------------------------------------------------------
 // The tiers. The sets form three tiers, strictest first: what ships (the
-// components and their two carve-outs), the gallery host, and the checks. A
+// components and their three carve-outs), the gallery host, and the checks. A
 // relative import never reaches from one tier into a looser one, so no file
 // can launder a looser set's freedoms through a re-export. A file no set reads
 // (neither code nor .css) counts as the loosest tier unless imported as text or
@@ -162,6 +177,7 @@ const TIER_OF_SET = {
 	components: 'shipped',
 	motion: 'shipped',
 	lazy: 'shipped',
+	environment: 'shipped',
 	routes: 'host',
 	gallery: 'host',
 	storage: 'host',
@@ -375,11 +391,22 @@ const HTML_PROPERTIES = [
 	{ property: 'httpEquiv', message: httpEquivMessage }
 ];
 
-/** What the components' set and its two carve-outs refuse as members, element.animate() aside. */
+const CLOCK_MESSAGE =
+	'Components never read the clock: take the time as a prop, so every render of the same props is the same.';
+
+/** The clock's three faces, as members. */
+const CLOCK_PROPERTIES = [
+	{ object: 'Date', property: 'now', message: CLOCK_MESSAGE },
+	{ object: 'performance', property: 'now', message: CLOCK_MESSAGE },
+	{ object: 'Temporal', property: 'Now', message: CLOCK_MESSAGE }
+];
+
+/** What the components' set and its carve-outs refuse as members, element.animate() aside. */
 const COMPONENT_PROPERTIES = [
 	...NETWORK_PROPERTIES,
 	...COMPONENT_STORAGE.properties,
-	...HTML_PROPERTIES
+	...HTML_PROPERTIES,
+	...CLOCK_PROPERTIES
 ];
 
 /** What the host refuses as members, outside its stores. */
@@ -530,6 +557,53 @@ const RAW_HTML_IMPORTS = [
 	{ regex: '^svelte/internal(/|$)', message: rawHtmlMessage }
 ];
 
+/** Svelte's stores: a component takes its values as props, never from a store. */
+const STORE_IMPORT = {
+	regex: '^svelte/store(/|$)',
+	message:
+		'Components keep no stores: take the value as a prop and report a change through a callback.'
+};
+
+/** Svelte's context functions, which only src/lib/environment calls. */
+const CONTEXT_FUNCTIONS = [
+	'setContext',
+	'getContext',
+	'hasContext',
+	'getAllContexts',
+	'createContext'
+];
+
+/** Svelte's context functions by name (a namespace import or export * of svelte names them too). */
+const CONTEXT_IMPORT = {
+	regex: '^svelte$',
+	importNames: CONTEXT_FUNCTIONS,
+	message:
+		"Svelte's context lives only in src/lib/environment: a component reads it once, through useEnvironment()."
+};
+
+const ENVIRONMENT_IMPORT_MESSAGE =
+	'The seam imports only svelte, svelte/attachments and its own files in src/lib/environment.';
+
+/**
+ * The seam's allow-list, read case-sensitively: `svelte`, `svelte/attachments`
+ * and paths that start with `./` and never climb out with a `..` segment.
+ */
+const ENVIRONMENT_IMPORTS_ALLOWED_ONLY = [
+	{
+		regex: '^(?!(?:svelte|svelte/attachments)$)(?!\\./)',
+		caseSensitive: true,
+		message: ENVIRONMENT_IMPORT_MESSAGE
+	},
+	{ regex: '(^|/)\\.\\.(/|$)', caseSensitive: true, message: ENVIRONMENT_IMPORT_MESSAGE }
+];
+
+/** The packages the controls wrap: the host shows them only through the public entry. */
+const WRAPPED_PACKAGE_IMPORT = {
+	regex: '^(bits-ui|@internationalized)(/|$)',
+	message:
+		"The gallery shows controls only through @zurfur/ui's public entry: bits-ui and @internationalized stay inside the components."
+};
+
 /** What every source set refuses as an import, before its own additions. */
 const COMMON_IMPORTS = [
 	ROOT_IMPORT,
@@ -540,28 +614,31 @@ const COMMON_IMPORTS = [
 	...RAW_HTML_IMPORTS
 ];
 
-const COMPONENT_IMPORTS = [
+/** What every shipped set refuses as an import, beside the components' list. */
+const SHIPPED_IMPORTS = [
 	...COMMON_IMPORTS,
 	DEEP_SELF_IMPORT,
 	ANY_APP_IMPORT,
 	GALLERY_IMPORT,
-	...ADAPTER_MOTION_IMPORTS,
+	STORE_IMPORT,
 	...HEAVY_IMPORTS
 ];
-const MOTION_IMPORTS = [
-	...COMMON_IMPORTS,
-	DEEP_SELF_IMPORT,
-	ANY_APP_IMPORT,
-	GALLERY_IMPORT,
-	...HEAVY_IMPORTS
-];
+const COMPONENT_IMPORTS = [...SHIPPED_IMPORTS, ...ADAPTER_MOTION_IMPORTS, CONTEXT_IMPORT];
+const MOTION_IMPORTS = [...SHIPPED_IMPORTS, CONTEXT_IMPORT];
 const LAZY_IMPORTS = COMPONENT_IMPORTS;
+const ENVIRONMENT_IMPORTS = [
+	...SHIPPED_IMPORTS,
+	...ADAPTER_MOTION_IMPORTS,
+	...ENVIRONMENT_IMPORTS_ALLOWED_ONLY
+];
 const HOST_IMPORTS = [
 	...COMMON_IMPORTS,
 	...HOST_DEEP_SELF_IMPORTS,
 	APP_IMPORT_EXCEPT_PATHS,
 	...ADAPTER_MOTION_IMPORTS,
-	...HEAVY_IMPORTS
+	...HEAVY_IMPORTS,
+	CONTEXT_IMPORT,
+	WRAPPED_PACKAGE_IMPORT
 ];
 
 /** The review rulebook: never throw, never null. */
@@ -699,7 +776,9 @@ const RENDERED_START_TAG =
  * its name starts with a lowercase `on` and its value is one expression; any
  * other `on…` attribute renders as written, and the browser, which reads
  * attribute names in any letter case, runs its text. A component's props are
- * not markup, and a spread can't be read here.
+ * not markup. A spread can't be read here: ui/spreads refuses every spread but
+ * the props a bits-ui component hands a {#snippet child(…)}, whose handlers are
+ * functions; a child snippet anything else could render is refused.
  */
 const INLINE_HANDLERS = [
 	{
@@ -779,6 +858,145 @@ const HTML_BINDING = {
 	message: rawHtmlMessage
 };
 
+const PROPS_MESSAGE =
+	'Destructure $props() into named props: a whole props object or a rest element forwards whatever the parent passes.';
+
+/** P5: props come in typed, named and read-only; nothing forwards the rest or binds back. */
+const PROPS_SYNTAX = [
+	{
+		selector: "Identifier[name='$bindable']",
+		message:
+			'No $bindable(): a control takes its value as a prop and reports a change through a callback.'
+	},
+	{
+		selector:
+			"VariableDeclarator[init.type='CallExpression'][init.callee.type='Identifier'][init.callee.name='$props'] > ObjectPattern.id > RestElement",
+		message: PROPS_MESSAGE
+	},
+	{
+		selector:
+			"VariableDeclarator[id.type!='ObjectPattern'][init.type='CallExpression'][init.callee.type='Identifier'][init.callee.name='$props']",
+		message: PROPS_MESSAGE
+	},
+	{
+		selector:
+			"CallExpression[callee.type='Identifier'][callee.name='$props']:not(VariableDeclarator > CallExpression.init)",
+		message: PROPS_MESSAGE
+	}
+];
+
+const MODULE_STATE_MESSAGE =
+	'No module-level state in a shipped .ts or .js: a module is shared by every instance on every page. Keep state in the component, or inside a function.';
+
+/** Outside any Svelte node: a plain .ts or .js file, never a component's script or markup. */
+const OUTSIDE_SVELTE = ':not([type=/^Svelte/] *)';
+
+/**
+ * P6: no module-level state in a plain module: a `let` or `var` at the top
+ * level (exported or not), and a Map, Set, WeakMap or WeakSet or a state rune
+ * built outside a function (a class field counts as outside). A rune inside a
+ * function, in the motion adapter's runes modules, is per call, not shared.
+ */
+const MODULE_STATE_SYNTAX = [
+	{
+		selector: 'Program > VariableDeclaration[kind=/^(?:let|var)$/]',
+		message: MODULE_STATE_MESSAGE
+	},
+	{
+		selector: 'Program > ExportNamedDeclaration > VariableDeclaration[kind=/^(?:let|var)$/]',
+		message: MODULE_STATE_MESSAGE
+	},
+	{
+		selector: `NewExpression[callee.type='Identifier'][callee.name=/^(?:Map|Set|WeakMap|WeakSet)$/]:not(:function *)${OUTSIDE_SVELTE}`,
+		message: MODULE_STATE_MESSAGE
+	},
+	{
+		selector: `CallExpression[callee.type='Identifier'][callee.name=/^\\$(?:state|derived)$/]:not(:function *)${OUTSIDE_SVELTE}`,
+		message: MODULE_STATE_MESSAGE
+	},
+	{
+		selector: `CallExpression[callee.type='MemberExpression'][callee.object.type='Identifier'][callee.object.name=/^\\$(?:state|derived)$/]:not(:function *)${OUTSIDE_SVELTE}`,
+		message: MODULE_STATE_MESSAGE
+	}
+];
+
+/** Why no shipped component holds a module block. */
+export const scriptModuleMessage =
+	"No <script module>: what it declares is shared by every instance. Keep each control's state in its own instance.";
+
+/** P6: `<script module>`, in either spelling. */
+const SCRIPT_MODULE = {
+	selector:
+		'SvelteScriptElement > SvelteStartTag > SvelteAttribute[key.name=/^(?:module|context)$/]',
+	message: scriptModuleMessage
+};
+
+/**
+ * The clock reads the members miss: through window, self and globalThis,
+ * `new Date()` with no argument, and `Date()` called bare, which answers the
+ * current time whatever it is handed.
+ */
+const CLOCK_SYNTAX = [
+	{
+		selector: `MemberExpression[object.type='MemberExpression'][object.object.name=${GLOBAL_OBJECTS}][object.property.name=/^(?:Date|performance|Temporal)$/][property.name=/^(?:now|Now)$/]`,
+		message: CLOCK_MESSAGE
+	},
+	{
+		selector: "NewExpression[callee.type='Identifier'][callee.name='Date'][arguments.length=0]",
+		message: CLOCK_MESSAGE
+	},
+	{
+		selector: `NewExpression[callee.type='MemberExpression'][callee.object.name=${GLOBAL_OBJECTS}][callee.property.name='Date'][arguments.length=0]`,
+		message: CLOCK_MESSAGE
+	},
+	{
+		selector: "CallExpression[callee.type='Identifier'][callee.name='Date']",
+		message: CLOCK_MESSAGE
+	},
+	{
+		selector: `CallExpression[callee.type='MemberExpression'][callee.object.name=${GLOBAL_OBJECTS}][callee.property.name='Date']`,
+		message: CLOCK_MESSAGE
+	}
+];
+
+/** What every shipped set refuses as syntax, beside the components' list. */
+const SHIPPED_SYNTAX = [...PROPS_SYNTAX, ...MODULE_STATE_SYNTAX, SCRIPT_MODULE, ...CLOCK_SYNTAX];
+
+/** Why a component never moves on its own. */
+export const seamMotionMessage =
+	'Components move only through the seam: {@attach moves.squish()} or {@attach moves.note(…)}, never a transition, an animation or a move class of their own.';
+
+/** The move classes, as one alternation. */
+const MOVE_NAMES = PAPER_MOVES.join('|');
+
+/** A class list, as text, that names a move class. */
+const MOVE_CLASS_TEXT = `/(?:^|\\s)(?:${MOVE_NAMES})(?:\\s|$)/`;
+
+/**
+ * The seam's rule for components: no transition:, in:, out: or animate:
+ * directive, and no static class naming one of the move classes, as text,
+ * as a string in a class expression, or as a class: directive.
+ */
+const COMPONENT_MOTION_SYNTAX = [
+	{ selector: 'SvelteDirective[kind=/^(?:Transition|Animation)$/]', message: seamMotionMessage },
+	{
+		selector: `SvelteAttribute[key.name='class'] SvelteLiteral[value=${MOVE_CLASS_TEXT}]`,
+		message: seamMotionMessage
+	},
+	{
+		selector: `SvelteAttribute[key.name='class'] Literal[value=${MOVE_CLASS_TEXT}]`,
+		message: seamMotionMessage
+	},
+	{
+		selector: `SvelteAttribute[key.name='class'] Property > :matches(Identifier, Literal).key:matches([name=/^(?:${MOVE_NAMES})$/], [value=/^(?:${MOVE_NAMES})$/])`,
+		message: seamMotionMessage
+	},
+	{
+		selector: `SvelteDirective[kind='Class'][key.name.name=/^(?:${MOVE_NAMES})$/]`,
+		message: seamMotionMessage
+	}
+];
+
 const COMMON_SYNTAX = [
 	...RULEBOOK_SYNTAX,
 	IMPORT_META_ENV,
@@ -795,13 +1013,24 @@ const COMPONENT_SYNTAX = [
 	...COMMON_SYNTAX,
 	...ANY_GLOB,
 	ANY_DYNAMIC_IMPORT,
-	...COMPONENT_STORAGE.syntax
+	...COMPONENT_STORAGE.syntax,
+	...SHIPPED_SYNTAX,
+	...COMPONENT_MOTION_SYNTAX
+];
+const MOTION_SYNTAX = [
+	...COMMON_SYNTAX,
+	...ANY_GLOB,
+	ANY_DYNAMIC_IMPORT,
+	...COMPONENT_STORAGE.syntax,
+	...SHIPPED_SYNTAX
 ];
 const LAZY_SYNTAX = [
 	...COMMON_SYNTAX,
 	...ANY_GLOB,
 	DYNAMIC_IMPORT_EXCEPT_HEAVY,
-	...COMPONENT_STORAGE.syntax
+	...COMPONENT_STORAGE.syntax,
+	...SHIPPED_SYNTAX,
+	...COMPONENT_MOTION_SYNTAX
 ];
 /** The host's syntax bans outside its frame and stores: the pages, the stories and the browser-side Storybook config. */
 const HOST_SYNTAX = [...COMMON_SYNTAX, ...ANY_GLOB, ANY_DYNAMIC_IMPORT, ...HOST_STORAGE.syntax];
@@ -848,6 +1077,20 @@ function staticTextOf(node) {
 	}
 	const cooked = fieldOf(fieldOf(quasis[0], 'value'), 'cooked');
 	return typeof cooked === 'string' ? cooked : undefined;
+}
+
+/**
+ * The specifier node of a type query's `import('…')`: `source` when it holds a
+ * string literal, else the older `argument.literal`.
+ *
+ * @param {unknown} node the TSImportType
+ * @returns {unknown}
+ */
+function importTypeSource(node) {
+	const source = fieldOf(node, 'source');
+	const holdsString =
+		fieldOf(source, 'type') === 'Literal' && typeof fieldOf(source, 'value') === 'string';
+	return holdsString ? source : fieldOf(fieldOf(node, 'argument'), 'literal');
 }
 
 /** @type {import('eslint').Rule.RuleModule} */
@@ -920,7 +1163,7 @@ const importTiersRule = {
 			ImportExpression: checkSource,
 			/** @param {import('eslint').Rule.Node} node */
 			TSImportType(node) {
-				check(node, fieldOf(fieldOf(node, 'argument'), 'literal'));
+				check(node, importTypeSource(node));
 			},
 			/** @param {import('eslint').Rule.Node} node */
 			TSExternalModuleReference(node) {
@@ -1023,13 +1266,483 @@ const noScriptUrlRule = {
 	}
 };
 
+/**
+ * A path as written in an import, relative to this package with forward
+ * slashes, resolved from the importing file; undefined for a bare specifier.
+ *
+ * @param {string} filename the importing file
+ * @param {string} specifier
+ * @returns {string | undefined}
+ */
+function packagePathOf(filename, specifier) {
+	if (!specifier.startsWith('.')) return undefined;
+	const bare = specifier.replace(/[?#].*$/s, '');
+	return path
+		.relative(PACKAGE_ROOT, path.resolve(path.dirname(filename), bare))
+		.split(path.sep)
+		.join('/');
+}
+
+/** `relative` with forward slashes, relative to this package. */
+const packageRelative = (/** @type {string} */ filename) =>
+	path.relative(PACKAGE_ROOT, filename).split(path.sep).join('/');
+
+/**
+ * True when `target` is `folder` or a path inside it.
+ *
+ * @param {string} target
+ * @param {string} folder
+ */
+const isInside = (target, folder) => target === folder || target.startsWith(`${folder}/`);
+
+/** The package's own name, in any letter case, alone or with a subpath. */
+const SELF_SPECIFIER = /^@zurfur\/ui(?:\/|$)/i;
+
+/** The folder the motion adapter lives in. */
+const MOTION_FOLDER = 'src/lib/motion';
+
+/** The folder the seam lives in. */
+const ENVIRONMENT_FOLDER = 'src/lib/environment';
+
+/** The public entry, which re-exports the seam's provideEnvironment for the host. */
+const PUBLIC_ENTRY = 'src/lib/index.ts';
+
+/**
+ * Visitors that hand `check` the source of every import, re-export, dynamic
+ * import, type import and import-equals in a file.
+ *
+ * @param {(node: import('eslint').Rule.Node, source: unknown) => void} check
+ * @returns {import('eslint').Rule.RuleListener}
+ */
+function sourceVisitors(check) {
+	/** @param {import('eslint').Rule.Node} node */
+	const checkSource = (node) => {
+		check(node, fieldOf(node, 'source'));
+	};
+	return {
+		ImportDeclaration: checkSource,
+		ExportAllDeclaration: checkSource,
+		ExportNamedDeclaration: checkSource,
+		ImportExpression: checkSource,
+		/** @param {import('eslint').Rule.Node} node */
+		TSImportType(node) {
+			check(node, importTypeSource(node));
+		},
+		/** @param {import('eslint').Rule.Node} node */
+		TSExternalModuleReference(node) {
+			check(node, fieldOf(node, 'expression'));
+		}
+	};
+}
+
+/** @type {import('eslint').Rule.RuleModule} */
+const noMotionImportRule = {
+	meta: {
+		type: 'problem',
+		docs: {
+			description:
+				"No shipped file but the adapter's own and the public entry imports the motion adapter, by path or through the entry; a plain module may pull in its stylesheet."
+		},
+		schema: [],
+		messages: {
+			motion:
+				'{{specifier}} reaches src/lib/motion: components move only through the seam (useEnvironment()), never by importing the motion adapter.'
+		}
+	},
+	create(context) {
+		if (packageRelative(context.filename) === PUBLIC_ENTRY) return {};
+		const isComponent = context.filename.endsWith('.svelte');
+		return sourceVisitors((node, source) => {
+			const specifier = staticTextOf(source);
+			if (specifier === undefined) return;
+			const target = packagePathOf(context.filename, specifier);
+			if (target === undefined) {
+				if (SELF_SPECIFIER.test(specifier)) {
+					context.report({ node, messageId: 'motion', data: { specifier } });
+				}
+				return;
+			}
+			// The styles entry pulls in the move classes' stylesheet; no component may.
+			const isStylesheet = !isComponent && target.endsWith('.css');
+			if (isInside(target, MOTION_FOLDER) && !isStylesheet) {
+				context.report({ node, messageId: 'motion', data: { specifier } });
+			}
+		});
+	}
+};
+
+/**
+ * The name an import or export specifier reads from its module: an
+ * identifier's name or a string name's value.
+ *
+ * @param {unknown} name
+ * @returns {string | undefined}
+ */
+function specifierName(name) {
+	const identifier = fieldOf(name, 'name');
+	if (typeof identifier === 'string') return identifier;
+	const value = fieldOf(name, 'value');
+	return typeof value === 'string' ? value : undefined;
+}
+
+/** @type {import('eslint').Rule.RuleModule} */
+const noProvideEnvironmentRule = {
+	meta: {
+		type: 'problem',
+		docs: {
+			description:
+				'Only the host and the checks take provideEnvironment; no shipped file outside the seam imports it.'
+		},
+		schema: [],
+		messages: {
+			provide:
+				'Only the host and the checks call provideEnvironment: a component reads the environment with useEnvironment() ({{specifier}}).',
+			whole:
+				'Import the seam by name, never as a namespace or with export *: either would hand over provideEnvironment ({{specifier}}).'
+		}
+	},
+	create(context) {
+		const isEntry = packageRelative(context.filename) === PUBLIC_ENTRY;
+
+		/** @param {unknown} source */
+		function reachesSeam(source) {
+			const specifier = staticTextOf(source);
+			if (specifier === undefined) return undefined;
+			const target = packagePathOf(context.filename, specifier);
+			const reaches =
+				target === undefined
+					? SELF_SPECIFIER.test(specifier)
+					: isInside(target, ENVIRONMENT_FOLDER);
+			return reaches ? specifier : undefined;
+		}
+
+		/**
+		 * @param {import('eslint').Rule.Node} node
+		 * @param {readonly unknown[]} specifiers
+		 * @param {boolean} isReexport
+		 */
+		function check(node, specifiers, isReexport) {
+			const specifier = reachesSeam(fieldOf(node, 'source'));
+			if (specifier === undefined) return;
+			for (const part of specifiers) {
+				const type = fieldOf(part, 'type');
+				if (type === 'ImportNamespaceSpecifier') {
+					context.report({ node, messageId: 'whole', data: { specifier } });
+					continue;
+				}
+				const read =
+					type === 'ImportSpecifier' ? fieldOf(part, 'imported') : fieldOf(part, 'local');
+				const isProvide = specifierName(read) === 'provideEnvironment';
+				if (isProvide && !(isReexport && isEntry)) {
+					context.report({ node, messageId: 'provide', data: { specifier } });
+				}
+			}
+		}
+
+		return {
+			/** @param {import('eslint').Rule.Node} node */
+			ImportDeclaration(node) {
+				const specifiers = fieldOf(node, 'specifiers');
+				check(node, Array.isArray(specifiers) ? specifiers : [], false);
+			},
+			/** @param {import('eslint').Rule.Node} node */
+			ExportNamedDeclaration(node) {
+				const specifiers = fieldOf(node, 'specifiers');
+				check(node, Array.isArray(specifiers) ? specifiers : [], true);
+			},
+			/** @param {import('eslint').Rule.Node} node */
+			ExportAllDeclaration(node) {
+				const specifier = reachesSeam(fieldOf(node, 'source'));
+				if (specifier === undefined) return;
+				context.report({ node, messageId: 'whole', data: { specifier } });
+			}
+		};
+	}
+};
+
+/** The only files that may write <svelte:element>, relative to this package. */
+const SVELTE_ELEMENT_FILES = ['src/lib/surfaces/Card.svelte'];
+
+/**
+ * The files that may also hand their {#snippet child(…)} to one of our own
+ * components: the component's default import and the attribute that takes it.
+ * That component must render the snippet only with what bits-ui hands it.
+ */
+const SNIPPET_HANDOFF_FILES = [
+	{ file: 'src/lib/controls/IconButton.svelte', source: './Tooltip.svelte', attribute: 'trigger' }
+];
+
+/** The one module whose components hand a {#snippet child(…)} its props. */
+const BITS_UI = 'bits-ui';
+
+/** What bits-ui's {#snippet child(…)} hands over to be spread. */
+const SNIPPET_PROPS = ['props', 'wrapperProps'];
+
+/**
+ * The nearest {#snippet} block above `node`, or undefined.
+ *
+ * @param {unknown} node
+ * @returns {unknown}
+ */
+function nearestSnippet(node) {
+	let current = fieldOf(node, 'parent');
+	while (current !== undefined && current !== null) {
+		if (fieldOf(current, 'type') === 'SvelteSnippetBlock') return current;
+		current = fieldOf(current, 'parent');
+	}
+	return undefined;
+}
+
+/**
+ * The variable `name` resolves to where `node` sits, or undefined.
+ *
+ * @param {import('eslint').SourceCode} sourceCode
+ * @param {import('eslint').Rule.Node} node
+ * @param {string} name
+ */
+function variableAt(sourceCode, node, name) {
+	/** @type {import('eslint').Scope.Scope | null} */
+	let scope = sourceCode.getScope(node);
+	let variable = undefined;
+	while (scope !== null && variable === undefined) {
+		variable = scope.set.get(name);
+		scope = scope.upper;
+	}
+	return variable;
+}
+
+/**
+ * The import that alone binds a component element's root name (`Switch` in
+ * `<Switch.Root>`), as its source and specifier, or undefined.
+ *
+ * @param {unknown} element
+ * @param {import('eslint').SourceCode} sourceCode
+ * @returns {{ source: string, specifier: unknown, isMember: boolean } | undefined}
+ */
+function componentImport(element, sourceCode) {
+	if (fieldOf(element, 'type') !== 'SvelteElement' || fieldOf(element, 'kind') !== 'component') {
+		return undefined;
+	}
+	const name = fieldOf(element, 'name');
+	let root = name;
+	while (fieldOf(root, 'type') === 'SvelteMemberExpressionName') root = fieldOf(root, 'object');
+	const rootName = fieldOf(root, 'name');
+	if (fieldOf(root, 'type') !== 'Identifier' || typeof rootName !== 'string') return undefined;
+	const variable = variableAt(
+		sourceCode,
+		/** @type {import('eslint').Rule.Node} */ (element),
+		rootName
+	);
+	if (variable === undefined || variable.defs.length !== 1) return undefined;
+	const [definition] = variable.defs;
+	if (definition === undefined || definition.type !== 'ImportBinding') return undefined;
+	const declaration = definition.parent;
+	if (fieldOf(declaration, 'type') !== 'ImportDeclaration') return undefined;
+	if (
+		fieldOf(declaration, 'importKind') === 'type' ||
+		fieldOf(definition.node, 'importKind') === 'type'
+	) {
+		return undefined;
+	}
+	const source = fieldOf(fieldOf(declaration, 'source'), 'value');
+	if (typeof source !== 'string') return undefined;
+	return { source, specifier: definition.node, isMember: root !== name };
+}
+
+/**
+ * The attribute whose whole value is `identifier` (`{child}` or
+ * `name={child}`), as its name and the element it sits on, or undefined.
+ *
+ * @param {unknown} identifier
+ * @returns {{ name: string, element: unknown } | undefined}
+ */
+function attributeValuedBy(identifier) {
+	const parent = fieldOf(identifier, 'parent');
+	let attribute = undefined;
+	if (fieldOf(parent, 'type') === 'SvelteShorthandAttribute') {
+		if (fieldOf(parent, 'value') === identifier) attribute = parent;
+	} else if (
+		fieldOf(parent, 'type') === 'SvelteMustacheTag' &&
+		fieldOf(parent, 'expression') === identifier
+	) {
+		const holder = fieldOf(parent, 'parent');
+		const value = fieldOf(holder, 'value');
+		const isWhole = Array.isArray(value) && value.length === 1 && value[0] === parent;
+		if (fieldOf(holder, 'type') === 'SvelteAttribute' && isWhole) attribute = holder;
+	}
+	const startTag = fieldOf(attribute, 'parent');
+	const name = fieldOf(fieldOf(attribute, 'key'), 'name');
+	if (fieldOf(startTag, 'type') !== 'SvelteStartTag' || typeof name !== 'string') return undefined;
+	return { name, element: fieldOf(startTag, 'parent') };
+}
+
+/**
+ * True when `inner`'s source lies within `outer`'s.
+ *
+ * @param {unknown} inner
+ * @param {unknown} outer
+ */
+function liesWithin(inner, outer) {
+	const within = fieldOf(inner, 'range');
+	const around = fieldOf(outer, 'range');
+	if (!Array.isArray(within) || !Array.isArray(around)) return false;
+	const [start, end] = within;
+	const [from, to] = around;
+	return (
+		typeof start === 'number' &&
+		typeof end === 'number' &&
+		typeof from === 'number' &&
+		typeof to === 'number' &&
+		start >= from &&
+		end <= to
+	);
+}
+
+/**
+ * True when `snippet`, a {#snippet child(…)}, can only ever be rendered by a
+ * bits-ui component: it sits right under one, which takes it as `child`, and
+ * nothing inside that component names it; or it sits anywhere else and every
+ * use of its name, at least one, is the value of a `child` attribute on one.
+ * A listed file may also hand it to the one component and attribute its entry
+ * names. A use the scope analysis can't resolve counts as a use.
+ *
+ * @param {unknown} snippet
+ * @param {import('eslint').SourceCode} sourceCode
+ * @param {{ source: string, attribute: string } | undefined} handoff
+ */
+function isRenderedByBitsUi(snippet, sourceCode, handoff) {
+	const isBitsUi = (/** @type {unknown} */ element) =>
+		componentImport(element, sourceCode)?.source === BITS_UI;
+	const id = fieldOf(snippet, 'id');
+	const name = fieldOf(id, 'name');
+	if (typeof name !== 'string') return false;
+	const scopes = sourceCode.scopeManager?.scopes ?? [];
+	const named = scopes
+		.flatMap((scope) => scope.references)
+		.filter((reference) => reference.identifier.name === name && reference.identifier !== id);
+	const parent = fieldOf(snippet, 'parent');
+	if (fieldOf(parent, 'type') === 'SvelteElement' && fieldOf(parent, 'kind') !== 'html') {
+		const inside = named.filter((reference) => liesWithin(reference.identifier, parent));
+		return inside.length === 0 && isBitsUi(parent);
+	}
+	const variable = scopes
+		.flatMap((scope) => scope.variables)
+		.find((candidate) =>
+			candidate.defs.some(
+				(definition) => definition.type === 'FunctionName' && definition.node === snippet
+			)
+		);
+	if (variable === undefined || variable.defs.length !== 1) return false;
+	const uses = named.filter(
+		(reference) => reference.resolved === variable || reference.resolved === null
+	);
+	/** @param {{ name: string, element: unknown }} attribute */
+	const isHandoff = (attribute) => {
+		if (handoff === undefined || attribute.name !== handoff.attribute) return false;
+		const target = componentImport(attribute.element, sourceCode);
+		return (
+			target !== undefined &&
+			target.source === handoff.source &&
+			!target.isMember &&
+			fieldOf(target.specifier, 'type') === 'ImportDefaultSpecifier'
+		);
+	};
+	return (
+		uses.length > 0 &&
+		uses.every((reference) => {
+			const attribute = attributeValuedBy(reference.identifier);
+			if (attribute === undefined) return false;
+			return (attribute.name === 'child' && isBitsUi(attribute.element)) || isHandoff(attribute);
+		})
+	);
+}
+
+/**
+ * True when a spread attribute spreads exactly what bits-ui hands the
+ * nearest {#snippet child(…)}: it sits on an HTML element, its argument is a
+ * bare name, that name resolves to `props` or `wrapperProps` destructured
+ * from that snippet's one parameter, nothing nearer shadowing it, and only a
+ * bits-ui component can render that snippet (see isRenderedByBitsUi).
+ *
+ * @param {import('eslint').Rule.Node} node the SvelteSpreadAttribute
+ * @param {import('eslint').SourceCode} sourceCode
+ * @param {{ source: string, attribute: string } | undefined} handoff
+ */
+function isSnippetPropsSpread(node, sourceCode, handoff) {
+	const element = fieldOf(fieldOf(node, 'parent'), 'parent');
+	if (fieldOf(element, 'type') !== 'SvelteElement' || fieldOf(element, 'kind') !== 'html') {
+		return false;
+	}
+	const argument = fieldOf(node, 'argument');
+	const name = fieldOf(argument, 'name');
+	if (fieldOf(argument, 'type') !== 'Identifier' || typeof name !== 'string') return false;
+	const snippet = nearestSnippet(node);
+	if (fieldOf(fieldOf(snippet, 'id'), 'name') !== 'child') return false;
+	const params = fieldOf(snippet, 'params');
+	const pattern = Array.isArray(params) && params.length === 1 ? params[0] : undefined;
+	if (fieldOf(pattern, 'type') !== 'ObjectPattern') return false;
+	const variable = variableAt(sourceCode, node, name);
+	if (variable === undefined || variable.defs.length !== 1) return false;
+	const [definition] = variable.defs;
+	if (definition === undefined || definition.type !== 'Parameter') return false;
+	if (definition.node !== snippet) return false;
+	const property = fieldOf(definition.name, 'parent');
+	const key = fieldOf(property, 'key');
+	const isHandedProps =
+		fieldOf(property, 'type') === 'Property' &&
+		fieldOf(property, 'parent') === pattern &&
+		fieldOf(property, 'value') === definition.name &&
+		fieldOf(property, 'computed') === false &&
+		fieldOf(key, 'type') === 'Identifier' &&
+		SNIPPET_PROPS.some((allowed) => fieldOf(key, 'name') === allowed);
+	return isHandedProps && isRenderedByBitsUi(snippet, sourceCode, handoff);
+}
+
+/** @type {import('eslint').Rule.RuleModule} */
+const spreadsRule = {
+	meta: {
+		type: 'problem',
+		docs: {
+			description:
+				'A spread carries only the props a bits-ui component hands its {#snippet child(…)} onto an HTML element; <svelte:element> only in its listed files.'
+		},
+		schema: [],
+		messages: {
+			spread:
+				'A spread passes attributes nobody reads here, an inline handler included: spread only the props or wrapperProps of the nearest {#snippet child(…)}, onto an HTML element inside it, and let only bits-ui render that snippet: put it right under a bits-ui component, or hand it to one as child and nowhere else (SNIPPET_HANDOFF_FILES lists the exceptions).',
+			element:
+				'<svelte:element> picks its tag at run time: write the element itself. Only the files on SVELTE_ELEMENT_FILES may use it.'
+		}
+	},
+	create(context) {
+		const file = packageRelative(context.filename);
+		const mayUseElement = SVELTE_ELEMENT_FILES.includes(file);
+		const handoff = SNIPPET_HANDOFF_FILES.find((entry) => entry.file === file);
+		return {
+			/** @param {import('eslint').Rule.Node} node */
+			SvelteSpreadAttribute(node) {
+				if (isSnippetPropsSpread(node, context.sourceCode, handoff)) return;
+				context.report({ node, messageId: 'spread' });
+			},
+			/** @param {import('eslint').Rule.Node} node */
+			"SvelteElement[name.name='svelte:element']"(node) {
+				if (mayUseElement) return;
+				context.report({ node, messageId: 'element' });
+			}
+		};
+	}
+};
+
 /** The package's own rules, as an inline plugin. */
 const uiPlugin = {
 	meta: { name: 'ui' },
 	rules: {
 		'import-tiers': importTiersRule,
 		'no-remote-string': noRemoteStringRule,
-		'no-script-url': noScriptUrlRule
+		'no-script-url': noScriptUrlRule,
+		'no-motion-import': noMotionImportRule,
+		'no-provide-environment': noProvideEnvironmentRule,
+		spreads: spreadsRule
 	}
 };
 
@@ -1043,11 +1756,15 @@ const HOST_RULES = {
 	globals: HOST_GLOBALS,
 	properties: [...HOST_PROPERTIES, ANIMATE_PROPERTY],
 	imports: HOST_IMPORTS,
-	syntax: HOST_SYNTAX
+	syntax: HOST_SYNTAX,
+	seam: { motionImport: false, provideEnvironment: false }
 };
 
 /**
- * Each source set's tier and its options for the four restricted rules. A
+ * Each source set's tier, its options for the four restricted rules, and
+ * which of the seam's import rules it takes: no import reaching the motion
+ * adapter (every shipped set but the adapter itself) and no provideEnvironment
+ * (every shipped set but the seam). A
  * later flat-config block replaces an earlier one's options for the same rule,
  * so each set gets one block per rule holding every entry it needs.
  */
@@ -1057,21 +1774,32 @@ export const boundaryRules = {
 		globals: COMPONENT_GLOBALS,
 		properties: [...COMPONENT_PROPERTIES, ANIMATE_PROPERTY],
 		imports: COMPONENT_IMPORTS,
-		syntax: COMPONENT_SYNTAX
+		syntax: COMPONENT_SYNTAX,
+		seam: { motionImport: true, provideEnvironment: true }
 	},
 	motion: {
 		tier: /** @type {const} */ ('shipped'),
 		globals: COMPONENT_GLOBALS,
 		properties: COMPONENT_PROPERTIES,
 		imports: MOTION_IMPORTS,
-		syntax: COMPONENT_SYNTAX
+		syntax: MOTION_SYNTAX,
+		seam: { motionImport: false, provideEnvironment: true }
 	},
 	lazy: {
 		tier: /** @type {const} */ ('shipped'),
 		globals: COMPONENT_GLOBALS,
 		properties: [...COMPONENT_PROPERTIES, ANIMATE_PROPERTY],
 		imports: LAZY_IMPORTS,
-		syntax: LAZY_SYNTAX
+		syntax: LAZY_SYNTAX,
+		seam: { motionImport: true, provideEnvironment: true }
+	},
+	environment: {
+		tier: /** @type {const} */ ('shipped'),
+		globals: COMPONENT_GLOBALS,
+		properties: [...COMPONENT_PROPERTIES, ANIMATE_PROPERTY],
+		imports: ENVIRONMENT_IMPORTS,
+		syntax: COMPONENT_SYNTAX,
+		seam: { motionImport: true, provideEnvironment: false }
 	},
 	routes: HOST_RULES,
 	gallery: {
@@ -1079,14 +1807,16 @@ export const boundaryRules = {
 		globals: HOST_GLOBALS,
 		properties: [...HOST_PROPERTIES, ANIMATE_PROPERTY],
 		imports: HOST_IMPORTS,
-		syntax: GALLERY_SYNTAX
+		syntax: GALLERY_SYNTAX,
+		seam: { motionImport: false, provideEnvironment: false }
 	},
 	storage: {
 		tier: /** @type {const} */ ('host'),
 		globals: STORE_GLOBALS,
 		properties: [...STORE_PROPERTIES, ANIMATE_PROPERTY],
 		imports: HOST_IMPORTS,
-		syntax: STORE_SYNTAX
+		syntax: STORE_SYNTAX,
+		seam: { motionImport: false, provideEnvironment: false }
 	},
 	stories: HOST_RULES,
 	storybookBrowser: HOST_RULES
@@ -1135,18 +1865,21 @@ function boundaryBlocks(name) {
 			rules: {
 				'ui/import-tiers': ['error', { tier: rules.tier }],
 				'ui/no-remote-string': 'error',
-				'ui/no-script-url': 'error'
+				'ui/no-script-url': 'error',
+				...(rules.seam.motionImport ? { 'ui/no-motion-import': 'error' } : {}),
+				...(rules.seam.provideEnvironment ? { 'ui/no-provide-environment': 'error' } : {})
 			}
 		}
 	];
 }
 
-/** Every set but the checks: the components, their two carve-outs, the host, its stores and the browser-side Storybook config. */
+/** Every set but the checks: the components, their three carve-outs, the host, its stores and the browser-side Storybook config. */
 /** @type {readonly (keyof typeof boundaryRules)[]} */
 const SOURCE_SETS = [
 	'components',
 	'motion',
 	'lazy',
+	'environment',
 	'routes',
 	'gallery',
 	'storage',
@@ -1289,6 +2022,19 @@ export default defineConfig(
 		// name them for resolve(); it prefixes each with resolve('/') instead.
 		files: ['src/gallery/GalleryNav.svelte'],
 		rules: { 'svelte/no-navigation-without-resolve': 'off' }
+	},
+	{
+		name: 'ui/button-link',
+		// Button's href is a LinkHref, checked again when Button renders; Kit's
+		// resolve() belongs to the app that builds the link, not to the library.
+		files: ['src/lib/controls/Button.svelte'],
+		rules: { 'svelte/no-navigation-without-resolve': 'off' }
+	},
+	{
+		name: 'ui/spreads',
+		// Every .svelte file in every set, the host's and the checks' included.
+		files: ['**/*.svelte'],
+		rules: { 'ui/spreads': 'error' }
 	},
 	{
 		name: 'ui/no-at-html',

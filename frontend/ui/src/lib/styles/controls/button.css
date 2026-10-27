@@ -1,0 +1,145 @@
+/* Button: one button in four looks. Primary, secondary and destructive are placed; quiet is a pick. */
+.zf-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-2);
+	box-sizing: border-box;
+	height: var(--size-control);
+	padding: 0 var(--space-3);
+	font: inherit;
+	font-size: var(--text-md);
+	line-height: var(--leading-md);
+	font-weight: var(--weight-semibold);
+	text-decoration: none;
+	white-space: nowrap;
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+}
+
+.zf-btn:focus-visible {
+	outline: 2px solid var(--color-focus);
+	outline-offset: var(--space-half);
+}
+
+.zf-btn--sm {
+	height: var(--size-control-sm);
+	padding: 0 var(--space-2);
+	font-size: var(--text-sm);
+}
+
+.zf-btn--primary {
+	background: var(--color-accent);
+	border-color: var(--color-accent-border);
+	color: var(--color-on-accent);
+}
+
+.zf-btn--primary:hover:not(:disabled) {
+	filter: brightness(1.06);
+}
+
+.zf-btn--secondary {
+	background: var(--color-surface-raised);
+	border-color: var(--color-border-strong);
+	color: var(--color-text);
+}
+
+.zf-btn--secondary:hover:not(:disabled) {
+	background: var(--color-hover);
+}
+
+/* Quiet rests as ink on the page and lifts as a pick when touched. */
+.zf-btn--quiet {
+	color: var(--color-text);
+	border-radius: var(--radius-pick);
+}
+
+.zf-btn--destructive {
+	background: var(--color-danger);
+	border-color: var(--color-danger);
+	color: var(--color-on-danger);
+}
+
+.zf-btn--destructive:hover:not(:disabled) {
+	filter: brightness(1.06);
+}
+
+.zf-btn:disabled {
+	cursor: not-allowed;
+	opacity: 0.55;
+}
+
+.zf-btn[aria-busy='true'] {
+	cursor: progress;
+}
+
+@media (pointer: coarse) {
+	.zf-btn {
+		min-height: var(--size-touch);
+	}
+}
+
+/* IconButton: a square button with only an icon. Plain ones are picks; secondary ones are placed. */
+.zf-iconbtn {
+	display: inline-grid;
+	place-items: center;
+	flex: none;
+	box-sizing: border-box;
+	width: var(--size-control);
+	height: var(--size-control);
+	padding: 0;
+	font: inherit;
+	color: var(--color-text-muted);
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+}
+
+.zf-iconbtn:focus-visible {
+	outline: 2px solid var(--color-focus);
+	outline-offset: var(--space-half);
+}
+
+.zf-iconbtn--sm {
+	width: var(--size-control-sm);
+	height: var(--size-control-sm);
+}
+
+.zf-iconbtn:hover:not(:disabled),
+.zf-iconbtn[aria-expanded='true'] {
+	color: var(--color-text);
+}
+
+/* Quiet rests as ink on the page and lifts as a pick when touched. */
+.zf-iconbtn--quiet {
+	border-radius: var(--radius-pick);
+}
+
+.zf-iconbtn--secondary {
+	background: var(--color-surface-raised);
+	border-color: var(--color-border-strong);
+	color: var(--color-text);
+}
+
+.zf-iconbtn--secondary:hover:not(:disabled) {
+	background: var(--color-hover);
+}
+
+/* A pressed tool keeps the selected tint. */
+.zf-iconbtn[aria-pressed='true'] {
+	background: var(--color-selected);
+	color: var(--color-accent-text);
+}
+
+.zf-iconbtn:disabled {
+	cursor: not-allowed;
+	opacity: 0.55;
+}
+
+@media (pointer: coarse) {
+	.zf-iconbtn {
+		min-width: var(--size-touch);
+		min-height: var(--size-touch);
+	}
+}

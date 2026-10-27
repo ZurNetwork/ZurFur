@@ -161,6 +161,15 @@ const checkImportableFiles = [
 	'.storybook/main.ts'
 ].map((file) => path.join(uiRoot, file));
 
+/** The packages the controls wrap, which only a component's own `.svelte` file may import. */
+const wrappedPackages = /^(?:bits-ui|@internationalized\/[^/]+)$/;
+
+/** True when `relative` (under src/) is a `.svelte` file in src/lib, the one place the wrapped packages may be imported. */
+function mayImportWrapped(relative: string): boolean {
+	const posix = relative.split(path.sep).join('/');
+	return posix.startsWith('lib/') && posix.endsWith('.svelte');
+}
+
 function packageName(specifier: string): string {
 	const parts = specifier.split('/');
 	const isScoped = specifier.startsWith('@');
@@ -218,6 +227,9 @@ function refusalOf(file: SourceFile, specifier: string, manifest: Manifest): str
 	if (aliasPattern.test(specifier)) return undefined;
 	const name = packageName(specifier);
 	if (kind === 'component' && isDevTool(name)) return 'a development tool in component code';
+	if (wrappedPackages.test(name) && !mayImportWrapped(file.relative)) {
+		return 'a wrapped package outside a .svelte file in src/lib';
+	}
 	if (name === manifest.name) {
 		return manifest.exported.has(specifier) ? undefined : 'a path the package does not export';
 	}
@@ -532,6 +544,59 @@ describe('declared imports', () => {
 			['no exports map', undefined, []]
 		])('reads an exports map of %s', (_label, exportsField, expected) => {
 			expect([...exportedSpecifiers('@zurfur/ui', exportsField)]).toEqual(expected);
+		});
+	});
+
+	describe('the wrapped packages, imported only by a .svelte file in src/lib', () => {
+		const bitsInPage =
+			'<script lang="ts">\n\timport { Switch } from \'bits-ui\';\n</script>\n\n<Switch.Root />\n';
+
+		it.each([
+			['bits-ui in a gallery route', 'routes/components/toggle/+page.svelte', bitsInPage],
+			['bits-ui in the gallery frame', 'gallery/X.svelte', bitsInPage],
+			['bits-ui in a stories file', 'stories/controls/X.stories.svelte', bitsInPage],
+			['bits-ui in a check harness', 'checks/testing/Harness.svelte', bitsInPage],
+			[
+				'bits-ui in the control types',
+				'lib/controls/types.ts',
+				"import type { Switch } from 'bits-ui';"
+			],
+			['a bits-ui subpath in a lib module', 'lib/x.ts', "import 'bits-ui/x';"],
+			[
+				'bits-ui in a spec',
+				'lib/controls/Toggle.svelte.spec.ts',
+				"import { Switch } from 'bits-ui';"
+			],
+			[
+				'@internationalized/date in a lib module',
+				'lib/controls/calendar-day.ts',
+				"import { CalendarDate } from '@internationalized/date';"
+			],
+			[
+				'@internationalized/date in a route module',
+				'routes/x.ts',
+				"import { today } from '@internationalized/date';"
+			],
+			[
+				'@internationalized/date in a check',
+				'checks/x.spec.ts',
+				"import '@internationalized/date';"
+			]
+		])('refuses %s', (_label, relative, text) => {
+			expect(refusalsFor(relative, text).map((refusal) => refusal.reason)).toEqual([
+				'a wrapped package outside a .svelte file in src/lib'
+			]);
+		});
+
+		it.each([
+			['bits-ui in a control', 'lib/controls/Toggle.svelte', bitsInPage],
+			[
+				'@internationalized/date in a control',
+				'lib/controls/DateField.svelte',
+				'<script lang="ts">\n\timport { CalendarDate } from \'@internationalized/date\';\n</script>\n\n<p>{CalendarDate.name}</p>\n'
+			]
+		])('allows %s', (_label, relative, text) => {
+			expect(refusalsFor(relative, text)).toEqual([]);
 		});
 	});
 
