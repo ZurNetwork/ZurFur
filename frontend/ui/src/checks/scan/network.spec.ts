@@ -769,6 +769,42 @@ describe('the doc comments under src/lib/', () => {
 			'<div><!-- @component See https://example.org --></div>',
 			'doc-url'
 		],
+		[
+			'a backslash host in a Markdown image',
+			libModule,
+			'/** ![s](/\\evil.example/p.png) */\nexport const x = 1;',
+			'doc-destination'
+		],
+		[
+			'a backslash host in a Markdown link',
+			libModule,
+			'/** See [it](\\\\evil.example/p). */\nexport const x = 1;',
+			'doc-destination'
+		],
+		[
+			'an escaped slash host in a Markdown link',
+			libModule,
+			'/** See [it](\\/\\/evil.example/p). */\nexport const x = 1;',
+			'doc-destination'
+		],
+		[
+			'a tab between slashes in an angle destination',
+			libModule,
+			'/** ![s](</\t/evil.example/p.png>) */\nexport const x = 1;',
+			'doc-destination'
+		],
+		[
+			'a backslash host in a reference definition',
+			libModule,
+			'/**\n * ![s][r]\n *\n * [r]: /\\evil.example/p.png\n */\nexport const x = 1;',
+			'doc-destination'
+		],
+		[
+			'a backslash host in an autolink',
+			libModule,
+			'/** See <\\\\evil.example/p>. */\nexport const x = 1;',
+			'doc-destination'
+		],
 		['a component that does not parse', libComponent, '<script>\n/** x */\n</scr', 'unparsed']
 	] as const)('refuses %s', (_label, path, text, rule) => {
 		expect(docRulesOf(path, text)).toContain(rule);
@@ -786,6 +822,12 @@ describe('the doc comments under src/lib/', () => {
 			'/** The attribute on `<html>` or any element below it. */\nexport const x = 1;'
 		],
 		['a comparison', libModule, '/** True when a < b and b > 2. */\nexport const x = 1;'],
+		[
+			'a local Markdown link',
+			libModule,
+			'/** See [the paper moves](./paper-moves.ts) and [x][r].\n *\n * [r]: ../x.ts\n */\nexport const x = 1;'
+		],
+		['a backslash in plain words', libModule, '/** Splits on a \\ or a /. */\nexport const x = 1;'],
 		['a line comment holding a URL', libModule, '// See https://example.org\nexport const x = 1;'],
 		[
 			'a block comment that is not JSDoc',

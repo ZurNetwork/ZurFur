@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
 import { parse } from 'svelte/compiler';
 import path from 'node:path';
+import { docTextRules, type DocTextRule } from './scan/network';
 import { packageSources, type SourceFile } from './scan/parse';
 
 /** Why a stories file is refused, and what it named. */
@@ -20,7 +21,10 @@ export type StoryRefusalReason =
 	| 'a <style> element'
 	| 'a style attribute'
 	| 'a style: directive'
-	| 'an a11y setting';
+	| 'an a11y setting'
+	| 'a URL in a string'
+	| 'an HTML tag in a string'
+	| 'a remote link or image in a string';
 
 /** The packages a stories file may import, each exactly as written: `@zurfur/ui` by its public entry only. */
 const allowedPackages: ReadonlySet<string> = new Set([
@@ -91,6 +95,31 @@ function namesA11y(node: Fields): boolean {
 	return false;
 }
 
+/** A string literal's value, or a template literal's cooked and raw text with its expressions left out. */
+function stringReadings(node: Fields): readonly string[] {
+	if (node.type === 'Literal') return typeof node.value === 'string' ? [node.value] : [];
+	if (node.type !== 'TemplateLiteral' || !Array.isArray(node.quasis)) return [];
+	const values = node.quasis.flatMap((quasi: unknown): readonly Fields[] => {
+		const value = isFields(quasi) ? quasi.value : undefined;
+		return isFields(value) ? [value] : [];
+	});
+	const joined = (part: 'cooked' | 'raw'): string =>
+		values.map((value) => (typeof value[part] === 'string' ? value[part] : '')).join('');
+	return [joined('cooked'), joined('raw')];
+}
+
+/** Why a string breaks the docs-text rule, in the words a refusal uses. */
+function docTextReason(rule: DocTextRule): StoryRefusalReason {
+	switch (rule) {
+		case 'doc-url':
+			return 'a URL in a string';
+		case 'doc-tag':
+			return 'an HTML tag in a string';
+		case 'doc-destination':
+			return 'a remote link or image in a string';
+	}
+}
+
 /** The text of each script block of a parsed `.svelte` file. */
 function scriptTexts(text: string, root: Fields): readonly string[] {
 	return [root.module, root.instance].flatMap((script) => {
@@ -124,7 +153,9 @@ function parseRoot(text: string): Fields | string {
 /**
  * Every refusal in one stories file: an import other than Svelte CSF,
  * `storybook/test`, `@zurfur/ui` and relative files under src/stories/ and
- * src/gallery/; any `<style>`, `style=` or `style:`; and any `a11y` key.
+ * src/gallery/; any `<style>`, `style=` or `style:`; any `a11y` key; and any
+ * string or template text that breaks the lib doc-comment rule, since docs
+ * descriptions render as Markdown with raw HTML allowed.
  */
 export function storyFileRefusals(file: SourceFile): readonly StoryRefusal[] {
 	const refusal = (reason: StoryRefusalReason, detail: string): StoryRefusal => ({
@@ -167,11 +198,19 @@ export function storyFileRefusals(file: SourceFile): readonly StoryRefusal[] {
 
 	const a11yRefusals = nodes.filter(namesA11y).map(() => refusal('an a11y setting', 'a11y'));
 
+	const stringRefusals = nodes.flatMap((node) => {
+		const readings = stringReadings(node);
+		const rules = new Set(readings.flatMap(docTextRules));
+		const excerpt = (readings[0] ?? '').replace(/\s+/g, ' ').slice(0, 80);
+		return [...rules].map((rule) => refusal(docTextReason(rule), excerpt));
+	});
+
 	return [
 		...importRefusals,
 		...computedImports.map(() => refusal('a computed import', 'import(…)')),
 		...styleRefusals,
-		...a11yRefusals
+		...a11yRefusals,
+		...stringRefusals
 	];
 }
 
@@ -356,6 +395,119 @@ describe('story imports', () => {
 		expect(reasonsFor(storiesFile(imports, meta, '<Story name="Plain" />'))).toEqual([
 			'an a11y setting'
 		]);
+	});
+
+	/** A defineMeta tail whose docs description is `source`, written as script source. */
+	const describedAs = (source: string): string =>
+		`,\n\t\tparameters: { docs: { description: { component: ${source} } } }`;
+
+	it.each([
+		['a Markdown image', "'![x](https://example.org/a.png)'", 'a URL in a string'],
+		['an <img>', '\'<img src="https://example.org/b.png">\'', 'a URL in a string'],
+		[
+			'a remote stylesheet',
+			'\'<link rel="stylesheet" href="https://example.org/c.css">\'',
+			'a URL in a string'
+		],
+		['an <iframe>', '\'<iframe src="https://example.org/">\'', 'a URL in a string'],
+		['an <object>', '\'<object data="https://example.org/d">\'', 'a URL in a string'],
+		['a <video>', '\'<video src="https://example.org/e.mp4">\'', 'a URL in a string'],
+		[
+			'an <svg><image>',
+			'\'<svg><image href="https://example.org/f.png"/></svg>\'',
+			'a URL in a string'
+		]
+	] as const)('refuses %s in a docs description', (_label, source, reason) => {
+		const reasons = reasonsFor(storiesFile(imports, describedAs(source), '<Story name="Plain" />'));
+		expect(reasons).toContain(reason);
+	});
+
+	it.each([
+		['an <img> with a local source', '\'<img src="./a.png">\'', ['an HTML tag in a string']],
+		[
+			'a backslash host in a Markdown link',
+			"'[x](/\\\\example.org/g)'",
+			['a remote link or image in a string']
+		],
+		[
+			'a backslash host in a Markdown image',
+			"'![x](\\\\\\\\example.org/g.png)'",
+			['a remote link or image in a string']
+		],
+		[
+			'a backslash host in a reference definition',
+			"'![x][r]\\n\\n[r]: /\\\\example.org/g.png'",
+			['a remote link or image in a string']
+		],
+		['a tag in a template literal', '`A <img src="./a.png"> here`', ['an HTML tag in a string']],
+		[
+			'a tag split across a template expression',
+			'`<${\'\'}img src="./a.png">`',
+			['an HTML tag in a string']
+		],
+		['a tag behind a unicode escape', '\'\\u003cimg src="./a.png">\'', ['an HTML tag in a string']],
+		[
+			'a URL in a String.raw template',
+			'String.raw`[x](/\\example.org/g)`',
+			['a remote link or image in a string']
+		]
+	] as const)('refuses %s in a docs description', (_label, source, reasons) => {
+		expect(reasonsFor(storiesFile(imports, describedAs(source), '<Story name="Plain" />'))).toEqual(
+			reasons
+		);
+	});
+
+	it('refuses every remote load in one docs description', () => {
+		const payload = [
+			'![x](https://example.org/a.png)',
+			'<img src="https://example.org/b.png">',
+			'<link rel="stylesheet" href="https://example.org/c.css">',
+			'<iframe src="https://example.org/">',
+			'<object data="https://example.org/d">',
+			'<video src="https://example.org/e.mp4">',
+			'<svg><image href="https://example.org/f.png"/></svg>',
+			'[x](/\\\\example.org/g)'
+		].join(' ');
+		const reasons = reasonsFor(
+			storiesFile(imports, describedAs(`'${payload}'`), '<Story name="Plain" />')
+		);
+		expect(reasons).toEqual([
+			'a URL in a string',
+			'an HTML tag in a string',
+			'a remote link or image in a string'
+		]);
+	});
+
+	it.each([
+		[
+			"a story's parameters in the markup",
+			storiesFile(
+				imports,
+				'',
+				'<Story name="Plain" parameters={{ docs: { description: { story: \'<img src="./a.png">\' } } }} />'
+			)
+		],
+		[
+			'the instance script',
+			`${storiesFile(imports, '', '<Story name="Plain" />')}\n<script lang="ts">\n\tconst words = '<img src="./a.png">';\n</script>\n`
+		],
+		[
+			'a markup expression',
+			storiesFile(imports, '', '<Story name="Plain">{\'<img src="./a.png">\'}</Story>')
+		]
+	] as const)('refuses a tag in a string in %s', (_label, text) => {
+		expect(reasonsFor(text)).toEqual(['an HTML tag in a string']);
+	});
+
+	it.each([
+		['a keyboard map', "'Tab moves to the button; Enter and Space press it.'"],
+		['a tag in a code span', "'Renders a `<button>`; `Esc` closes it.'"],
+		['a local Markdown link', "'See [the paper](./Paper.mdx) and a < b.'"],
+		['a template with an expression', '`${1} of ${2} pages`']
+	] as const)('passes %s in a docs description', (_label, source) => {
+		expect(reasonsFor(storiesFile(imports, describedAs(source), '<Story name="Plain" />'))).toEqual(
+			[]
+		);
 	});
 
 	it('refuses a file that does not parse', () => {

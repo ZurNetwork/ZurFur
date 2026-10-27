@@ -14,9 +14,12 @@
  * (`//`, `\\`), read the way a browser reads a URL.
  *
  * Doc comments under `src/lib/` (JSDoc in TypeScript and in Svelte scripts,
- * and Svelte `@component` comments) hold no URL (`http:`, `https:`, `//`)
- * and no HTML tag outside an inline code span: Storybook's docs pages render
- * them as Markdown, raw HTML allowed.
+ * and Svelte `@component` comments) hold no URL (`http:`, `https:`, `//`),
+ * no HTML tag outside an inline code span, and no Markdown link, image,
+ * reference or autolink destination that reads as remote (`/\host`, `\\host`,
+ * `\/\/host`): Storybook's docs pages render them as Markdown, raw HTML
+ * allowed. The stories spec holds every string in a stories file to the same
+ * rule.
  *
  * Not caught: a URL built at run time from an expression, a spread
  * attribute, a `<svelte:element this="style">`, and the doc comments of
@@ -53,6 +56,7 @@ export type NetworkRule =
 	| 'head-content'
 	| 'doc-url'
 	| 'doc-tag'
+	| 'doc-destination'
 	| 'unparsed';
 
 export interface NetworkFinding {
@@ -280,16 +284,45 @@ function outsideCodeSpans(text: string): string {
 	return text.replace(/`[^`\\\n]*`/g, (span) => ' '.repeat(span.length));
 }
 
+/** Where a Markdown destination starts: after `](` (a link or image), `]:` (a reference definition) or `<` (an autolink). */
+const docDestinationStart = /\]\(|\]:|</g;
+
+/** A Markdown backslash escape, as the docs pages' renderer undoes it in a destination. */
+const markdownEscape = /\\([^0-9A-Za-z\s])/g;
+
+/**
+ * Each Markdown link, image, reference and autolink destination in `text`,
+ * from its start to the end of the text, as written and with backslash
+ * escapes undone. It over-reads on purpose: only a destination's start
+ * decides whether it is remote.
+ */
+export function markdownDestinations(text: string): readonly string[] {
+	return [...text.matchAll(docDestinationStart)].flatMap((match) => {
+		const destination = text.slice(match.index + match[0].length).replace(/^\s*</, '');
+		return [destination, destination.replace(markdownEscape, '$1')];
+	});
+}
+
+/** A rule docs text breaks. */
+export type DocTextRule = 'doc-url' | 'doc-tag' | 'doc-destination';
+
+/**
+ * The rules `text` breaks as docs text, which Storybook renders as Markdown
+ * with raw HTML allowed: a URL anywhere, an HTML tag outside inline code
+ * spans, or a Markdown destination a browser reads as remote.
+ */
+export function docTextRules(text: string): readonly DocTextRule[] {
+	const rules: readonly (DocTextRule | false)[] = [
+		docUrl.test(text) && 'doc-url',
+		docTag.test(outsideCodeSpans(text)) && 'doc-tag',
+		markdownDestinations(text).some(isRemote) && 'doc-destination'
+	];
+	return rules.filter((rule) => rule !== false);
+}
+
 function docFindings(comment: DocComment): readonly NetworkFinding[] {
 	const excerpt = comment.text.replace(/\s+/g, ' ').slice(0, 80);
-	return [
-		...(docUrl.test(comment.text)
-			? [{ rule: 'doc-url' as const, found: excerpt, place: comment.place }]
-			: []),
-		...(docTag.test(outsideCodeSpans(comment.text))
-			? [{ rule: 'doc-tag' as const, found: excerpt, place: comment.place }]
-			: [])
-	];
+	return docTextRules(comment.text).map((rule) => ({ rule, found: excerpt, place: comment.place }));
 }
 
 /** The findings in one file's doc comments; only files under `src/lib/` are held to the rule. */
