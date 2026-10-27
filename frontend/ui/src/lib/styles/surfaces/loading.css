@@ -54,3 +54,8 @@
 	gap: var(--space-2);
 	width: 100%;
 }
+
+/* Of several bars, the last is shorter, like a line that ends early. */
+.zf-skeleton-lines > .zf-skeleton:last-child:not(:only-child) {
+	width: 62%;
+}

@@ -63,7 +63,24 @@ export type {
 	SelectOption,
 	TabItem
 } from './controls/types.ts';
-export type { FeedbackAction } from './surfaces/types.ts';
+export { default as Card } from './surfaces/Card.svelte';
+export { default as Badge } from './surfaces/Badge.svelte';
+export { default as Spinner } from './surfaces/Spinner.svelte';
+export { default as Skeleton } from './surfaces/Skeleton.svelte';
+export { default as VisibilityMarker } from './surfaces/VisibilityMarker.svelte';
+export { default as StatusPill } from './surfaces/StatusPill.svelte';
+export type {
+	BadgeTone,
+	CardElement,
+	CardPadding,
+	FeedbackAction,
+	StatusFact,
+	StatusPart,
+	StatusParts,
+	StatusTone,
+	VisibilityLevel,
+	VisibilityWords
+} from './surfaces/types.ts';
 export {
 	NO_MOVES,
 	type LoopKind,
