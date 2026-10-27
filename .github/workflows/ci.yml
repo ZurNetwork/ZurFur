@@ -389,11 +389,9 @@ jobs:
       - run: just hooks-test
       # Fixture tests for the CI path classifier, gate-light and pr-wait.
       - run: just scripts-test
-      # Every action pinned to a commit SHA, and the workflows' typos,
-      # cargo-deny and buf versions equal to the Justfile's pins; every
-      # checkout without stored credentials, read-only top-level permissions,
-      # no job-level permissions, no pull_request_target, no secrets, and
-      # every yarn install frozen, script-free and guarded before and after.
+      # The workflow checks: every action at its one reviewed SHA, the tool
+      # versions equal to the Justfile's pins, and the CI safety rules
+      # (scripts/tools-check.sh's header lists them all).
       - run: just tools-check --pins-only
       # The TOML files the `changes` job lets skip the Rust jobs still parse.
       - run: just toml-check
@@ -441,8 +439,10 @@ jobs:
   # built-output check over that build, then the Storybook gallery's build and
   # its built-output check (`just gallery-build`), then the screenshot run's
   # unit tests and the run itself (`just gallery-shots-run --ci`). On a
-  # failure, only the run's PNG files under frontend/ui/shots/output are uploaded,
-  # kept 7 days; nothing from the job is published.
+  # failure, the run's expected, actual and difference PNG files under
+  # frontend/ui/shots/output are uploaded for 7 days, downloadable by anyone
+  # signed in to GitHub while the repository is public; nothing else leaves
+  # the job.
   ui:
     name: ui
     needs: [changes, npm-lock]
@@ -490,10 +490,12 @@ jobs:
           just-version: '1.49.0'
       # The screenshots against the committed pictures, in the pinned Playwright image with no network.
       - run: just gallery-shots-run --ci
+        id: shots
         working-directory: .
-      # On a failure only, the run's PNG files and nothing else, kept 7 days.
+      # Only when the screenshot run itself failed: its PNG files and nothing
+      # else, kept 7 days.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: failure()
+        if: failure() && steps.shots.outcome == 'failure'
         with:
           name: gallery-shots-failures
           path: frontend/ui/shots/output/**/*.png

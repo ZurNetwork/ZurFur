@@ -9,10 +9,16 @@
 #
 # Exits 1 only when the workflows disagree with the Justfile's pins, an action
 # is not pinned to a full commit SHA or is not at the one commit allowed_actions
-# names for it, a workflow breaks a CI safety rule
-# (see ci_safety below), or frontend/install-check.mjs holds no readable
-# INSTALL_COMMAND. A local version that differs from CI's prints a
-# warning and leaves the exit code alone.
+# names for it, a workflow breaks a CI safety rule, or
+# frontend/install-check.mjs holds no readable INSTALL_COMMAND. A local version
+# that differs from CI's prints a warning and leaves the exit code alone.
+#
+# The CI safety rules: every checkout sets persist-credentials: false; every
+# actions/upload-artifact step sets path frontend/ui/shots/output/**/*.png and
+# retention-days 7, and runs only on exactly
+# `if: failure() && steps.shots.outcome == 'failure'`; and the rules in the
+# comment above ci_safety (permissions, secrets, installs, package managers,
+# containers, actions and the YAML shapes this reader can follow).
 set -eu
 
 : "${TYPOS_VERSION:?run through just tools-check}"
@@ -149,6 +155,72 @@ check_step_input actions/checkout persist-credentials false "CI safety rule"
 # longer retention fails.
 check_step_input actions/upload-artifact path 'frontend/ui/shots/output/**/*.png' "CI safety rule"
 check_step_input actions/upload-artifact retention-days 7 "CI safety rule"
+
+# step_if_pins <action> <condition> — prints "<steps> <pinned>": how many
+# steps use <action>, and how many of those carry exactly one step-level
+# `if:`, whose value is exactly <condition>. A step's keys are the lines at
+# its first key's indent, before or after its `uses:`; an `if:` under `with:`
+# or `env:` never counts.
+step_if_pins() {
+    # shellcheck disable=SC2086 # $workflow_files is a newline list without spaces
+    awk -v action="$1" -v want="$2" -v q="'" '
+        function indent(s) { match(s, /^ */); return RLENGTH }
+        function close_item() {
+            if (in_item && uses_action) { steps++; if (ifs == 1 && if_ok) ok++ }
+            in_item = 0
+        }
+        function step_key(t,    v) {
+            if (match(t, /^uses:[ \t]*/)) {
+                v = substr(t, RLENGTH + 1)
+                sub("^[\"" q "]", "", v)
+                if (index(v, action "@") == 1) uses_action = 1
+            } else if (match(t, /^if:[ \t]*/)) {
+                v = substr(t, RLENGTH + 1)
+                sub(/[ \t]+#.*$/, "", v)
+                sub(/[ \t]+$/, "", v)
+                ifs++
+                if (v == want) if_ok = 1
+            }
+        }
+        FNR == 1 { close_item() }
+        {
+            sub(/\r$/, "")
+            line = $0
+            if (line ~ /^ *(#.*)?$/) next
+            if (in_item && indent(line) > dash_ind) {
+                if (indent(line) == key_ind) step_key(substr(line, key_ind + 1))
+                next
+            }
+            close_item()
+            if (match(line, /^ *- +/)) {
+                key_ind = RLENGTH
+                dash_ind = indent(line)
+                in_item = 1
+                uses_action = 0
+                ifs = 0
+                if_ok = 0
+                step_key(substr(line, key_ind + 1))
+            }
+        }
+        END { close_item(); print steps + 0, ok + 0 }
+    ' $workflow_files
+}
+
+# check_step_if <action> <condition> — at least one step uses <action>, and
+# every such step runs only on exactly <condition>.
+check_step_if() {
+    counts="$(step_if_pins "$1" "$2")"
+    steps="${counts% *}"
+    pinned="${counts#* }"
+    if [ "$steps" -eq 0 ]; then
+        pin_error "no workflow uses $1"
+    elif [ "$steps" != "$pinned" ]; then
+        pin_error "$steps $1 step(s) but $pinned set if: '$2' (CI safety rule)"
+    fi
+}
+# The upload runs only when the screenshot step (id: shots) itself failed, not
+# on any earlier step's failure.
+check_step_if actions/upload-artifact "failure() && steps.shots.outcome == 'failure'"
 
 # The guarded install's exact text: the INSTALL_COMMAND the install guard
 # exports, from its one `export const INSTALL_COMMAND = '<command>';` line.
@@ -572,7 +644,7 @@ ci_safety() {
             if (line !~ /^[ \t]*(-[ \t]+)?(run|shell)[ \t]*:/) {
                 shape = key_shape(line)
                 if (shape != "") problem(FILENAME, FNR, shape ", a shape tools-check cannot read")
-                if (line ~ /(^|[ \t{,])container[ \t]*:/) problem(FILENAME, FNR, "a container: key (no job or step runs in a container image)")
+                if (line ~ /(^|[ \t{,])container[ \t]*:/) problem(FILENAME, FNR, "a container: key (no job or step asks for a container image)")
                 if (line ~ /(^|[ \t{,])services[ \t]*:/) problem(FILENAME, FNR, "a services: key (no job starts service containers)")
             }
             # A shell: (in a step or under defaults) runs its command too; its

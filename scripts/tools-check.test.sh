@@ -43,7 +43,8 @@ install_line() {
 # new_tree — a repo whose ci.yml pins everything correctly and keeps every CI
 # safety rule: read-only top-level permissions, checkouts without stored
 # credentials, the guarded install, exactly the install guard's command, and
-# the one failure upload: the screenshot run's PNG files, kept 7 days.
+# the one failure upload: the screenshot run's PNG files, kept 7 days, only
+# when the screenshot step itself failed.
 new_tree() {
     rm -rf "$work/repo"
     mkdir -p "$work/repo/scripts" "$work/repo/.github/workflows" "$work/repo/frontend"
@@ -95,8 +96,10 @@ jobs:
       - run: |
           yarn run check
           yarn --cwd frontend/web run build
+      - run: just gallery-shots-run --ci
+        id: shots
       - uses: $upload_artifact # v7.0.2
-        if: failure()
+        if: failure() && steps.shots.outcome == 'failure'
         with:
           name: gallery-shots-failures
           path: frontend/ui/shots/output/**/*.png
@@ -380,6 +383,43 @@ expect_exit "an upload of a path list fails" 1 "set path: 'frontend/ui/shots/out
 new_tree
 printf '      - uses: %s # v7.0.2\n        with:\n          name: x\n          path: frontend/ui/shots/output/**/*.png\n' "$upload_artifact" >>"$work/repo/.github/workflows/ci.yml"
 expect_exit "a second upload without retention-days fails" 1 "2 actions/upload-artifact step(s) but 1 set retention-days"
+
+# The upload runs only when the screenshot step itself failed: exactly one
+# step-level if:, exactly that condition.
+upload_if="failure() && steps.shots.outcome == 'failure'"
+export upload_if
+if_count="set if: '$upload_if'"
+new_tree
+replace_in_ci '/^        if: failure\(\) && steps/ { next } { print }'
+expect_exit "an upload without an if: fails" 1 "1 actions/upload-artifact step(s) but 0 $if_count"
+
+new_tree
+replace_in_ci '/^        if: failure\(\) && steps/ { print "        if: failure()"; next } { print }'
+expect_exit "an upload on any failure fails" 1 "but 0 $if_count"
+
+new_tree
+replace_in_ci '/^        if: failure\(\) && steps/ { print "        if: always()"; next } { print }'
+expect_exit "an upload that always runs fails" 1 "but 0 $if_count"
+
+new_tree
+replace_in_ci '/^        if: failure\(\) && steps/ { print "        if: ${{ failure() && steps.shots.outcome == '"'"'failure'"'"' }}"; next } { print }'
+expect_exit "the same condition in another spelling fails (exact text only)" 1 "but 0 $if_count"
+
+new_tree
+replace_in_ci '/^        if: failure\(\) && steps/ { next } { print } /^          retention-days: 7$/ { print "          if: " ENVIRON["upload_if"] }'
+expect_exit "an if: under with: does not count" 1 "but 0 $if_count"
+
+new_tree
+replace_in_ci '{ print } /^        if: failure\(\) && steps/ { print "        if: always()" }'
+expect_exit "a second step-level if: fails" 1 "but 0 $if_count"
+
+new_tree
+replace_in_ci '/uses: .*upload-artifact/ { print "      - name: upload"; print "        if: " ENVIRON["upload_if"]; sub(/- uses/, "  uses"); print; next } /^        if: failure\(\) && steps/ { next } { print }'
+expect_exit "the if: before the uses: passes" 0
+
+new_tree
+printf '      - uses: %s # v7.0.2\n        with:\n          path: frontend/ui/shots/output/**/*.png\n          retention-days: 7\n' "$upload_artifact" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a second upload without the if: fails" 1 "2 actions/upload-artifact step(s) but 1 $if_count"
 
 # No workflow asks for a container itself: no container: or services: key,
 # and no docker or podman in a run: or shell:.
