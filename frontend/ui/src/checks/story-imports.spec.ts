@@ -4,6 +4,7 @@ import { parse } from 'svelte/compiler';
 import path from 'node:path';
 import { docTextRules, type DocTextRule } from './scan/network';
 import { packageSources, type SourceFile } from './scan/parse';
+import * as room from '../stories/controls/room.ts';
 
 /** Why a stories file is refused, and what it named. */
 export interface StoryRefusal {
@@ -22,6 +23,8 @@ export type StoryRefusalReason =
 	| 'a style attribute'
 	| 'a style: directive'
 	| 'an a11y setting'
+	| 'a backgrounds setting'
+	| 'a docs height not imported from room'
 	| 'a URL in a string'
 	| 'an HTML tag in a string'
 	| 'a remote link or image in a string';
@@ -35,6 +38,17 @@ const allowedPackages: ReadonlySet<string> = new Set([
 
 /** The folders a stories file may import relatively: the stories and the token pages' parts. */
 const allowedFolders: readonly string[] = ['src/stories/', 'src/gallery/'];
+
+/** The module every docs height comes from, as a package path without its extension. */
+const roomModule = 'src/stories/controls/room';
+
+/** The one shape a room may take: a whole number of rem from 1 to 999, so no CSS rides along. */
+const roomPattern = /^[1-9]\d{0,2}rem$/;
+
+/** True for a value the room module may export. */
+export function isRoom(value: unknown): boolean {
+	return typeof value === 'string' && roomPattern.test(value);
+}
 
 /** True for a Svelte CSF stories file under src/stories/. */
 export function isStoriesFile(filePath: string): boolean {
@@ -95,6 +109,55 @@ function namesA11y(node: Fields): boolean {
 	return false;
 }
 
+/** True for a key or member named `backgrounds`, which Storybook writes into the page as raw CSS. */
+function namesBackgrounds(node: Fields): boolean {
+	if (node.type === 'Property') return spelledName(node.key, node.computed) === 'backgrounds';
+	if (node.type === 'MemberExpression') {
+		return spelledName(node.property, node.computed) === 'backgrounds';
+	}
+	return false;
+}
+
+/** The keys Storybook pastes into a docs page's CSS as a story's height. */
+const heightKeys: ReadonlySet<string> = new Set(['height', 'iframeHeight']);
+
+/** The local names a file imports by name from the room module. */
+function roomImports(filePath: string, nodes: readonly Fields[]): ReadonlySet<string> {
+	const names = nodes.flatMap((node): readonly string[] => {
+		if (node.type !== 'ImportDeclaration' || !isFields(node.source)) return [];
+		const source = node.source.value;
+		if (typeof source !== 'string' || !source.startsWith('.')) return [];
+		const target = path.posix.join(path.posix.dirname(filePath), source).replace(/\.ts$/, '');
+		if (target !== roomModule || !Array.isArray(node.specifiers)) return [];
+		return node.specifiers.flatMap((specifier: unknown): readonly string[] => {
+			if (!isFields(specifier) || specifier.type !== 'ImportSpecifier') return [];
+			const local = isFields(specifier.local) ? specifier.local.name : undefined;
+			return typeof local === 'string' ? [local] : [];
+		});
+	});
+	return new Set(names);
+}
+
+/**
+ * True for a height Storybook would paste into CSS that isn't a name imported
+ * from the room module: a `height` or `iframeHeight` key holding anything
+ * else, or an assignment to a member of either name.
+ */
+function isRawHeight(node: Fields, rooms: ReadonlySet<string>): boolean {
+	if (node.type === 'Property') {
+		const key = spelledName(node.key, node.computed);
+		if (key === undefined || !heightKeys.has(key)) return false;
+		const value = isFields(node.value) ? node.value : undefined;
+		const name = value?.type === 'Identifier' ? value.name : undefined;
+		return typeof name !== 'string' || !rooms.has(name);
+	}
+	if (node.type !== 'AssignmentExpression' || !isFields(node.left)) return false;
+	const { left } = node;
+	if (left.type !== 'MemberExpression') return false;
+	const member = spelledName(left.property, left.computed);
+	return member !== undefined && heightKeys.has(member);
+}
+
 /** A string literal's value, or a template literal's cooked and raw text with its expressions left out. */
 function stringReadings(node: Fields): readonly string[] {
 	if (node.type === 'Literal') return typeof node.value === 'string' ? [node.value] : [];
@@ -153,7 +216,9 @@ function parseRoot(text: string): Fields | string {
 /**
  * Every refusal in one stories file: an import other than Svelte CSF,
  * `storybook/test`, `@zurfur/ui` and relative files under src/stories/ and
- * src/gallery/; any `<style>`, `style=` or `style:`; any `a11y` key; and any
+ * src/gallery/; any `<style>`, `style=` or `style:`; any `a11y` or
+ * `backgrounds` key; a `height` or `iframeHeight` that isn't a name imported
+ * from the room module; and any
  * string or template text that breaks the lib doc-comment rule, since docs
  * descriptions render as Markdown with raw HTML allowed.
  */
@@ -197,6 +262,13 @@ export function storyFileRefusals(file: SourceFile): readonly StoryRefusal[] {
 	});
 
 	const a11yRefusals = nodes.filter(namesA11y).map(() => refusal('an a11y setting', 'a11y'));
+	const backgroundsRefusals = nodes
+		.filter(namesBackgrounds)
+		.map(() => refusal('a backgrounds setting', 'backgrounds'));
+	const rooms = roomImports(file.path, nodes);
+	const heightRefusals = nodes
+		.filter((node) => isRawHeight(node, rooms))
+		.map(() => refusal('a docs height not imported from room', 'height'));
 
 	const stringRefusals = nodes.flatMap((node) => {
 		const readings = stringReadings(node);
@@ -210,6 +282,8 @@ export function storyFileRefusals(file: SourceFile): readonly StoryRefusal[] {
 		...computedImports.map(() => refusal('a computed import', 'import(…)')),
 		...styleRefusals,
 		...a11yRefusals,
+		...backgroundsRefusals,
+		...heightRefusals,
 		...stringRefusals
 	];
 }
@@ -522,6 +596,116 @@ describe('story imports', () => {
 		['src/lib/Button.stories.svelte', false]
 	] as const)('reads %s as a stories file: %s', (filePath, expected) => {
 		expect(isStoriesFile(filePath)).toBe(expected);
+	});
+
+	it.each([
+		[
+			'a raw docs story height in defineMeta',
+			",\n\t\tparameters: { docs: { story: { height: '1px} *{background:red} x{' } } }"
+		],
+		[
+			'a raw iframeHeight in defineMeta',
+			",\n\t\tparameters: { docs: { story: { iframeHeight: '300px' } } }"
+		],
+		['a quoted height key', ",\n\t\tparameters: { docs: { story: { 'height': '16rem' } } }"],
+		['a height from a local name', ',\n\t\tparameters: { docs: { story: { height: ROOM } } }'],
+		['a height from a template', ',\n\t\tparameters: { docs: { story: { height: `${16}rem` } } }']
+	] as const)('refuses %s', (_label, meta) => {
+		const localRoom = "\timport { Button } from '@zurfur/ui';\n\tconst ROOM = '16rem';";
+		expect(reasonsFor(storiesFile(localRoom, meta, '<Story name="Plain" />'))).toEqual([
+			'a docs height not imported from room'
+		]);
+	});
+
+	it.each([
+		[
+			"a raw height in a story's parameters",
+			'<Story name="Plain" parameters={{ docs: { story: { height: \'200px\' } } }} />'
+		],
+		[
+			"a raw iframeHeight in a story's parameters",
+			'<Story name="Plain" parameters={{ docs: { story: { iframeHeight: \'200px\' } } }} />'
+		],
+		[
+			'a height assigned in a play function',
+			'<Story name="Plain" play={async ({ parameters }) => { parameters.docs.story.height = \'2px\'; }} />'
+		],
+		[
+			'a member of a room namespace import',
+			'<Story name="Plain" parameters={{ docs: { story: { height: rooms.FLOATING_ROOM } } }} />'
+		]
+	] as const)('refuses %s', (_label, body) => {
+		const withNamespace =
+			"\timport { Button } from '@zurfur/ui';\n\timport * as rooms from './room.ts';";
+		expect(reasonsFor(storiesFile(withNamespace, '', body))).toEqual([
+			'a docs height not imported from room'
+		]);
+	});
+
+	it.each([
+		[
+			'the meta',
+			',\n\t\tparameters: { docs: { story: { height: FLOATING_ROOM } } }',
+			'<Story name="Plain" />'
+		],
+		[
+			"a story's parameters",
+			'',
+			'<Story name="Plain" parameters={{ docs: { story: { iframeHeight: FLOATING_ROOM } } }} />'
+		]
+	] as const)('passes a height imported from room in %s', (_label, meta, body) => {
+		const fromRoom =
+			"\timport { Button } from '@zurfur/ui';\n\timport { FLOATING_ROOM } from './room.ts';";
+		expect(reasonsFor(storiesFile(fromRoom, meta, body))).toEqual([]);
+	});
+
+	it.each([
+		[
+			'in defineMeta',
+			",\n\t\tparameters: { backgrounds: { default: 'x' } }",
+			'<Story name="Plain" />'
+		],
+		[
+			'a quoted key',
+			",\n\t\tparameters: { 'backgrounds': { disable: true } }",
+			'<Story name="Plain" />'
+		],
+		[
+			"on a story's parameters",
+			'',
+			"<Story name=\"Plain\" parameters={{ backgrounds: { values: [{ name: 'x', value: 'red' }] } }} />"
+		],
+		[
+			'a member named backgrounds',
+			',\n\t\ttags: [String(Object.keys({}).backgrounds)]',
+			'<Story name="Plain" />'
+		]
+	] as const)('refuses a backgrounds setting %s', (_label, meta, body) => {
+		expect(reasonsFor(storiesFile(imports, meta, body))).toEqual(['a backgrounds setting']);
+	});
+
+	it('holds every room to a whole number of rem', () => {
+		const rooms = Object.entries(room);
+		expect(rooms.map(([name]) => name)).toContain('FLOATING_ROOM');
+		expect(rooms.filter(([, value]) => !isRoom(value))).toEqual([]);
+	});
+
+	it.each([
+		['1px} *{background:url(\\2f\\2f evil.example/x)} x{'],
+		['16rem;'],
+		['16px'],
+		['0rem'],
+		['1000rem'],
+		['16.5rem'],
+		[' 16rem'],
+		['16REM'],
+		[16]
+	] as const)('refuses the room %s', (value) => {
+		expect(isRoom(value)).toBe(false);
+	});
+
+	it.each(['1rem', '16rem', '999rem'])('passes the room %s', (value) => {
+		expect(isRoom(value)).toBe(true);
 	});
 
 	it('passes every real stories file', () => {

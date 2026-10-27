@@ -1,5 +1,6 @@
 /** The item shapes the controls take: plain, readonly data, generic over the id where a control hands one back. */
 import type { IconName } from '../icons/icons.ts';
+import type { StepSide } from './step-row.ts';
 
 /** A Button's look: primary is the view's one main action, destructive deletes or can't be undone. */
 export type ButtonVariant = 'primary' | 'secondary' | 'quiet' | 'destructive';
@@ -19,6 +20,14 @@ export interface TabItem<Id extends string> {
 	readonly label: string;
 	readonly icon?: IconName;
 	readonly count?: string;
+}
+
+/** What Tabs hands the step buttons it is given: one step in `side`, and whether the tabs are already at that end. */
+export interface TabStep {
+	readonly side: StepSide;
+	/** Moves the tab list by one tab; the tab showing stays what it was. */
+	readonly step: () => void;
+	readonly atEdge: boolean;
 }
 
 /** One choice in a pill switch; `prefix` is the muted type before the label, such as `batch:`. */

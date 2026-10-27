@@ -54,11 +54,20 @@ export const filterOptions: readonly PillOption<FilterId>[] = [
 
 export type BatchId = 'all' | 'spooky_sketches' | 'stickers';
 
-/** The batch filter: one plain option and two typed ones, with the type muted before the word. */
+/** The batch filter: one plain option and two choices of the same type, which the switch shows once. */
 export const batchOptions: readonly PillOption<BatchId>[] = [
 	{ id: 'all', label: 'All' },
 	{ id: 'spooky_sketches', label: 'spooky_sketches', prefix: 'batch:' },
 	{ id: 'stickers', label: 'stickers', prefix: 'batch:' }
+];
+
+export type MixedId = 'all' | 'spooky_sketches' | 'sketch';
+
+/** Two types in one switch, so each typed option keeps its own muted type. */
+export const mixedOptions: readonly PillOption<MixedId>[] = [
+	{ id: 'all', label: 'All' },
+	{ id: 'spooky_sketches', label: 'spooky_sketches', prefix: 'batch:' },
+	{ id: 'sketch', label: 'sketch', prefix: 'phase:' }
 ];
 
 export type ViewId = 'list' | 'files' | 'calendar';

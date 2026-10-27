@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
 import { parse } from 'svelte/compiler';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { SAMPLE_SUBSTITUTIONS } from './tokens/copy';
 
@@ -12,6 +12,9 @@ const storiesFolder = 'src/stories';
 
 /** The folder the stories' fixtures live in, relative to the package. */
 const fixturesFolder = `${storiesFolder}/fixtures`;
+
+/** The folders read whole, every file whatever its extension: the stories, and the gallery parts they render. */
+const readFolders: readonly string[] = [storiesFolder, 'src/gallery'];
 
 /** The made-up handle and DID the design system's samples were swapped for. */
 const reservedSamples: readonly string[] = SAMPLE_SUBSTITUTIONS.map(
@@ -81,9 +84,11 @@ function plainName(name: ts.Node): string | undefined {
 	return undefined;
 }
 
-/** The value each handle-named field or variable in a `.ts` file holds, as every string written in it. */
+/** The value each handle-named field or variable in a `.ts` or `.json` file holds, as every string written in it. */
 function scriptHandleStrings(file: FixtureFile): readonly string[] {
-	const source = ts.createSourceFile(file.path, file.text, ts.ScriptTarget.Latest, true);
+	const source = file.path.endsWith('.json')
+		? ts.parseJsonText(file.path, file.text)
+		: ts.createSourceFile(file.path, file.text, ts.ScriptTarget.Latest, true);
 	const found: string[] = [];
 	const visit = (node: ts.Node): void => {
 		const isNamedValue = ts.isPropertyAssignment(node) || ts.isVariableDeclaration(node);
@@ -178,6 +183,16 @@ function svelteHandleStrings(file: FixtureFile): readonly string[] | string {
 }
 
 /**
+ * The strings in a file's handle-named fields: read from a `.svelte`, `.ts` or
+ * `.json` file's tree; any other file (an `.mdx` page) is read as text alone.
+ */
+function handleStringsOf(file: FixtureFile): readonly string[] | string {
+	if (file.path.endsWith('.svelte')) return svelteHandleStrings(file);
+	if (file.path.endsWith('.ts') || file.path.endsWith('.json')) return scriptHandleStrings(file);
+	return [];
+}
+
+/**
  * Every refusal in one fixture or stories file: any `did:` text but the
  * reserved sample, any `@name.domain` whose domain doesn't end in `.test` or
  * `.example`, anywhere in the text, and the same for a bare domain in a
@@ -189,9 +204,7 @@ export function fixtureRefusals(file: FixtureFile): readonly FixtureRefusal[] {
 		reason,
 		text
 	});
-	const handleStrings = file.path.endsWith('.svelte')
-		? svelteHandleStrings(file)
-		: scriptHandleStrings(file);
+	const handleStrings = handleStringsOf(file);
 	if (typeof handleStrings === 'string') {
 		return [refusal('a stories file that does not parse', handleStrings)];
 	}
@@ -208,21 +221,17 @@ export function fixtureRefusals(file: FixtureFile): readonly FixtureRefusal[] {
 	];
 }
 
-/** Every `.ts` file in the fixtures folder and every stories file under the stories folder, sorted by path. */
+/** Every file under the stories and gallery folders, whatever its extension, sorted by path. */
 function realFixtures(): readonly FixtureFile[] {
-	const folder = `${uiRoot}${storiesFolder}`;
-	const names = existsSync(folder)
-		? readdirSync(folder, { recursive: true, encoding: 'utf8' })
-		: [];
-	return names
-		.map((name) => `${storiesFolder}/${name}`)
-		.filter(
-			(filePath) =>
-				filePath.endsWith('.stories.svelte') ||
-				(filePath.startsWith(`${fixturesFolder}/`) &&
-					filePath.endsWith('.ts') &&
-					!filePath.slice(fixturesFolder.length + 1).includes('/'))
-		)
+	return readFolders
+		.flatMap((relative) => {
+			const folder = `${uiRoot}${relative}`;
+			const names = existsSync(folder)
+				? readdirSync(folder, { recursive: true, encoding: 'utf8' })
+				: [];
+			return names.map((name) => `${relative}/${name}`);
+		})
+		.filter((filePath) => statSync(`${uiRoot}${filePath}`).isFile())
 		.sort()
 		.map((filePath) => ({ path: filePath, text: readFileSync(`${uiRoot}${filePath}`, 'utf8') }));
 }
@@ -381,13 +390,80 @@ describe('story fixtures', () => {
 		]);
 	});
 
-	it('reads the stories files, not only the fixtures', () => {
-		expect(realFixtures().map((file) => file.path)).toContain(
-			`${storiesFolder}/tokens/Colour.stories.svelte`
+	it('reads every file under the stories and the gallery, whatever its extension', () => {
+		const paths = realFixtures().map((file) => file.path);
+		expect(paths).toEqual(
+			expect.arrayContaining([
+				`${storiesFolder}/tokens/Colour.stories.svelte`,
+				`${storiesFolder}/tokens/Colour.mdx`,
+				`${storiesFolder}/controls/ToggleHolder.svelte`,
+				`${storiesFolder}/controls/args.ts`,
+				`${storiesFolder}/controls/room.ts`,
+				`${storiesFolder}/NODE.inf.json`,
+				`${storiesFolder}/frame/StoryFrame.svelte`,
+				'src/gallery/GalleryPage.svelte'
+			])
 		);
 	});
 
-	it('passes every real fixture and stories file', () => {
+	it.each([
+		[
+			'a real DID in a holder',
+			`${storiesFolder}/controls/ToggleHolder.svelte`,
+			'<script lang="ts">\n\tconst owner = \'did:plc:zzzzzzzzzzzzzzzzzzzzzzzz\';\n</script>\n\n<p>{owner}</p>\n',
+			'a DID other than the reserved sample'
+		],
+		[
+			'a real handle in a holder',
+			`${storiesFolder}/controls/ToggleHolder.svelte`,
+			'<p>Art by @someone.bsky.social</p>\n',
+			'a handle outside .test and .example'
+		],
+		[
+			'a real DID in room.ts',
+			`${storiesFolder}/controls/room.ts`,
+			"export const owner = 'did:web:zurfur.app';",
+			'a DID other than the reserved sample'
+		],
+		[
+			'a real handle in args.ts',
+			`${storiesFolder}/controls/args.ts`,
+			"export const ownerHandle = 'someone.bsky.social';",
+			'a handle outside .test and .example'
+		],
+		[
+			'a real DID in a docs page',
+			`${storiesFolder}/tokens/Colour.mdx`,
+			'# Colour\n\nMade by did:plc:zzzzzzzzzzzzzzzzzzzzzzzz.\n',
+			'a DID other than the reserved sample'
+		],
+		[
+			'a real handle in a docs page',
+			`${storiesFolder}/tokens/Colour.mdx`,
+			'# Colour\n\nMade by @someone.bsky.social.\n',
+			'a handle outside .test and .example'
+		],
+		[
+			'a real handle in a node file',
+			`${storiesFolder}/NODE.inf.json`,
+			'{ "short": "x", "owner": { "handle": "someone.bsky.social" } }',
+			'a handle outside .test and .example'
+		],
+		[
+			'a real DID in a gallery part',
+			'src/gallery/GalleryPage.svelte',
+			'<p>did:plc:zzzzzzzzzzzzzzzzzzzzzzzz</p>\n',
+			'a DID other than the reserved sample'
+		]
+	] as const)('refuses %s', (_label, filePath, text, reason) => {
+		const read = realFixtures().map((file) => file.path);
+		expect(read).toContain(filePath);
+		expect(fixtureRefusals({ path: filePath, text }).map((refusal) => refusal.reason)).toEqual([
+			reason
+		]);
+	});
+
+	it('passes every real file under the stories and the gallery', () => {
 		expect(realFixtures().flatMap(fixtureRefusals)).toEqual([]);
 	});
 });

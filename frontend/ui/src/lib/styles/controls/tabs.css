@@ -17,6 +17,32 @@
 	scrollbar-width: none;
 }
 
+/* With step buttons, the tabs snap one at a time: each tab stops the scroll at its start. The scroll padding is the piece's padding, so the first tab rests at the very start. */
+.zf-tabs--step {
+	scroll-snap-type: x mandatory;
+	scroll-padding-inline: var(--space-half);
+}
+
+.zf-tabs--step > .zf-tab {
+	scroll-snap-align: start;
+	scroll-snap-stop: always;
+}
+
+/* The tabs with a step button each side; the tabs take the room between and scroll. */
+.zf-tabs-row {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	width: fit-content;
+	max-width: 100%;
+	min-width: 0;
+}
+
+.zf-tabs-row > .zf-tabs {
+	flex: 0 1 auto;
+	min-width: 0;
+}
+
 .zf-seg {
 	flex-wrap: wrap;
 }
@@ -75,6 +101,22 @@
 
 .zf-seg__prefix {
 	font-weight: var(--weight-regular);
+}
+
+/* A type every choice shares is shown once, muted and in the mono face, beside the piece. */
+.zf-seg-row {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2);
+	max-width: 100%;
+}
+
+.zf-seg__type {
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+	line-height: var(--leading-sm);
+	color: var(--color-text-muted);
 }
 
 /* A count is neutral and muted, never red. */

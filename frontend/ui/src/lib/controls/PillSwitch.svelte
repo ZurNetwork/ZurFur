@@ -1,7 +1,9 @@
 <script lang="ts" generics="Id extends string">
 	import { RadioGroup } from 'bits-ui';
+	import type { Snippet } from 'svelte';
 	import { useEnvironment } from '../environment/context';
 	import Icon from '../icons/Icon.svelte';
+	import { sharedType, typeOf } from './pill-type';
 	import type { PillOption } from './types';
 
 	interface Props {
@@ -22,6 +24,16 @@
 	let { label, options, value, onChange, disabled = false, name, testid }: Props = $props();
 
 	const { moves, sounds } = useEnvironment();
+	const id = $props.id();
+
+	/** The type every typed option shares, shown once beside the switch; none when they differ or none is typed. */
+	const shared = $derived(sharedType(options));
+
+	/** What describes the group: the shared type's id, when one is shown. */
+	const describedby = $derived(shared === undefined ? undefined : `${id}-type`);
+
+	/** The radio group, as a plain snippet to render in either place it can sit. */
+	const radioGroup: Snippet = group;
 
 	/** A choice asked for: unknown ids, the empty string and disabled options are ignored; the rest play the cue and ask the parent. */
 	function choose(next: string): void {
@@ -40,12 +52,14 @@
 				{#snippet child({ props })}
 					<button
 						{...props}
-						class={['zf-seg__opt', 'pick', option.prefix !== undefined && 'zf-seg__opt--typed']}
+						class={['zf-seg__opt', 'pick', typeOf(option) !== undefined && 'zf-seg__opt--typed']}
 						{@attach moves.squish()}
 					>
 						{#if option.icon !== undefined}<Icon name={option.icon} size="sm" />{/if}
-						{#if option.prefix !== undefined}<span class="zf-seg__prefix">{option.prefix}</span
-							>{/if}
+						{#if shared === undefined}
+							{@const type = typeOf(option)}
+							{#if type !== undefined}<span class="zf-seg__prefix">{type}</span>{/if}
+						{/if}
 						<span>{option.label}</span>
 					</button>
 				{/snippet}
@@ -54,22 +68,36 @@
 	</div>
 {/snippet}
 
-<!-- bits-ui's `name` takes no undefined, so the root without a name is its own branch. -->
-{#if name === undefined}
-	<RadioGroup.Root
-		aria-label={label}
-		orientation="horizontal"
-		bind:value={() => value, choose}
-		{disabled}
-		{child}
-	/>
+<!-- bits-ui's `name` takes no undefined, so a root with a name is its own branch. -->
+{#snippet group()}
+	{#if name === undefined}
+		<RadioGroup.Root
+			aria-label={label}
+			aria-describedby={describedby}
+			orientation="horizontal"
+			bind:value={() => value, choose}
+			{disabled}
+			{child}
+		/>
+	{:else}
+		<RadioGroup.Root
+			aria-label={label}
+			aria-describedby={describedby}
+			orientation="horizontal"
+			bind:value={() => value, choose}
+			{disabled}
+			{name}
+			{child}
+		/>
+	{/if}
+{/snippet}
+
+<!-- A shared type is drawn once, before the piece, as the switch's own words. -->
+{#if shared === undefined}
+	{@render radioGroup()}
 {:else}
-	<RadioGroup.Root
-		aria-label={label}
-		orientation="horizontal"
-		bind:value={() => value, choose}
-		{disabled}
-		{name}
-		{child}
-	/>
+	<div class="zf-seg-row">
+		<span class="zf-seg__type" id="{id}-type">{shared}</span>
+		{@render radioGroup()}
+	</div>
 {/if}

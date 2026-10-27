@@ -106,7 +106,7 @@
 	height: var(--size-control-sm);
 }
 
-.zf-iconbtn:hover:not(:disabled),
+.zf-iconbtn:hover:not(:disabled):not([aria-disabled='true']),
 .zf-iconbtn[aria-expanded='true'] {
 	color: var(--color-text);
 }
@@ -122,7 +122,7 @@
 	color: var(--color-text);
 }
 
-.zf-iconbtn--secondary:hover:not(:disabled) {
+.zf-iconbtn--secondary:hover:not(:disabled):not([aria-disabled='true']) {
 	background: var(--color-hover);
 }
 
@@ -132,7 +132,9 @@
 	color: var(--color-accent-text);
 }
 
-.zf-iconbtn:disabled {
+/* Disabled, natively or while it stays focusable, looks the same. */
+.zf-iconbtn:disabled,
+.zf-iconbtn[aria-disabled='true'] {
 	cursor: not-allowed;
 	opacity: 0.55;
 }

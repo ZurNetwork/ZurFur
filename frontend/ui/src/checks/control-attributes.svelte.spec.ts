@@ -1,15 +1,16 @@
 import { page, userEvent } from 'vitest/browser';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { createRawSnippet } from 'svelte';
 import AcceptingDateField from './testing/AcceptingDateField.svelte';
 import AcceptingMenu from './testing/AcceptingMenu.svelte';
 import AcceptingPillSwitch from './testing/AcceptingPillSwitch.svelte';
+import AcceptingScrollingTabs from './testing/AcceptingScrollingTabs.svelte';
+import AcceptingSelect from './testing/AcceptingSelect.svelte';
 import AcceptingTabs from './testing/AcceptingTabs.svelte';
 import Button from '../lib/controls/Button.svelte';
 import Checkbox from '../lib/controls/Checkbox.svelte';
 import IconButton from '../lib/controls/IconButton.svelte';
-import Select from '../lib/controls/Select.svelte';
 import TextInput from '../lib/controls/TextInput.svelte';
 import Toggle from '../lib/controls/Toggle.svelte';
 import { isCalendarDay, type CalendarDay } from '../lib/controls/calendar-day.ts';
@@ -93,27 +94,35 @@ const pills: readonly PillOption<Choice>[] = [
 	{ id: 'one', label: 'One', icon: 'file', prefix: 'batch:' },
 	{ id: 'two', label: 'Two' }
 ];
+/** Two types in one switch, so each option keeps its own type. */
+const mixedPills: readonly PillOption<Choice>[] = [
+	{ id: 'one', label: 'One', icon: 'file', prefix: 'batch:' },
+	{ id: 'two', label: 'Two', prefix: 'phase:' }
+];
 const menuItems: readonly MenuItem<Choice>[] = [
 	{ id: 'one', label: 'One', icon: 'file' },
 	{ id: 'two', label: 'Two', tone: 'danger', disabled: true }
 ];
 
-/** Opens the menu whose trigger carries `trigger`, then highlights its first row. */
-const menuSteps = [
-	[
-		'opened',
-		async () => {
-			await page.getByTestId('trigger').click();
-			await expect.element(page.getByRole('menu')).toBeInTheDocument();
-		}
-	],
-	[
-		'with a row highlighted',
-		async () => {
-			await page.getByRole('menuitem', { name: 'One' }).hover();
-		}
-	]
+/** Opens the menu whose trigger carries `trigger`. */
+const openMenuStep = [
+	'opened',
+	async () => {
+		await page.getByTestId('trigger').click();
+		await expect.element(page.getByRole('menu')).toBeInTheDocument();
+	}
 ] as const;
+
+/** Highlights the open menu's first row. */
+const highlightRowStep = [
+	'with a row highlighted',
+	async () => {
+		await page.getByRole('menuitem', { name: 'One' }).hover();
+	}
+] as const;
+
+/** Opens the menu whose trigger carries `trigger`, then highlights its first row. */
+const menuSteps = [openMenuStep, highlightRowStep] as const;
 
 /** Shows the icon button's tip by `how`, and waits for it. */
 async function showTip(how: 'hover' | 'focus'): Promise<void> {
@@ -126,6 +135,32 @@ async function showTip(how: 'hover' | 'focus'): Promise<void> {
 		{ timeout: 3000 }
 	);
 }
+
+/** Shows the icon menu trigger's tip by `how`, and waits for it. */
+async function showMenuTip(how: 'hover' | 'focus'): Promise<void> {
+	if (how === 'hover') await page.getByTestId('trigger').hover();
+	else byTestId('trigger').focus();
+	await vi.waitFor(
+		() => {
+			expect(document.querySelector('.zf-tip')?.textContent).toBe('More');
+		},
+		{ timeout: 3000 }
+	);
+}
+
+/** Shows the icon menu's tip by hover and by focus, opens the menu with the tip showing, then highlights a row. */
+const iconMenuSteps = [
+	['its tip shown on hover', () => showMenuTip('hover')],
+	['its tip shown on focus', () => showMenuTip('focus')],
+	[
+		'opened with its tip shown',
+		async () => {
+			await showMenuTip('hover');
+			await openMenuStep[1]();
+		}
+	],
+	highlightRowStep
+] as const;
 
 const FIXTURES: Readonly<Record<string, readonly Fixture[]>> = {
 	'Button.svelte': [
@@ -233,7 +268,7 @@ const FIXTURES: Readonly<Record<string, readonly Fixture[]>> = {
 					onOpenChange: () => undefined,
 					onSelect: () => undefined
 				}).container,
-			steps: menuSteps
+			steps: iconMenuSteps
 		}
 	],
 	'PillSwitch.svelte': [
@@ -250,24 +285,62 @@ const FIXTURES: Readonly<Record<string, readonly Fixture[]>> = {
 					onChange: () => undefined
 				}).container,
 			steps: [['chosen', () => page.getByRole('radio', { name: 'Two' }).click()]]
+		},
+		{
+			label: 'with mixed types and a name',
+			render: () =>
+				render(AcceptingPillSwitch<Choice>, {
+					label: 'Batch',
+					options: mixedPills,
+					initial: 'one',
+					accepts: true,
+					name: 'batch',
+					testid: 'control',
+					onChange: () => undefined
+				}).container,
+			steps: [['chosen', () => page.getByRole('radio', { name: 'Two' }).click()]]
 		}
 	],
 	'Select.svelte': [
 		{
 			label: 'with a placeholder, hint, error and name',
 			render: () =>
-				render(Select<Choice>, {
+				render(AcceptingSelect<Choice>, {
 					label: 'Pick',
 					options: selectOptions,
-					value: undefined,
-					onChange: () => undefined,
+					initial: undefined,
 					placeholder: 'Choose one',
 					hint: 'A hint',
 					error: 'An error',
 					name: 'pick',
-					testid: 'control'
+					testid: 'control',
+					onChange: () => undefined
 				}).container,
-			steps: [['chosen', () => page.getByTestId('control').selectOptions('two')]]
+			steps: [
+				[
+					'opened',
+					async () => {
+						await page.getByTestId('control').click();
+						await expect.element(page.getByRole('listbox')).toBeInTheDocument();
+					}
+				],
+				[
+					'with an option highlighted',
+					async () => {
+						await page.getByRole('option', { name: 'Two' }).hover();
+						await expect
+							.element(page.getByRole('option', { name: 'Two' }))
+							.toHaveAttribute('data-highlighted');
+					}
+				],
+				[
+					'chosen',
+					async () => {
+						await page.getByRole('option', { name: 'Two' }).click();
+						await expect.element(page.getByTestId('control')).toHaveTextContent('Two');
+					}
+				]
+			]
 		}
 	],
 	'Tabs.svelte': [
@@ -283,6 +356,36 @@ const FIXTURES: Readonly<Record<string, readonly Fixture[]>> = {
 					onChange: () => undefined
 				}).container,
 			steps: [['switched', () => page.getByRole('tab', { name: 'Two' }).click()]]
+		}
+	],
+	'ScrollingTabs.svelte': [
+		{
+			label: 'narrow, with a panel and its step buttons',
+			render: () => {
+				// Narrow enough that the tabs outgrow their list, so the forward step can be pressed.
+				const narrow = document.createElement('div');
+				narrow.style.width = '120px';
+				document.body.append(narrow);
+				onTestFinished(() => {
+					narrow.remove();
+				});
+				return render(AcceptingScrollingTabs<Choice>, {
+					target: narrow,
+					props: {
+						label: 'Sections',
+						tabs,
+						initial: 'one',
+						accepts: true,
+						stepWords: { back: 'Earlier tabs', forward: 'More tabs' },
+						testid: 'control',
+						onChange: () => undefined
+					}
+				}).container;
+			},
+			steps: [
+				['stepped', () => page.getByRole('button', { name: 'More tabs' }).click()],
+				['switched', () => page.getByRole('tab', { name: 'Two' }).click()]
+			]
 		}
 	],
 	'TextInput.svelte': [

@@ -17,7 +17,11 @@
 		readonly expanded?: boolean | undefined;
 		/** The id of the element it shows, hides or changes: sets `aria-controls`. */
 		readonly controls?: string | undefined;
-		readonly disabled?: boolean;
+		/**
+		 * `true` takes it out of the tab order. `'focusable'` keeps it in the tab order,
+		 * named and tipped, and ignores presses.
+		 */
+		readonly disabled?: boolean | 'focusable';
 		readonly onPress: () => void;
 		readonly testid?: string | undefined;
 	}
@@ -44,6 +48,14 @@
 		size === 'sm' && 'zf-iconbtn--sm',
 		variant === 'secondary' ? 'placed' : 'pick'
 	]);
+	/** Disabled but still reachable by keyboard: it says so, and a press does nothing. */
+	const stillFocusable = $derived(disabled === 'focusable');
+
+	/** A press: ignored while disabled but focusable, otherwise handed to the parent. */
+	function press(): void {
+		if (stillFocusable) return;
+		onPress();
+	}
 </script>
 
 <!-- The button itself; the tooltip hands it the props that show and hide the tip. -->
@@ -56,9 +68,11 @@
 		aria-pressed={pressed}
 		aria-expanded={expanded}
 		aria-controls={controls}
+		aria-disabled={stillFocusable ? 'true' : undefined}
 		data-testid={testid}
-		{@attach moves.squish()}><Icon name={icon} size={iconSize} /></button
+		{@attach stillFocusable ? undefined : moves.squish()}
+		><Icon name={icon} size={iconSize} /></button
 	>
 {/snippet}
 
-<Tooltip words={label} trigger={child} {onPress} {disabled} />
+<Tooltip words={label} trigger={child} onPress={press} disabled={disabled === true} />

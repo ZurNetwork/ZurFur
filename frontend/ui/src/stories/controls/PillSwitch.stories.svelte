@@ -2,14 +2,20 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, fn } from 'storybook/test';
 	import { PillSwitch } from '@zurfur/ui';
-	import { batchOptions, filterOptions, stageOptions, viewOptions } from '../fixtures/actions.ts';
+	import {
+		batchOptions,
+		filterOptions,
+		mixedOptions,
+		stageOptions,
+		viewOptions
+	} from '../fixtures/actions.ts';
 	import type { PillSwitchArgs } from './args.ts';
 	import PillSwitchHolder from './PillSwitchHolder.svelte';
 
 	const { Story } = defineMeta({
 		title: 'Controls/Pill Switch',
 		component: PillSwitch,
-		tags: ['autodocs'],
+		tags: ['autodocs', 'simple'],
 		args: { label: 'Filter', options: filterOptions, value: 'all', onChange: fn() },
 		argTypes: {
 			disabled: { control: 'boolean' },
@@ -20,7 +26,7 @@
 			layout: 'centered',
 			docs: {
 				description: {
-					component: `A simple component: a row of pills where exactly one is chosen, such as a filter. Each pill has a label, and can have an icon or a muted type in front of it. The page decides the value: a choice asks for it, and the pills show what the page passes back. An option can be disabled, or the whole row.
+					component: `A simple component: a row of pills where exactly one is chosen, such as a filter. Each pill has a label, and can have an icon or a muted type in front of it. A type all the pills share shows once, beside the pills. The page decides the value: a choice asks for it, and the pills show what the page passes back. An option can be disabled, or the whole row.
 
 Keyboard:
 
@@ -61,13 +67,26 @@ Keyboard:
 />
 
 <Story
-	name="With a Type"
+	name="With a Shared Type"
 	template={holder}
 	args={{ label: 'Batch', options: batchOptions }}
 	play={async ({ args, canvas, userEvent }) => {
-		await userEvent.click(canvas.getByRole('radio', { name: /stickers/ }));
+		await expect(canvas.getAllByText('batch:')).toHaveLength(1);
+		await userEvent.click(canvas.getByRole('radio', { name: 'stickers' }));
 		await expect(args.onChange).toHaveBeenLastCalledWith('stickers');
-		await expect(canvas.getByRole('radio', { name: /stickers/ })).toBeChecked();
+		await expect(canvas.getByRole('radio', { name: 'stickers' })).toBeChecked();
+	}}
+/>
+
+<Story
+	name="With Mixed Types"
+	template={holder}
+	args={{ label: 'Filter', options: mixedOptions }}
+	play={async ({ args, canvas, userEvent }) => {
+		await expect(canvas.getByText('batch:')).toBeInTheDocument();
+		await expect(canvas.getByText('phase:')).toBeInTheDocument();
+		await userEvent.click(canvas.getByRole('radio', { name: /sketch$/ }));
+		await expect(args.onChange).toHaveBeenLastCalledWith('sketch');
 	}}
 />
 
