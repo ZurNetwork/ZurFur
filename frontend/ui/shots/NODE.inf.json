@@ -60,7 +60,7 @@
     },
     {
       "name": "storybook.ts",
-      "role": "index.json parsed into entries (each id parsed, else refused), the skins, the tags, the viewports, the entry address, the stale-picture walk and walkEntry, the walk of one entry the walker and the self-tests share (its picture left out when tagged `no-shot`)",
+      "role": "index.json parsed into entries (each id parsed, else refused), the skins, the tags, the viewports, the entry address and the stale-picture walk; no browser code",
       "node": false
     },
     {
@@ -70,7 +70,7 @@
     },
     {
       "name": "watch.ts",
-      "role": "the checks the walker and the self-tests share: the loopback port, the request, websocket and page-error watch, Storybook's render state, settling and the globals check",
+      "role": "the checks the walker and the self-tests share: the loopback port, the request, websocket and page-error watch, Storybook's render state, settling and the globals check; and walkEntry, the walk of one entry that runs them (its picture left out when tagged `no-shot`)",
       "node": false
     }
   ],

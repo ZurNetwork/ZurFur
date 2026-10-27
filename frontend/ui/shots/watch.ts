@@ -1,10 +1,11 @@
 /**
  * The checks every screenshot test runs before its picture: no request leaves
  * the loopback server, no page throws, and Storybook rendered without its
- * error display. The walker and the self-tests share them from here.
+ * error display; and the walk of one entry, which runs them. The walker and
+ * the self-tests share them from here.
  */
 import { expect, type BrowserContext, type Frame, type Page } from '@playwright/test';
-import type { Skin, ViewMode } from './storybook.ts';
+import { entryAddress, isShot, type Entry, type Skin, type ViewMode } from './storybook.ts';
 
 /** The loopback port the static server listens on inside the container. */
 export const shotsPort = 5199;
@@ -181,4 +182,24 @@ export async function expectRendered(page: Page, viewMode: ViewMode, skin: Skin)
 		skin,
 		motion: 'still'
 	});
+}
+
+/**
+ * Opens an entry in a skin and fails the test on a request off 127.0.0.1, a
+ * page error or Storybook's error display, tagged `no-shot` or not; then, when
+ * it is shot, compares it with its reference picture.
+ */
+export async function walkEntry(
+	context: BrowserContext,
+	page: Page,
+	entry: Entry,
+	skin: Skin
+): Promise<void> {
+	const watch = await watchContext(context, page);
+	await page.goto(entryAddress(entry, skin));
+	await expectRendered(page, entry.viewMode, skin);
+	expectNoProblems(watch);
+	if (!isShot(entry)) return;
+	// Last, so an update run never keeps a picture from a failed test.
+	await expect(page).toHaveScreenshot([entry.id, `${skin}.png`]);
 }

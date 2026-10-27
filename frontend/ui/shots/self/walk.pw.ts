@@ -5,7 +5,8 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { noShotTag, parseIndex, walkEntry, type Entry, type IndexItem } from '../storybook.ts';
+import { noShotTag, parseIndex, type Entry, type IndexItem } from '../storybook.ts';
+import { walkEntry } from '../watch.ts';
 
 const indexFile = path.join(import.meta.dirname, '..', '..', 'storybook-static', 'index.json');
 

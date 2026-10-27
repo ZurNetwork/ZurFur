@@ -9,16 +9,8 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import {
-	isShot,
-	parseIndex,
-	skins,
-	stalePictures,
-	viewportOf,
-	walkEntry,
-	type Entry
-} from './storybook.ts';
-import { expectNoProblems, settle, watchContext, waitForStorybook } from './watch.ts';
+import { isShot, parseIndex, skins, stalePictures, viewportOf, type Entry } from './storybook.ts';
+import { expectNoProblems, settle, walkEntry, watchContext, waitForStorybook } from './watch.ts';
 
 const shotsFolder = import.meta.dirname;
 const indexFile = path.join(shotsFolder, '..', 'storybook-static', 'index.json');
