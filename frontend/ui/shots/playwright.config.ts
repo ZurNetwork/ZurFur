@@ -65,7 +65,8 @@ export default defineConfig({
 			name: 'self',
 			testDir: 'self',
 			testMatch: '*.pw.ts',
-			// Always missing, so the missing-reference self-test fails as it should.
+			// In the fresh output folder: missing unless a self-test writes one first (only the
+			// walk's after-the-picture test does, in light), so the missing-reference test fails.
 			snapshotPathTemplate: 'output/self-pictures/{testFileBaseName}/{arg}{ext}'
 		}
 	]
