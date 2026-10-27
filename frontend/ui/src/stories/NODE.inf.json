@@ -32,12 +32,17 @@
     },
     {
       "name": "fixtures/",
-      "role": "made-up words, options and days the stories share, readonly and typed: actions.ts (Button, Icon Button, Checkbox, Toggle, Pill Switch) and fields.ts (Text Input, Select, Tabs, Menu, Date Field)",
+      "role": "made-up words, options and days the stories share, readonly and typed: actions.ts (Button, Icon Button, Checkbox, Toggle, Pill Switch) and fields.ts (Text Input, Select, Tabs, Menu, Date Field) and surfaces.ts (the surfaces and feedback pieces)",
       "node": false
     },
     {
       "name": "frame/",
       "role": "StoryFrame.svelte (sets data-skin and data-motion on <html> and on a wrapping div, the portal target, from the toolbar's globals, and paints a docs page's background and text from the skin's tokens; a story tagged `layer` gets `layer`, which contains the wrapper's layout and paint at a dialog's height, so a fixed layer stays inside its story), FrameSkin.svelte (resolves Follow the OS to the skin showing), globals.ts (parseSkinChoice and parseMotion: address text to closed unions, unknown text meaning Follow the OS and Lively) and their specs",
+      "node": false
+    },
+    {
+      "name": "surfaces/",
+      "role": "the surfaces and feedback pieces' stories, under \"Surfaces and Feedback\": <Name>.stories.svelte for each exported surface (Card, Badge, Spinner, Skeleton, VisibilityMarker, StatusPill), each tagged with its kind, with a Moves and Sounds story for the moving ones",
       "node": false
     },
     {

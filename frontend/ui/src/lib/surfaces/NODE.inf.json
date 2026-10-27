@@ -2,7 +2,7 @@
   "path": "frontend/ui/src/lib/surfaces",
   "charted": "2026-10-27",
   "short": "The surfaces and feedback pieces, their shapes and mints",
-  "is": "Where the surfaces (cards, dialogs, labels) and the feedback pieces (toasts, messages, loading) live with the plain shapes they take and their mints. Today it holds only `types.ts`, with `FeedbackAction`: a press a piece reports, or a link it follows, drawn through Button.",
+  "is": "Where the surfaces and the feedback pieces live with the plain shapes they take and their run-time choices. Today it holds Card, Badge, Spinner, Skeleton, VisibilityMarker and StatusPill, all simple, with `types.ts` (their shapes and `FeedbackAction`) and `choices.ts` (the allow-lists each piece falls back through).",
   "type": "code",
   "tags": [
     "category:ui",
@@ -19,8 +19,78 @@
   ],
   "fs": [
     {
+      "name": "Badge.svelte",
+      "role": "a small tag with a label, one of six tones and an optional icon",
+      "node": false
+    },
+    {
+      "name": "Badge.svelte.spec.ts",
+      "role": "spec for Badge",
+      "node": false
+    },
+    {
+      "name": "Card.svelte",
+      "role": "a sheet for one object: a div, section, article or li chosen from a closed map, with or without padding; it holds whatever it is given",
+      "node": false
+    },
+    {
+      "name": "Card.svelte.spec.ts",
+      "role": "spec for Card",
+      "node": false
+    },
+    {
+      "name": "Skeleton.svelte",
+      "role": "a blank in the shape of what is coming: text lines (the last one shorter), a rectangle or a circle; hidden from screen readers and breathing through the seam",
+      "node": false
+    },
+    {
+      "name": "Skeleton.svelte.spec.ts",
+      "role": "spec for Skeleton",
+      "node": false
+    },
+    {
+      "name": "Spinner.svelte",
+      "role": "a ring that turns through the seam: a status with its words, or the glyph alone (what Button's busy state will hold)",
+      "node": false
+    },
+    {
+      "name": "Spinner.svelte.spec.ts",
+      "role": "spec for Spinner",
+      "node": false
+    },
+    {
+      "name": "StatusPill.svelte",
+      "role": "a pill of one or two parts, each with a label, tone and optional icon, and a quiet fact beside it",
+      "node": false
+    },
+    {
+      "name": "StatusPill.svelte.spec.ts",
+      "role": "spec for StatusPill",
+      "node": false
+    },
+    {
+      "name": "VisibilityMarker.svelte",
+      "role": "who can see a thing: an icon and the word for private, listed or public, or the icon alone with its word read out once",
+      "node": false
+    },
+    {
+      "name": "VisibilityMarker.svelte.spec.ts",
+      "role": "spec for VisibilityMarker",
+      "node": false
+    },
+    {
+      "name": "choices.spec.ts",
+      "role": "spec for the run-time choices",
+      "node": false
+    },
+    {
+      "name": "choices.ts",
+      "role": "the run-time choices, each taking any value and falling back to the safe one: the card element, the badge and status tones, the visibility level and its icon, an icon name and the number of skeleton lines",
+      "node": false
+    },
+    {
       "name": "types.ts",
-      "role": "`FeedbackAction`: a press with a label and an optional icon, or a link that adds a `LinkHref`",
+      "role": "`FeedbackAction`, and the shapes of the surfaces: the card element and padding, the badge and status tones, a status pill's parts and fact, the visibility levels and their words",
       "node": false
     }
   ],

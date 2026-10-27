@@ -34,10 +34,16 @@ export const KINDS: Readonly<Record<string, Kind>> = {
 	Tabs: 'simple',
 	PillSwitch: 'simple',
 	DateField: 'simple',
-	Menu: 'simple'
+	Menu: 'simple',
+	Card: 'simple',
+	Badge: 'simple',
+	Spinner: 'simple',
+	Skeleton: 'simple',
+	VisibilityMarker: 'simple',
+	StatusPill: 'simple'
 };
 
-/** The glyphs a simple component may hold, by exported name. Spinner's glyph form arrives later. */
+/** The glyphs a simple component may hold, by exported name. Spinner's glyph form is what Button's busy state holds. */
 export const GLYPHS: readonly string[] = ['Icon', 'Spinner'];
 
 /** The library's internal pieces: simple, not exported, and usable by any library component. */
@@ -104,7 +110,12 @@ export const OWNERS: Readonly<Record<OwnedElement, readonly Row[]>> = {
 };
 
 /** The files that may render a `<svelte:element>` whose `this` is not written out. */
-export const DYNAMIC_ELEMENT: readonly Row[] = [];
+export const DYNAMIC_ELEMENT: readonly Row[] = [
+	{
+		file: 'src/lib/surfaces/Card.svelte',
+		reason: 'the card becomes a div, section, article or li, chosen from a closed map'
+	}
+];
 
 /** The elements no file under `src/lib/` or `src/stories/` renders: they load, base or style the page. */
 export const PAGE_ELEMENTS: readonly string[] = ['link', 'base', 'svelte:head', 'style'];
@@ -154,7 +165,13 @@ export const FAMILIES: Readonly<Record<FilePath, readonly Family[]>> = {
 	'src/lib/controls/Tabs.svelte': ['zf-tabs', 'zf-tab', 'zf-tabview'],
 	'src/lib/controls/PillSwitch.svelte': ['zf-seg'],
 	'src/lib/controls/Menu.svelte': ['zf-menu'],
-	'src/lib/controls/Tooltip.svelte': ['zf-tip']
+	'src/lib/controls/Tooltip.svelte': ['zf-tip'],
+	'src/lib/surfaces/Card.svelte': ['zf-card'],
+	'src/lib/surfaces/Badge.svelte': ['zf-badge'],
+	'src/lib/surfaces/Spinner.svelte': ['zf-spinner', 'zf-spinner-wrap'],
+	'src/lib/surfaces/Skeleton.svelte': ['zf-skeleton', 'zf-skeleton-lines'],
+	'src/lib/surfaces/VisibilityMarker.svelte': ['zf-vis'],
+	'src/lib/surfaces/StatusPill.svelte': ['zf-status', 'zf-pill']
 };
 
 /** The families any `.svelte` file under `src/lib/` may write: `zf-sr` keeps words for screen readers only. */
