@@ -16,7 +16,7 @@
     "The folder is ESLint's `stories` file set, in the gallery host tier: the host's bans hold (no `fetch`, no storage, no remote or `javascript:` string, no raw HTML, no script markup, no inline handler, no dynamic import).",
     "A docs page (`.mdx`, allowed only under `src/stories/`) holds only `import { Meta, Story } from '@storybook/addon-docs/blocks';`, `import * as X from './<Name>.stories.svelte';` from its own folder, one `<Meta of={X} />`, Markdown headings, plain prose, blank lines and `<Story of={X.<Story>} />` lines; any other import or JSX, `{` outside `of={…}`, `export`, an image, a link, raw HTML or a URL is refused (`src/checks/docs-pages.spec.ts`).",
     "Every component `src/lib/index.ts` exports has a stories file whose `defineMeta.component` is that component imported from `@zurfur/ui`, and a contract spec; a pending list names the controls still waiting for stories and may only shrink (`src/checks/story-coverage.spec.ts`). Fixtures and stories files carry only the reserved sample DID and handles ending in `.test` or `.example`, a bare domain in a handle-named field, variable or attribute is refused too, and a stories file that does not parse is refused (`src/checks/story-fixtures.spec.ts`, which reads `fixtures/*.ts` and every `*.stories.svelte`).",
-    "Titles and story names are in Title Case (\"Tokens and Paper/Colour\", \"Controls/Button\"); the sidebar order is `.storybook/preview.ts`'s.",
+    "Titles and story names are in Title Case (\"Tokens and Paper/Colour\", \"Controls/Button\"): each word of every `defineMeta` title segment, every `<Story name>` and every fixture `title` string starts with a capital, but for a, an, and, of, the, to, in, on, for, with and by after the first word, and a word that starts with a digit or a symbol; a title or name that isn't one string, and a stories file with no title, are refused (`src/checks/story-coverage.spec.ts`, whose pending list of fixture titles only shrinks). No middle dot and no age-check words anywhere here (`src/checks/words.spec.ts`). The sidebar order is `.storybook/preview.ts`'s.",
     "Storybook and the Vitest story projects run only through the package's scripts, under `env -i` and the network guard (see `frontend/ui`)."
   ],
   "entry_points": [
@@ -37,7 +37,7 @@
     },
     {
       "name": "frame/",
-      "role": "StoryFrame.svelte (sets data-skin and data-motion on <html> and on a wrapping div, the portal target, from the toolbar's globals, and paints a docs page's background and text from the skin's tokens), FrameSkin.svelte (resolves Follow the OS to the skin showing), globals.ts (parseSkinChoice and parseMotion: address text to closed unions, unknown text meaning Follow the OS and Lively) and their specs",
+      "role": "StoryFrame.svelte (sets data-skin and data-motion on <html> and on a wrapping div, the portal target, from the toolbar's globals, and paints a docs page's background and text from the skin's tokens; a story tagged `layer` gets `layer`, which contains the wrapper's layout and paint at a dialog's height, so a fixed layer stays inside its story), FrameSkin.svelte (resolves Follow the OS to the skin showing), globals.ts (parseSkinChoice and parseMotion: address text to closed unions, unknown text meaning Follow the OS and Lively) and their specs",
       "node": false
     },
     {

@@ -4,10 +4,11 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const uiRoot = fileURLToPath(new URL('../../', import.meta.url));
 const libRoot = fileURLToPath(new URL('../lib/', import.meta.url));
 
 /** The folders whose components show no word of their own: every word is a prop. */
-const wordlessFolders = ['controls', 'icons'] as const;
+const wordlessFolders = ['controls', 'icons', 'surfaces'] as const;
 
 /** The attributes whose value a person reads or hears. */
 const spokenAttributes: ReadonlySet<string> = new Set([
@@ -224,7 +225,7 @@ describe('every word a control shows is a prop', () => {
 			'words as props',
 			'<button aria-label={label} title={label} onclick={onPress}>{label}</button>'
 		],
-		['punctuation and digits', '<span aria-hidden="true">· — 1/2 …</span><span>{label}</span>'],
+		['punctuation and digits', '<span aria-hidden="true">— 1/2 …</span><span>{label}</span>'],
 		['whitespace', '<p>\n\t{label}\n</p>'],
 		[
 			'attributes no one reads',
@@ -235,5 +236,137 @@ describe('every word a control shows is a prop', () => {
 		['a class expression', "<p class={['zf-tip', label === '' ? 'empty' : 'full']}>{label}</p>"]
 	])('allows %s', (_label, markup) => {
 		expect(literalWords('controls/Button.svelte', component(markup))).toEqual([]);
+	});
+});
+
+// --- Words no screen shows -------------------------------------------------------
+
+/** One word or mark no screen shows, found in a file. */
+interface Refusal {
+	readonly file: string;
+	readonly line: number;
+	readonly found: string;
+}
+
+/**
+ * The middle dot as written: the character itself, and its escapes in CSS
+ * (`\b7`, `\00b7`, up to six hex digits), in script (`\xb7`, `\u00b7`,
+ * `\u{b7}`) and in markup (`&middot;`, `&#183;`, `&#xb7;`).
+ */
+const middleDot =
+	/\u00b7|\\0{0,4}b7(?![0-9a-f])|\\x[bB]7|\\u00[bB]7|\\u\{0*[bB]7\}|&middot;|&#0*183;|&#x0*b7;/gi;
+
+/** A phrase, matched as whole words in any letter case, its words split by spaces, hyphens or underscores. */
+const phrase = (...words: readonly string[]): RegExp =>
+	new RegExp(`(?<![\\p{L}\\p{N}])${words.join('[\\s_-]+')}(?![\\p{L}\\p{N}])`, 'giu');
+
+/** The age-check and ID-check words: Zurfur asks no one to prove their age or who they are. */
+const ageCheckPhrases: readonly RegExp[] = [
+	phrase('age', 'check'),
+	phrase('id', 'check'),
+	phrase('verify', 'your', 'age'),
+	phrase('age', 'verification')
+];
+
+/** Every middle dot and age-check phrase in one file's text, with its line. */
+export function wordRefusals(file: string, text: string): readonly Refusal[] {
+	const lineOf = (offset: number): number => text.slice(0, offset).split('\n').length;
+	return [middleDot, ...ageCheckPhrases].flatMap((pattern) =>
+		[...text.matchAll(pattern)].map((match) => ({
+			file,
+			line: lineOf(match.index),
+			found: match[0]
+		}))
+	);
+}
+
+/**
+ * Every file the words rule reads, relative to the package: all of `src/lib/`
+ * and `src/stories/` (the fixtures in `src/stories/fixtures/` among them) and
+ * the fixture pictures in `static/fixtures/`. A folder's `NODE.inf.json`
+ * describes it to people working here and is never shown, so it is not read.
+ */
+function wordedFiles(): readonly string[] {
+	return ['src/lib', 'src/stories', 'static/fixtures'].flatMap((folder) => {
+		const root = path.join(uiRoot, folder);
+		if (!existsSync(root)) return [];
+		return readdirSync(root, { recursive: true, withFileTypes: true })
+			.filter((entry) => entry.isFile() && entry.name !== 'NODE.inf.json')
+			.map((entry) =>
+				path.relative(uiRoot, path.join(entry.parentPath, entry.name)).split(path.sep).join('/')
+			);
+	});
+}
+
+describe('no middle dot and no age-check words', () => {
+	it('reads the library, the stories, their fixtures and the fixture pictures', () => {
+		const files = wordedFiles();
+		expect(files).toContain('src/lib/controls/Button.svelte');
+		expect(files).toContain('src/stories/fixtures/fields.ts');
+		expect(files).toContain('static/fixtures/avatar.svg');
+		expect(files.filter((file) => file.endsWith('NODE.inf.json'))).toEqual([]);
+	});
+
+	it('finds none in the real files', () => {
+		const refusals = wordedFiles().flatMap((file) =>
+			wordRefusals(file, readFileSync(path.join(uiRoot, file), 'utf8'))
+		);
+		expect(refusals).toEqual([]);
+	});
+
+	it.each([
+		[
+			'· in a stories fixture',
+			'src/stories/fixtures/people.ts',
+			"export const line = 'Sketch · WIP';"
+		],
+		['· in a fixture picture', 'static/fixtures/avatar.svg', '<svg><title>A · B</title></svg>'],
+		[
+			'\\00b7 in a CSS content',
+			'src/lib/styles/surfaces/label.css',
+			".x::after { content: '\\00b7'; }"
+		],
+		[
+			'\\b7 in a CSS content',
+			'src/lib/controls/Button.svelte',
+			"<style>.x::before { content: '\\b7 '; }</style>"
+		],
+		['\\0000B7 in a CSS content', 'src/lib/x.css', ".x::after { content: '\\0000B7'; }"],
+		['\\u00b7 in a script', 'src/lib/x.ts', "export const dot = '\\u00b7';"],
+		['\\u{b7} in a script', 'src/lib/x.ts', "export const dot = '\\u{b7}';"],
+		['\\xB7 in a script', 'src/lib/x.ts', "export const dot = '\\xB7';"],
+		['&middot; in markup', 'src/stories/X.stories.svelte', '<p>a &middot; b</p>'],
+		['&#183; in markup', 'src/stories/X.stories.svelte', '<p>a &#183; b</p>'],
+		['&#xB7; in markup', 'src/stories/X.stories.svelte', '<p>a &#xB7; b</p>'],
+		[
+			'"Verify your age" in a fixture',
+			'src/stories/fixtures/mature.ts',
+			"export const gate = 'Verify your age';"
+		],
+		[
+			'"AGE-CHECK" in a component',
+			'src/lib/surfaces/MatureCover.svelte',
+			'<p>{label} AGE-CHECK</p>'
+		],
+		['"age check" in a component', 'src/lib/surfaces/X.svelte', '<p>age check</p>'],
+		['"Age verification" in a docs page', 'src/stories/surfaces/X.mdx', '# Age verification'],
+		['"ID check" in a story', 'src/stories/X.stories.svelte', '<Story name="ID Check" />'],
+		['"id-check" in a fixture picture', 'static/fixtures/avatar.svg', '<svg id="id-check"></svg>'],
+		['"verify  your\\nage" across a line', 'src/lib/x.ts', '// verify  your\nage']
+	])('refuses %s', (_label, file, text) => {
+		expect(wordRefusals(file, text)).not.toEqual([]);
+	});
+
+	it.each([
+		['the verified mark', "export const seal = 'Verified';"],
+		['the package-check icon', "export const icon = 'package-check';"],
+		['a package check', '<p>package check</p>'],
+		['an age without a check', '<p>Your age stays yours.</p>'],
+		['a valid check', '<p>valid check</p>'],
+		['a bullet', "export const sep = '•';"],
+		['a hex colour ending in b7', '.x { color: #a0b7c1; }'],
+		['an escape of another character', ".x::after { content: '\\b70'; }"]
+	])('allows %s', (_label, text) => {
+		expect(wordRefusals('src/lib/x.ts', text)).toEqual([]);
 	});
 });

@@ -43,7 +43,8 @@ const preview: Preview = {
 			Component: StoryFrame,
 			props: {
 				skin: parseSkinChoice(context.globals.skin),
-				motion: parseMotion(context.globals.motion)
+				motion: parseMotion(context.globals.motion),
+				layer: context.tags.includes('layer')
 			}
 		})
 	],
