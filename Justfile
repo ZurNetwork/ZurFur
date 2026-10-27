@@ -121,12 +121,13 @@ frontend-install:
 # The component gallery: Storybook's dev server at http://127.0.0.1:5190, or
 # at ZURFUR_GALLERY_PORT, after the guarded install. ui's `storybook` script
 # alone sets the host and port (frontend/ui/gallery-port.ts is the port rule).
-# No Docker, no API. dotenv-load reads .env into this recipe, but the script
-# runs Storybook under `env -i` with only PATH, HOME, ZURFUR_GALLERY_PORT and
-# the network guard, so nothing else from .env or the shell reaches it.
+# No Docker, no API. dotenv-load reads .env into this recipe, so the install
+# and yarn itself see it. The port rule and Storybook run under `env -i`: the
+# address line keeps only PATH and ZURFUR_GALLERY_PORT, the script only PATH,
+# HOME, ZURFUR_GALLERY_PORT and the network guard.
 gallery:
     just frontend-install
-    @echo "Storybook (the component gallery): http://127.0.0.1:$(node frontend/ui/gallery-port.ts)"
+    @env -i PATH="$PATH" ZURFUR_GALLERY_PORT="${ZURFUR_GALLERY_PORT-}" sh -c 'echo "Storybook (the component gallery): http://127.0.0.1:$(node frontend/ui/gallery-port.ts)"'
     yarn --cwd frontend/ui run storybook
 
 # The component gallery built as static files (frontend/ui/storybook-static),
