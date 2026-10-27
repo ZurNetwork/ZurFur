@@ -1,0 +1,184 @@
+/**
+ * The checks every screenshot test runs before its picture: no request leaves
+ * the loopback server, no page throws, and Storybook rendered without its
+ * error display. The walker and the self-tests share them from here.
+ */
+import { expect, type BrowserContext, type Frame, type Page } from '@playwright/test';
+import type { Skin, ViewMode } from './storybook.ts';
+
+/** The loopback port the static server listens on inside the container. */
+export const shotsPort = 5199;
+
+/** The only origin a page may load from. */
+export const shotsOrigin = `http://127.0.0.1:${String(shotsPort)}`;
+
+/** True when a page may load `url`: the loopback server's origin, or a `data:` or `blob:` URL. */
+export function isAllowedUrl(url: string): boolean {
+	let parsed: URL;
+	try {
+		parsed = new URL(url);
+	} catch {
+		return false;
+	}
+	if (parsed.protocol === 'data:' || parsed.protocol === 'blob:') return true;
+	return parsed.origin === shotsOrigin;
+}
+
+/** What went wrong in one test's pages, collected as it happens. */
+export interface Watch {
+	readonly problems: Set<string>;
+}
+
+function watchPage(page: Page, watch: Watch): void {
+	page.on('pageerror', (error) => {
+		watch.problems.add(`page error: ${error.name}: ${error.message}`);
+	});
+	page.on('websocket', (socket) => {
+		if (!isAllowedUrl(socket.url())) watch.problems.add(`websocket to ${socket.url()}`);
+	});
+}
+
+/**
+ * Watches every page of the test's context: each request not to the loopback
+ * server is aborted and recorded, as is every page error and off-host
+ * websocket, in every frame. Call it before the first navigation.
+ */
+export async function watchContext(context: BrowserContext, page: Page): Promise<Watch> {
+	const watch: Watch = { problems: new Set() };
+	await context.route('**/*', async (route) => {
+		const url = route.request().url();
+		if (isAllowedUrl(url)) {
+			await route.continue();
+			return;
+		}
+		watch.problems.add(`request to ${url}`);
+		await route.abort('blockedbyclient');
+	});
+	await context.routeWebSocket(/.*/, (socket) => {
+		if (!isAllowedUrl(socket.url())) watch.problems.add(`websocket to ${socket.url()}`);
+		void socket.close();
+	});
+	context.on('request', (request) => {
+		if (!isAllowedUrl(request.url())) watch.problems.add(`request to ${request.url()}`);
+	});
+	for (const open of context.pages()) watchPage(open, watch);
+	context.on('page', (opened) => {
+		watchPage(opened, watch);
+	});
+	if (!context.pages().includes(page)) watchPage(page, watch);
+	await context.addInitScript(listenForDocsRendered);
+	return watch;
+}
+
+/** Fails the test when anything went wrong so far. */
+export function expectNoProblems(watch: Watch): void {
+	expect([...watch.problems], 'requests off 127.0.0.1, page errors or websockets').toEqual([]);
+}
+
+/** The flag the init script sets once Storybook says a docs page rendered. */
+const docsRenderedFlag = '__zurfurShotsDocsRendered';
+
+/**
+ * Runs in every frame before its scripts: catches Storybook's channel as it is
+ * installed and sets a flag on its `docsRendered` event.
+ */
+function listenForDocsRendered(): void {
+	const flag = '__zurfurShotsDocsRendered';
+	let channel: unknown;
+	Reflect.set(globalThis, flag, false);
+	Reflect.defineProperty(globalThis, '__STORYBOOK_ADDONS_CHANNEL__', {
+		configurable: true,
+		get: () => channel,
+		set: (next: unknown) => {
+			channel = next;
+			const on: unknown = Object(next) === next ? Reflect.get(Object(next), 'on') : undefined;
+			if (typeof on !== 'function') return;
+			Reflect.apply(on, next, [
+				'docsRendered',
+				() => {
+					Reflect.set(globalThis, flag, true);
+				}
+			]);
+		}
+	});
+}
+
+/** Where Storybook's preview ended up. */
+export type RenderState = 'rendered' | 'error-display' | 'no-preview';
+
+/**
+ * Reads the preview's state in the page: Storybook's error display or its
+ * no-preview screen, by the body's class; otherwise rendered once every story
+ * render reached its `finished` phase (play functions and afterEach included)
+ * and, on a docs page, once Storybook said the page rendered. False while
+ * neither.
+ */
+function renderStateInPage([viewMode, flag]: readonly [ViewMode, string]): RenderState | false {
+	const body = document.querySelector('body') ?? undefined;
+	if (body === undefined) return false;
+	if (body.classList.contains('sb-show-errordisplay')) return 'error-display';
+	if (body.classList.contains('sb-show-nopreview')) return 'no-preview';
+	const preview: unknown = Reflect.get(globalThis, '__STORYBOOK_PREVIEW__');
+	const renders: unknown =
+		Object(preview) === preview ? Reflect.get(Object(preview), 'storyRenders') : undefined;
+	const phases = Array.isArray(renders)
+		? renders.map((render: unknown) =>
+				Object(render) === render ? Reflect.get(Object(render), 'phase') : undefined
+			)
+		: [];
+	const allFinished = phases.every((phase) => phase === 'finished');
+	if (viewMode === 'story') return phases.length > 0 && allFinished ? 'rendered' : false;
+	return Reflect.get(globalThis, flag) === true && allFinished ? 'rendered' : false;
+}
+
+/** Waits until the preview rendered or showed its error display, and says which. */
+export async function waitForStorybook(
+	target: Page | Frame,
+	viewMode: ViewMode
+): Promise<RenderState> {
+	const handle = await target.waitForFunction(renderStateInPage, [
+		viewMode,
+		docsRenderedFlag
+	] as const);
+	const state: unknown = await handle.jsonValue();
+	await handle.dispose();
+	return state === 'error-display' || state === 'no-preview' ? state : 'rendered';
+}
+
+/** Waits for the fonts, the images that load now, and a quiet network. */
+export async function settle(page: Page): Promise<void> {
+	await page.evaluate(async () => {
+		await document.fonts.ready;
+	});
+	await page.waitForFunction(() =>
+		Array.from(document.images).every((image) => image.complete || image.loading === 'lazy')
+	);
+	await page.waitForLoadState('networkidle');
+}
+
+/** The globals the preview applied, read from its store. */
+function globalsInPage(): unknown {
+	const preview: unknown = Reflect.get(globalThis, '__STORYBOOK_PREVIEW__');
+	const store: unknown =
+		Object(preview) === preview ? Reflect.get(Object(preview), 'storyStoreValue') : undefined;
+	const globals: unknown =
+		Object(store) === store ? Reflect.get(Object(store), 'userGlobals') : undefined;
+	return Object(globals) === globals ? Reflect.get(Object(globals), 'globals') : undefined;
+}
+
+/**
+ * Opens an entry's address and checks it rendered in the asked skin with
+ * motion stopped: Storybook's error display, its no-preview screen or a
+ * global the address did not set each fail the test.
+ */
+export async function expectRendered(page: Page, viewMode: ViewMode, skin: Skin): Promise<void> {
+	expect(await waitForStorybook(page, viewMode), "Storybook's preview state").toBe('rendered');
+	await settle(page);
+	expect(await waitForStorybook(page, viewMode), "Storybook's preview state, settled").toBe(
+		'rendered'
+	);
+	expect(await page.evaluate(globalsInPage), 'the globals the address set').toMatchObject({
+		skin,
+		motion: 'still'
+	});
+}
