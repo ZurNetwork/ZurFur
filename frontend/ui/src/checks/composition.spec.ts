@@ -68,7 +68,8 @@ export type CompositionRefusalReason =
 	| 'a family listed by two stylesheet rows'
 	| 'a stylesheet row for a family a component styles itself'
 	| 'a Spinner rendered other than as a glyph'
-	| 'an import of the package entry from inside the library';
+	| 'an import of the package entry from inside the library'
+	| 'a .ts file in the library, not the entry, that imports a component';
 
 /** Why a file, the entry or the table is refused, and what it named. */
 export interface CompositionRefusal {
@@ -742,6 +743,20 @@ function entryImports(facts: Facts): readonly string[] {
 	);
 }
 
+/**
+ * The `.svelte` files a plain `.ts` file under `src/lib/` imports or re-exports,
+ * in any form, type-only included; the package entry alone may. A spec is
+ * never read, and no library code may import one.
+ */
+function componentImports(facts: Facts): readonly string[] {
+	const isLibraryScript = facts.path.startsWith('src/lib/') && /\.(?:ts|js)$/.test(facts.path);
+	if (!isLibraryScript || facts.path === entryPath) return [];
+	return facts.imports.flatMap(({ source }) => {
+		const target = source === undefined ? undefined : resolvedPath(facts.path, source);
+		return target?.endsWith('.svelte') === true ? [target] : [];
+	});
+}
+
 /** The refusals of the bits-ui rule in one file's imports. */
 function bitsImportRefusals(facts: Facts, table: CompositionTable): readonly Finding[] {
 	const listed = rowFor(table.bitsUi, facts.path) ?? [];
@@ -900,6 +915,13 @@ export function compositionRefusals(input: CompositionInput): readonly Compositi
 		for (const use of facts.bitsUses) refuse(file.path, use.reason, use.detail);
 		for (const source of entryImports(facts)) {
 			refuse(file.path, 'an import of the package entry from inside the library', source);
+		}
+		for (const target of componentImports(facts)) {
+			refuse(
+				file.path,
+				'a .ts file in the library, not the entry, that imports a component',
+				target
+			);
 		}
 
 		// A family a component styles in its own <style> has no stylesheet row.
@@ -1686,6 +1708,103 @@ describe('the plants', () => {
 		expect(reasons(check({ sources: [holding] }))).toEqual([
 			'an import of the package entry from inside the library'
 		]);
+	});
+
+	it.each([
+		[
+			'a folder barrel',
+			'src/lib/controls/index.ts',
+			'./Toggle.svelte',
+			'src/lib/controls/Toggle.svelte'
+		],
+		[
+			'a helper',
+			'src/lib/surfaces/parts.ts',
+			'../controls/Toggle.svelte',
+			'src/lib/controls/Toggle.svelte'
+		],
+		[
+			'a runes module',
+			'src/lib/motion/parts.svelte.ts',
+			'../controls/Toggle.svelte',
+			'src/lib/controls/Toggle.svelte'
+		],
+		[
+			'a file at the top of lib',
+			'src/lib/extra.ts',
+			'./controls/Toggle.svelte',
+			'src/lib/controls/Toggle.svelte'
+		]
+	] as const)(
+		'refuses %s that imports or re-exports a component',
+		(_label, filePath, specifier, target) => {
+			const forms = [
+				`import Toggle from '${specifier}';\nexport { Toggle };`,
+				`import { default as Toggle } from '${specifier}';\nexport { Toggle };`,
+				`import * as Toggle from '${specifier}';\nexport { Toggle };`,
+				`import '${specifier}';`,
+				`export { default as Toggle } from '${specifier}';`,
+				`export { default } from '${specifier}';`,
+				`export * from '${specifier}';`,
+				`export * as Toggle from '${specifier}';`,
+				`export const load = () => import('${specifier}');`,
+				`import type Toggle from '${specifier}';\nexport type { Toggle };`,
+				`export type { default as Toggle } from '${specifier}';`,
+				`export type Toggle = typeof import('${specifier}');`
+			];
+			for (const text of forms) {
+				expect(check({ sources: [{ path: filePath, text: `${text}\n` }] }), text).toEqual([
+					{
+						path: filePath,
+						reason: 'a .ts file in the library, not the entry, that imports a component',
+						detail: target
+					}
+				]);
+			}
+		}
+	);
+
+	it.each([
+		[
+			'a folder barrel',
+			'src/lib/controls/index.ts',
+			"export { default as Toggle } from './Toggle.svelte';",
+			"import { Toggle } from '../controls';"
+		],
+		[
+			'a helper',
+			'src/lib/surfaces/parts.ts',
+			"export { default as Toggle } from '../controls/Toggle.svelte';",
+			"import { Toggle } from './parts';"
+		]
+	] as const)(
+		'refuses a simple component holding a Toggle through %s',
+		(_label, helperPath, reexport, line) => {
+			const helper = { path: helperPath, text: `${reexport}\n` };
+			const marker = realWith(
+				'src/lib/surfaces/VisibilityMarker.svelte',
+				"import Icon from '../icons/Icon.svelte';",
+				`import Icon from '../icons/Icon.svelte';\n\t${line}`
+			);
+			const icon = '<Icon name={visibilityIconOf(shownLevel)} size="sm" />';
+			const holding = {
+				path: marker.path,
+				text: marker.text.replace(icon, `${icon}\n\t\t<Toggle label="x" checked={false} />`)
+			};
+			expect(holding.text).not.toBe(marker.text);
+			expect(check({ sources: [helper, holding] })).toEqual([
+				{
+					path: helperPath,
+					reason: 'a .ts file in the library, not the entry, that imports a component',
+					detail: 'src/lib/controls/Toggle.svelte'
+				}
+			]);
+		}
+	);
+
+	it('leaves the package entry its imports of the components', () => {
+		expect(realEntry).toContain(".svelte'");
+		expect(check({ sources: [{ path: entryPath, text: realEntry }] })).toEqual([]);
 	});
 
 	it('leaves a stories file its import of the package', () => {
