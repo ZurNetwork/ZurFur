@@ -98,22 +98,25 @@ const menuItems: readonly MenuItem<Choice>[] = [
 	{ id: 'two', label: 'Two', tone: 'danger', disabled: true }
 ];
 
-/** Opens the menu whose trigger carries `trigger`, then highlights its first row. */
-const menuSteps = [
-	[
-		'opened',
-		async () => {
-			await page.getByTestId('trigger').click();
-			await expect.element(page.getByRole('menu')).toBeInTheDocument();
-		}
-	],
-	[
-		'with a row highlighted',
-		async () => {
-			await page.getByRole('menuitem', { name: 'One' }).hover();
-		}
-	]
+/** Opens the menu whose trigger carries `trigger`. */
+const openMenuStep = [
+	'opened',
+	async () => {
+		await page.getByTestId('trigger').click();
+		await expect.element(page.getByRole('menu')).toBeInTheDocument();
+	}
 ] as const;
+
+/** Highlights the open menu's first row. */
+const highlightRowStep = [
+	'with a row highlighted',
+	async () => {
+		await page.getByRole('menuitem', { name: 'One' }).hover();
+	}
+] as const;
+
+/** Opens the menu whose trigger carries `trigger`, then highlights its first row. */
+const menuSteps = [openMenuStep, highlightRowStep] as const;
 
 /** Shows the icon button's tip by `how`, and waits for it. */
 async function showTip(how: 'hover' | 'focus'): Promise<void> {
@@ -126,6 +129,32 @@ async function showTip(how: 'hover' | 'focus'): Promise<void> {
 		{ timeout: 3000 }
 	);
 }
+
+/** Shows the icon menu trigger's tip by `how`, and waits for it. */
+async function showMenuTip(how: 'hover' | 'focus'): Promise<void> {
+	if (how === 'hover') await page.getByTestId('trigger').hover();
+	else byTestId('trigger').focus();
+	await vi.waitFor(
+		() => {
+			expect(document.querySelector('.zf-tip')?.textContent).toBe('More');
+		},
+		{ timeout: 3000 }
+	);
+}
+
+/** Shows the icon menu's tip by hover and by focus, opens the menu with the tip showing, then highlights a row. */
+const iconMenuSteps = [
+	['its tip shown on hover', () => showMenuTip('hover')],
+	['its tip shown on focus', () => showMenuTip('focus')],
+	[
+		'opened with its tip shown',
+		async () => {
+			await showMenuTip('hover');
+			await openMenuStep[1]();
+		}
+	],
+	highlightRowStep
+] as const;
 
 const FIXTURES: Readonly<Record<string, readonly Fixture[]>> = {
 	'Button.svelte': [
@@ -233,7 +262,7 @@ const FIXTURES: Readonly<Record<string, readonly Fixture[]>> = {
 					onOpenChange: () => undefined,
 					onSelect: () => undefined
 				}).container,
-			steps: menuSteps
+			steps: iconMenuSteps
 		}
 	],
 	'PillSwitch.svelte': [

@@ -14,8 +14,8 @@
 		readonly words: string;
 		/** The trigger: one element that spreads `props`. */
 		readonly trigger: Snippet<[TriggerArgs]>;
-		/** A press on the trigger. */
-		readonly onPress: () => void;
+		/** A press on the trigger, when the trigger does nothing else on its own. */
+		readonly onPress?: (() => void) | undefined;
 		readonly disabled?: boolean;
 	}
 
@@ -50,7 +50,7 @@
 		<Tooltip.Trigger
 			{disabled}
 			onclick={() => {
-				onPress();
+				onPress?.();
 			}}
 		>
 			{#snippet child({ props }: TriggerArgs)}

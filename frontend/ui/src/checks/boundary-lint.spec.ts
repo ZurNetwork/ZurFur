@@ -53,6 +53,7 @@ const plannedOrReal = {
 	checkbox: 'src/lib/controls/Checkbox.svelte',
 	toggle: 'src/lib/controls/Toggle.svelte',
 	iconButton: 'src/lib/controls/IconButton.svelte',
+	menu: 'src/lib/controls/Menu.svelte',
 	controlTypes: 'src/lib/controls/types.ts',
 	context: 'src/lib/environment/context.ts',
 	card: 'src/lib/surfaces/Card.svelte',
@@ -2713,6 +2714,184 @@ describe("the pattern's bans in what ships", { timeout: 120_000 }, () => {
 				markup
 			);
 			await expectRefused(plannedOrReal.iconButton, code, SPREADS);
+		});
+
+		describe("Menu's icon trigger: the snippet handed to Tooltip spreads only onto DropdownMenu.Trigger", () => {
+			const menuHead = [
+				"\timport { DropdownMenu, Switch } from 'bits-ui';",
+				"\timport Tooltip from './Tooltip.svelte';",
+				'\tinterface Props {\n\t\treadonly raw: string;\n\t}',
+				'\tlet { raw }: Props = $props();'
+			].join('\n');
+			const opener = '{#snippet child({ props }: { readonly props: Record<string, unknown> })}';
+			const inner = '{#snippet child({ props })}<button {...props}>{raw}</button>{/snippet}';
+			/** A Menu-like file whose handed snippet holds `body`, under `head`. */
+			const handing = (body: string, head: string = menuHead): string =>
+				component(
+					head,
+					`${opener}${body}{/snippet}\n<DropdownMenu.Root><Tooltip words="x" trigger={child} /></DropdownMenu.Root>`
+				);
+			/** The trigger part, spread first, with `more` after the spread and `kids` inside. */
+			const part = (more = '', kids = inner, tag = 'DropdownMenu.Trigger'): string =>
+				`<${tag} {...props}${more}>${kids}</${tag}>`;
+			const allowedShape = handing(part());
+
+			it('allows the real Menu in its own file, and nowhere else', async () => {
+				const menu = readFileSync(`${uiRoot}${plannedOrReal.menu}`, 'utf8');
+				expect(menu).toContain('<DropdownMenu.Trigger {...props}>');
+				await expectAllowed(plannedOrReal.menu, menu);
+				await expectRefused(plannedOrReal.toggle, menu, SPREADS);
+				await expectRefused(plannedOrReal.iconButton, menu, SPREADS);
+			});
+
+			it('allows the narrow shape in Menu alone, with or without its inner child snippet', async () => {
+				await expectAllowed(plannedOrReal.menu, allowedShape);
+				await expectAllowed(plannedOrReal.menu, handing(part('', '')));
+				await expectRefused(plannedOrReal.iconButton, allowedShape, SPREADS);
+				await expectRefused(plannedOrReal.toggle, allowedShape, SPREADS);
+				await expectRefused(planted.componentSvelte, allowedShape, SPREADS);
+			});
+
+			it.each(refused)('refuses %s in Menu', async (_label, code) => {
+				await expectRefused(plannedOrReal.menu, code, SPREADS);
+			});
+
+			const refusedInMenu: readonly Allowed[] = [
+				[
+					'an HTML element with formaction and ping in the handed snippet',
+					handing('<button {...props} formaction={raw} ping={raw}>x</button>')
+				],
+				['a link in the handed snippet', handing('<a {...props} href={raw}>x</a>')],
+				[
+					'a renamed import',
+					handing(
+						part(),
+						menuHead.replace('{ DropdownMenu, Switch }', '{ Popover as DropdownMenu, Switch }')
+					)
+				],
+				[
+					'a LinkPreview under the namespace name',
+					handing(
+						part(),
+						menuHead.replace('{ DropdownMenu, Switch }', '{ LinkPreview as DropdownMenu, Switch }')
+					)
+				],
+				[
+					'a namespace import',
+					handing(
+						part('', '', 'Bits.DropdownMenu.Trigger'),
+						menuHead.replace("{ DropdownMenu, Switch } from 'bits-ui'", "* as Bits from 'bits-ui'")
+					)
+				],
+				['DropdownMenu.Content', handing(part('', inner, 'DropdownMenu.Content'))],
+				['DropdownMenu.Item', handing(part('', inner, 'DropdownMenu.Item'))],
+				['DropdownMenu.SubTrigger', handing(part('', inner, 'DropdownMenu.SubTrigger'))],
+				['DropdownMenu.Trigger.X', handing(part('', inner, 'DropdownMenu.Trigger.X'))],
+				['a deeper DropdownMenu.Sub.Trigger', handing(part('', '', 'DropdownMenu.Sub.Trigger'))],
+				[
+					"bits-ui's Tooltip.Trigger",
+					component(
+						"\timport { DropdownMenu, Tooltip } from 'bits-ui';\n\timport Tip from './Tooltip.svelte';",
+						`${opener}${part('', inner, 'Tooltip.Trigger')}{/snippet}\n<DropdownMenu.Root><Tip words="x" trigger={child} /></DropdownMenu.Root>`
+					)
+				],
+				[
+					'a local component under the namespace name',
+					handing(
+						part('', ''),
+						menuHead.replace(
+							"import { DropdownMenu, Switch } from 'bits-ui';",
+							"import DropdownMenu from './Toggle.svelte';"
+						)
+					)
+				],
+				[
+					"a look-alike import 'bits-ui/x'",
+					handing(part('', ''), menuHead.replace("from 'bits-ui'", "from 'bits-ui/x'"))
+				],
+				[
+					"a look-alike import './bits-ui'",
+					handing(part('', ''), menuHead.replace("from 'bits-ui'", "from './bits-ui'"))
+				],
+				['ONCLICK beside the spread', handing(part(' ONCLICK={raw}'))],
+				['formaction beside the spread', handing(part(' formaction={raw}'))],
+				['an attachment beside the spread', handing(part(' {@attach raw}'))],
+				['a binding beside the spread', handing(part(' bind:ref={raw}'))],
+				['a shorthand attribute beside the spread', handing(part(' {raw}'))],
+				['a second spread', handing(part(' {...props}'))],
+				[
+					'an attribute before the spread',
+					handing(`<DropdownMenu.Trigger id={raw} {...props}>${inner}</DropdownMenu.Trigger>`)
+				],
+				[
+					'a snippet named ONCLICK inside the part',
+					handing(part('', `{#snippet ONCLICK()}{raw}{/snippet}${inner}`))
+				],
+				['words inside the part', handing(part('', `${inner}{raw}`))],
+				['an {#if} inside the part', handing(part('', `{#if raw}${inner}{/if}`))],
+				[
+					'a child snippet with no parameter inside the part',
+					handing(part('', '{#snippet child()}<button>{raw}</button>{/snippet}'))
+				],
+				[
+					'the props of a child snippet under a bits-ui root',
+					component(
+						menuHead,
+						`<Switch.Root>{#snippet child({ props })}${part()}{/snippet}</Switch.Root>\n<DropdownMenu.Root />`
+					)
+				],
+				[
+					'wrapperProps',
+					component(
+						menuHead,
+						`{#snippet child({ wrapperProps }: { readonly wrapperProps: Record<string, unknown> })}<DropdownMenu.Trigger {...wrapperProps}>${inner}</DropdownMenu.Trigger>{/snippet}\n<DropdownMenu.Root><Tooltip words="x" trigger={child} /></DropdownMenu.Root>`
+					)
+				],
+				[
+					'a {@const} that shadows props',
+					handing(`{@const props = { href: raw, ONCLICK: raw }}${part()}`)
+				],
+				[
+					'a hand-built record',
+					handing(`<DropdownMenu.Trigger {...{ onclick: raw }}>${inner}</DropdownMenu.Trigger>`)
+				],
+				[
+					'the handed snippet also rendered by hand',
+					`${handing(part())}{@render child({ props: { href: raw, ONCLICK: raw, ping: raw } })}\n`
+				],
+				[
+					'the handed snippet also handed to Tooltip as another prop',
+					component(
+						menuHead,
+						`${opener}${part()}{/snippet}\n<DropdownMenu.Root><Tooltip words="x" trigger={child} label={child} /></DropdownMenu.Root>`
+					)
+				],
+				[
+					'the snippet handed to another component of ours',
+					component(
+						`${menuHead}\n\timport Toggle from './Toggle.svelte';`,
+						`${opener}${part()}{/snippet}\n<DropdownMenu.Root><Toggle label="x" trigger={child} /></DropdownMenu.Root>`
+					)
+				],
+				[
+					'the snippet written directly inside a component',
+					component(
+						menuHead,
+						`<DropdownMenu.Root>${opener}${part()}{/snippet}<Tooltip words="x" trigger={child} /></DropdownMenu.Root>`
+					)
+				],
+				[
+					'a snippet not named child',
+					component(
+						menuHead,
+						`{#snippet tip({ props }: { readonly props: Record<string, unknown> })}${part()}{/snippet}\n<DropdownMenu.Root><Tooltip words="x" trigger={tip} /></DropdownMenu.Root>`
+					)
+				]
+			];
+
+			it.each(refusedInMenu)('refuses %s in Menu', async (_label, code) => {
+				await expectRefused(plannedOrReal.menu, code, SPREADS);
+			});
 		});
 	});
 

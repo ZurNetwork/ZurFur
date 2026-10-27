@@ -4,6 +4,7 @@ import { render } from 'vitest-browser-svelte';
 import { flushSync, type ComponentProps } from 'svelte';
 import AcceptingMenu from '../../checks/testing/AcceptingMenu.svelte';
 import RecordingEnvironment from '../../checks/testing/RecordingEnvironment.svelte';
+import ScrollBoxHost from '../../checks/testing/ScrollBoxHost.svelte';
 import Menu from './Menu.svelte';
 import type { MenuItem, MenuTrigger } from './types.ts';
 import '../styles/index.ts';
@@ -40,6 +41,37 @@ function menuItem(name: string): HTMLElement {
 	const [found] = page.getByRole('menuitem', { name }).elements();
 	if (!(found instanceof HTMLElement)) throw new Error(`no menu item ${name}`);
 	return found;
+}
+
+/** The tooltip's words on the page, wherever it portalled, or undefined while it is hidden. */
+function shownTip(): HTMLElement | undefined {
+	const tip = document.querySelector('.zf-tip');
+	return tip instanceof HTMLElement ? tip : undefined;
+}
+
+/** Waits `ms` milliseconds. */
+function pause(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** A primary mouse button's pointer event of `type`, dispatched on `target` as a browser does. */
+function pointer(type: 'pointerdown' | 'pointerup', target: HTMLElement): void {
+	const init: PointerEventInit = {
+		bubbles: true,
+		cancelable: true,
+		composed: true,
+		button: 0,
+		buttons: type === 'pointerdown' ? 1 : 0,
+		pointerType: 'mouse',
+		isPrimary: true
+	};
+	target.dispatchEvent(new PointerEvent(type, init));
+}
+
+/** Renders the short, transformed, scrolling box and hands back the box and its skin scope. */
+function renderScrollBox(): { readonly box: HTMLElement; readonly scope: HTMLElement } {
+	render(ScrollBoxHost, {});
+	return { box: byTestId('scroll-box'), scope: byTestId('scroll-box-scope') };
 }
 
 interface Spies {
@@ -117,6 +149,138 @@ describe('Menu', () => {
 		await expect.element(page.getByRole('menu')).toBeInTheDocument();
 		await vi.waitFor(() => {
 			expect(document.activeElement).toBe(menuItem('Rename'));
+		});
+	});
+
+	it('stays open after a click, choosing nothing, inside a short box that scrolls', async () => {
+		const { scope } = renderScrollBox();
+		const { onOpenChange, onSelect } = renderAccepting(actions, scope);
+		await page.getByRole('button', { name: 'Actions' }).click({ delay: 250 });
+		await pause(300);
+		expect(openMenu()).toBeDefined();
+		expect(onOpenChange.mock.calls).toEqual([[true]]);
+		expect(onSelect).not.toHaveBeenCalled();
+	});
+
+	it('chooses nothing on a release over a row the press did not start on', async () => {
+		const { onOpenChange, onSelect } = renderAccepting();
+		pointer('pointerdown', byTestId('trigger'));
+		await expect.element(page.getByRole('menu')).toBeInTheDocument();
+		pointer('pointerup', menuItem('Duplicate'));
+		await pause(100);
+		expect(onSelect).not.toHaveBeenCalled();
+		expect(onOpenChange.mock.calls).toEqual([[true]]);
+		expect(openMenu()).toBeDefined();
+	});
+
+	it('scrolls nothing as it opens, focusing the menu itself', async () => {
+		const { box, scope } = renderScrollBox();
+		renderAccepting(actions, scope);
+		await page.getByRole('button', { name: 'Actions' }).click();
+		await expect.element(page.getByRole('menu')).toBeInTheDocument();
+		const menu = openMenu();
+		expect(menu?.closest('[data-testid="scroll-box"]')).toBe(box);
+		expect(box.scrollHeight).toBeGreaterThan(box.clientHeight);
+		await vi.waitFor(() => {
+			expect(document.activeElement).toBe(menu);
+		});
+		await pause(100);
+		expect(box.scrollTop).toBe(0);
+	});
+
+	it('scrolls nothing as it opens from the keyboard, onto its first row', async () => {
+		const { box, scope } = renderScrollBox();
+		renderAccepting(actions, scope);
+		byTestId('trigger').focus();
+		await userEvent.keyboard('{Enter}');
+		await vi.waitFor(() => {
+			expect(document.activeElement).toBe(menuItem('Rename'));
+		});
+		await pause(100);
+		expect(box.scrollTop).toBe(0);
+	});
+
+	it('opens its icon trigger in the menu it belongs to', async () => {
+		const { onOpenChange } = renderAccepting(more);
+		const trigger = page.getByRole('button', { name: 'More actions' });
+		await trigger.click();
+		await expect.element(page.getByRole('menu')).toBeInTheDocument();
+		await expect.element(trigger).toHaveAttribute('aria-expanded', 'true');
+		expect(byTestId('trigger').getAttribute('aria-controls')).toBe(openMenu()?.id);
+		expect(onOpenChange.mock.calls).toEqual([[true]]);
+	});
+
+	it('shows the icon trigger’s name in a tip on hover, by the trigger, adding no description', async () => {
+		renderAccepting(more);
+		await page.getByRole('button', { name: 'More actions' }).hover();
+		await vi.waitFor(
+			() => {
+				expect(shownTip()?.textContent).toBe('More actions');
+			},
+			{ timeout: 3000 }
+		);
+		await expect
+			.element(page.getByRole('button', { name: 'More actions' }))
+			.toHaveAccessibleDescription('');
+		expect(byTestId('trigger').hasAttribute('aria-describedby')).toBe(false);
+		const tip = shownTip()?.getBoundingClientRect();
+		const button = byTestId('trigger').getBoundingClientRect();
+		expect(tip).toBeDefined();
+		if (tip === undefined) return;
+		const gap = Math.max(tip.top - button.bottom, button.top - tip.bottom);
+		expect(gap).toBeGreaterThanOrEqual(0);
+		expect(gap).toBeLessThan(24);
+		expect(tip.right).toBeGreaterThan(button.left - tip.width);
+		expect(tip.left).toBeLessThan(button.right + tip.width);
+	});
+
+	it('shows the icon trigger’s name in a tip on focus, adding no description', async () => {
+		renderAccepting(more);
+		byTestId('trigger').focus();
+		await vi.waitFor(() => {
+			expect(shownTip()?.textContent).toBe('More actions');
+		});
+		expect(shownTip()?.getAttribute('aria-hidden')).toBe('true');
+		await expect
+			.element(page.getByRole('button', { name: 'More actions' }))
+			.toHaveAccessibleDescription('');
+		expect(byTestId('trigger').hasAttribute('aria-describedby')).toBe(false);
+	});
+
+	it('hides the tip when the icon trigger opens the menu', async () => {
+		renderAccepting(more);
+		const trigger = page.getByRole('button', { name: 'More actions' });
+		await trigger.hover();
+		await vi.waitFor(
+			() => {
+				expect(shownTip()).toBeDefined();
+			},
+			{ timeout: 3000 }
+		);
+		await trigger.click();
+		await expect.element(page.getByRole('menu')).toBeInTheDocument();
+		await vi.waitFor(() => {
+			expect(shownTip()).toBeUndefined();
+		});
+	});
+
+	it('closes the icon menu on Escape, back on the trigger, which shows its tip again', async () => {
+		const { onOpenChange } = renderAccepting(more);
+		byTestId('trigger').focus();
+		await userEvent.keyboard('{Enter}');
+		await expect.element(page.getByRole('menu')).toBeInTheDocument();
+		await vi.waitFor(() => {
+			expect(document.activeElement).toBe(menuItem('Rename'));
+		});
+		expect(shownTip()).toBeUndefined();
+		await userEvent.keyboard('{Escape}');
+		await vi.waitFor(() => {
+			expect(openMenu()).toBeUndefined();
+		});
+		expect(onOpenChange.mock.calls).toEqual([[true], [false]]);
+		expect(document.activeElement).toBe(byTestId('trigger'));
+		await vi.waitFor(() => {
+			expect(shownTip()?.textContent).toBe('More actions');
 		});
 	});
 
