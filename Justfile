@@ -367,9 +367,9 @@ hooks-test:
 # gate's argument guard, workspace-init, the npm advisory scan, CI's npm-lock
 # driver and its pins, the gallery's screenshot script and its image pins (the
 # design-index check's own tests run under `design-index-check-test`). CI runs
-# it in the `hooks` job, which has no jj, no nodes and no container runtime:
-# the jj fixtures and the node-text edits' tests skip themselves there, and the
-# screenshot script's tests use a stub runtime.
+# it in the `hooks` job, which has no jj and no nodes: the jj fixtures and the
+# node-text edits' tests skip themselves there. The screenshot script's tests
+# always run against a stub runtime, never a real one.
 scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
