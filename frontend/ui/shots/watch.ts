@@ -1,9 +1,9 @@
 /**
  * The checks every screenshot test runs before its picture and again after
  * it: no request leaves the loopback server, no page throws, no page builds a
- * SharedWorker, RTCPeerConnection or WebTransport, and Storybook rendered
- * without its error display; and the walk of one entry, which runs them. The
- * walker and the self-tests share them from here.
+ * SharedWorker, RTCPeerConnection or WebTransport, no play function throws,
+ * and Storybook rendered without its error display; and the walk of one
+ * entry, which runs them. The walker and the self-tests share them from here.
  */
 import { readFileSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -113,7 +113,7 @@ export async function watchContext(context: BrowserContext, page: Page): Promise
 		constructionBinding,
 		watchedConstructors
 	] as const);
-	await context.addInitScript(listenForDocsRendered);
+	await context.addInitScript(listenToStorybook, [docsRenderedFlag, playFailuresKey] as const);
 	return watch;
 }
 
@@ -121,21 +121,27 @@ export async function watchContext(context: BrowserContext, page: Page): Promise
 export function expectNoProblems(watch: Watch, moment: string): void {
 	expect(
 		[...watch.problems],
-		`requests off 127.0.0.1, page errors, websockets or watched constructions, ${moment}`
+		`requests off 127.0.0.1, page errors, websockets, watched constructions or play function failures, ${moment}`
 	).toEqual([]);
 }
 
 /** The flag the init script sets once Storybook says a docs page rendered. */
 const docsRenderedFlag = '__zurfurShotsDocsRendered';
 
+/** The list the init script adds each play function's failure to, as `<name>: <message>`. */
+const playFailuresKey = '__zurfurShotsPlayFailures';
+
 /**
  * Runs in every frame before its scripts: catches Storybook's channel as it is
- * installed and sets a flag on its `docsRendered` event.
+ * installed, sets a flag on its `docsRendered` event and records each
+ * `playFunctionThrewException`. Storybook goes on to `finished` after a play
+ * function throws, without its error display, so the record is the only sign.
  */
-function listenForDocsRendered(): void {
-	const flag = '__zurfurShotsDocsRendered';
+function listenToStorybook([flag, failuresKey]: readonly [string, string]): void {
 	let channel: unknown;
+	const failures: string[] = [];
 	Reflect.set(globalThis, flag, false);
+	Reflect.set(globalThis, failuresKey, failures);
 	Reflect.defineProperty(globalThis, '__STORYBOOK_ADDONS_CHANNEL__', {
 		configurable: true,
 		get: () => channel,
@@ -149,25 +155,51 @@ function listenForDocsRendered(): void {
 					Reflect.set(globalThis, flag, true);
 				}
 			]);
+			Reflect.apply(on, next, [
+				'playFunctionThrewException',
+				(error: unknown) => {
+					const field = (key: string): string => {
+						const value: unknown =
+							Object(error) === error ? Reflect.get(Object(error), key) : undefined;
+						return typeof value === 'string' ? value : '';
+					};
+					const [firstLine = ''] = field('message').split('\n');
+					failures.push(`${field('name') || 'Error'}: ${firstLine}`);
+				}
+			]);
 		}
 	});
 }
 
+/** The play function failures the page recorded so far. */
+export async function playFailuresIn(target: Page | Frame): Promise<readonly string[]> {
+	const recorded: unknown = await target.evaluate(
+		(key) => Reflect.get(globalThis, key),
+		playFailuresKey
+	);
+	return Array.isArray(recorded)
+		? recorded.filter((failure: unknown) => typeof failure === 'string')
+		: [];
+}
+
 /** Where Storybook's preview ended up. */
-export type RenderState = 'rendered' | 'error-display' | 'no-preview';
+export type RenderState = 'rendered' | 'error-display' | 'no-preview' | 'play-failed';
 
 /**
  * Reads the preview's state in the page: Storybook's error display or its
- * no-preview screen, by the body's class; otherwise rendered once every story
- * render reached its `finished` phase (play functions and afterEach included)
- * and, on a docs page, once Storybook said the page rendered. False while
- * neither.
+ * no-preview screen, by the body's class; a play function that threw, by the
+ * init script's record; otherwise rendered once every story render reached its
+ * `finished` phase (play functions and afterEach included) and, on a docs page,
+ * once Storybook said the page rendered. False while none of these.
  */
-function renderStateInPage([viewMode, flag]: readonly [ViewMode, string]): RenderState | false {
+function renderStateInPage([viewMode, flag, failuresKey]: readonly [ViewMode, string, string]):
+	RenderState | false {
 	const body = document.querySelector('body') ?? undefined;
 	if (body === undefined) return false;
 	if (body.classList.contains('sb-show-errordisplay')) return 'error-display';
 	if (body.classList.contains('sb-show-nopreview')) return 'no-preview';
+	const failures: unknown = Reflect.get(globalThis, failuresKey);
+	if (Array.isArray(failures) && failures.length > 0) return 'play-failed';
 	const preview: unknown = Reflect.get(globalThis, '__STORYBOOK_PREVIEW__');
 	const renders: unknown =
 		Object(preview) === preview ? Reflect.get(Object(preview), 'storyRenders') : undefined;
@@ -181,18 +213,28 @@ function renderStateInPage([viewMode, flag]: readonly [ViewMode, string]): Rende
 	return Reflect.get(globalThis, flag) === true && allFinished ? 'rendered' : false;
 }
 
-/** Waits until the preview rendered or showed its error display, and says which. */
+/** Waits until the preview rendered, showed its error display or a play function threw, and says which. */
 export async function waitForStorybook(
 	target: Page | Frame,
 	viewMode: ViewMode
 ): Promise<RenderState> {
 	const handle = await target.waitForFunction(renderStateInPage, [
 		viewMode,
-		docsRenderedFlag
+		docsRenderedFlag,
+		playFailuresKey
 	] as const);
 	const state: unknown = await handle.jsonValue();
 	await handle.dispose();
-	return state === 'error-display' || state === 'no-preview' ? state : 'rendered';
+	return state === 'error-display' || state === 'no-preview' || state === 'play-failed'
+		? state
+		: 'rendered';
+}
+
+/** Checks the preview's state, naming each play function failure when there is one. */
+async function expectState(page: Page, viewMode: ViewMode, moment: string): Promise<void> {
+	const state = await waitForStorybook(page, viewMode);
+	const failures = state === 'play-failed' ? await playFailuresIn(page) : [];
+	expect({ state, failures }, moment).toEqual({ state: 'rendered', failures: [] });
 }
 
 /** Waits for the fonts, the images that load now, and a quiet network. */
@@ -217,16 +259,14 @@ function globalsInPage(): unknown {
 }
 
 /**
- * Opens an entry's address and checks it rendered in the asked skin with
- * motion stopped: Storybook's error display, its no-preview screen or a
- * global the address did not set each fail the test.
+ * Checks an opened entry rendered in the asked skin with motion stopped:
+ * Storybook's error display, its no-preview screen, a play function that threw
+ * or a global the address did not set each fail the test.
  */
 export async function expectRendered(page: Page, viewMode: ViewMode, skin: Skin): Promise<void> {
-	expect(await waitForStorybook(page, viewMode), "Storybook's preview state").toBe('rendered');
+	await expectState(page, viewMode, "Storybook's preview state");
 	await settle(page);
-	expect(await waitForStorybook(page, viewMode), "Storybook's preview state, settled").toBe(
-		'rendered'
-	);
+	await expectState(page, viewMode, "Storybook's preview state, settled");
 	expect(await page.evaluate(globalsInPage), 'the globals the address set').toMatchObject({
 		skin,
 		motion: 'still'
@@ -265,9 +305,9 @@ export function putPictureBack(file: string, before: Buffer | undefined): void {
 
 /**
  * Opens an entry in a skin and fails the test on a request off 127.0.0.1, a
- * page error, a watched construction or Storybook's error display, tagged
- * `no-shot` or not; then, when it is shot, compares it with its reference
- * picture and checks again for anything since.
+ * page error, a watched construction, a play function that threw or
+ * Storybook's error display, tagged `no-shot` or not; then, when it is shot,
+ * compares it with its reference picture and checks again for anything since.
  */
 export async function walkEntry(
 	context: BrowserContext,
@@ -285,6 +325,9 @@ export async function walkEntry(
 	const picture = test.info().snapshotPath(...name);
 	const before = bytesOf(picture);
 	await expect(page).toHaveScreenshot(name);
+	for (const failure of await playFailuresIn(page)) {
+		watch.problems.add(`play function threw: ${failure}`);
+	}
 	// An update run never keeps a picture from a test that fails here.
 	if (watch.problems.size > 0) putPictureBack(picture, before);
 	expectNoProblems(watch, 'after the picture');

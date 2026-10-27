@@ -4,7 +4,13 @@
  */
 import { expect, test } from '@playwright/test';
 import { imageGuardRefusals } from '../image-guard.ts';
-import { shotsOrigin, waitForStorybook, watchContext, watchedConstructors } from '../watch.ts';
+import {
+	playFailuresIn,
+	shotsOrigin,
+	waitForStorybook,
+	watchContext,
+	watchedConstructors
+} from '../watch.ts';
 
 test('a missing reference picture fails the test', async ({ page }) => {
 	test.fail();
@@ -65,6 +71,37 @@ test("Storybook's error display is caught", async ({ context, page }) => {
 	await page.goto('/iframe.html?id=no-such-entry&viewMode=story&globals=skin:dark;motion:still');
 	expect(await waitForStorybook(page, 'story')).toBe('error-display');
 	expect([...watch.problems]).toEqual([]);
+});
+
+/**
+ * Plants a stand-in for Storybook's preview, every story render finished, and
+ * its channel; when `playThrows`, the channel then reports a play function
+ * that threw, as Storybook does before it goes on to finish.
+ */
+function plantFinishedStory(playThrows: boolean): void {
+	const listeners = new Map<string, (payload: unknown) => void>();
+	Reflect.set(globalThis, '__STORYBOOK_PREVIEW__', { storyRenders: [{ phase: 'finished' }] });
+	Reflect.set(globalThis, '__STORYBOOK_ADDONS_CHANNEL__', {
+		on: (name: string, listener: (payload: unknown) => void) => {
+			listeners.set(name, listener);
+		}
+	});
+	const thrown = { name: 'AssertionError', message: 'planted by the self-test\nits second line' };
+	if (playThrows) listeners.get('playFunctionThrewException')?.(thrown);
+}
+
+test('a play function that throws is caught and named, and a finished story without one is not', async ({
+	context,
+	page
+}) => {
+	await watchContext(context, page);
+	await page.goto('/index.json');
+	await page.evaluate(plantFinishedStory, false);
+	expect(await waitForStorybook(page, 'story')).toBe('rendered');
+	await page.goto('/index.json');
+	await page.evaluate(plantFinishedStory, true);
+	expect(await waitForStorybook(page, 'story')).toBe('play-failed');
+	expect(await playFailuresIn(page)).toEqual(['AssertionError: planted by the self-test']);
 });
 
 /** A served page, so the constructors that need a secure context have one. */
