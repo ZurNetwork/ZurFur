@@ -52,6 +52,11 @@
 		color: var(--color-text);
 	}
 
+	/* Code in the design system's mono; a bare element selector, so a component's own font wins. */
+	:global(code, kbd, samp) {
+		font-family: var(--font-mono);
+	}
+
 	/*
 	 * A story of a fixed layer (a toast stack, a dialog): containment makes the frame the layer's
 	 * containing block, so it stays inside its story in the panel, the docs page and screenshots.

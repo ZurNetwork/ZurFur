@@ -1,6 +1,6 @@
 {
   "path": "scripts",
-  "charted": "2026-10-26",
+  "charted": "2026-10-27",
   "short": "Shell backing just recipes and hooks",
   "is": "Shell scripts backing the `just` dev-loop recipes and jj/session hooks — not cargo tests, but scripted proofs and glue for the manual dev loop.",
   "type": "code",
@@ -37,7 +37,7 @@
     },
     {
       "name": "ci-paths.sh",
-      "role": "classifies changed paths for CI's changes job (code: anything but docs-only; lock: a Cargo.lock; npmlock: an npm lockfile, a root osv-scanner.*.toml or the root npm-licences.json) and, with --paths, for just gate-light; fails closed",
+      "role": "classifies changed paths for CI's changes job (code: anything but docs-only, where scripts/ and the Justfile are docs-only except scripts/gallery-shots.sh, which the ui job runs; lock: a Cargo.lock; npmlock: an npm lockfile, a root osv-scanner.*.toml or the root npm-licences.json) and, with --paths, for just gate-light; fails closed",
       "node": false
     },
     {
@@ -53,6 +53,21 @@
     {
       "name": "dev-log.sh",
       "role": "the wrapper every dev recipe runs through: the terminal keeps its bytes, logs/<name>/<UTC stamp>.log gets them as plain text (a pipe through tee and a SIGINT-proof stripper, never script(1)), logs/latest/<name>.log links the newest, 10 kept, 0600 (tested by dev-log.test.sh)",
+      "node": false
+    },
+    {
+      "name": "gallery-image-pins.test.sh",
+      "role": "pins the Justfile's PLAYWRIGHT_IMAGE (exactly the pinned image, its tag the locked @playwright/test's), the gallery-shots and gallery-shots-run recipes line for line, and the container flags on gallery-shots.sh's run line and its one Podman line (--userns=keep-id, --http-proxy=false, --no-hosts); each pin's failure proved on a doctored copy",
+      "node": false
+    },
+    {
+      "name": "gallery-shots.sh",
+      "role": "the gallery's screenshot run (just gallery-shots, gallery-shots-run): every story and docs page in both skins, in the pinned Playwright image (PLAYWRIGHT_IMAGE, run by its digest) under Podman or Docker with no network, a read-only root, no capabilities and only HOME, TZ, ZURFUR_GALLERY_IMAGE and, with --ci, CI set, and under Podman no copy of the host's /etc/hosts (--no-hosts); prints one line naming the runtime and its flags (podman or docker); mounts the gallery build, frontend/ui/shots, ui's package.json and frontend/node_modules read-only and a fresh, empty shots/output (plus the references with --update) read-write; refuses a bad argument or pin, a tag other than the locked and installed Playwright, a missing build or install, and an image whose RepoDigests lack the digest; after every run, walks shots/output without following links and removes each link (never its target), special file and unreadable folder, naming each and exiting 1 (the whole folder goes when one can't be removed), since CI uploads that folder on a failure; after --update, walks the references and refuses links, special files, non-PNG and oversized files (tested by gallery-shots.test.sh)",
+      "node": false
+    },
+    {
+      "name": "gallery-shots.test.sh",
+      "role": "tests for gallery-shots.sh in a fixture repository against stub podman and docker runtimes, offline: the exact run argv and the runtime line (plain, --ci, --update; Podman, Docker, Docker's Podman shim), every refusal, the fresh output folder, the pull and RepoDigests check, the output walk over links, FIFOs and unreadable folders a run leaves, the reference walk and Playwright's exit code",
       "node": false
     },
     {
@@ -142,7 +157,7 @@
     },
     {
       "name": "tools-check.sh",
-      "role": "local tool versions vs CI's pins (warns), and the workflow checks (fails): every uses: a step's (no job-level uses:, a reusable workflow call) naming one of the seven actions on its allow list at the one commit SHA reviewed for it (a bump changes the workflow and the table together); no quoted mapping key, no explicit (?) key and no tag, anchor or alias where a key starts outside run:/shell: script text and ${{ }} expressions, and no line break awk does not split on (a lone CR, NEL, LS or PS) anywhere; tool versions equal to the Justfile's, and the CI safety rules (read-only top-level permissions, no job-level permissions, persist-credentials: false on every checkout, no pull_request_target or secrets, every yarn install exactly frontend/install-check.mjs's INSTALL_COMMAND and wrapped in the install guard's steps, and no other package manager (npm, npx, pnpm, pnpx, bun, bunx, corepack), no yarn --use-yarnrc and no yarn create, policies, set, init, config or workspace in any run: or shell:); just tools-check, and --pins-only in CI's hooks job (tested by tools-check.test.sh)",
+      "role": "local tool versions vs CI's pins (warns), and the workflow checks (fails): every uses: a step's (no job-level uses:, a reusable workflow call) naming one of the eight actions on its allow list at the one commit SHA reviewed for it (a bump changes the workflow and the table together); no quoted mapping key, no explicit (?) key and no tag, anchor or alias where a key starts outside run:/shell: script text and ${{ }} expressions, and no line break awk does not split on (a lone CR, NEL, LS or PS) anywhere; tool versions equal to the Justfile's, and the CI safety rules (read-only top-level permissions, no job-level permissions, persist-credentials: false on every checkout, every upload-artifact step's path exactly frontend/ui/shots/output/**/*.png, its retention-days 7 and its one step-level if: exactly failure() && steps.shots.outcome == 'failure' on one line with no continuation line, each upload uses: line a step it reads (a bare - item too), id: shots on the step whose run: is exactly just gallery-shots-run --ci and on no other step, no container: or services: key anywhere, no docker or podman word in any run: or shell:, no pull_request_target or secrets, every yarn install exactly frontend/install-check.mjs's INSTALL_COMMAND and wrapped in the install guard's steps, and no other package manager (npm, npx, pnpm, pnpx, bun, bunx, corepack), no yarn --use-yarnrc and no yarn create, policies, set, init, config or workspace in any run: or shell:); just tools-check, and --pins-only in CI's hooks job (tested by tools-check.test.sh)",
       "node": false
     },
     {

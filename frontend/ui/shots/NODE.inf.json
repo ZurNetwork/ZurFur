@@ -1,0 +1,80 @@
+{
+  "path": "frontend/ui/shots",
+  "charted": "2026-10-27",
+  "short": "The screenshot walker over the built Storybook",
+  "is": "Playwright Test over the built Storybook (`storybook-static`), run only inside the pinned Playwright image: the walker opens every story and docs entry of `index.json` in Paper dark and Paper light with motion stopped, fails it on a request off 127.0.0.1, a page error, a plain construction of `SharedWorker`, `RTCPeerConnection` or `WebTransport`, a play function that threw, or Storybook's error display, checked before its picture and again after it, and compares it with its reference picture; with its static loopback server, its image guard and the self-tests that prove each check catches what it should.",
+  "type": "code",
+  "tags": [
+    "category:ui",
+    "category:tests"
+  ],
+  "conventions": [
+    "Runs only inside the pinned image, through `scripts/gallery-shots.sh`: the config calls `imageGuard()` first, which refuses unless `ZURFUR_GALLERY_IMAGE` is `mcr.microsoft.com/playwright:v<version>-noble@sha256:<digest>`, the image's marker `/ms-playwright/.docker-info` names that version and image, and the installed `@playwright/test` is that version. It guards against accidents only. On the host, `playwright test --config shots/playwright.config.ts` refuses before any test.",
+    "The image is pulled by digest and never pushed or saved to a registry or cache: that would be redistribution and needs a compliance look first. If pulls start failing, the answer is a cache that isn't a mirror, after that look.",
+    "Inside the container the work directory is `/work/frontend/ui`, with no network: read-only `storybook-static`, `shots`, `package.json` and `frontend/node_modules`; read-write `shots/output` (fresh and empty each run) and, on an update run only, `shots/__screenshots__`; `HOME=/tmp`, `TZ=UTC`, `/tmp` the only other writable place. The source is not mounted, so nothing here imports from outside `shots/` but packages from `frontend/node_modules`, and `tsconfig.json` here stands alone (no `extends`).",
+    "Two projects: `stories` (the walker, the manager-page test and the stale-picture test) and `self` (the self-tests). A plain run is `playwright test --config shots/playwright.config.ts --update-snapshots=none`; an update run adds `--update-snapshots=changed --project=stories` and is the only way a reference picture is made.",
+    "References live at `__screenshots__/<entry id>/<dark|light>.png` and are made only through the image. An entry id is parsed (`^[a-z0-9-]+$`) before it names a picture, else its test fails; a folder or file there that names no shot entry or skin fails the stale-picture test; `src/checks/references.ts` and its spec hold the folder to that layout and each picture to a plain PNG of at most 1 MiB and 4096 px a side, with only IHDR, IDAT and IEND chunks, each CRC checked, the IDAT chunks one run holding one zlib stream that inflates to exactly the bytes IHDR implies, an empty IEND, and nothing after it.",
+    "Each test checks requests, page errors, watched constructions and Storybook's state before `toHaveScreenshot`, and requests, page errors, watched constructions and play function failures again after it; when that second check fails, the picture the run just wrote is put back as it was (removed when new, its old bytes when changed), so an update run never keeps a picture from a failed test. Every request not to `http://127.0.0.1:5199`, `data:` or `blob:` is aborted and recorded as a problem, in every frame, as is any off-host websocket. An init script in every frame records a plain construction of `SharedWorker`, `RTCPeerConnection` (and its alias `webkitRTCPeerConnection`) or `WebTransport` as a problem, through a binding the context exposes; it records, it doesn't block. Storybook's state is read from the preview: the body class `sb-show-errordisplay` or `sb-show-nopreview` fails it, as does a play function that threw (Storybook reports it on its channel as `playFunctionThrewException`, which an init script in every frame records, then goes on to `finished` with no error display); a story is rendered once every story render reached its `finished` phase (play and afterEach included), a docs page once Storybook's `docsRendered` event fired and its stories finished; the globals the address set (`globals=skin:<skin>;motion:still`) must be the preview's.",
+    "Not caught: a `preconnect` or `dns-prefetch` hint, a `2x` `srcset` at scale 1, and a request that starts after the second check (a `meta refresh` past the wait, a fetch fired seconds later). The record catches a plain `SharedWorker`, `RTCPeerConnection` or `WebTransport` construction, not a hidden one (through a prototype's constructor, inside a dedicated Worker, or after the page rewrites the record's global: Playwright's binding globals can be written by the page, so an in-page record can always be dodged). In the container nothing leaves (no network); the check is the backstop for the Engineer's dev Storybook on the host.",
+    "Tags: `no-shot` skips its pictures; the entry is still opened and checked (and its pictures count as stale); `phone-320` shoots it at 320×568, Storybook's `mobile1`. Everything else is shot at 1280×900, scale 1, `en-GB`, UTC, reduced motion, the page's colour scheme matching the skin, viewport only (token pages too, not the full page).",
+    "Settings: threshold 0.2 with no differing pixel, animations disabled, caret hidden, CSS scale; no retries, flaky tests fail, `test.only` refused, four workers, trace, video and failure screenshots off, no html reporter, git info not captured. Failures keep Playwright's expected, actual and difference pictures under `output/results`.",
+    "`yarn test:shots` runs the Node tests here (`*.test.mjs`, `*.test.ts`) on the host; `yarn check` type-checks this folder with `tsc -p shots/tsconfig.json`. `output/` is ignored by git and prettier, `__screenshots__/` by prettier."
+  ],
+  "entry_points": [
+    "playwright.config.ts",
+    "stories.pw.ts"
+  ],
+  "fs": [
+    {
+      "name": "image-guard.test.ts",
+      "role": "Node test of the guard: each refusal and a clean pass",
+      "node": false
+    },
+    {
+      "name": "image-guard.ts",
+      "role": "imageGuardRefusals (pure, over the pin, the marker's text and the installed version) and imageGuard, which reads them and throws one error naming every refusal",
+      "node": false
+    },
+    {
+      "name": "playwright.config.ts",
+      "role": "the guard first, the two projects, the settings, the snapshot paths and the web server on 127.0.0.1:5199",
+      "node": false
+    },
+    {
+      "name": "self/",
+      "role": "the self-tests (project self): a missing reference fails, an off-host request, websocket and page error are caught in the page and a nested frame, a construction of `SharedWorker`, `RTCPeerConnection` or `WebTransport` is caught in the page and a `SharedWorker` in a nested frame, a construction while the picture is taken fails the check after it, a picture from a failed test is put back as it was, Storybook's error display is caught, a play function that threw is caught and named while a finished story without one is not, a `no-shot` entry is still opened and fails on an off-host request, a page error or Storybook's error display, with only its picture left out, the guard refuses outside the image, and the `phone-320` tag gives 320×568, every other entry 1280×900",
+      "node": false
+    },
+    {
+      "name": "serve.mjs",
+      "role": "the static server, Node built-ins only: one folder on 127.0.0.1, GET and HEAD only, the target decoded once, NUL, backslash, `..` and any real path outside the folder refused, `/` as index.html, no listing, nosniff",
+      "node": false
+    },
+    {
+      "name": "serve.test.mjs",
+      "role": "Node test of the server: traversal by every route refused, files, HEAD, 404, 405 and the loopback bind",
+      "node": false
+    },
+    {
+      "name": "stories.pw.ts",
+      "role": "the walker (project stories), the manager-page test and the stale-picture test",
+      "node": false
+    },
+    {
+      "name": "storybook.ts",
+      "role": "index.json parsed into entries (each id parsed, else refused), the skins, the tags, the viewports, the entry address and the stale-picture walk; no browser code",
+      "node": false
+    },
+    {
+      "name": "tsconfig.json",
+      "role": "a standalone strict config for this folder, type-checked by `yarn check`",
+      "node": false
+    },
+    {
+      "name": "watch.ts",
+      "role": "the checks the walker and the self-tests share: the loopback port, the request, websocket, page-error and construction watch (an init script reports a plain construction of `SharedWorker`, `RTCPeerConnection` or `WebTransport` in a frame through a binding), Storybook's render state (a play function that threw included, recorded from Storybook's channel by an init script), settling and the globals check; putPictureBack, which puts a picture back as it was before the test took it; and walkEntry, the walk of one entry that runs the checks before its picture and again after it, putting the picture back when the second check fails (its picture left out when tagged `no-shot`)",
+      "node": false
+    }
+  ],
+  "notes": []
+}

@@ -11,6 +11,10 @@ bun.lockb
 # Storybook's build output.
 storybook-static/
 
+# The screenshot run's output and its reference pictures.
+shots/output/
+shots/__screenshots__/
+
 # Node files are formatted by the nodes tool (canonical form); prettier must not fight it.
 **/NODE.inf.json
 

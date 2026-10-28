@@ -18,6 +18,17 @@ afterEach(() => {
 	root.removeAttribute('data-motion');
 });
 
+/** A story with code, a key and sample output, and code that brings its own font. */
+const codeStory = createRawSnippet(() => ({
+	render: () =>
+		'<p class="the-story"><code>code</code><kbd>Tab</kbd><samp>out</samp><code class="own-font">own</code></p>'
+}));
+
+/** A font-family list with its quotes and spaces dropped, to compare two spellings of it. */
+function familyList(value: string): string {
+	return value.replace(/["'\s]/g, '');
+}
+
 /** The skin and motion attributes on `<html>` and on the story's wrapper. */
 function attributes(): {
 	readonly root: readonly (string | null)[];
@@ -152,6 +163,29 @@ describe('StoryFrame', () => {
 		expect(wrapper === null ? undefined : getComputedStyle(wrapper).backgroundColor).toBe(
 			'rgb(236, 229, 211)'
 		);
+	});
+
+	it("draws code, kbd and samp in the design system's mono, and lets a component's own font win", () => {
+		const ownFont = document.createElement('style');
+		ownFont.textContent = '.own-font { font-family: serif; }';
+		document.head.append(ownFont);
+		try {
+			render(StoryFrame, { skin: 'dark', motion: 'still', children: codeStory });
+			const mono = familyList(getComputedStyle(root).getPropertyValue('--font-mono'));
+			const fontOf = (selector: string): string => {
+				const element = document.querySelector(selector);
+				return element === null ? '' : familyList(getComputedStyle(element).fontFamily);
+			};
+			expect(mono).toMatch(/^AtkinsonHyperlegibleMono/);
+			expect({
+				code: fontOf('.the-story > code:not(.own-font)'),
+				kbd: fontOf('.the-story > kbd'),
+				samp: fontOf('.the-story > samp'),
+				own: fontOf('.the-story > .own-font')
+			}).toEqual({ code: mono, kbd: mono, samp: mono, own: 'serif' });
+		} finally {
+			ownFont.remove();
+		}
 	});
 
 	it.each([

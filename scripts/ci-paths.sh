@@ -39,7 +39,12 @@ docs_only() {
         *.md) return 0 ;;
         # design-index.md (nodes job); documents; boardroom runs; agent settings.
         docs/* | reports/* | forks/* | .claude/*) return 0 ;;
-        # Used by the always-on `nodes` and `hooks` jobs and locally.
+        # Run by the ui job's screenshot step (just gallery-shots-run --ci).
+        scripts/gallery-shots.sh) return 1 ;;
+        # The rest of scripts/ runs in the always-on `nodes` and `hooks` jobs
+        # and locally. The ui job reads the Justfile for its PLAYWRIGHT_IMAGE
+        # pin and its gallery-shots-run recipe, which the `hooks` job pins line
+        # for line (gallery-image-pins.test.sh).
         scripts/* | Justfile) return 0 ;;
     esac
     return 1

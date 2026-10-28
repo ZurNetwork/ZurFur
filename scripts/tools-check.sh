@@ -9,10 +9,19 @@
 #
 # Exits 1 only when the workflows disagree with the Justfile's pins, an action
 # is not pinned to a full commit SHA or is not at the one commit allowed_actions
-# names for it, a workflow breaks a CI safety rule
-# (see ci_safety below), or frontend/install-check.mjs holds no readable
-# INSTALL_COMMAND. A local version that differs from CI's prints a
-# warning and leaves the exit code alone.
+# names for it, a workflow breaks a CI safety rule, or
+# frontend/install-check.mjs holds no readable INSTALL_COMMAND. A local version
+# that differs from CI's prints a warning and leaves the exit code alone.
+#
+# The CI safety rules: every checkout sets persist-credentials: false; every
+# actions/upload-artifact step sets path frontend/ui/shots/output/**/*.png and
+# retention-days 7, and runs only on exactly
+# `if: failure() && steps.shots.outcome == 'failure'`, one line with no
+# continuation line under it; the step whose `run:` is exactly
+# `just gallery-shots-run --ci` carries `id: shots`, and no other step does;
+# and the rules in the comment above ci_safety (permissions, secrets,
+# installs, package managers, containers, actions and the YAML shapes this
+# reader can follow).
 set -eu
 
 : "${TYPOS_VERSION:?run through just tools-check}"
@@ -50,6 +59,7 @@ bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7
 EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
 crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b
 extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3
+actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
 "
 
 pin_error() {
@@ -81,9 +91,10 @@ check_every_use() {
 check_every_use crate-ci/typos "# v$TYPOS_VERSION"
 check_every_use EmbarkStudios/cargo-deny-action "(cargo-deny $CARGO_DENY_VERSION)"
 # step_pins <action> <input> <value> — prints "<steps> <pinned>": how many
-# steps use <action>, and how many of those set `<input>: <value>` in their own
-# `with:` block. A comment or an `env:` entry never counts, so a pin that
-# survives only there fails.
+# steps use <action> (every `uses:` line naming it counts as one, wherever it
+# sits), and how many of those set `<input>: <value>` in their own `with:`
+# block. A comment or an `env:` entry never counts, so a pin that survives only
+# there fails.
 step_pins() {
     # shellcheck disable=SC2086 # $workflow_files is a newline list without spaces
     awk -v action="$1" -v key="$2" -v want="$3" -v q="'" '
@@ -144,6 +155,123 @@ check_step_input bufbuild/buf-action version "$BUF_VERSION"
 check_step_input extractions/setup-just just-version "$JUST_VERSION"
 # No checkout leaves its token in .git/config for later steps to read.
 check_step_input actions/checkout persist-credentials false "CI safety rule"
+# The one upload is the screenshot run's PNG files, kept 7 days: a wider path or a
+# longer retention fails.
+check_step_input actions/upload-artifact path 'frontend/ui/shots/output/**/*.png' "CI safety rule"
+check_step_input actions/upload-artifact retention-days 7 "CI safety rule"
+
+# step_key_pins <select key> <mode> <text> <key> <value> — prints "<steps>
+# <pinned>": how many steps carry a step-level <select key> whose value, a
+# comment and its quotes aside, is <text> (mode exact) or starts with it (mode
+# prefix), and how many of those carry exactly one step-level <key>, whose
+# value is exactly <value>. A step starts on a `-` line, as in the safety
+# reader below: its keys are the lines at its first key's indent, on the `-`
+# line or, after a bare `-`, on the next line; a key under `with:` or `env:`
+# never counts. Any other line of the step after <key> and before its next key
+# (YAML folds a deeper line into the value, past blank lines, which may hold
+# spaces or tabs) voids the match.
+step_key_pins() {
+    # shellcheck disable=SC2086 # $workflow_files is a newline list without spaces
+    awk -v sel="$1" -v mode="$2" -v text="$3" -v key="$4" -v want="$5" -v q="'" '
+        function indent(s) { match(s, /^ */); return RLENGTH }
+        function close_item() {
+            if (in_item && selected) { steps++; if (keys == 1 && key_ok) ok++ }
+            in_item = 0
+        }
+        function value(t, at) {
+            t = substr(t, at)
+            sub(/[ \t]+#.*$/, "", t)
+            sub(/[ \t]+$/, "", t)
+            return t
+        }
+        function step_key(t,    v) {
+            after_key = 0
+            if (match(t, "^" sel ":[ \t]*")) {
+                v = value(t, RLENGTH + 1)
+                sub("^[\"" q "]", "", v)
+                sub("[\"" q "]$", "", v)
+                if (mode == "prefix" ? index(v, text) == 1 : v == text) selected = 1
+            }
+            if (match(t, "^" key ":[ \t]*")) {
+                keys++
+                after_key = 1
+                if (value(t, RLENGTH + 1) == want) key_ok = 1
+            }
+        }
+        FNR == 1 { close_item() }
+        {
+            sub(/\r$/, "")
+            line = $0
+            if (line ~ /^[ \t]*(#.*)?$/) next
+            if (in_item && indent(line) > dash_ind) {
+                if (key_ind < 0) key_ind = indent(line)
+                if (indent(line) == key_ind) step_key(substr(line, key_ind + 1))
+                else if (after_key) key_ok = 0
+                next
+            }
+            close_item()
+            if (match(line, /^ *-([ \t]|$)/)) {
+                dash_ind = indent(line)
+                in_item = 1
+                selected = 0
+                keys = 0
+                key_ok = 0
+                after_key = 0
+                key_ind = -1
+                if (match(line, /^ *-[ \t]+/) && substr(line, RLENGTH + 1) !~ /^#/) {
+                    key_ind = RLENGTH
+                    step_key(substr(line, key_ind + 1))
+                }
+            }
+        }
+        END { close_item(); print steps + 0, ok + 0 }
+    ' $workflow_files
+}
+
+# check_step_if <action> <condition> — at least one step uses <action>, every
+# such step runs only on exactly <condition>, and step_key_pins finds as many
+# such steps as step_pins counts `uses:` lines for <action>.
+check_step_if() {
+    counts="$(step_key_pins uses prefix "$1@" if "$2")"
+    steps="${counts% *}"
+    pinned="${counts#* }"
+    # Only step_pins's step count is read; its input and value are unused here.
+    uses="$(step_pins "$1" if "$2")"
+    uses="${uses% *}"
+    if [ "$steps" -eq 0 ]; then
+        pin_error "no workflow uses $1"
+    elif [ "$steps" != "$uses" ]; then
+        pin_error "$uses $1 uses: line(s) but $steps step(s) whose if: tools-check can read (CI safety rule)"
+    elif [ "$steps" != "$pinned" ]; then
+        pin_error "$steps $1 step(s) but $pinned set if: '$2' (CI safety rule)"
+    fi
+}
+# The upload runs only when the screenshot step (id: shots) itself failed, not
+# on any earlier step's failure, and its if: has no continuation line.
+check_step_if actions/upload-artifact "failure() && steps.shots.outcome == 'failure'"
+
+# check_step_id <run> <id> — at least one step runs exactly <run>, every such
+# step carries exactly one step-level `id: <id>`, and every step whose id is
+# <id> runs exactly <run>.
+check_step_id() {
+    counts="$(step_key_pins run exact "$1" id "$2")"
+    steps="${counts% *}"
+    pinned="${counts#* }"
+    if [ "$steps" -eq 0 ]; then
+        pin_error "no step runs exactly '$1' (CI safety rule)"
+    elif [ "$steps" != "$pinned" ]; then
+        pin_error "$steps step(s) run '$1' but $pinned set id: $2 (CI safety rule)"
+    fi
+    counts="$(step_key_pins id exact "$2" run "$1")"
+    steps="${counts% *}"
+    pinned="${counts#* }"
+    if [ "$steps" != "$pinned" ]; then
+        pin_error "$steps step(s) set id: $2 but $pinned run exactly '$1' (CI safety rule)"
+    fi
+}
+# The upload's steps.shots names the screenshot step and no other: without the
+# id the upload never runs, and on another step it uploads on that step's failure.
+check_step_id "just gallery-shots-run --ci" shots
 
 # The guarded install's exact text: the INSTALL_COMMAND the install guard
 # exports, from its one `export const INSTALL_COMMAND = '<command>';` line.
@@ -183,6 +311,11 @@ fi
 #     subcommand create, policies, set, init, config, workspace, self-update
 #     or dlx (each fetches and runs a package, changes which yarn runs, or
 #     runs any yarn command);
+#   - no `container:` key and no `services:` key anywhere (a job's, a
+#     step's or deeper), and no word docker or podman, in any letter case,
+#     bare, by path or quoted, in a `run:` or a `shell:` outside its shell
+#     comments: a workflow's own text starts no container (the screenshot
+#     script and the test suites start theirs);
 #   - every `run:` is a step's (a `defaults: run:` block aside), so a shape
 #     this reader can't follow fails rather than hiding an install;
 #   - every `uses:` is a step's, so a job-level `uses:` (a reusable workflow
@@ -360,10 +493,18 @@ ci_safety() {
         # yarn_scan <text> — sets n_cmds (shell commands in <text>), n_inst
         # (those holding a yarn install), inst_frozen/inst_ignore (whether
         # every install carries the flag), and bad[1..n_bad] (every other
-        # installer, refused yarn subcommand or --use-yarnrc, once each).
-        function yarn_scan(text,    lines, nl, i, ln, cmds, nc, j, c, w, nw, k, m, a, n_sub, bound, is_inst, f, g) {
+        # installer, refused yarn subcommand, --use-yarnrc, docker or podman,
+        # once each).
+        function yarn_scan(text,    lines, nl, i, ln, cmds, nc, j, c, w, nw, k, m, a, n_sub, bound, is_inst, f, g, rt) {
             n_cmds = 0; n_inst = 0; inst_frozen = 1; inst_ignore = 1
             n_bad = 0; split("", bad_seen)
+            # A container runtime by name, its line continuations joined and
+            # its quotes and backslashes gone, as the shell would read the word.
+            rt = text
+            gsub(/\\\n/, "", rt)
+            rt = tolower(unquote(strip_comments(rt)))
+            if (rt ~ /(^|[^a-z0-9_])docker([^a-z0-9_]|$)/) add_bad("docker in a run: or shell: (scripts/gallery-shots.sh alone names the container runtime)")
+            if (rt ~ /(^|[^a-z0-9_])podman([^a-z0-9_]|$)/) add_bad("podman in a run: or shell: (scripts/gallery-shots.sh alone names the container runtime)")
             gsub(/\\\n/, " ", text)
             text = strip_comments(text)
             nl = split(text, lines, "\n")
@@ -554,6 +695,8 @@ ci_safety() {
             if (line !~ /^[ \t]*(-[ \t]+)?(run|shell)[ \t]*:/) {
                 shape = key_shape(line)
                 if (shape != "") problem(FILENAME, FNR, shape ", a shape tools-check cannot read")
+                if (line ~ /(^|[ \t{,])container[ \t]*:/) problem(FILENAME, FNR, "a container: key (no job or step asks for a container image)")
+                if (line ~ /(^|[ \t{,])services[ \t]*:/) problem(FILENAME, FNR, "a services: key (no job starts service containers)")
             }
             # A shell: (in a step or under defaults) runs its command too; its
             # value, continuation lines included, is scanned like a run:.

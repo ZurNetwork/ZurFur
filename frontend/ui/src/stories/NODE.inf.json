@@ -37,7 +37,7 @@
     },
     {
       "name": "frame/",
-      "role": "StoryFrame.svelte (sets data-skin and data-motion on <html> and on a wrapping div, the portal target, from the toolbar's globals, and paints a docs page's background and text from the skin's tokens; a story tagged `layer` gets `layer`, which contains the wrapper's layout and paint at a dialog's height, so a fixed layer stays inside its story), FrameSkin.svelte (resolves Follow the OS to the skin showing), globals.ts (parseSkinChoice and parseMotion: address text to closed unions, unknown text meaning Follow the OS and Lively) and their specs",
+      "role": "StoryFrame.svelte (sets data-skin and data-motion on <html> and on a wrapping div, the portal target, from the toolbar's globals, and paints a docs page's background and text from the skin's tokens, and draws every code, kbd and samp in --font-mono with a bare element rule a component's own font beats; a story tagged `layer` gets `layer`, which contains the wrapper's layout and paint at a dialog's height, so a fixed layer stays inside its story), FrameSkin.svelte (resolves Follow the OS to the skin showing), globals.ts (parseSkinChoice and parseMotion: address text to closed unions, unknown text meaning Follow the OS and Lively) and their specs",
       "node": false
     },
     {
