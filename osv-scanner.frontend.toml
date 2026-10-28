@@ -16,3 +16,8 @@ reason = "@sveltejs/kit 2.70.3, fixed only in Kit 3: the web prerenders nothing 
 id = "GHSA-pfhg-q3qv-9q6r"
 ignoreUntil = 2027-01-24
 reason = "@sveltejs/kit 2.70.3, fixed only in Kit 3: the web's server hook answers every pathname starting with // with a 404 before any load or action runs."
+
+[[IgnoredVulns]]
+id = "GHSA-gcqx-w48m-w2h4"
+ignoreUntil = 2027-01-24
+reason = "deepmerge 4.3.1, no fixed version, pulled in by @sveltejs/vite-plugin-svelte, @rollup/plugin-node-resolve (through @sveltejs/adapter-node) and Storybook's manager: each merges option objects from our own config, at build time or in the dev-only Storybook; the web's build ships no deepmerge (its ts-deepmerge is another package) and no user input reaches a merge."
