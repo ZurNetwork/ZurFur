@@ -1,0 +1,224 @@
+/* Labels: Badge, StatusPill, VisibilityMarker, Avatar and the handle. */
+.zf-handle {
+	min-width: 0;
+	overflow: hidden;
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+	line-height: var(--leading-sm);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--color-text-muted);
+}
+
+/* Tones, shared by Badge and Avatar. */
+.zf-badge--neutral,
+.zf-avatar--neutral {
+	background: var(--color-status-neutral-soft);
+	color: var(--color-status-neutral);
+}
+
+.zf-badge--accent,
+.zf-avatar--accent {
+	background: var(--color-selected);
+	color: var(--color-accent-text);
+}
+
+.zf-badge--iris,
+.zf-avatar--iris {
+	background: var(--color-secondary-iris-soft);
+	color: var(--color-secondary-iris);
+}
+
+.zf-badge--crown,
+.zf-avatar--crown {
+	background: var(--color-secondary-crown-soft);
+	color: var(--color-secondary-crown);
+}
+
+.zf-badge--rose,
+.zf-avatar--rose {
+	background: var(--color-secondary-rose-soft);
+	color: var(--color-secondary-rose);
+}
+
+.zf-badge--taupe,
+.zf-avatar--taupe {
+	background: var(--color-secondary-taupe-soft);
+	color: var(--color-secondary-taupe);
+}
+
+/* Badge */
+.zf-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	max-width: 100%;
+	height: var(--space-5);
+	padding: 0 var(--space-2);
+	font-size: var(--text-xs);
+	line-height: var(--leading-xs);
+	font-weight: var(--weight-semibold);
+	white-space: nowrap;
+	border-radius: var(--radius-sm);
+}
+
+.zf-badge > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* StatusPill: one or two parts, and a quiet fact beside them. */
+.zf-status {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.zf-pill {
+	display: inline-flex;
+	align-items: stretch;
+	overflow: hidden;
+	white-space: nowrap;
+	border-radius: var(--radius-full);
+}
+
+.zf-pill__seg {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	height: calc(var(--space-5) + var(--space-half));
+	padding: 0 var(--space-2);
+	font-size: var(--text-sm);
+	line-height: var(--leading-sm);
+	font-weight: var(--weight-semibold);
+}
+
+.zf-pill__seg + .zf-pill__seg {
+	border-left: 1px solid var(--color-bg);
+}
+
+.zf-status--neutral {
+	background: var(--color-status-neutral-soft);
+	color: var(--color-status-neutral);
+}
+
+.zf-status--progress {
+	background: var(--color-status-progress-soft);
+	color: var(--color-status-progress);
+}
+
+.zf-status--waiting {
+	background: var(--color-status-waiting-soft);
+	color: var(--color-status-waiting);
+}
+
+.zf-status--done {
+	background: var(--color-status-done-soft);
+	color: var(--color-status-done);
+}
+
+.zf-status__fact {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	font-size: var(--text-sm);
+	line-height: var(--leading-sm);
+	color: var(--color-text-muted);
+}
+
+/* VisibilityMarker */
+.zf-vis {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: var(--space-1);
+	height: var(--space-5);
+	padding: 0 var(--space-2) 0 calc(var(--space-1) + var(--space-half));
+	font-size: var(--text-xs);
+	line-height: var(--leading-xs);
+	font-weight: var(--weight-semibold);
+	border-radius: var(--radius-full);
+}
+
+.zf-vis--private {
+	background: var(--color-visibility-private-soft);
+	color: var(--color-visibility-private);
+}
+
+.zf-vis--listed {
+	background: var(--color-visibility-listed-soft);
+	color: var(--color-visibility-listed);
+}
+
+.zf-vis--public {
+	background: var(--color-visibility-public-soft);
+	color: var(--color-visibility-public);
+}
+
+/* Compact: the icon alone, on no ground. After the levels, so it wins. */
+.zf-vis.zf-vis--compact {
+	height: auto;
+	padding: 0;
+	background: transparent;
+}
+
+/* Avatar */
+.zf-avatar-wrap {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-width: 0;
+	max-width: 100%;
+}
+
+.zf-avatar {
+	display: grid;
+	flex: none;
+	place-items: center;
+	overflow: hidden;
+	font-weight: var(--weight-bold);
+	border-radius: var(--radius-full);
+}
+
+.zf-avatar > img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+.zf-avatar--sm {
+	width: var(--size-avatar-sm);
+	height: var(--size-avatar-sm);
+	font-size: calc(var(--text-xs) * 0.75);
+}
+
+.zf-avatar--md {
+	width: var(--size-avatar-md);
+	height: var(--size-avatar-md);
+	font-size: var(--text-xs);
+}
+
+.zf-avatar--lg {
+	width: var(--size-avatar-lg);
+	height: var(--size-avatar-lg);
+	font-size: var(--text-md);
+}
+
+.zf-avatar__text {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.zf-avatar__name {
+	overflow: hidden;
+	font-weight: var(--weight-semibold);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.zf-avatar-wrap .zf-avatar--sm + .zf-avatar__text .zf-handle {
+	font-size: var(--text-xs);
+}

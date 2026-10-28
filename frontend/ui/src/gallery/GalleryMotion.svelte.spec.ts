@@ -21,11 +21,11 @@ describe('GalleryMotion', () => {
 
 	it('has a line for every move and every cue', () => {
 		const { container } = render(GalleryMotion, {
-			moves: ['squish', 'note'],
-			sounds: ['open', 'close', 'toggle']
+			moves: ['squish', 'note', 'dim', 'life', 'loop', 'burst'],
+			sounds: ['open', 'close', 'toggle', 'celebrate']
 		});
 		const lines = [...listUnder(container, 'Moves'), ...listUnder(container, 'Sounds')];
-		expect(lines).toHaveLength(5);
+		expect(lines).toHaveLength(10);
 		expect(lines.filter(([, line]) => line === '')).toEqual([]);
 	});
 

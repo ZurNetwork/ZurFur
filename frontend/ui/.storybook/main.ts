@@ -167,6 +167,8 @@ const config: GalleryConfig = {
 	// A function replaces the composed Storybooks outright; an object would be
 	// merged with the ones Storybook finds in the dependencies on its own.
 	refs: () => ({}),
+	// The one static folder: the fixture pictures the stories load by URL, at /fixtures.
+	staticDirs: [{ from: '../static/fixtures', to: '/fixtures' }],
 	experimental_serverChannel: serverChannel
 };
 

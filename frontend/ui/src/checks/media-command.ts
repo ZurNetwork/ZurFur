@@ -1,21 +1,23 @@
 /**
  * The `emulateMedia` browser command. It runs in Vitest's Node process, with
  * the whole page that holds the test frame in reach, so it reads its payload
- * as untrusted: only `colorScheme` (`light`, `dark` or `null`) and
- * `reducedMotion` (`reduce`, `no-preference` or `null`), as own data
- * properties of a plain object, reach the page; anything else is refused
- * before the page is touched.
+ * as untrusted: only `colorScheme` (`light`, `dark` or `null`),
+ * `reducedMotion` (`reduce`, `no-preference` or `null`) and `forcedColors`
+ * (`active`, `none` or `null`), as own data properties of a plain object,
+ * reach the page; anything else is refused before the page is touched.
  */
 import type { BrowserCommand } from 'vitest/node';
 
-/** The two media features a spec may emulate; `null` hands one back to the browser. */
+/** The three media features a spec may emulate; `null` hands one back to the browser. */
 export interface MediaSettings {
 	readonly colorScheme?: ColorScheme;
 	readonly reducedMotion?: ReducedMotion;
+	readonly forcedColors?: ForcedColors;
 }
 
 type ColorScheme = 'light' | 'dark' | null;
 type ReducedMotion = 'reduce' | 'no-preference' | null;
+type ForcedColors = 'active' | 'none' | null;
 
 /** What the command did: applied the settings, or refused them and touched nothing. */
 export type MediaOutcome =
@@ -27,6 +29,7 @@ type Parsed =
 
 const colorSchemes: readonly unknown[] = ['light', 'dark', null];
 const reducedMotions: readonly unknown[] = ['reduce', 'no-preference', null];
+const forcedColorsValues: readonly unknown[] = ['active', 'none', null];
 
 function isColorScheme(value: unknown): value is ColorScheme {
 	return colorSchemes.includes(value);
@@ -34,6 +37,10 @@ function isColorScheme(value: unknown): value is ColorScheme {
 
 function isReducedMotion(value: unknown): value is ReducedMotion {
 	return reducedMotions.includes(value);
+}
+
+function isForcedColors(value: unknown): value is ForcedColors {
+	return forcedColorsValues.includes(value);
 }
 
 function refused(reason: string): Parsed {
@@ -58,11 +65,17 @@ export function parseMediaSettings(payload: unknown): Parsed {
 		return refused('the settings are not a plain object');
 	}
 	const keys = Reflect.ownKeys(payload);
-	const unknownKeys = keys.filter((key) => key !== 'colorScheme' && key !== 'reducedMotion');
+	const unknownKeys = keys.filter(
+		(key) => key !== 'colorScheme' && key !== 'reducedMotion' && key !== 'forcedColors'
+	);
 	if (unknownKeys.length > 0) {
 		return refused(`unknown setting(s): ${unknownKeys.map(String).join(', ')}`);
 	}
-	const settings: { colorScheme?: ColorScheme; reducedMotion?: ReducedMotion } = {};
+	const settings: {
+		colorScheme?: ColorScheme;
+		reducedMotion?: ReducedMotion;
+		forcedColors?: ForcedColors;
+	} = {};
 	if (keys.includes('colorScheme')) {
 		const colorScheme = ownValue(payload, 'colorScheme');
 		if (colorScheme === undefined || !isColorScheme(colorScheme.value)) {
@@ -76,6 +89,13 @@ export function parseMediaSettings(payload: unknown): Parsed {
 			return refused('reducedMotion is not reduce, no-preference or null');
 		}
 		settings.reducedMotion = reducedMotion.value;
+	}
+	if (keys.includes('forcedColors')) {
+		const forcedColors = ownValue(payload, 'forcedColors');
+		if (forcedColors === undefined || !isForcedColors(forcedColors.value)) {
+			return refused('forcedColors is not active, none or null');
+		}
+		settings.forcedColors = forcedColors.value;
 	}
 	return { kind: 'parsed', settings };
 }

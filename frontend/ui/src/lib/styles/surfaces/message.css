@@ -1,0 +1,96 @@
+/* InlineMessage: something that stays true, said in place. */
+.zf-inline {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-3);
+	color: var(--color-text);
+	background: var(--color-surface);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-sm);
+}
+
+.zf-inline__icon {
+	display: inline-flex;
+	flex: none;
+	padding-top: var(--space-half);
+	color: var(--color-text-muted);
+}
+
+.zf-inline__text {
+	flex: 1;
+	min-width: 0;
+}
+
+.zf-inline__title {
+	margin: 0;
+	font-weight: var(--weight-semibold);
+}
+
+.zf-inline__body {
+	color: var(--color-text-muted);
+}
+
+.zf-inline__body p {
+	margin: 0;
+}
+
+.zf-inline__action {
+	flex: none;
+	align-self: center;
+}
+
+.zf-inline--error {
+	background: var(--color-danger-soft);
+	border-color: transparent;
+}
+
+.zf-inline--error .zf-inline__icon {
+	color: var(--color-danger-text);
+}
+
+.zf-inline--error .zf-inline__body {
+	color: var(--color-text);
+}
+
+/* EmptyState: nothing here yet, and what to do about it. */
+.zf-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--space-2);
+	max-width: calc(var(--size-dialog) * 7 / 8);
+	margin: 0 auto;
+	padding: var(--space-8) var(--space-6);
+	text-align: center;
+}
+
+.zf-empty__icon {
+	display: grid;
+	place-items: center;
+	width: var(--size-avatar-lg);
+	height: var(--size-avatar-lg);
+	margin-bottom: var(--space-1);
+	color: var(--color-text-muted);
+	background: var(--color-hover);
+	border-radius: var(--radius-md);
+}
+
+.zf-empty__title {
+	margin: 0;
+	font-size: var(--text-lg);
+	line-height: var(--leading-lg);
+	font-weight: var(--weight-semibold);
+}
+
+.zf-empty__body {
+	color: var(--color-text-muted);
+}
+
+.zf-empty__body p {
+	margin: 0;
+}
+
+.zf-empty__action {
+	margin-top: var(--space-2);
+}

@@ -12,7 +12,7 @@
 	const { Story } = defineMeta({
 		title: 'Controls/Button',
 		component: Button,
-		tags: ['autodocs'],
+		tags: ['autodocs', 'simple'],
 		args: { onPress: fn() },
 		argTypes: {
 			variant: { control: 'select', options: ['primary', 'secondary', 'quiet', 'destructive'] },
@@ -29,7 +29,7 @@
 			layout: 'centered',
 			docs: {
 				description: {
-					component: `A simple component: the one button, for an action. Its words are a verb and its object. Four looks: Primary is the view's one main action, Secondary is the everyday one, Quiet is for Cancel and other light actions, Destructive is for what deletes or can't be undone. Given a safe address instead of an action, it becomes a link that looks the same. While Busy it keeps its words and its focus, and ignores presses.
+					component: `A simple component: the one button, for an action. Its words are a verb and its object. Four looks: Primary is the view's one main action, Secondary is the everyday one, Quiet is for Cancel and other light actions, Destructive is for what deletes or can't be undone. Given a safe address instead of an action, it becomes a link that looks the same. While Busy it keeps its words and its focus, shows a turning ring beside them, and ignores presses.
 
 Keyboard:
 
@@ -130,6 +130,7 @@ Keyboard:
 	play={async ({ args, canvas, userEvent }) => {
 		const button = canvas.getByRole('button', { name: actionWords.send });
 		await expect(button).toHaveAttribute('aria-busy', 'true');
+		await expect(button.querySelectorAll('span[aria-hidden="true"]')).toHaveLength(1);
 		await userEvent.click(button);
 		await expect(args.onPress).not.toHaveBeenCalled();
 	}}>{actionWords.send}</Story

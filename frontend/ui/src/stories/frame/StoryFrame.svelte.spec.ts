@@ -54,6 +54,32 @@ function frame(skin: SkinChoice, motion: MotionMode) {
 	return render(StoryFrame, { skin, motion, children });
 }
 
+/** A story of a fixed layer, pinned to every edge of whatever contains it. */
+const fixedLayer = createRawSnippet(() => ({
+	render: () => '<div class="the-layer" style="position: fixed; inset: 0"></div>'
+}));
+
+/** The containment and minimum height of the frame's wrapper, and where its fixed layer sits. */
+function layerShape(layer: boolean | undefined) {
+	const props = layer === undefined ? {} : { layer };
+	render(StoryFrame, { skin: 'dark', motion: 'lively', children: fixedLayer, ...props });
+	const wrapper = document.querySelector('.story-frame');
+	const fixed = document.querySelector('.the-layer');
+	if (wrapper === null || fixed === null) throw new Error('the frame or its layer is missing');
+	const style = getComputedStyle(wrapper);
+	const box = (element: Element) => {
+		const { top, left, width, height } = element.getBoundingClientRect();
+		return { top, left, width, height };
+	};
+	return {
+		contain: style.contain,
+		minHeight: style.minHeight,
+		layerBox: box(fixed),
+		wrapperBox: box(wrapper),
+		skinHolder: fixed.closest('[data-skin]') === wrapper
+	};
+}
+
 describe('StoryFrame', () => {
 	it('renders the story inside its wrapper', () => {
 		frame('dark', 'lively');
@@ -188,4 +214,32 @@ describe('StoryFrame', () => {
 			}
 		}
 	);
+
+	it.each([
+		['by default', undefined],
+		['when layer is false', false]
+	] as const)('leaves the wrapper uncontained %s', (_label, layer) => {
+		const shape = layerShape(layer);
+		expect({ contain: shape.contain, minHeight: shape.minHeight }).toEqual({
+			contain: 'none',
+			minHeight: '0px'
+		});
+		expect(shape.layerBox).toEqual({
+			top: 0,
+			left: 0,
+			width: document.documentElement.clientWidth,
+			height: window.innerHeight
+		});
+	});
+
+	it('holds a fixed layer inside the wrapper when layer is true, under its skin', () => {
+		const shape = layerShape(true);
+		expect({ contain: shape.contain, minHeight: shape.minHeight }).toEqual({
+			contain: 'layout paint',
+			minHeight: '480px'
+		});
+		expect(shape.layerBox).toEqual(shape.wrapperBox);
+		expect(shape.wrapperBox.height).toBe(480);
+		expect(shape.skinHolder).toBe(true);
+	});
 });

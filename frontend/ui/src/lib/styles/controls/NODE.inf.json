@@ -13,7 +13,7 @@
     "Everything comes from tokens: no raw colour, time, easing or length, except `0`, 1px borders, the 2px focus ring, percentages and unitless numbers. A size the bundle writes raw takes the nearest size token.",
     "Motion belongs to the seam: no `animation` or keyframes, and no `transition` of `translate`, `transform`, `box-shadow`, `top`, `left`, `width` or `all`. Colour fades on tokens stay.",
     "Resting states render from props; hover, focus and pressed come from interaction. Every focusable part shows the one focus ring, and none sets `outline: none` without a replacement.",
-    "`controls-css.spec` scans every stylesheet here against these rules, and checks that exactly these seven exist, that nothing but this node sits beside them, and that the styles entry imports each."
+    "`family-css.spec` scans every stylesheet here against these rules, and checks that exactly these seven exist, that nothing but this node sits beside them, and that the styles entry imports each; it holds the surface stylesheets to the same rules."
   ],
   "entry_points": [
     "button.css",

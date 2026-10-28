@@ -1,6 +1,14 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+	chmodSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -479,5 +487,116 @@ describe("the built-output check's Storybook mode", () => {
 			{ cwd: uiRoot, encoding: 'utf8' }
 		);
 		expect(result.status, result.stderr).toBe(expected);
+	});
+});
+
+/** The real avatar fixture, as a build copies it. */
+const avatar = readFileSync(new URL('../../static/fixtures/avatar.svg', import.meta.url), 'utf8');
+
+/** Storybook's own wrapper icon's shape: masks and a `<use>` with no href. */
+const storybookIcon =
+	'<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><defs><mask id="m"><rect x="0" y="0" width="32" height="32" fill="#FFF" /></mask></defs><use id="icon" /></svg>';
+
+describe("the built-output check's SVG files and fixtures", () => {
+	const builds = [
+		['the Kit build', { ...cleanBuild, 'fixtures/avatar.svg': avatar }, 'kit'],
+		['the Storybook build', { ...storybookBuild, 'fixtures/avatar.svg': avatar }, 'storybook']
+	] as const;
+
+	it.each(builds)('passes %s with its fixture', (_label, files, mode) => {
+		expect(checkBuild(buildFolder(files), mode)).toEqual({ findings: [], errors: [] });
+	});
+
+	it("passes Storybook's own icons outside the fixtures folder", () => {
+		const folder = buildFolder({ ...storybookBuild, 'favicon-wrapper.svg': storybookIcon });
+		expect(checkBuild(folder, 'storybook')).toEqual({ findings: [], errors: [] });
+	});
+
+	it("refuses Storybook's own icon shape as a fixture", () => {
+		const folder = buildFolder({ ...storybookBuild, 'fixtures/avatar.svg': storybookIcon });
+		const found = checkBuild(folder, 'storybook').findings.map((finding) => finding.found);
+		expect(found).toEqual(['the element <mask>', 'the element <use>']);
+	});
+
+	const svgRefused: readonly (readonly [string, string, string])[] = [
+		['a <script>', '<svg><script>alert(1)</script></svg>', 'a <script> element'],
+		['an onload', '<svg onload="alert(1)"></svg>', 'an onload attribute'],
+		['an external href', '<svg><use href="https://x.example/a.svg#i" /></svg>', 'not a #fragment'],
+		['an external xlink:href', '<svg><g xlink:href="data:x" /></svg>', 'not a #fragment'],
+		['a <foreignObject>', '<svg><foreignObject /></svg>', 'a <foreignObject> element'],
+		['a DOCTYPE', '<!DOCTYPE svg><svg></svg>', 'a DOCTYPE'],
+		['an ENTITY', '<!DOCTYPE svg [<!ENTITY x "y">]><svg></svg>', 'an ENTITY declaration'],
+		['a stylesheet instruction', '<?xml-stylesheet href="a.css"?><svg></svg>', 'xml-stylesheet'],
+		['a remote url(', '<svg><rect fill="url(https://x/a)" /></svg>', 'url() that is not'],
+		['an <a>', '<svg><a><rect /></a></svg>', 'a <a> element'],
+		['a <set>', '<svg><set attributeName="x" to="1" /></svg>', 'a <set> element'],
+		['an <animate>', '<svg><animate attributeName="x" /></svg>', 'a <animate> element'],
+		['a <style>', '<svg><style>a{}</style></svg>', 'a <style> element'],
+		['an <image>', '<svg><image /></svg>', 'a <image> element'],
+		['a prefixed <svg:script>', '<svg:svg><svg:script /></svg:svg>', 'a <script> element']
+	];
+
+	it.each(svgRefused)('refuses %s in any built SVG', (_label, svg, reason) => {
+		const folder = buildFolder({ ...storybookBuild, 'sb-common-assets/x.svg': svg });
+		const found = checkBuild(folder, 'storybook').findings;
+		expect(found.map((finding) => finding.rule)).toContain('svg');
+		expect(found.map((finding) => finding.found)).toContainEqual(expect.stringContaining(reason));
+		expect(run(['--storybook', folder]).code).toBe(1);
+	});
+
+	it.each(builds)('refuses a <script> in a built fixture in %s', (_label, files, mode) => {
+		const folder = buildFolder({
+			...files,
+			'fixtures/avatar.svg': avatar.replace('</svg>', '<script>alert(1)</script></svg>')
+		});
+		expect(checkBuild(folder, mode).findings.map((finding) => finding.found)).toContain(
+			'a <script> element'
+		);
+	});
+
+	it.each(builds)('refuses an extra file in the fixtures folder of %s', (_label, files, mode) => {
+		const folder = buildFolder({ ...files, 'fixtures/id_ed25519': 'secret' });
+		expect(checkBuild(folder, mode).findings).toEqual([
+			{
+				rule: 'fixture',
+				found: 'a file the fixture list does not name',
+				place: { path: path.join(folder, 'fixtures/id_ed25519'), line: 1, column: 1 }
+			}
+		]);
+		const argv = mode === 'storybook' ? ['--storybook', folder] : [folder];
+		expect(run(argv).code).toBe(1);
+	});
+
+	it.each([
+		['a dotfile', 'fixtures/.env'],
+		['a fixture in a subfolder', 'fixtures/.ssh/avatar.svg'],
+		['an unlisted SVG', 'fixtures/probe2.svg']
+	])('refuses %s under storybook-static/fixtures', (_label, relative) => {
+		const folder = buildFolder({ ...storybookBuild, [relative]: avatar });
+		const rules = checkBuild(folder, 'storybook').findings.map((finding) => finding.rule);
+		expect(rules).toContain('fixture');
+	});
+
+	it('refuses the fixtures folder as a link, and does not follow it', () => {
+		const folder = buildFolder(storybookBuild);
+		const home = buildFolder({ '.ssh/id_ed25519': 'secret', 'avatar.svg': avatar });
+		symlinkSync(home, path.join(folder, 'fixtures'));
+		expect(checkBuild(folder, 'storybook').findings).toEqual([
+			{
+				rule: 'link',
+				found: 'a link the check does not follow, which a server would',
+				place: { path: path.join(folder, 'fixtures'), line: 1, column: 1 }
+			}
+		]);
+	});
+
+	it('refuses a fixture that is a link', () => {
+		const folder = buildFolder({ ...storybookBuild, 'fixtures/.keep': '' });
+		rmSync(path.join(folder, 'fixtures/.keep'));
+		const outside = buildFolder({ 'avatar.svg': avatar });
+		symlinkSync(path.join(outside, 'avatar.svg'), path.join(folder, 'fixtures/avatar.svg'));
+		expect(checkBuild(folder, 'storybook').findings.map((finding) => finding.rule)).toEqual([
+			'link'
+		]);
 	});
 });

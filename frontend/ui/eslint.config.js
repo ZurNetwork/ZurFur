@@ -1461,7 +1461,7 @@ const noProvideEnvironmentRule = {
 };
 
 /** The only files that may write <svelte:element>, relative to this package. */
-const SVELTE_ELEMENT_FILES = ['src/lib/surfaces/Card.svelte'];
+export const SVELTE_ELEMENT_FILES = ['src/lib/surfaces/Card.svelte'];
 
 /**
  * The files that may also hand their {#snippet child(…)} to one of our own
@@ -2043,6 +2043,352 @@ const SOURCE_SETS = [
 	'storybookBrowser'
 ];
 
+// ---------------------------------------------------------------------------
+// The load bans: timers, load starters and media. Kept in one block of their
+// own. A later flat-config block replaces an earlier one's options for the
+// same rule, so these entries run ESLint's own restricted-name rules under the
+// `ui-load` names, beside the boundary blocks' entries rather than over them.
+// ---------------------------------------------------------------------------
+
+const { builtinRules } = await import('eslint/use-at-your-own-risk');
+
+/**
+ * ESLint's built-in rules, by name. Its rule map is read through the package's
+ * unstable entry; a missing rule fails the config load rather than linting less.
+ *
+ * @param {string} name
+ * @returns {import('eslint').Rule.RuleModule}
+ */
+function builtinRule(name) {
+	const rule = builtinRules.get(name);
+	if (rule === undefined) throw new Error(`ESLint's built-in rule ${name} not found`);
+	return rule;
+}
+
+/** Why a component never schedules work of its own. */
+export const timerMessage =
+	'Components never schedule work of their own: no timers, frames or idle callbacks. Take the moment as a prop, or move through the seam.';
+
+/** Why nothing outside the checks starts a load of its own. */
+export const loadStarterMessage =
+	'Nothing outside the checks starts a load of its own: no Image, Audio, createElement or createElementNS. Render the element in markup, from a prop.';
+
+/** Why the motion adapter builds only spans. */
+export const motionElementMessage =
+	"The motion adapter builds only spans, with createElement('span'), and never calls createElementNS.";
+
+/** Why no markup holds media or a picture a stylesheet loads. */
+export const mediaMessage =
+	'No markup loads media of its own: no <picture>, <source>, <video>, <audio>, <iframe>, <object>, <embed> or <track>, no SVG <set>, <animate>, <animateMotion>, <animateTransform> or <feImage>, no srcset, imagesrcset or poster, no SVG <image> or <use> with an href, no url() or other image function in a style attribute or style: directive, no value in a style attribute, no value in a style: directive but a few that never hold a picture, no background attribute, no input with a src, no value or url() but url(#…) in an SVG mask, filter, clip-path, fill, stroke, marker or cursor, and no <svelte:element> naming a prefixed tag such as svg:image.';
+
+/** Why a component never reaches an inline style from code. */
+export const inlineStyleMessage =
+	"Components never reach an element's inline style from code: no .style, attributeStyleMap, or setAttribute or createAttribute naming style or background. Style it in markup, with a class or a token.";
+
+/** The timers' globals, bare and through window, self and globalThis. */
+const TIMER_GLOBALS = [
+	'setTimeout',
+	'setInterval',
+	'requestAnimationFrame',
+	'requestIdleCallback',
+	'scheduler'
+].map((name) => ({ name, message: timerMessage }));
+
+/** A timer reached as a member: an abort signal that fires after a delay. */
+const TIMER_PROPERTIES = [{ object: 'AbortSignal', property: 'timeout', message: timerMessage }];
+
+const IMAGE_GLOBAL = { name: 'Image', message: loadStarterMessage };
+const AUDIO_GLOBAL = { name: 'Audio', message: loadStarterMessage };
+
+/** The load starters every set but the checks refuses. */
+const STARTER_GLOBALS = [IMAGE_GLOBAL, AUDIO_GLOBAL];
+
+/** createElement and createElementNS on any object, destructured too. */
+const ELEMENT_PROPERTIES = ['createElement', 'createElementNS'].map((property) => ({
+	property,
+	message: loadStarterMessage
+}));
+
+/**
+ * The motion adapter's one way to build an element: `createElement('span')`,
+ * called with that one string literal. Any other use of `createElement`, by
+ * name or computed, destructured, and every `createElementNS` is refused.
+ */
+const MOTION_ELEMENT_SYNTAX = [
+	{
+		selector:
+			"MemberExpression[property.name='createElement']:not(CallExpression[arguments.length=1][arguments.0.type='Literal'][arguments.0.value='span'] > MemberExpression.callee)",
+		message: motionElementMessage
+	},
+	{
+		selector: 'MemberExpression[property.value=/^createElement(?:NS)?$/]',
+		message: motionElementMessage
+	},
+	{ selector: "MemberExpression[property.name='createElementNS']", message: motionElementMessage },
+	{
+		selector: 'ObjectPattern > Property[key.name=/^createElement(?:NS)?$/]',
+		message: motionElementMessage
+	},
+	{
+		selector: 'ObjectPattern > Property[key.value=/^createElement(?:NS)?$/]',
+		message: motionElementMessage
+	}
+];
+
+/**
+ * The media elements and the SVG elements refused with them, in any letter
+ * case: feImage loads a picture, and set and the animate elements write a
+ * value into another attribute, a loading one included.
+ */
+const MEDIA_TAGS =
+	'/^(?:picture|source|video|audio|iframe|object|embed|track|set|animate|animatemotion|animatetransform|feimage)$/i';
+
+/** The functions that load a picture inside a CSS value, in any letter case. */
+const STYLE_LOAD = '/(?:^|[^a-z0-9_])(?:-webkit-)?(?:url|src|image|image-set|cross-fade)\\s*\\(/i';
+
+/** A style attribute in any letter case, or a style: directive. */
+const STYLE_HOLDERS = ['SvelteAttribute[key.name=/^style$/i]', 'SvelteStyleDirective'];
+
+/**
+ * The style: properties that may take a value from an expression. A property
+ * joins only if its CSS grammar can't hold a picture; widening the list gets a
+ * security review. Written in lower case, so any other letter case is refused.
+ */
+const STYLE_VALUE_PROPERTIES = [
+	'left',
+	'top',
+	'width',
+	'border-radius',
+	'box-shadow',
+	'font-family',
+	'font-size',
+	'font-weight',
+	'line-height',
+	'letter-spacing',
+	'background-color'
+];
+
+/** The style: properties that may take a value, as an exact-name pattern. */
+const STYLE_VALUE_NAMES = `/^(?:${STYLE_VALUE_PROPERTIES.join('|')})$/`;
+
+/** The SVG attributes that take a paint, mask, filter, marker or cursor, in any letter case. */
+const SVG_REFERENCE_ATTRIBUTES =
+	'/^(?:mask|filter|clip-path|fill|stroke|marker|marker-start|marker-mid|marker-end|cursor)$/i';
+
+/** A picture-loading function in an attribute's text, but a url() naming a #fragment. */
+const NON_FRAGMENT_LOAD =
+	'/(?:^|[^a-z0-9_])(?:-webkit-)?(?:url\\s*\\((?!\\s*[\'"]?\\s*#)|(?:src|image|image-set|cross-fade)\\s*\\()/i';
+
+/** An attribute or its shorthand, either written out or as `{name}`. */
+const ATTRIBUTE = ':matches(SvelteAttribute, SvelteShorthandAttribute)';
+
+/**
+ * A value reaching a style: a style attribute, on an element or a component,
+ * holding any expression or written as `{style}`, and a style: directive
+ * holding an expression or written as a shorthand, unless its property is on
+ * STYLE_VALUE_PROPERTIES. A static value goes through STYLE_LOAD instead.
+ */
+const STYLE_VALUES = [
+	{ selector: 'SvelteAttribute[key.name=/^style$/i] > SvelteMustacheTag', message: mediaMessage },
+	{ selector: 'SvelteShorthandAttribute[key.name=/^style$/i]', message: mediaMessage },
+	{
+		selector: `SvelteStyleDirective[shorthand=true]:not([key.name.name=${STYLE_VALUE_NAMES}])`,
+		message: mediaMessage
+	},
+	{
+		selector: `SvelteStyleDirective:not([key.name.name=${STYLE_VALUE_NAMES}]) > SvelteMustacheTag`,
+		message: mediaMessage
+	}
+];
+
+/**
+ * Attributes that load a picture from their value: the old background
+ * attribute, whatever it holds; src on an input, which loads as type="image";
+ * and the SVG paint, mask, filter, marker and cursor attributes holding an
+ * expression, or a picture-loading function but url(#…), each on anything and
+ * in any letter case.
+ */
+const LOADING_ATTRIBUTES = [
+	{ selector: `${ATTRIBUTE}[key.name=/^background$/i]`, message: mediaMessage },
+	{
+		selector: `SvelteElement[name.name=/^input$/i] > SvelteStartTag > ${ATTRIBUTE}[key.name=/^src$/i]`,
+		message: mediaMessage
+	},
+	{
+		selector: `SvelteAttribute[key.name=${SVG_REFERENCE_ATTRIBUTES}] > SvelteMustacheTag`,
+		message: mediaMessage
+	},
+	{
+		selector: `SvelteShorthandAttribute[key.name=${SVG_REFERENCE_ATTRIBUTES}]`,
+		message: mediaMessage
+	},
+	{
+		selector: `SvelteAttribute[key.name=${SVG_REFERENCE_ATTRIBUTES}] > SvelteLiteral[value=${NON_FRAGMENT_LOAD}]`,
+		message: mediaMessage
+	}
+];
+
+/**
+ * <svelte:element> naming a prefixed tag by any static text: inside an <svg>,
+ * `svg:image` or `svg:script` builds the real SVG element, which the exact-name
+ * bans above never see. Any string or template text in `this` holding a `:`.
+ */
+const PREFIXED_ELEMENT = [
+	{
+		selector: `SvelteElement[name.name='svelte:element'] > SvelteStartTag > SvelteAttribute[key.name='this'] > SvelteLiteral[value=/:/]`,
+		message: mediaMessage
+	},
+	{ selector: "SvelteSpecialDirective[kind='this'] Literal[value=/:/]", message: mediaMessage },
+	{
+		selector: "SvelteSpecialDirective[kind='this'] TemplateElement[value.cooked=/:/]",
+		message: mediaMessage
+	}
+];
+
+/**
+ * Media in markup: the media elements and SVG's set, animate, animateMotion,
+ * animateTransform and feImage wherever they sit, as an element or a component
+ * in any letter case and as <svelte:element> naming one by a static string;
+ * srcset, imagesrcset and poster on anything; SVG image and use with an href
+ * or any prefixed href; and a picture-loading function in
+ * the text or the string literals of a style attribute or a style: directive.
+ */
+const MEDIA_SYNTAX = [
+	{ selector: `SvelteElement[name.name=${MEDIA_TAGS}]`, message: mediaMessage },
+	{
+		selector: `SvelteElement[name.name='svelte:element'] > SvelteStartTag > SvelteAttribute[key.name='this'] > SvelteLiteral[value=${MEDIA_TAGS}]`,
+		message: mediaMessage
+	},
+	{
+		selector: `SvelteSpecialDirective[kind='this'] > Literal.expression[value=${MEDIA_TAGS}]`,
+		message: mediaMessage
+	},
+	{
+		selector: `SvelteSpecialDirective[kind='this'] > TemplateLiteral.expression[expressions.length=0][quasis.0.value.cooked=${MEDIA_TAGS}]`,
+		message: mediaMessage
+	},
+	{
+		selector:
+			':matches(SvelteAttribute, SvelteShorthandAttribute)[key.name=/^(?:srcset|imagesrcset|poster)$/i]',
+		message: mediaMessage
+	},
+	{
+		selector:
+			'SvelteElement[name.name=/^(?:image|use)$/i] > SvelteStartTag > :matches(SvelteAttribute, SvelteShorthandAttribute)[key.name=/^(?:[^:]*:)?href$/i]',
+		message: mediaMessage
+	},
+	...STYLE_HOLDERS.flatMap((holder) => [
+		{ selector: `${holder} SvelteLiteral[value=${STYLE_LOAD}]`, message: mediaMessage },
+		{ selector: `${holder} Literal[value=${STYLE_LOAD}]`, message: mediaMessage },
+		{ selector: `${holder} TemplateElement[value.raw=${STYLE_LOAD}]`, message: mediaMessage }
+	]),
+	...STYLE_VALUES,
+	...LOADING_ATTRIBUTES,
+	...PREFIXED_ELEMENT
+];
+
+/** A member named `name`, by dot, by a string key or by a template with no expressions. */
+const memberNamed = (/** @type {string} */ name) => [
+	`MemberExpression[computed=false][property.name='${name}']`,
+	`MemberExpression[computed=true][property.value='${name}']`,
+	`MemberExpression[computed=true][property.expressions.length=0][property.quasis.0.value.cooked='${name}']`,
+	`ObjectPattern > Property[key.name='${name}']`,
+	`ObjectPattern > Property[key.value='${name}']`
+];
+
+/**
+ * An element's inline style reached from code: the `style` and
+ * `attributeStyleMap` members, read or written, destructured too (a property
+ * assignment, setProperty, cssText and Object.assign all go through them), and
+ * setAttribute, setAttributeNS, createAttribute and createAttributeNS naming
+ * style or background by a static string in any letter case.
+ */
+const INLINE_STYLE_SYNTAX = [
+	...['style', 'attributeStyleMap'].flatMap(memberNamed).map((selector) => ({
+		selector,
+		message: inlineStyleMessage
+	})),
+	...namedByLiteral(
+		['setAttribute', 'createAttribute'],
+		0,
+		qualified('style|background'),
+		inlineStyleMessage
+	),
+	...namedByLiteral(
+		['setAttributeNS', 'createAttributeNS'],
+		1,
+		qualified('style|background'),
+		inlineStyleMessage
+	)
+];
+
+/** ESLint's restricted-name rules, under names of their own. */
+const loadPlugin = {
+	meta: { name: 'ui-load' },
+	rules: {
+		globals: builtinRule('no-restricted-globals'),
+		properties: builtinRule('no-restricted-properties'),
+		syntax: builtinRule('no-restricted-syntax'),
+		markup: builtinRule('no-restricted-syntax')
+	}
+};
+
+/**
+ * What each source set refuses here: the components and the seam take the
+ * timers, both load starters, both element calls and any reach into an inline
+ * style, the motion adapter Image, Audio and every element but a span, and
+ * every other set Image, Audio and both element calls.
+ */
+export const loadRules = {
+	components: {
+		globals: [...TIMER_GLOBALS, ...STARTER_GLOBALS],
+		properties: [...TIMER_PROPERTIES, ...ELEMENT_PROPERTIES],
+		syntax: INLINE_STYLE_SYNTAX
+	},
+	environment: {
+		globals: [...TIMER_GLOBALS, ...STARTER_GLOBALS],
+		properties: [...TIMER_PROPERTIES, ...ELEMENT_PROPERTIES],
+		syntax: INLINE_STYLE_SYNTAX
+	},
+	motion: { globals: STARTER_GLOBALS, properties: [], syntax: MOTION_ELEMENT_SYNTAX },
+	lazy: { globals: STARTER_GLOBALS, properties: ELEMENT_PROPERTIES, syntax: [] },
+	routes: { globals: STARTER_GLOBALS, properties: ELEMENT_PROPERTIES, syntax: [] },
+	gallery: { globals: STARTER_GLOBALS, properties: ELEMENT_PROPERTIES, syntax: [] },
+	storage: { globals: STARTER_GLOBALS, properties: ELEMENT_PROPERTIES, syntax: [] },
+	stories: { globals: STARTER_GLOBALS, properties: ELEMENT_PROPERTIES, syntax: [] },
+	storybookBrowser: { globals: STARTER_GLOBALS, properties: ELEMENT_PROPERTIES, syntax: [] }
+};
+
+/** Every .svelte file under src/, the checks' harnesses included. */
+export const MEDIA_FILES = ['src/**/*.svelte'];
+
+/**
+ * The load bans' block for one source set.
+ *
+ * @param {keyof typeof loadRules} name
+ * @returns {import('eslint').Linter.Config}
+ */
+function loadBlock(name) {
+	const { files, ignores } = fileSets[name];
+	const { globals, properties, syntax } = loadRules[name];
+	/** @type {import('eslint').Linter.RulesRecord} */
+	const rules = { 'ui-load/globals': ['error', { globals, checkGlobalObject: true }] };
+	if (properties.length > 0) rules['ui-load/properties'] = ['error', ...properties];
+	if (syntax.length > 0) rules['ui-load/syntax'] = ['error', ...syntax];
+	return { name: `ui-load/${name}`, files, ignores, rules };
+}
+
+/** @type {import('eslint').Linter.Config[]} */
+const LOAD_BLOCKS = [
+	{ name: 'ui-load/plugin', plugins: { 'ui-load': loadPlugin } },
+	...SOURCE_SETS.map(loadBlock),
+	{
+		name: 'ui-load/media',
+		files: MEDIA_FILES,
+		rules: { 'ui-load/markup': ['error', ...MEDIA_SYNTAX] }
+	}
+];
+
 export default defineConfig(
 	includeIgnoreFile(gitignorePath),
 	{
@@ -2198,5 +2544,6 @@ export default defineConfig(
 		files: ['**/*.svelte'],
 		rules: { 'svelte/no-at-html-tags': 'error' }
 	},
-	...SOURCE_SETS.flatMap(boundaryBlocks)
+	...SOURCE_SETS.flatMap(boundaryBlocks),
+	...LOAD_BLOCKS
 );

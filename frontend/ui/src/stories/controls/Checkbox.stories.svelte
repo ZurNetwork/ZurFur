@@ -9,7 +9,7 @@
 	const { Story } = defineMeta({
 		title: 'Controls/Checkbox',
 		component: Checkbox,
-		tags: ['autodocs'],
+		tags: ['autodocs', 'simple'],
 		args: { label: shareSketches.label, checked: false, onCheckedChange: fn() },
 		argTypes: {
 			checked: {
