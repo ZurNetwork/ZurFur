@@ -9,11 +9,13 @@
 		readonly skin: SkinChoice;
 		/** The Motion menu's choice; Lively leaves `<html>` without a motion mode. */
 		readonly motion: MotionMode;
+		/** True for a story tagged `layer`: its fixed layers stay inside the frame. */
+		readonly layer?: boolean;
 		/** The story. */
 		readonly children: Snippet;
 	}
 
-	let { skin, motion, children: story }: Props = $props();
+	let { skin, motion, layer = false, children: story }: Props = $props();
 
 	$effect(() => {
 		const root = document.documentElement;
@@ -38,7 +40,7 @@
 
 <FrameSkin choice={skin}>
 	{#snippet children(shown)}
-		<div class="story-frame" data-skin={shown} data-motion={stillMotion}>
+		<div class="story-frame" class:layer data-skin={shown} data-motion={stillMotion}>
 			{@render story()}
 		</div>
 	{/snippet}
@@ -48,6 +50,15 @@
 	.story-frame {
 		background: var(--color-bg);
 		color: var(--color-text);
+	}
+
+	/*
+	 * A story of a fixed layer (a toast stack, a dialog): containment makes the frame the layer's
+	 * containing block, so it stays inside its story in the panel, the docs page and screenshots.
+	 */
+	.story-frame.layer {
+		contain: layout paint;
+		min-height: var(--size-dialog);
 	}
 
 	/*

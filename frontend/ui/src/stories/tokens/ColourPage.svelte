@@ -28,7 +28,7 @@
 					tokens={tokensOf(model, 'color')}
 				>
 					{#snippet drawing(token: Token)}
-						<span class="swatch" style:background="var(--{token.name})"></span>
+						<span class="swatch" style:background-color="var(--{token.name})"></span>
 					{/snippet}
 				</TokenSection>
 				<GalleryState name="contrast-table">
@@ -46,7 +46,7 @@
 							<ul class="entries">
 								{#each contrastReport(model, skin).filled as entry (entry.token)}
 									<li data-filled={entry.token}>
-										<span class="swatch" style:background="var(--{entry.token})"></span>
+										<span class="swatch" style:background-color="var(--{entry.token})"></span>
 										<div class="words">
 											<code>{entry.token}</code>
 											<code class="muted">{entry.value}</code>
@@ -65,7 +65,7 @@
 							<ul class="entries">
 								{#each contrastReport(model, skin).decorative as entry (entry.token)}
 									<li data-decorative={entry.token}>
-										<span class="swatch" style:background="var(--{entry.token})"></span>
+										<span class="swatch" style:background-color="var(--{entry.token})"></span>
 										<div class="words">
 											<code>{entry.token}</code>
 											<code class="muted">{entry.value}</code>

@@ -72,6 +72,37 @@ describe('Button', () => {
 		}
 	);
 
+	it('shows one hidden spinner ring beside its words while busy, and records the spin loop on it', () => {
+		const calls: SeamCall[] = [];
+		render(
+			Button,
+			{ children: words('Accept'), onPress: () => undefined, busy: true, testid: 'busy' },
+			{ wrapper: RecordingEnvironment, wrapperProps: { onRecord: (call) => calls.push(call) } }
+		);
+		const rings = byTestId('busy').querySelectorAll('.zf-spinner');
+		expect(rings).toHaveLength(1);
+		expect(rings[0]?.getAttribute('aria-hidden')).toBe('true');
+		expect(calls.filter((call) => call.kind === 'move' && call.move === 'loop')).toEqual([
+			{ kind: 'move', move: 'loop', args: ['spin'], element: rings[0] }
+		]);
+	});
+
+	it('shows no spinner ring when not busy', () => {
+		render(Button, { children: words('Accept'), onPress: () => undefined, testid: 'rest' });
+		expect(byTestId('rest').querySelectorAll('.zf-spinner')).toHaveLength(0);
+	});
+
+	it('is named by its words alone, busy or not', async () => {
+		const { rerender } = render(Button, { children: words('Accept'), onPress: () => undefined });
+		await expect
+			.element(page.getByRole('button', { name: 'Accept', exact: true }))
+			.toBeInTheDocument();
+		await rerender({ children: words('Accept'), onPress: () => undefined, busy: true });
+		await expect
+			.element(page.getByRole('button', { name: 'Accept', exact: true }))
+			.toBeInTheDocument();
+	});
+
 	it('does not submit its form while busy', () => {
 		const onPress = vi.fn<() => void>();
 		const { container } = render(Button, {

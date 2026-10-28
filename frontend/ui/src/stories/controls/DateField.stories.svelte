@@ -19,7 +19,7 @@
 		title: 'Controls/Date Field',
 		component: DateField,
 		render: template,
-		tags: ['autodocs'],
+		tags: ['autodocs', 'simple'],
 		args: {
 			label: DATE_TEXT.label,
 			value: undefined,

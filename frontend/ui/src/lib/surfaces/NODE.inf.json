@@ -1,0 +1,148 @@
+{
+  "path": "frontend/ui/src/lib/surfaces",
+  "charted": "2026-10-27",
+  "short": "The surfaces and feedback pieces, their shapes and mints",
+  "is": "Where the surfaces and the feedback pieces live with the plain shapes they take and their run-time choices. Today it holds Card, Badge, Spinner, Skeleton, Avatar, VisibilityMarker, StatusPill, Pin and ToastStack, all simple, with `types.ts` (their shapes and `FeedbackAction`), `choices.ts` (the allow-lists each piece falls back through) and the two mints, `image-src.ts` and `pin-point.ts`.",
+  "type": "code",
+  "tags": [
+    "category:ui",
+    "category:source"
+  ],
+  "conventions": [
+    "Each piece is simple or composite, as `src/checks/composition-table.ts` says. A simple piece draws its own element and its own family class and holds only glyphs and the internal pieces; a composite lays out library components with its own family class and plain text, and draws no button, link, field or picture of its own: an action is a `FeedbackAction` handed to Button.",
+    "One `.svelte` file per piece, its `X.svelte.spec.ts` beside it, and its stories under `src/stories/` tagged with its kind. Shapes and mints are plain TypeScript next to the pieces, readonly, with a `kind` discriminant and `?: never` on the keys another form owns.",
+    "A piece's looks are its family stylesheet in `../styles/surfaces`, whose selectors name only its own families; it writes no colour, time or size of its own, and moves only through the seam, like the controls.",
+    "Everything the library's conventions say holds here: dumb, controlled, every word a prop, no type from bits-ui or the date library passed out."
+  ],
+  "entry_points": [
+    "types.ts"
+  ],
+  "fs": [
+    {
+      "name": "Avatar.svelte",
+      "role": "someone's picture in a circle, or the first letter, number or emoji of their name, in one of six tones and three sizes; with the name and handle beside it, or alone and read out as the name, hidden only when the name holds nothing but invisible characters and white space; only a picture that passes the picture check loads",
+      "node": false
+    },
+    {
+      "name": "Avatar.svelte.spec.ts",
+      "role": "spec for Avatar",
+      "node": false
+    },
+    {
+      "name": "Badge.svelte",
+      "role": "a small tag with a label, one of six tones and an optional icon",
+      "node": false
+    },
+    {
+      "name": "Badge.svelte.spec.ts",
+      "role": "spec for Badge",
+      "node": false
+    },
+    {
+      "name": "Card.svelte",
+      "role": "a sheet for one object: a div, section, article or li chosen from a closed map, with or without padding; it holds whatever it is given",
+      "node": false
+    },
+    {
+      "name": "Card.svelte.spec.ts",
+      "role": "spec for Card",
+      "node": false
+    },
+    {
+      "name": "Pin.svelte",
+      "role": "a numbered button on a piece of art, placed at its point as percentages; open or closed, naming the thread it opens; a point that fails the check draws no pin",
+      "node": false
+    },
+    {
+      "name": "Pin.svelte.spec.ts",
+      "role": "spec for Pin",
+      "node": false
+    },
+    {
+      "name": "Skeleton.svelte",
+      "role": "a blank in the shape of what is coming: text lines (the last one shorter), a rectangle or a circle; hidden from screen readers and breathing through the seam",
+      "node": false
+    },
+    {
+      "name": "Skeleton.svelte.spec.ts",
+      "role": "spec for Skeleton",
+      "node": false
+    },
+    {
+      "name": "Spinner.svelte",
+      "role": "a ring that turns through the seam: a status always on the page that holds the ring and its words only while `active` (a page mounts it once and changes `active`), or the glyph alone (what Button's busy state holds)",
+      "node": false
+    },
+    {
+      "name": "Spinner.svelte.spec.ts",
+      "role": "spec for Spinner",
+      "node": false
+    },
+    {
+      "name": "StatusPill.svelte",
+      "role": "a pill of one or two parts, read with a pause between them, each with a label, tone and optional icon, and a quiet fact beside it",
+      "node": false
+    },
+    {
+      "name": "StatusPill.svelte.spec.ts",
+      "role": "spec for StatusPill",
+      "node": false
+    },
+    {
+      "name": "ToastStack.svelte",
+      "role": "the place toasts sit: a labelled region fixed at the bottom right, holding an always-there polite live region (`zf-toast-stack__live`) that holds the toasts",
+      "node": false
+    },
+    {
+      "name": "ToastStack.svelte.spec.ts",
+      "role": "spec for ToastStack",
+      "node": false
+    },
+    {
+      "name": "VisibilityMarker.svelte",
+      "role": "who can see a thing: an icon and the word for private, listed or public, or the icon alone with its word read out once",
+      "node": false
+    },
+    {
+      "name": "VisibilityMarker.svelte.spec.ts",
+      "role": "spec for VisibilityMarker",
+      "node": false
+    },
+    {
+      "name": "choices.spec.ts",
+      "role": "spec for the run-time choices",
+      "node": false
+    },
+    {
+      "name": "choices.ts",
+      "role": "the run-time choices, each taking any value and falling back to the safe one: the card element, the badge and status tones, the visibility level and its icon, an icon name, the number of skeleton lines (a whole number from 1 to 12), the avatar size and the avatar initial",
+      "node": false
+    },
+    {
+      "name": "image-src.spec.ts",
+      "role": "spec for the picture address",
+      "node": false
+    },
+    {
+      "name": "image-src.ts",
+      "role": "`ImageSrc` and `isImageSrc`: a picture address, which is exactly a same-origin path",
+      "node": false
+    },
+    {
+      "name": "pin-point.spec.ts",
+      "role": "spec for the pin point",
+      "node": false
+    },
+    {
+      "name": "pin-point.ts",
+      "role": "`PinPoint` and `pinPointOf`: a frozen point of two fractions from 0 to 1, `-0` made 0; `pinPointFrom` checks any value again as one",
+      "node": false
+    },
+    {
+      "name": "types.ts",
+      "role": "`FeedbackAction`, and the shapes of the surfaces: the card element and padding, the badge and status tones, a status pill's parts and fact, the visibility levels and their words",
+      "node": false
+    }
+  ],
+  "notes": []
+}

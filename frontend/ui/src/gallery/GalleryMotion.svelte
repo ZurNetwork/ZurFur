@@ -14,14 +14,19 @@
 	/** What each move looks like, in a line. */
 	const moveWords: Readonly<Record<MoveName, string>> = {
 		squish: 'Squishes a little when pressed, then springs back',
-		note: 'Put down like a note, picked up when it closes'
+		note: 'Put down like a note, picked up when it closes',
+		dim: 'Dims the desk behind it, clears when it closes',
+		life: 'Lands from below, waits, then goes by itself',
+		loop: 'Spins or breathes for as long as it is there',
+		burst: 'Throws a little confetti, once'
 	};
 
 	/** What each cue sounds like, in a line. */
 	const soundWords: Readonly<Record<SoundCue, string>> = {
 		open: 'A short middle blip',
 		close: 'A short low blip',
-		toggle: 'A short high blip'
+		toggle: 'A short high blip',
+		celebrate: 'A short C-E-G chord'
 	};
 </script>
 

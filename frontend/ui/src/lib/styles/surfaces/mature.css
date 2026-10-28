@@ -1,0 +1,92 @@
+/* MatureCover: rated art under its veil, and the placeholder shown instead of art. */
+.zf-mature {
+	position: relative;
+	isolation: isolate;
+	margin: 0;
+	overflow: hidden;
+	background: var(--color-bg);
+	border-radius: var(--radius-lg);
+}
+
+.zf-mature__art {
+	width: 100%;
+	height: 100%;
+}
+
+.zf-mature__art > img,
+.zf-mature__art > svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+.zf-mature:not(.is-revealed) .zf-mature__art {
+	filter: blur(var(--blur-mature)) saturate(0.8);
+	scale: 1.15;
+}
+
+.zf-mature__veil {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-items: center;
+	padding: var(--space-4);
+	background: var(--color-veil);
+}
+
+.zf-mature__panel {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--space-1);
+	box-sizing: border-box;
+	max-width: min(var(--size-tree), 100%);
+	padding: var(--space-3) var(--space-4);
+	text-align: center;
+	color: var(--color-text);
+	background: var(--color-surface-raised);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius-md);
+}
+
+.zf-mature__rating {
+	margin: 0;
+	font-weight: var(--weight-semibold);
+}
+
+.zf-mature__note {
+	margin: 0 0 var(--space-2);
+	font-size: var(--text-xs);
+	line-height: var(--leading-xs);
+	color: var(--color-text-muted);
+}
+
+.zf-mature__recover {
+	position: absolute;
+	top: var(--space-2);
+	right: var(--space-2);
+}
+
+/* The placeholders (hidden, withheld, ask): no art, a solid hairline edge. */
+.zf-mature.is-hidden {
+	display: grid;
+	place-items: center;
+	min-height: calc(var(--space-8) * 5);
+	background: var(--color-surface);
+	border: 1px solid var(--color-border-strong);
+}
+
+.zf-mature__hidden {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--space-1);
+	padding: var(--space-4);
+	text-align: center;
+	color: var(--color-text-muted);
+}
+
+.zf-mature__hidden .zf-mature__rating {
+	color: var(--color-text);
+}

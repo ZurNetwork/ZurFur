@@ -3,6 +3,7 @@
 	import { useEnvironment } from '../environment/context';
 	import Icon from '../icons/Icon.svelte';
 	import type { IconName } from '../icons/icons';
+	import Spinner from '../surfaces/Spinner.svelte';
 	import { isLinkHref, type LinkHref } from './link-href';
 	import type { ButtonSize, ButtonVariant } from './types';
 
@@ -22,7 +23,7 @@
 		readonly href?: undefined;
 		readonly onPress: () => void;
 		readonly type?: 'button' | 'submit';
-		/** Busy keeps focus and the words, and ignores presses until the action is done. */
+		/** Busy keeps focus and the words, shows the spinner's ring beside them, and ignores presses until the action is done. */
 		readonly busy?: boolean;
 		readonly disabled?: boolean;
 	}
@@ -92,6 +93,7 @@
 		{@attach moves.squish()}
 	>
 		{#if icon !== undefined}<Icon name={icon} size={iconSize} />{/if}
+		{#if busy}<Spinner kind="glyph" />{/if}
 		{@render children()}
 		{#if iconAfter !== undefined}<Icon name={iconAfter} size={iconSize} />{/if}
 	</button>

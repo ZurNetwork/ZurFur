@@ -1,0 +1,97 @@
+/* Toast: a note about something that just happened, in a stack at the bottom of the screen. */
+.zf-toast {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-3);
+	box-sizing: border-box;
+	width: 100%;
+	max-width: calc(var(--size-dialog) * 5 / 6);
+	padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+	color: var(--color-text);
+	background: var(--color-note);
+	border: 1px solid transparent;
+	border-radius: var(--radius-md);
+	box-shadow: var(--elevation-note);
+	pointer-events: auto;
+}
+
+.zf-toast__icon {
+	flex: none;
+	color: var(--color-text-muted);
+}
+
+.zf-toast--success .zf-toast__icon {
+	color: var(--color-status-done);
+}
+
+.zf-toast--error {
+	background: var(--color-danger-soft);
+}
+
+.zf-toast--error .zf-toast__icon {
+	color: var(--color-danger-text);
+}
+
+.zf-toast__text {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: var(--space-half);
+	min-width: 0;
+	padding-top: var(--space-half);
+}
+
+.zf-toast__title {
+	margin: 0;
+	font-weight: var(--weight-semibold);
+}
+
+.zf-toast__body {
+	color: var(--color-text-muted);
+}
+
+.zf-toast--error .zf-toast__body {
+	color: var(--color-text);
+}
+
+.zf-toast__action {
+	flex: none;
+}
+
+/* The stack: bottom-right on desktop; its live region stacks the toasts the same way. */
+.zf-toast-stack,
+.zf-toast-stack__live {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: var(--space-2);
+}
+
+.zf-toast-stack {
+	position: fixed;
+	right: var(--space-4);
+	bottom: var(--space-4);
+	z-index: var(--layer-toast);
+	width: calc(100% - 2 * var(--space-4));
+	pointer-events: none;
+}
+
+/* Phones (480px is `breakpoint-sm`): full width at the bottom. */
+@media (max-width: 480px) {
+	.zf-toast-stack,
+	.zf-toast-stack__live {
+		align-items: stretch;
+	}
+
+	.zf-toast-stack {
+		right: 0;
+		bottom: 0;
+		box-sizing: border-box;
+		width: 100%;
+		padding: var(--space-2);
+	}
+
+	.zf-toast-stack .zf-toast {
+		max-width: none;
+	}
+}

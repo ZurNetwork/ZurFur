@@ -1,6 +1,6 @@
 {
   "path": "frontend/ui/src/lib/environment",
-  "charted": "2026-10-26",
+  "charted": "2026-10-27",
   "short": "The seam: moves and sounds, provided once by the host",
   "is": "The seam components reach their motion and sound through: the `Moves` and `Sounds` shapes with their frozen still forms, and the one Svelte context that carries the `Environment` (exactly `moves` and `sounds`) from the host to every component below it.",
   "type": "code",
@@ -12,7 +12,8 @@
     "The only home of Svelte's context functions. A component calls `useEnvironment()` once at init and never `provideEnvironment`; the host provides once, and the environment is fixed for the host's life. With no provider `useEnvironment()` returns the still environment, so every control works unprovided.",
     "The still forms (`NO_MOVES`, `NO_SOUNDS`, `STILL_ENVIRONMENT`) are frozen: every attachment does nothing and every cue plays nothing. Components depend on `Moves` and `Sounds`, never on a motion or audio library.",
     "These files import only `svelte`, `svelte/attachments` and each other, and no runes module (`.svelte.ts`) lives here; lint and a spec hold both.",
-    "`squish` moves only the `scale` property. `note`'s exit is an animation on the element it is attached to, the one that takes bits-ui's content props, because bits-ui waits on that element's animations before it removes the part.",
+    "`squish` moves only the `scale` property. `note`'s exit is an animation on the element it is attached to, the one that takes bits-ui's content props, because bits-ui waits on that element's animations before it removes the part; `dim`'s exit is the same, on the element that takes the overlay props. Callers pass literal parameters only (a literal union, a boolean or `() => void`), write `life(() => onDismiss())`, never put `loop` on an element that takes bits-ui's content or overlay props, and never let a move write `transform` on Pin.",
+    "Without an adapter `life` never calls `onEnd`, so a timed toast stays until it is dismissed. `moves.spec` runs the moves contract (`checks/moves.contract.ts`) against `NO_MOVES`: every attachment touches nothing and `life` never ends, even with every timer run out. The motion adapter runs the same suite, with its own rows, in each mode.",
     "The seam files are `moves.ts`, `sounds.ts` and `context.ts`; the seam's specs, `checks/testing/RecordingEnvironment.svelte` and `gallery/GalleryMotion.svelte` go with them. Later motion changes add to all of these, so the second change to touch any of them takes a base merge (merge the base branch in, never rebase), keeps both sides in the seam's order, and re-runs its gate. A rename or a removal ships only with every call site edited in the same change, after the seam contract is revised."
   ],
   "entry_points": [
@@ -37,13 +38,18 @@
       "node": false
     },
     {
+      "name": "moves.spec.ts",
+      "role": "runs the moves contract against `NO_MOVES`",
+      "node": false
+    },
+    {
       "name": "moves.ts",
-      "role": "`Moves` (`squish`, `note`), `NoteOrigin`, `MoveName` and the frozen `NO_MOVES`",
+      "role": "`Moves` (`squish`, `note`, `dim`, `life`, `loop`, `burst`), `NoteOrigin`, `LoopKind`, `MoveName` and the frozen `NO_MOVES`",
       "node": false
     },
     {
       "name": "sounds.ts",
-      "role": "`Sounds`, `SoundCue` (`open`, `close`, `toggle`) and the frozen `NO_SOUNDS`",
+      "role": "`Sounds`, `SoundCue` (`open`, `close`, `toggle`, `celebrate`) and the frozen `NO_SOUNDS`",
       "node": false
     }
   ],

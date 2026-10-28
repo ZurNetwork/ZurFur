@@ -2,8 +2,8 @@
  * Storybook's config, held to exactly what the gallery allows. The config
  * folder holds its four files and nothing Storybook would load by name;
  * `main.ts` holds exactly the allowed keys and values (no remote Storybooks,
- * no static folders, no injected head or body, no opened hosts, nothing
- * reported); the manager's brand title, which Storybook renders as HTML, is
+ * one static folder, the fixtures at `/fixtures`, no injected head or body, no
+ * opened hosts, nothing reported); the manager's brand title, which Storybook renders as HTML, is
  * one constant, with no brand image or link; and the preview's accessibility
  * rules and sidebar order are the gallery's.
  */
@@ -119,11 +119,15 @@ const allowedFeatures: Fields = {
 	menuOnboardingChecklist: false
 };
 
+/** The one static folder: the fixture pictures, served at `/fixtures` and nowhere else. */
+const allowedStaticDirs: readonly Fields[] = [{ from: '../static/fixtures', to: '/fixtures' }];
+
 /**
  * Each key `main.ts` may hold and the check its value must pass. `refs` must
  * be a function that returns `{}`: an object would be merged with the
  * Storybooks Storybook finds in the dependencies on its own, and only a
- * function replaces them. The server-channel hook must be a function; its
+ * function replaces them. `staticDirs` is exactly one entry with exactly the
+ * fixtures' `from` and `to`. The server-channel hook must be a function; its
  * spec proves what it does.
  */
 const mainKeys: Readonly<Record<string, (value: unknown) => boolean>> = {
@@ -134,6 +138,7 @@ const mainKeys: Readonly<Record<string, (value: unknown) => boolean>> = {
 	features: (value) => isDeepStrictEqual(value, allowedFeatures),
 	refs: (value) =>
 		typeof value === 'function' && isDeepStrictEqual(Reflect.apply(value, undefined, []), {}),
+	staticDirs: (value) => isDeepStrictEqual(value, allowedStaticDirs),
 	experimental_serverChannel: (value) => typeof value === 'function'
 };
 
@@ -163,6 +168,7 @@ describe("main.ts's keys and values", () => {
 		core: { ...allowedCore },
 		features: { ...allowedFeatures },
 		refs: () => ({}),
+		staticDirs: [{ from: '../static/fixtures', to: '/fixtures' }],
 		experimental_serverChannel: (channel: unknown) => channel
 	};
 
@@ -178,7 +184,40 @@ describe("main.ts's keys and values", () => {
 		['refs as an object', { ...good, refs: {} }, 'refs is not the allowed value'],
 		['refs dropped', without('refs'), 'refs is missing'],
 		['refs returning a Storybook', { ...good, refs: () => ({ x: { url: 'https://x' } }) }, 'refs'],
-		['staticDirs', { ...good, staticDirs: ['public'] }, 'staticDirs is not allowed'],
+		['staticDirs dropped', without('staticDirs'), 'staticDirs is missing'],
+		["staticDirs: ['..']", { ...good, staticDirs: ['..'] }, 'staticDirs is not the allowed value'],
+		["staticDirs: ['public']", { ...good, staticDirs: ['public'] }, 'staticDirs'],
+		[
+			'a second static folder',
+			{
+				...good,
+				staticDirs: [
+					{ from: '../static/fixtures', to: '/fixtures' },
+					{ from: '../static', to: '/static' }
+				]
+			},
+			'staticDirs'
+		],
+		[
+			'all of static/ at /fixtures',
+			{ ...good, staticDirs: [{ from: '../static', to: '/fixtures' }] },
+			'staticDirs'
+		],
+		[
+			'the fixtures at the root',
+			{ ...good, staticDirs: [{ from: '../static/fixtures', to: '/' }] },
+			'staticDirs'
+		],
+		[
+			'an extra key on the entry',
+			{ ...good, staticDirs: [{ from: '../static/fixtures', to: '/fixtures', dot: true }] },
+			'staticDirs'
+		],
+		[
+			'the entry as a plain string',
+			{ ...good, staticDirs: ['../static/fixtures:/fixtures'] },
+			'staticDirs'
+		],
 		['previewHead', { ...good, previewHead: (head: string) => head }, 'previewHead is not allowed'],
 		['managerHead', { ...good, managerHead: (head: string) => head }, 'managerHead is not allowed'],
 		['previewBody', { ...good, previewBody: (body: string) => body }, 'previewBody is not allowed'],

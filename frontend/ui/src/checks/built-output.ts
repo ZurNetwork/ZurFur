@@ -14,6 +14,15 @@
  * environment variable built into the output. Only fonts and images, by
  * extension, are not read as text.
  *
+ * Every `.svg` file is refused if it holds a `<script>`, an `on…` attribute,
+ * a `<foreignObject>`, an `href` (with any prefix) that is not a `#fragment`,
+ * a DOCTYPE or ENTITY declaration, an `<?xml-stylesheet>`, a `url(` that is
+ * not `url(#…)`, or an `a`, `set`, `animate…`, `style`, `image`, `feImage`,
+ * `iframe`, `embed`, `object`, `handler` or `listener` element. Under the
+ * build's `fixtures/` folder only the fixture names may sit, each a plain
+ * file, with no folder beside them, and each fixture is also read against
+ * the fixtures' allow-list of elements and attributes (`fixtureSvgRefusals`).
+ *
  * In Storybook mode (`--storybook`, over `storybook-static`), a remote
  * `<a href>` is allowed under `https://storybook.js.org/docs/` alone, for the
  * links on Storybook's own error screens; every other rule is the same.
@@ -43,6 +52,8 @@ export type BuiltRule =
 	| 'http-equiv'
 	| 'environment-name'
 	| 'link'
+	| 'svg'
+	| 'fixture'
 	| 'unparsed';
 
 /** Which build the check reads: the Kit gallery's, or Storybook's static build. */
@@ -60,7 +71,7 @@ export interface BuiltReport {
 	readonly errors: readonly string[];
 }
 
-type BuiltKind = 'css' | 'html' | 'text' | 'binary';
+type BuiltKind = 'css' | 'html' | 'svg' | 'text' | 'binary';
 
 /**
  * The extensions, in lower case, of the binary files the check does not read
@@ -86,6 +97,7 @@ function builtKind(name: string): BuiltKind {
 	const lower = name.toLowerCase();
 	if (lower.endsWith('.css')) return 'css';
 	if (lower.endsWith('.html')) return 'html';
+	if (lower.endsWith('.svg')) return 'svg';
 	const dot = lower.lastIndexOf('.');
 	return dot !== -1 && binaryExtensions.has(lower.slice(dot)) ? 'binary' : 'text';
 }
@@ -97,6 +109,7 @@ interface BuiltFile {
 
 interface Walk {
 	readonly files: BuiltFile[];
+	readonly folders: string[];
 	readonly links: string[];
 	readonly errors: string[];
 }
@@ -121,6 +134,7 @@ function walk(folder: string, found: Walk): void {
 		if (entry.isSymbolicLink()) {
 			found.links.push(entryPath);
 		} else if (entry.isDirectory()) {
+			found.folders.push(entryPath);
 			walk(entryPath, found);
 		} else if (entry.isFile()) {
 			found.files.push({ path: entryPath, kind: builtKind(entry.name) });
@@ -248,6 +262,201 @@ function environmentFindings(file: string, text: string): readonly BuiltFinding[
 	});
 }
 
+// --- SVG files and the fixtures ---------------------------------------------
+
+/**
+ * The pictures the stories load by URL, by file name: the only files the
+ * fixtures folder may hold, in `static/` and in a build.
+ */
+export const FIXTURE_NAMES: readonly string[] = ['avatar.svg'];
+
+/** The fixtures folder's name, in `static/` and at a build's root. */
+export const FIXTURE_FOLDER = 'fixtures';
+
+/** Elements no SVG holds, with any prefix and in any letter case. */
+const refusedSvgElements =
+	/<\s*(?:[\w.-]+:)?(a|set|animate[\w-]*|style|image|feimage|iframe|embed|object|handler|listener)(?=[\s/>])/gi;
+
+/** An `href` attribute with any prefix, and its value, quoted or not. */
+const hrefAttribute =
+	/(?:^|[\s"'/])((?:[^\s=<>"'/]*:)?href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]*))/gi;
+
+/** An attribute named `on…`, in any letter case. */
+const handlerAttribute = /(?:^|[\s"'/])(on[^\s=<>"'/]*)\s*=/gi;
+
+/** Every `url(` and what follows it. */
+const urlCall = /url\s*\(\s*(['"]?)\s*(.?)/gi;
+
+/**
+ * Why an SVG file could run script, load anything or navigate: what every
+ * `.svg` under a build is refused for. Read on the text as written, so markup
+ * the check can't parse is still seen.
+ */
+export function svgRefusals(text: string): readonly string[] {
+	const fixed: readonly (readonly [RegExp, string])[] = [
+		[/<\s*(?:[\w.-]+:)?script/i, 'a <script> element'],
+		[/<\s*(?:[\w.-]+:)?foreignObject/i, 'a <foreignObject> element'],
+		[/<!DOCTYPE/i, 'a DOCTYPE'],
+		[/<!ENTITY/i, 'an ENTITY declaration'],
+		[/<\?xml-stylesheet/i, 'an <?xml-stylesheet?> instruction']
+	];
+	const named = fixed.filter(([pattern]) => pattern.test(text)).map(([, reason]) => reason);
+	const elements = [...text.matchAll(refusedSvgElements)].map(
+		(match) => `a <${match[1] ?? ''}> element`
+	);
+	const handlers = [...text.matchAll(handlerAttribute)].map(
+		(match) => `an ${match[1] ?? 'on…'} attribute`
+	);
+	const hrefs = [...text.matchAll(hrefAttribute)].flatMap((match) => {
+		const value = match[2] ?? match[3] ?? match[4] ?? '';
+		return value.startsWith('#')
+			? []
+			: [`an ${match[1] ?? 'href'} that is not a #fragment: ${value}`];
+	});
+	const urls = [...text.matchAll(urlCall)].flatMap((match) =>
+		match[2] === '#' ? [] : [`a url() that is not url(#…): ${match[0]}`]
+	);
+	return [...named, ...elements, ...handlers, ...hrefs, ...urls];
+}
+
+/** The elements a fixture SVG may hold. */
+const fixtureElements: ReadonlySet<string> = new Set([
+	'svg',
+	'g',
+	'title',
+	'circle',
+	'ellipse',
+	'rect',
+	'path',
+	'line',
+	'polyline',
+	'polygon',
+	'defs',
+	'linearGradient',
+	'radialGradient',
+	'stop',
+	'clipPath'
+]);
+
+/** The attributes a fixture SVG may hold: geometry, presentation and ids. */
+const fixtureAttributes: ReadonlySet<string> = new Set([
+	'viewBox',
+	'width',
+	'height',
+	'preserveAspectRatio',
+	'x',
+	'y',
+	'x1',
+	'y1',
+	'x2',
+	'y2',
+	'cx',
+	'cy',
+	'r',
+	'rx',
+	'ry',
+	'fx',
+	'fy',
+	'd',
+	'points',
+	'transform',
+	'fill',
+	'fill-opacity',
+	'fill-rule',
+	'stroke',
+	'stroke-width',
+	'stroke-linecap',
+	'stroke-linejoin',
+	'stroke-opacity',
+	'stroke-dasharray',
+	'stroke-dashoffset',
+	'stroke-miterlimit',
+	'opacity',
+	'offset',
+	'stop-color',
+	'stop-opacity',
+	'gradientUnits',
+	'gradientTransform',
+	'spreadMethod',
+	'clip-path',
+	'clip-rule',
+	'clipPathUnits',
+	'id'
+]);
+
+/** The one namespace a fixture names, on its root alone. */
+const svgNamespace = 'http://www.w3.org/2000/svg';
+
+const fixtureStartTag =
+	/^<([A-Za-z][A-Za-z0-9]*)((?:\s+[A-Za-z][A-Za-z0-9:-]*\s*=\s*"[^"<]*")*)\s*(\/?)>/;
+const fixtureEndTag = /^<\/([A-Za-z][A-Za-z0-9]*)\s*>/;
+const fixtureAttribute = /\s+([A-Za-z][A-Za-z0-9:-]*)\s*=\s*"([^"<]*)"/g;
+
+/** The attributes of one start tag, refused when off the list. */
+function fixtureAttributeRefusals(name: string, attributes: string, isRoot: boolean): string[] {
+	return [...attributes.matchAll(fixtureAttribute)].flatMap((match) => {
+		const attribute = match[1] ?? '';
+		const value = match[2] ?? '';
+		if (attribute === 'xmlns') {
+			return isRoot && value === svgNamespace ? [] : [`xmlns="${value}" on <${name}>`];
+		}
+		return fixtureAttributes.has(attribute) ? [] : [`the attribute ${attribute} on <${name}>`];
+	});
+}
+
+/**
+ * Why a fixture SVG holds more than plain shapes: read as XML with no entity,
+ * comment, declaration or instruction, one `<svg>` root naming the SVG
+ * namespace, every element and attribute on the fixtures' lists, attribute
+ * values in double quotes, text only inside a `<title>`, and every element
+ * closed. Anything it can't read is refused.
+ */
+function fixtureShapeRefusals(text: string): readonly string[] {
+	const refusals: string[] = [];
+	if (text.includes('&')) refusals.push('an entity or character reference');
+	if (/<[!?]/.test(text)) refusals.push('a comment, declaration or instruction');
+	const open: string[] = [];
+	let roots = 0;
+	let rest = text;
+	while (rest.length > 0) {
+		const next = rest.indexOf('<');
+		const between = next === -1 ? rest : rest.slice(0, next);
+		if (between.trim() !== '' && open.at(-1) !== 'title') {
+			refusals.push(`text outside a <title>: ${between.trim().slice(0, 30)}`);
+		}
+		if (next === -1) break;
+		rest = rest.slice(next);
+		const end = fixtureEndTag.exec(rest);
+		if (end !== null) {
+			const name = end[1] ?? '';
+			if (open.pop() !== name) refusals.push(`a </${name}> that closes nothing open`);
+			rest = rest.slice(end[0].length);
+			continue;
+		}
+		const start = fixtureStartTag.exec(rest);
+		if (start === null) {
+			refusals.push(`markup that does not read as a plain tag: ${rest.slice(0, 30)}`);
+			break;
+		}
+		const [whole, name = '', attributes = '', selfClosing = ''] = start;
+		const isRoot = open.length === 0;
+		if (isRoot) roots += 1;
+		if (isRoot && name !== 'svg') refusals.push(`a root <${name}> that is not <svg>`);
+		if (!fixtureElements.has(name)) refusals.push(`the element <${name}>`);
+		refusals.push(...fixtureAttributeRefusals(name, attributes, isRoot));
+		if (selfClosing === '') open.push(name);
+		rest = rest.slice(whole.length);
+	}
+	if (open.length > 0) refusals.push(`unclosed <${open.join('>, <')}>`);
+	if (roots !== 1) refusals.push(`${String(roots)} root elements, not one <svg>`);
+	return refusals;
+}
+
+/** Why a fixture SVG is refused: every SVG's refusals and the fixtures' allow-list. */
+export function fixtureSvgRefusals(text: string): readonly string[] {
+	return [...svgRefusals(text), ...fixtureShapeRefusals(text)];
+}
+
 /** The findings in one built file's text; `mode` defaults to the Kit gallery's build. */
 export function builtFileFindings(
 	file: string,
@@ -256,6 +465,14 @@ export function builtFileFindings(
 ): readonly BuiltFinding[] {
 	const kind = builtKind(file);
 	const inText = environmentFindings(file, text);
+	if (kind === 'svg') {
+		const inSvg = svgRefusals(text).map((found): BuiltFinding => ({
+			rule: 'svg',
+			found,
+			place: placeOf(file)
+		}));
+		return [...inSvg, ...inText];
+	}
 	if (kind !== 'css' && kind !== 'html') return inText;
 	const source = parseSource({ path: file, text });
 	const unparsed = source.unparsed.map((failure): BuiltFinding => ({
@@ -266,6 +483,46 @@ export function builtFileFindings(
 	const inHtml =
 		kind === 'html' ? [...attributeFindings(source, mode), ...httpEquivFindings(source)] : [];
 	return [...unparsed, ...cssFindings(source), ...inHtml, ...inText];
+}
+
+/**
+ * The fixtures folder of a build: only the fixture names, as plain files right
+ * inside it, no folder in it, and each fixture held to the allow-list.
+ */
+function fixtureFindings(folder: string, found: Walk, errors: string[]): readonly BuiltFinding[] {
+	const relativeOf = (entry: string): string =>
+		path.relative(folder, entry).split(path.sep).join('/');
+	const inFixtures = (entry: string): boolean => relativeOf(entry).startsWith(`${FIXTURE_FOLDER}/`);
+	const folders = found.folders.filter(inFixtures).map((entry): BuiltFinding => ({
+		rule: 'fixture',
+		found: 'a folder inside the fixtures folder',
+		place: placeOf(entry)
+	}));
+	const files = found.files.filter((file) => inFixtures(file.path));
+	const isListed = (file: BuiltFile): boolean =>
+		FIXTURE_NAMES.some((name) => relativeOf(file.path) === `${FIXTURE_FOLDER}/${name}`);
+	const unlisted = files
+		.filter((file) => !isListed(file))
+		.map((file): BuiltFinding => ({
+			rule: 'fixture',
+			found: 'a file the fixture list does not name',
+			place: placeOf(file.path)
+		}));
+	const shapes = files.filter(isListed).flatMap((file) => {
+		let text;
+		try {
+			text = readFileSync(file.path, 'utf8');
+		} catch (error) {
+			errors.push(`${file.path}: ${reasonOf(error)}`);
+			return [];
+		}
+		return fixtureShapeRefusals(text).map((found): BuiltFinding => ({
+			rule: 'svg',
+			found,
+			place: placeOf(file.path)
+		}));
+	});
+	return [...folders, ...unlisted, ...shapes];
 }
 
 /** Checks a build folder: every file in it but its fonts and images, and no link. */
@@ -279,7 +536,7 @@ export function checkBuild(folder: string, mode: BuildMode = 'kit'): BuiltReport
 	if (!stat.isDirectory()) {
 		return { findings: [], errors: [`${folder}: not a folder (a link is not followed)`] };
 	}
-	const found: Walk = { files: [], links: [], errors: [] };
+	const found: Walk = { files: [], folders: [], links: [], errors: [] };
 	walk(folder, found);
 	const errors = [...found.errors];
 	if (errors.length === 0 && !found.files.some((file) => file.kind === 'html')) {
@@ -301,7 +558,8 @@ export function checkBuild(folder: string, mode: BuildMode = 'kit'): BuiltReport
 		}
 		return builtFileFindings(file.path, text, mode);
 	});
-	return { findings: [...linkFindings, ...fileFindings], errors };
+	const inFixtures = fixtureFindings(folder, found, errors);
+	return { findings: [...linkFindings, ...fileFindings, ...inFixtures], errors };
 }
 
 /** Where the check writes: a stream's `write`, so a spec can collect the text. */

@@ -66,11 +66,18 @@ describe('the still environment', () => {
 		for (const attachment of attachments) {
 			expect(attachment(Object.freeze(element) as unknown as HTMLElement)).toBeUndefined();
 		}
-		expect(Object.keys(NO_MOVES).sort()).toEqual(['note', 'squish']);
+		expect(Object.keys(NO_MOVES).sort()).toEqual([
+			'burst',
+			'dim',
+			'life',
+			'loop',
+			'note',
+			'squish'
+		]);
 	});
 
 	it('plays nothing, for every cue', () => {
-		const cues = ['open', 'close', 'toggle'] as const;
+		const cues = ['open', 'close', 'toggle', 'celebrate'] as const;
 		for (const cue of cues) {
 			expect(() => {
 				NO_SOUNDS.play(cue);

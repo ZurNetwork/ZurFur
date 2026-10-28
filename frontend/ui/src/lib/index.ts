@@ -65,6 +65,37 @@ export type {
 	TabItem,
 	TabStep
 } from './controls/types.ts';
-export { NO_MOVES, type MoveName, type Moves, type NoteOrigin } from './environment/moves.ts';
+export { default as ToastStack } from './surfaces/ToastStack.svelte';
+export { default as Card } from './surfaces/Card.svelte';
+export { default as Badge } from './surfaces/Badge.svelte';
+export { default as Spinner } from './surfaces/Spinner.svelte';
+export { default as Skeleton } from './surfaces/Skeleton.svelte';
+export { default as VisibilityMarker } from './surfaces/VisibilityMarker.svelte';
+export { default as StatusPill } from './surfaces/StatusPill.svelte';
+export { default as Avatar } from './surfaces/Avatar.svelte';
+export { default as Pin } from './surfaces/Pin.svelte';
+export type {
+	AvatarSize,
+	AvatarTone,
+	BadgeTone,
+	CardElement,
+	CardPadding,
+	FeedbackAction,
+	StatusFact,
+	StatusPart,
+	StatusParts,
+	StatusTone,
+	VisibilityLevel,
+	VisibilityWords
+} from './surfaces/types.ts';
+export { isImageSrc, type ImageSrc } from './surfaces/image-src.ts';
+export { pinPointOf, type PinPoint } from './surfaces/pin-point.ts';
+export {
+	NO_MOVES,
+	type LoopKind,
+	type MoveName,
+	type Moves,
+	type NoteOrigin
+} from './environment/moves.ts';
 export { NO_SOUNDS, type SoundCue, type Sounds } from './environment/sounds.ts';
 export { STILL_ENVIRONMENT, provideEnvironment, type Environment } from './environment/context.ts';

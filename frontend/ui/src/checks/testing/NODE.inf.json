@@ -11,7 +11,7 @@
   "conventions": [
     "Specs only: the checks tier, never imported by anything that ships. They import the controls and the seam by relative path, as a host would.",
     "A harness that accepts changes keeps its own state and hands it back as the prop, so a spec drives the control the way a real parent does; a refusing parent is written in the spec itself.",
-    "`RecordingEnvironment.svelte` provides a frozen environment whose moves and cues call back with the move name, its arguments and the element it attached to; specs use it to prove a control calls the seam. It is one of the seam files with the second-change rule described in `lib/environment`."
+    "`RecordingEnvironment.svelte` provides a frozen environment whose moves and cues call back with the move name, its arguments and the element it attached to; `life`'s argument is its `onEnd`, so a spec can end the life. Specs use it to prove a component calls the seam. It is one of the seam files with the second-change rule described in `lib/environment`."
   ],
   "entry_points": [
     "RecordingEnvironment.svelte"
@@ -54,7 +54,7 @@
     },
     {
       "name": "RecordingEnvironment.svelte",
-      "role": "provides an environment that records each move attached and each cue played",
+      "role": "provides an environment that records each move attached, with its arguments (`life`'s `onEnd` among them), and each cue played",
       "node": false
     },
     {

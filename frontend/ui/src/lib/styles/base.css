@@ -12,3 +12,13 @@ body {
 	outline: 2px solid var(--color-focus);
 	outline-offset: var(--space-half);
 }
+
+/* Words for screen readers only: kept in the page, drawn nowhere. */
+.zf-sr {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+}
