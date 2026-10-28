@@ -16,7 +16,8 @@
 # The CI safety rules: every checkout sets persist-credentials: false; every
 # actions/upload-artifact step sets path frontend/ui/shots/output/**/*.png and
 # retention-days 7, and runs only on exactly
-# `if: failure() && steps.shots.outcome == 'failure'`; and the rules in the
+# `if: failure() && steps.shots.outcome == 'failure'`, one line with no
+# continuation line under it; and the rules in the
 # comment above ci_safety (permissions, secrets, installs, package managers,
 # containers, actions and the YAML shapes this reader can follow).
 set -eu
@@ -88,9 +89,10 @@ check_every_use() {
 check_every_use crate-ci/typos "# v$TYPOS_VERSION"
 check_every_use EmbarkStudios/cargo-deny-action "(cargo-deny $CARGO_DENY_VERSION)"
 # step_pins <action> <input> <value> — prints "<steps> <pinned>": how many
-# steps use <action>, and how many of those set `<input>: <value>` in their own
-# `with:` block. A comment or an `env:` entry never counts, so a pin that
-# survives only there fails.
+# steps use <action> (every `uses:` line naming it counts as one, wherever it
+# sits), and how many of those set `<input>: <value>` in their own `with:`
+# block. A comment or an `env:` entry never counts, so a pin that survives only
+# there fails.
 step_pins() {
     # shellcheck disable=SC2086 # $workflow_files is a newline list without spaces
     awk -v action="$1" -v key="$2" -v want="$3" -v q="'" '
@@ -158,9 +160,12 @@ check_step_input actions/upload-artifact retention-days 7 "CI safety rule"
 
 # step_if_pins <action> <condition> — prints "<steps> <pinned>": how many
 # steps use <action>, and how many of those carry exactly one step-level
-# `if:`, whose value is exactly <condition>. A step's keys are the lines at
-# its first key's indent, before or after its `uses:`; an `if:` under `with:`
-# or `env:` never counts.
+# `if:`, whose value is exactly <condition>. A step starts on a `-` line, as in
+# the safety reader below: its keys are the lines at its first key's indent,
+# on the `-` line or, after a bare `-`, on the next line, before or after its
+# `uses:`; an `if:` under `with:` or `env:` never counts. Any other line of the
+# step after the `if:` and before its next key (YAML folds a deeper line into
+# the value, past blank lines) voids the match.
 step_if_pins() {
     # shellcheck disable=SC2086 # $workflow_files is a newline list without spaces
     awk -v action="$1" -v want="$2" -v q="'" '
@@ -170,6 +175,7 @@ step_if_pins() {
             in_item = 0
         }
         function step_key(t,    v) {
+            after_if = 0
             if (match(t, /^uses:[ \t]*/)) {
                 v = substr(t, RLENGTH + 1)
                 sub("^[\"" q "]", "", v)
@@ -179,6 +185,7 @@ step_if_pins() {
                 sub(/[ \t]+#.*$/, "", v)
                 sub(/[ \t]+$/, "", v)
                 ifs++
+                after_if = 1
                 if (v == want) if_ok = 1
             }
         }
@@ -188,38 +195,50 @@ step_if_pins() {
             line = $0
             if (line ~ /^ *(#.*)?$/) next
             if (in_item && indent(line) > dash_ind) {
+                if (key_ind < 0) key_ind = indent(line)
                 if (indent(line) == key_ind) step_key(substr(line, key_ind + 1))
+                else if (after_if) if_ok = 0
                 next
             }
             close_item()
-            if (match(line, /^ *- +/)) {
-                key_ind = RLENGTH
+            if (match(line, /^ *-([ \t]|$)/)) {
                 dash_ind = indent(line)
                 in_item = 1
                 uses_action = 0
                 ifs = 0
                 if_ok = 0
-                step_key(substr(line, key_ind + 1))
+                after_if = 0
+                key_ind = -1
+                if (match(line, /^ *-[ \t]+/) && substr(line, RLENGTH + 1) !~ /^#/) {
+                    key_ind = RLENGTH
+                    step_key(substr(line, key_ind + 1))
+                }
             }
         }
         END { close_item(); print steps + 0, ok + 0 }
     ' $workflow_files
 }
 
-# check_step_if <action> <condition> — at least one step uses <action>, and
-# every such step runs only on exactly <condition>.
+# check_step_if <action> <condition> — at least one step uses <action>, every
+# such step runs only on exactly <condition>, and this reader finds as many
+# such steps as step_pins counts `uses:` lines for <action>.
 check_step_if() {
     counts="$(step_if_pins "$1" "$2")"
     steps="${counts% *}"
     pinned="${counts#* }"
+    # Only step_pins's step count is read; its input and value are unused here.
+    uses="$(step_pins "$1" if "$2")"
+    uses="${uses% *}"
     if [ "$steps" -eq 0 ]; then
         pin_error "no workflow uses $1"
+    elif [ "$steps" != "$uses" ]; then
+        pin_error "$uses $1 uses: line(s) but $steps step(s) whose if: tools-check can read (CI safety rule)"
     elif [ "$steps" != "$pinned" ]; then
         pin_error "$steps $1 step(s) but $pinned set if: '$2' (CI safety rule)"
     fi
 }
 # The upload runs only when the screenshot step (id: shots) itself failed, not
-# on any earlier step's failure.
+# on any earlier step's failure, and its if: has no continuation line.
 check_step_if actions/upload-artifact "failure() && steps.shots.outcome == 'failure'"
 
 # The guarded install's exact text: the INSTALL_COMMAND the install guard

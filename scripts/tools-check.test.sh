@@ -421,6 +421,36 @@ new_tree
 printf '      - uses: %s # v7.0.2\n        with:\n          path: frontend/ui/shots/output/**/*.png\n          retention-days: 7\n' "$upload_artifact" >>"$work/repo/.github/workflows/ci.yml"
 expect_exit "a second upload without the if: fails" 1 "2 actions/upload-artifact step(s) but 1 $if_count"
 
+new_tree
+printf '      -\n        uses: %s # v7.0.2\n        if: always()\n        with:\n          path: frontend/ui/shots/output/**/*.png\n          retention-days: 7\n' "$upload_artifact" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a second upload as a bare - item that always runs fails" 1 "2 actions/upload-artifact step(s) but 1 $if_count"
+
+new_tree
+printf '      - # the second upload\n        uses: %s # v7.0.2\n        with:\n          path: frontend/ui/shots/output/**/*.png\n          retention-days: 7\n' "$upload_artifact" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a second upload after a - with only a comment fails" 1 "2 actions/upload-artifact step(s) but 1 $if_count"
+
+# YAML folds a deeper line into the if: value, so the upload would always run.
+new_tree
+replace_in_ci '{ print } /^        if: failure\(\) && steps/ { print "          || always()" }'
+expect_exit "an if: continued on the next line fails" 1 "1 actions/upload-artifact step(s) but 0 $if_count"
+
+new_tree
+replace_in_ci '{ print } /^        if: failure\(\) && steps/ { print ""; print "        # always"; print "          || always()" }'
+expect_exit "an if: continued past a blank and a comment line fails" 1 "but 0 $if_count"
+
+new_tree
+replace_in_ci '/uses: .*upload-artifact/ { print "      - if: " ENVIRON["upload_if"]; print "         || always()"; sub(/- uses/, "  uses"); print; next } /^        if: failure\(\) && steps/ { next } { print }'
+expect_exit "an if: on the - line continued on the next line fails" 1 "but 0 $if_count"
+
+new_tree
+replace_in_ci '/uses: .*upload-artifact/ { print "      -"; print "        if: " ENVIRON["upload_if"]; sub(/- uses/, "  uses"); print; next } /^        if: failure\(\) && steps/ { next } { print }'
+expect_exit "the upload as a bare - item with the if: passes" 0
+
+# Every uses: line of the upload is a step this reader reads for its if:.
+new_tree
+printf '      - run: true\n        env:\n          uses: %s # v7.0.2\n          with:\n            path: frontend/ui/shots/output/**/*.png\n            retention-days: 7\n' "$upload_artifact" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "an upload uses: line outside a step's keys fails" 1 "2 actions/upload-artifact uses: line(s) but 1 step(s) whose if: tools-check can read"
+
 # No workflow asks for a container itself: no container: or services: key,
 # and no docker or podman in a run: or shell:.
 new_tree
