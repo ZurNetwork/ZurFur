@@ -44,8 +44,8 @@ function watchPage(page: Page, watch: Watch): void {
 
 /**
  * The constructors whose connections the request watch can't see (a shared
- * worker's own requests, WebRTC's STUN and TURN, WebTransport's QUIC): each
- * construction in a page is a problem.
+ * worker's own requests, WebRTC's STUN and TURN, WebTransport's QUIC): a plain
+ * construction in a page is a problem; a hidden one is not caught.
  */
 export const watchedConstructors = [
 	'SharedWorker',
@@ -59,7 +59,9 @@ const constructionBinding = '__zurfurShotsConstructed';
 
 /**
  * Runs in every frame before its scripts: wraps each watched constructor the
- * frame has so that every construction calls the binding with its name first.
+ * frame has so that a plain construction calls the binding with its name first.
+ * It doesn't run in a dedicated Worker, and the page can reach the original
+ * or rewrite the binding's global, so a hidden construction goes unreported.
  */
 function reportConstructions([binding, names]: readonly [string, readonly string[]]): void {
 	for (const name of names) {
@@ -79,7 +81,7 @@ function reportConstructions([binding, names]: readonly [string, readonly string
 /**
  * Watches every page of the test's context: each request not to the loopback
  * server is aborted and recorded, as is every page error, off-host websocket
- * and construction of a watched constructor, in every frame. Call it before
+ * and plain construction of a watched constructor, in every frame. Call it before
  * the first navigation.
  */
 export async function watchContext(context: BrowserContext, page: Page): Promise<Watch> {
