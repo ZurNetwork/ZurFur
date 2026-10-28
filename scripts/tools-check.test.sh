@@ -451,6 +451,29 @@ new_tree
 printf '      - run: true\n        env:\n          uses: %s # v7.0.2\n          with:\n            path: frontend/ui/shots/output/**/*.png\n            retention-days: 7\n' "$upload_artifact" >>"$work/repo/.github/workflows/ci.yml"
 expect_exit "an upload uses: line outside a step's keys fails" 1 "2 actions/upload-artifact uses: line(s) but 1 step(s) whose if: tools-check can read"
 
+# The upload's steps.shots is the screenshot step: it carries id: shots, and
+# no other step does.
+new_tree
+replace_in_ci '/^        id: shots$/ { next } { print }'
+expect_exit "a screenshot step without id: shots fails" 1 "1 step(s) run 'just gallery-shots-run --ci' but 0 set id: shots"
+
+new_tree
+replace_in_ci '/^        id: shots$/ { next } { print } /^          yarn --cwd frontend\/web run build$/ { print "        id: shots" }'
+expect_exit "id: shots on another step fails" 1 "1 step(s) set id: shots but 0 run exactly 'just gallery-shots-run --ci'"
+expect_exit "id: shots on another step leaves the screenshot step without it" 1 "1 step(s) run 'just gallery-shots-run --ci' but 0 set id: shots"
+
+new_tree
+replace_in_ci '{ print } /^      - run: just gallery-shots-run --ci$/ { print "          || true" }'
+expect_exit "a screenshot run continued on the next line fails" 1 "1 step(s) set id: shots but 0 run exactly 'just gallery-shots-run --ci'"
+
+new_tree
+replace_in_ci '/^      - run: just gallery-shots-run --ci$/ { print "      - run: just gallery-shots-run"; next } { print }'
+expect_exit "a workflow without the screenshot run fails" 1 "no step runs exactly 'just gallery-shots-run --ci'"
+
+new_tree
+replace_in_ci '/^      - run: just gallery-shots-run --ci$/ { print "      - id: shots"; print "        run: just gallery-shots-run --ci"; getline; next } { print }'
+expect_exit "id: shots before the screenshot run passes" 0
+
 # No workflow asks for a container itself: no container: or services: key,
 # and no docker or podman in a run: or shell:.
 new_tree

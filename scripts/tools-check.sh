@@ -17,9 +17,11 @@
 # actions/upload-artifact step sets path frontend/ui/shots/output/**/*.png and
 # retention-days 7, and runs only on exactly
 # `if: failure() && steps.shots.outcome == 'failure'`, one line with no
-# continuation line under it; and the rules in the
-# comment above ci_safety (permissions, secrets, installs, package managers,
-# containers, actions and the YAML shapes this reader can follow).
+# continuation line under it; the step whose `run:` is exactly
+# `just gallery-shots-run --ci` carries `id: shots`, and no other step does;
+# and the rules in the comment above ci_safety (permissions, secrets,
+# installs, package managers, containers, actions and the YAML shapes this
+# reader can follow).
 set -eu
 
 : "${TYPOS_VERSION:?run through just tools-check}"
@@ -158,35 +160,41 @@ check_step_input actions/checkout persist-credentials false "CI safety rule"
 check_step_input actions/upload-artifact path 'frontend/ui/shots/output/**/*.png' "CI safety rule"
 check_step_input actions/upload-artifact retention-days 7 "CI safety rule"
 
-# step_if_pins <action> <condition> — prints "<steps> <pinned>": how many
-# steps use <action>, and how many of those carry exactly one step-level
-# `if:`, whose value is exactly <condition>. A step starts on a `-` line, as in
-# the safety reader below: its keys are the lines at its first key's indent,
-# on the `-` line or, after a bare `-`, on the next line, before or after its
-# `uses:`; an `if:` under `with:` or `env:` never counts. Any other line of the
-# step after the `if:` and before its next key (YAML folds a deeper line into
-# the value, past blank lines) voids the match.
-step_if_pins() {
+# step_key_pins <select key> <mode> <text> <key> <value> — prints "<steps>
+# <pinned>": how many steps carry a step-level <select key> whose value, a
+# comment and its quotes aside, is <text> (mode exact) or starts with it (mode
+# prefix), and how many of those carry exactly one step-level <key>, whose
+# value is exactly <value>. A step starts on a `-` line, as in the safety
+# reader below: its keys are the lines at its first key's indent, on the `-`
+# line or, after a bare `-`, on the next line; a key under `with:` or `env:`
+# never counts. Any other line of the step after <key> and before its next key
+# (YAML folds a deeper line into the value, past blank lines) voids the match.
+step_key_pins() {
     # shellcheck disable=SC2086 # $workflow_files is a newline list without spaces
-    awk -v action="$1" -v want="$2" -v q="'" '
+    awk -v sel="$1" -v mode="$2" -v text="$3" -v key="$4" -v want="$5" -v q="'" '
         function indent(s) { match(s, /^ */); return RLENGTH }
         function close_item() {
-            if (in_item && uses_action) { steps++; if (ifs == 1 && if_ok) ok++ }
+            if (in_item && selected) { steps++; if (keys == 1 && key_ok) ok++ }
             in_item = 0
         }
+        function value(t, at) {
+            t = substr(t, at)
+            sub(/[ \t]+#.*$/, "", t)
+            sub(/[ \t]+$/, "", t)
+            return t
+        }
         function step_key(t,    v) {
-            after_if = 0
-            if (match(t, /^uses:[ \t]*/)) {
-                v = substr(t, RLENGTH + 1)
+            after_key = 0
+            if (match(t, "^" sel ":[ \t]*")) {
+                v = value(t, RLENGTH + 1)
                 sub("^[\"" q "]", "", v)
-                if (index(v, action "@") == 1) uses_action = 1
-            } else if (match(t, /^if:[ \t]*/)) {
-                v = substr(t, RLENGTH + 1)
-                sub(/[ \t]+#.*$/, "", v)
-                sub(/[ \t]+$/, "", v)
-                ifs++
-                after_if = 1
-                if (v == want) if_ok = 1
+                sub("[\"" q "]$", "", v)
+                if (mode == "prefix" ? index(v, text) == 1 : v == text) selected = 1
+            }
+            if (match(t, "^" key ":[ \t]*")) {
+                keys++
+                after_key = 1
+                if (value(t, RLENGTH + 1) == want) key_ok = 1
             }
         }
         FNR == 1 { close_item() }
@@ -197,17 +205,17 @@ step_if_pins() {
             if (in_item && indent(line) > dash_ind) {
                 if (key_ind < 0) key_ind = indent(line)
                 if (indent(line) == key_ind) step_key(substr(line, key_ind + 1))
-                else if (after_if) if_ok = 0
+                else if (after_key) key_ok = 0
                 next
             }
             close_item()
             if (match(line, /^ *-([ \t]|$)/)) {
                 dash_ind = indent(line)
                 in_item = 1
-                uses_action = 0
-                ifs = 0
-                if_ok = 0
-                after_if = 0
+                selected = 0
+                keys = 0
+                key_ok = 0
+                after_key = 0
                 key_ind = -1
                 if (match(line, /^ *-[ \t]+/) && substr(line, RLENGTH + 1) !~ /^#/) {
                     key_ind = RLENGTH
@@ -220,10 +228,10 @@ step_if_pins() {
 }
 
 # check_step_if <action> <condition> — at least one step uses <action>, every
-# such step runs only on exactly <condition>, and this reader finds as many
+# such step runs only on exactly <condition>, and step_key_pins finds as many
 # such steps as step_pins counts `uses:` lines for <action>.
 check_step_if() {
-    counts="$(step_if_pins "$1" "$2")"
+    counts="$(step_key_pins uses prefix "$1@" if "$2")"
     steps="${counts% *}"
     pinned="${counts#* }"
     # Only step_pins's step count is read; its input and value are unused here.
@@ -240,6 +248,29 @@ check_step_if() {
 # The upload runs only when the screenshot step (id: shots) itself failed, not
 # on any earlier step's failure, and its if: has no continuation line.
 check_step_if actions/upload-artifact "failure() && steps.shots.outcome == 'failure'"
+
+# check_step_id <run> <id> — at least one step runs exactly <run>, every such
+# step carries exactly one step-level `id: <id>`, and every step whose id is
+# <id> runs exactly <run>.
+check_step_id() {
+    counts="$(step_key_pins run exact "$1" id "$2")"
+    steps="${counts% *}"
+    pinned="${counts#* }"
+    if [ "$steps" -eq 0 ]; then
+        pin_error "no step runs exactly '$1' (CI safety rule)"
+    elif [ "$steps" != "$pinned" ]; then
+        pin_error "$steps step(s) run '$1' but $pinned set id: $2 (CI safety rule)"
+    fi
+    counts="$(step_key_pins id exact "$2" run "$1")"
+    steps="${counts% *}"
+    pinned="${counts#* }"
+    if [ "$steps" != "$pinned" ]; then
+        pin_error "$steps step(s) set id: $2 but $pinned run exactly '$1' (CI safety rule)"
+    fi
+}
+# The upload's steps.shots names the screenshot step and no other: without the
+# id the upload never runs, and on another step it uploads on that step's failure.
+check_step_id "just gallery-shots-run --ci" shots
 
 # The guarded install's exact text: the INSTALL_COMMAND the install guard
 # exports, from its one `export const INSTALL_COMMAND = '<command>';` line.
