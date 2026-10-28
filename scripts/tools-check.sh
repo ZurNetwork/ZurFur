@@ -168,7 +168,8 @@ check_step_input actions/upload-artifact retention-days 7 "CI safety rule"
 # reader below: its keys are the lines at its first key's indent, on the `-`
 # line or, after a bare `-`, on the next line; a key under `with:` or `env:`
 # never counts. Any other line of the step after <key> and before its next key
-# (YAML folds a deeper line into the value, past blank lines) voids the match.
+# (YAML folds a deeper line into the value, past blank lines, which may hold
+# spaces or tabs) voids the match.
 step_key_pins() {
     # shellcheck disable=SC2086 # $workflow_files is a newline list without spaces
     awk -v sel="$1" -v mode="$2" -v text="$3" -v key="$4" -v want="$5" -v q="'" '
@@ -201,7 +202,7 @@ step_key_pins() {
         {
             sub(/\r$/, "")
             line = $0
-            if (line ~ /^ *(#.*)?$/) next
+            if (line ~ /^[ \t]*(#.*)?$/) next
             if (in_item && indent(line) > dash_ind) {
                 if (key_ind < 0) key_ind = indent(line)
                 if (indent(line) == key_ind) step_key(substr(line, key_ind + 1))

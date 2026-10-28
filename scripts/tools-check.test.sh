@@ -438,6 +438,15 @@ new_tree
 replace_in_ci '{ print } /^        if: failure\(\) && steps/ { print ""; print "        # always"; print "          || always()" }'
 expect_exit "an if: continued past a blank and a comment line fails" 1 "but 0 $if_count"
 
+# A blank line may hold spaces and a tab; YAML still folds the deeper line.
+new_tree
+replace_in_ci '{ print } /^        if: failure\(\) && steps/ { print "        \t"; print "          || always()" }'
+expect_exit "an if: continued past a line of spaces and a tab fails" 1 "but 0 $if_count"
+
+new_tree
+replace_in_ci '{ print } /^        if: failure\(\) && steps/ { print "\t"; print "          || always()" }'
+expect_exit "an if: continued past a tab-only line fails" 1 "but 0 $if_count"
+
 new_tree
 replace_in_ci '/uses: .*upload-artifact/ { print "      - if: " ENVIRON["upload_if"]; print "         || always()"; sub(/- uses/, "  uses"); print; next } /^        if: failure\(\) && steps/ { next } { print }'
 expect_exit "an if: on the - line continued on the next line fails" 1 "but 0 $if_count"
@@ -465,6 +474,10 @@ expect_exit "id: shots on another step leaves the screenshot step without it" 1 
 new_tree
 replace_in_ci '{ print } /^      - run: just gallery-shots-run --ci$/ { print "          || true" }'
 expect_exit "a screenshot run continued on the next line fails" 1 "1 step(s) set id: shots but 0 run exactly 'just gallery-shots-run --ci'"
+
+new_tree
+replace_in_ci '{ print } /^      - run: just gallery-shots-run --ci$/ { print "        \t"; print "          || true" }'
+expect_exit "a screenshot run continued past a line of spaces and a tab fails" 1 "1 step(s) set id: shots but 0 run exactly 'just gallery-shots-run --ci'"
 
 new_tree
 replace_in_ci '/^      - run: just gallery-shots-run --ci$/ { print "      - run: just gallery-shots-run"; next } { print }'
