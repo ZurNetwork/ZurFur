@@ -287,6 +287,19 @@ describe('the reference-picture check', () => {
 		expect(findings.map((finding) => finding.found).join('\n')).toMatch(/zrFr[\s\S]*iCCP/);
 	});
 
+	it('refuses an IEND carrying bytes, naming IEND and its length', () => {
+		const payload = Buffer.from('DATABASE_URL=postgres://u:p@h/db');
+		const planted = Buffer.concat([png().subarray(0, -12), chunk('IEND', payload)]);
+		expect(pngFindings('a/dark.png', planted)).toEqual([
+			{
+				rule: 'metadata',
+				path: 'a/dark.png',
+				found: `chunk IEND, holding ${String(payload.length)} byte(s), not empty`
+			}
+		]);
+		expect(run([referenceFolder({ 'a/dark.png': planted })]).code).toBe(1);
+	});
+
 	it('names an unprintable chunk type by its bytes', () => {
 		const planted = png([chunk('a\nb\x1b', Buffer.alloc(0))]);
 		const found = pngFindings('a/dark.png', planted).map((finding) => finding.found);

@@ -2,7 +2,8 @@
  * The reference-picture check: the folder holds exactly `<entry id>/<dark|light>.png`
  * (ids of a-z, 0-9 and -), read without following links. Each picture is a PNG of at
  * most 1 MiB and 4096 px a side with only IHDR, IDAT and IEND chunks, every CRC right,
- * one IDAT run that is one zlib stream of exactly IHDR's size, nothing after IEND.
+ * one IDAT run that is one zlib stream of exactly IHDR's size, an empty IEND,
+ * nothing after it.
  *
  * Run by Node from `frontend/ui`: `node src/checks/references.ts shots/__screenshots__`.
  * Exit 0 clean, 1 findings, 2 unreadable input or bad usage.
@@ -199,6 +200,11 @@ export function pngFindings(file: string, bytes: Buffer): readonly ReferenceFind
 		}
 		if (!allowedChunks.has(name)) {
 			findings.push(finding('metadata', `chunk ${name}, not IHDR, IDAT or IEND`));
+		}
+		if (name === 'IEND' && length !== 0) {
+			findings.push(
+				finding('metadata', `chunk IEND, holding ${String(length)} byte(s), not empty`)
+			);
 		}
 		if (name === 'IHDR') {
 			if (length !== 13) {
