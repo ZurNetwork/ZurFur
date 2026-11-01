@@ -1,0 +1,32 @@
+# Free dependency updates and security alerts (phase 0 of teams 2.0: docs/zuri-ai-framework.md in ProgrammingCheetah/ways).
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: npm
+    directory: /frontend/web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: npm
+    directory: /lexicons
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /docker/plc
+    schedule:
+      interval: weekly
