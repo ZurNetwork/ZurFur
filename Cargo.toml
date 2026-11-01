@@ -119,7 +119,7 @@ proptest = "1.11.0"
 insta = { version = "1.48.0", features = ["json", "redactions"] }
 # Quiet upstream since 2025-08; re-check activity before any bump.
 wiremock = "0.6.5"
-rand = { version = "0.8" }
+rand = { version = "0.10" }
 # --- ZMVP-49: real did:plc minter, key custody, envelope encryption ---
 # secp256k1 keygen + atproto-canonical ECDSA-SHA256 sign (low-S, 64-byte r‖s) +
 # did:key multikey formatting. The vetted primitive, not hand-rolled k256.
