@@ -22,7 +22,7 @@ tokio = { version = "1.49.0", features = ["full"] }
 # (lowerCamelCase, absent-optional omission, strict Timestamp grammar).
 prost = "0.14.4"
 pbjson = "0.8.0"
-pbjson-types = "0.8.0"
+pbjson-types = "0.9.0"
 serde = { version = "1.0.228", features = ["derive"] }
 uuid = { version = "1.20.0", features = ["v7", "serde"] }
 # Content identifiers: atproto record and blob CIDs, and the hash on every Atta node.
