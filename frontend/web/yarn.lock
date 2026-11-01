@@ -1012,13 +1012,18 @@ dlv@^1.1.3:
   resolved "https://registry.yarnpkg.com/dlv/-/dlv-1.1.3.tgz#5c198a8a11453596e751494d49874bc7732f2e79"
   integrity sha512-+HlytyjlPKnIG8XuRG8WvmBP8xs8P71y+SKKS6ZXWoEgLuePxtDoUEiH7WkdePWrQ5JBpE6aoVqfZfJUQkjXwA==
 
-effect@^3.21.4, effect@^3.22.0:
+effect@^3.21.4:
   version "3.22.0"
   resolved "https://registry.yarnpkg.com/effect/-/effect-3.22.0.tgz#74afbee753a78586e784e42b299d2d469dc13b3a"
   integrity sha512-jhYFe0zTlIRqYFrKTS+6luhmS/Tm0f+JLo0K9KUxvtFab1SUGEszQi2ehOP6QzAZvy831lDmTwwzvVDZSPNz3g==
   dependencies:
     "@standard-schema/spec" "^1.0.0"
     fast-check "^3.23.1"
+
+effect@^4.1.0:
+  version "4.1.0"
+  resolved "https://registry.yarnpkg.com/effect/-/effect-4.1.0.tgz#26808deca403af6af0cf79caac78104db6b82176"
+  integrity sha512-lGx2MJJyrXA8RZb2UpQ/0Nkb5Utaimby7oD92+18noBxLPE85IFOvptdzau8dvcxAOwfwHo9iqapbKeFzqQM/Q==
 
 es-errors@^1.3.0:
   version "1.3.0"
