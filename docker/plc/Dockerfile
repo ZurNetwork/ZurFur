@@ -19,7 +19,7 @@
 # -v`). Verified end-to-end against the pinned reference PDS image
 # (ZURFUR_PDS_IMAGE in .env.example): boots, mints a did:plc on
 # createAccount, and resolves it back.
-FROM node:20-alpine
+FROM node:26-alpine
 
 WORKDIR /app
 
