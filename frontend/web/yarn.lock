@@ -2033,10 +2033,10 @@ validator@^13.12.0, validator@^13.15.22:
   resolved "https://registry.yarnpkg.com/validator/-/validator-13.15.35.tgz#81cf455c51f15b69d8d340be5914f3fab00dbf7f"
   integrity sha512-TQ5pAGhd5whStmqWvYF4OjQROlmv9SMFVt37qoCBdqRffuuklWYQlCNnEs2ZaIBD1kZRNnikiZOS1eqgkar0iw==
 
-"vite@^6.0.0 || ^7.0.0 || ^8.0.0", vite@^8.0.16:
-  version "8.1.5"
-  resolved "https://registry.yarnpkg.com/vite/-/vite-8.1.5.tgz#ccffce3ee487b1886223b24ebb27b91674827d30"
-  integrity sha512-7ULLwsCdYx/nRyrpiEwvqb5TFHrMVZyBt+rg/OAXT7rgj/z+DtTDyKFeLAdDkubDVDKD8jOsndmy7m55XcfUsw==
+"vite@^6.0.0 || ^7.0.0 || ^8.0.0", vite@^8.1.6:
+  version "8.1.6"
+  resolved "https://registry.yarnpkg.com/vite/-/vite-8.1.6.tgz#77f27cfb40c29d02bc60490b01d983e0ecb9a394"
+  integrity sha512-aRAHIxx5SW5zc1sMqFwJU/t5qaFfXb5Hj0J7W0VXihu/X99+346tz6080tO1T1xVIJORX/b3zVTXGFqUXh35uw==
   dependencies:
     lightningcss "^1.32.0"
     picomatch "^4.0.5"
