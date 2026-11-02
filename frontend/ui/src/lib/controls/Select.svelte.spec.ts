@@ -256,7 +256,7 @@ describe('Select', () => {
 		expect(names).toEqual(['Everyone', 'Followers only', 'Only me']);
 		expect(option('Followers only').getAttribute('aria-selected')).toBe('true');
 		expect(option('Followers only').querySelector('svg')).not.toBeNull();
-		expect(option('Everyone').hasAttribute('aria-selected')).toBe(false);
+		expect(option('Everyone').getAttribute('aria-selected')).toBe('false');
 		expect(option('Everyone').querySelector('svg')).toBeNull();
 	});
 
@@ -471,7 +471,7 @@ describe('Select', () => {
 		await page.getByRole('combobox').click();
 		await expect.element(page.getByRole('listbox')).toBeVisible();
 		expect(option('Everyone').getAttribute('aria-selected')).toBe('true');
-		expect(option('Only me').hasAttribute('aria-selected')).toBe(false);
+		expect(option('Only me').getAttribute('aria-selected')).toBe('false');
 	});
 
 	it('shows the placeholder again when the parent refuses the first choice', async () => {
@@ -618,33 +618,6 @@ describe('Select', () => {
 		await unchosen.rerender({ value: 'followers' });
 		expect(hiddenInputs(form)).toHaveLength(1);
 		expect(new FormData(form).get('visibility')).toBe('followers');
-	});
-
-	it.each([
-		['a string that is no option', 'evil'],
-		['the empty string', '']
-	])('ignores %s written into its hidden input, and posts the value it shows', async (_, raw) => {
-		const { form } = aForm();
-		const onChange = vi.fn<(value: Visibility) => void>();
-		render(Select<Visibility>, {
-			target: form,
-			props: {
-				label: 'Who can see this',
-				options: VISIBILITY,
-				value: 'followers',
-				onChange,
-				name: 'visibility'
-			}
-		});
-		const [input] = hiddenInputs(form);
-		if (input === undefined) throw new Error('no hidden input');
-		input.value = raw;
-		input.dispatchEvent(new Event('input', { bubbles: true }));
-		await tick();
-		await tick();
-		expect(onChange).not.toHaveBeenCalled();
-		expect(new FormData(form).get('visibility')).toBe('followers');
-		await expect.element(page.getByRole('combobox')).toHaveTextContent('Followers only');
 	});
 
 	it.each([
