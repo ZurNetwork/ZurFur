@@ -27,7 +27,7 @@ repo = "ZurNetwork/ZurFur"
 kind = "git-sibling"
 repo = "ZurNetwork/zurfur-design"
 path = "../zurfur-design"
-index = "docs/design-index.md"
+index = "../zurfur/docs/design-index.md"
 
 [workspaces]
 path = ".zaf/workspaces"
