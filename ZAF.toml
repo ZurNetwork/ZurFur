@@ -8,6 +8,7 @@ name = "zurfur"
 jj = "*"
 gh = "*"
 just = "*"
+yarn = "*"
 
 # Tickets live on the private design repo, beside the pages they cite.
 [board]
