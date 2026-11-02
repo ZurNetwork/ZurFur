@@ -40,7 +40,7 @@ task = "feature/release-{version}-{epic}-{task}"
 [gate]
 full = "just gate"
 light = "just gate-light"
-tests = "cargo test --workspace {name}"
+tests = "sh scripts/zaf-tests.sh {name}"
 
 # The teams pack, installed from the ways marketplace on GitHub (ProgrammingCheetah/ways).
 [pack]
