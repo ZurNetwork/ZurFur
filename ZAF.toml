@@ -48,7 +48,7 @@ tag = "2.0.0"
 
 [runners.claude]
 command = "claude -p {prompt} --model {model} --add-dir {root}"
-timeout_minutes = 45
+timeout_minutes = 180
 
 [roles.programmer]
 model = "sonnet"
