@@ -33,6 +33,7 @@ buf_action="$(reviewed bufbuild/buf-action)"
 cargo_deny="$(reviewed EmbarkStudios/cargo-deny-action)"
 typos="$(reviewed crate-ci/typos)"
 setup_just="$(reviewed extractions/setup-just)"
+upload_artifact="$(reviewed actions/upload-artifact)"
 
 # install_line <command> — frontend/install-check.mjs's INSTALL_COMMAND line.
 install_line() {
@@ -41,7 +42,9 @@ install_line() {
 
 # new_tree — a repo whose ci.yml pins everything correctly and keeps every CI
 # safety rule: read-only top-level permissions, checkouts without stored
-# credentials, and the guarded install, exactly the install guard's command.
+# credentials, the guarded install, exactly the install guard's command, and
+# the one failure upload: the screenshot run's PNG files, kept 7 days, only
+# when the screenshot step itself failed.
 new_tree() {
     rm -rf "$work/repo"
     mkdir -p "$work/repo/scripts" "$work/repo/.github/workflows" "$work/repo/frontend"
@@ -93,6 +96,15 @@ jobs:
       - run: |
           yarn run check
           yarn --cwd frontend/web run build
+      - run: just gallery-shots-run --ci
+        id: shots
+      - uses: $upload_artifact # v7.0.2
+        if: failure() && steps.shots.outcome == 'failure'
+        with:
+          name: gallery-shots-failures
+          path: frontend/ui/shots/output/**/*.png
+          retention-days: 7
+          if-no-files-found: ignore
 EOF
 }
 
@@ -351,6 +363,192 @@ new_tree
 printf '    container:\n      options: [{run: yarn install}]\n' >>"$work/repo/.github/workflows/ci.yml"
 expect_exit "a run: outside any step fails" 1 "a run: that is not a step command"
 
+# The one upload: the screenshot run's PNG files, kept 7 days, and nothing wider.
+new_tree
+replace_in_ci '/retention-days: 7/ { print "          retention-days: 90"; next } { print }'
+expect_exit "an upload kept longer than 7 days fails" 1 "set retention-days: '7'"
+
+new_tree
+replace_in_ci '/retention-days: 7/ { next } { print }'
+expect_exit "an upload without retention-days fails" 1 "set retention-days: '7'"
+
+new_tree
+replace_in_ci '/path: frontend\/ui\/shots\/output/ { print "          path: frontend/ui/"; next } { print }'
+expect_exit "an upload of a wider path fails" 1 "set path: 'frontend/ui/shots/output/**/*.png'"
+
+new_tree
+replace_in_ci '/path: frontend\/ui\/shots\/output/ { print "          path: |"; print "            frontend/ui/shots/output/**/*.png"; print "            frontend/ui/storybook-static"; next } { print }'
+expect_exit "an upload of a path list fails" 1 "set path: 'frontend/ui/shots/output/**/*.png'"
+
+new_tree
+printf '      - uses: %s # v7.0.2\n        with:\n          name: x\n          path: frontend/ui/shots/output/**/*.png\n' "$upload_artifact" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a second upload without retention-days fails" 1 "2 actions/upload-artifact step(s) but 1 set retention-days"
+
+# The upload runs only when the screenshot step itself failed: exactly one
+# step-level if:, exactly that condition.
+upload_if="failure() && steps.shots.outcome == 'failure'"
+export upload_if
+if_count="set if: '$upload_if'"
+new_tree
+replace_in_ci '/^        if: failure\(\) && steps/ { next } { print }'
+expect_exit "an upload without an if: fails" 1 "1 actions/upload-artifact step(s) but 0 $if_count"
+
+new_tree
+replace_in_ci '/^        if: failure\(\) && steps/ { print "        if: failure()"; next } { print }'
+expect_exit "an upload on any failure fails" 1 "but 0 $if_count"
+
+new_tree
+replace_in_ci '/^        if: failure\(\) && steps/ { print "        if: always()"; next } { print }'
+expect_exit "an upload that always runs fails" 1 "but 0 $if_count"
+
+new_tree
+replace_in_ci '/^        if: failure\(\) && steps/ { print "        if: ${{ failure() && steps.shots.outcome == '"'"'failure'"'"' }}"; next } { print }'
+expect_exit "the same condition in another spelling fails (exact text only)" 1 "but 0 $if_count"
+
+new_tree
+replace_in_ci '/^        if: failure\(\) && steps/ { next } { print } /^          retention-days: 7$/ { print "          if: " ENVIRON["upload_if"] }'
+expect_exit "an if: under with: does not count" 1 "but 0 $if_count"
+
+new_tree
+replace_in_ci '{ print } /^        if: failure\(\) && steps/ { print "        if: always()" }'
+expect_exit "a second step-level if: fails" 1 "but 0 $if_count"
+
+new_tree
+replace_in_ci '/uses: .*upload-artifact/ { print "      - name: upload"; print "        if: " ENVIRON["upload_if"]; sub(/- uses/, "  uses"); print; next } /^        if: failure\(\) && steps/ { next } { print }'
+expect_exit "the if: before the uses: passes" 0
+
+new_tree
+printf '      - uses: %s # v7.0.2\n        with:\n          path: frontend/ui/shots/output/**/*.png\n          retention-days: 7\n' "$upload_artifact" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a second upload without the if: fails" 1 "2 actions/upload-artifact step(s) but 1 $if_count"
+
+new_tree
+printf '      -\n        uses: %s # v7.0.2\n        if: always()\n        with:\n          path: frontend/ui/shots/output/**/*.png\n          retention-days: 7\n' "$upload_artifact" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a second upload as a bare - item that always runs fails" 1 "2 actions/upload-artifact step(s) but 1 $if_count"
+
+new_tree
+printf '      - # the second upload\n        uses: %s # v7.0.2\n        with:\n          path: frontend/ui/shots/output/**/*.png\n          retention-days: 7\n' "$upload_artifact" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a second upload after a - with only a comment fails" 1 "2 actions/upload-artifact step(s) but 1 $if_count"
+
+# YAML folds a deeper line into the if: value, so the upload would always run.
+new_tree
+replace_in_ci '{ print } /^        if: failure\(\) && steps/ { print "          || always()" }'
+expect_exit "an if: continued on the next line fails" 1 "1 actions/upload-artifact step(s) but 0 $if_count"
+
+new_tree
+replace_in_ci '{ print } /^        if: failure\(\) && steps/ { print ""; print "        # always"; print "          || always()" }'
+expect_exit "an if: continued past a blank and a comment line fails" 1 "but 0 $if_count"
+
+# A blank line may hold spaces and a tab; YAML still folds the deeper line.
+new_tree
+replace_in_ci '{ print } /^        if: failure\(\) && steps/ { print "        \t"; print "          || always()" }'
+expect_exit "an if: continued past a line of spaces and a tab fails" 1 "but 0 $if_count"
+
+new_tree
+replace_in_ci '{ print } /^        if: failure\(\) && steps/ { print "\t"; print "          || always()" }'
+expect_exit "an if: continued past a tab-only line fails" 1 "but 0 $if_count"
+
+new_tree
+replace_in_ci '/uses: .*upload-artifact/ { print "      - if: " ENVIRON["upload_if"]; print "         || always()"; sub(/- uses/, "  uses"); print; next } /^        if: failure\(\) && steps/ { next } { print }'
+expect_exit "an if: on the - line continued on the next line fails" 1 "but 0 $if_count"
+
+new_tree
+replace_in_ci '/uses: .*upload-artifact/ { print "      -"; print "        if: " ENVIRON["upload_if"]; sub(/- uses/, "  uses"); print; next } /^        if: failure\(\) && steps/ { next } { print }'
+expect_exit "the upload as a bare - item with the if: passes" 0
+
+# Every uses: line of the upload is a step this reader reads for its if:.
+new_tree
+printf '      - run: true\n        env:\n          uses: %s # v7.0.2\n          with:\n            path: frontend/ui/shots/output/**/*.png\n            retention-days: 7\n' "$upload_artifact" >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "an upload uses: line outside a step's keys fails" 1 "2 actions/upload-artifact uses: line(s) but 1 step(s) whose if: tools-check can read"
+
+# The upload's steps.shots is the screenshot step: it carries id: shots, and
+# no other step does.
+new_tree
+replace_in_ci '/^        id: shots$/ { next } { print }'
+expect_exit "a screenshot step without id: shots fails" 1 "1 step(s) run 'just gallery-shots-run --ci' but 0 set id: shots"
+
+new_tree
+replace_in_ci '/^        id: shots$/ { next } { print } /^          yarn --cwd frontend\/web run build$/ { print "        id: shots" }'
+expect_exit "id: shots on another step fails" 1 "1 step(s) set id: shots but 0 run exactly 'just gallery-shots-run --ci'"
+expect_exit "id: shots on another step leaves the screenshot step without it" 1 "1 step(s) run 'just gallery-shots-run --ci' but 0 set id: shots"
+
+new_tree
+replace_in_ci '{ print } /^      - run: just gallery-shots-run --ci$/ { print "          || true" }'
+expect_exit "a screenshot run continued on the next line fails" 1 "1 step(s) set id: shots but 0 run exactly 'just gallery-shots-run --ci'"
+
+new_tree
+replace_in_ci '{ print } /^      - run: just gallery-shots-run --ci$/ { print "        \t"; print "          || true" }'
+expect_exit "a screenshot run continued past a line of spaces and a tab fails" 1 "1 step(s) set id: shots but 0 run exactly 'just gallery-shots-run --ci'"
+
+new_tree
+replace_in_ci '/^      - run: just gallery-shots-run --ci$/ { print "      - run: just gallery-shots-run"; next } { print }'
+expect_exit "a workflow without the screenshot run fails" 1 "no step runs exactly 'just gallery-shots-run --ci'"
+
+new_tree
+replace_in_ci '/^      - run: just gallery-shots-run --ci$/ { print "      - id: shots"; print "        run: just gallery-shots-run --ci"; getline; next } { print }'
+expect_exit "id: shots before the screenshot run passes" 0
+
+# No workflow asks for a container itself: no container: or services: key,
+# and no docker or podman in a run: or shell:.
+new_tree
+at="$(($(wc -l <"$work/repo/.github/workflows/ci.yml") + 2))"
+printf '  b:\n    container: node:24\n    steps:\n      - run: true\n' >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a job's container: fails" 1 "ci.yml:$at: a container: key"
+
+new_tree
+replace_in_ci '{ print } /^  web:$/ { print "    container:"; print "      image: node:24" }'
+expect_exit "a block container: under a job fails" 1 "a container: key"
+
+new_tree
+at="$(($(wc -l <"$work/repo/.github/workflows/ci.yml") + 2))"
+printf '  b:\n    services:\n      db:\n        image: postgres:17\n    steps:\n      - run: true\n' >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a job's services: fails" 1 "ci.yml:$at: a services: key"
+
+new_tree
+printf '  b: {runs-on: x, services: {db: {image: postgres}}, steps: [{run: true}]}\n' >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a flow-style services: fails" 1 "a services: key"
+
+new_tree
+printf '      - name: x\n        container: alpine\n        run: true\n' >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a step's container: fails" 1 "a container: key"
+
+new_tree
+printf '      - name: x\n        container : alpine\n' >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a container : key with a space before its colon fails" 1 "a container: key"
+
+docker_run="docker in a run: or shell:"
+podman_run="podman in a run: or shell:"
+expect_step_fails "a docker in a run: fails" 'docker ps' "$docker_run"
+expect_step_fails "a podman in a run: fails" 'podman ps' "$podman_run"
+expect_step_fails "a docker by path fails" '/usr/bin/docker ps' "$docker_run"
+expect_step_fails "an upper-case DOCKER fails" 'DOCKER ps' "$docker_run"
+expect_step_fails "a Podman in mixed case fails" 'PoDmAn run x' "$podman_run"
+expect_step_fails "a quoted docker fails" '"docker" ps' "$docker_run"
+expect_step_fails "a docker split by quotes fails" "do''cker ps" "$docker_run"
+expect_step_fails "a docker behind a wrapper fails" 'sudo -E docker run x' "$docker_run"
+expect_step_fails "a docker in sh -c fails" "sh -c 'docker ps'" "$docker_run"
+expect_step_fails "a docker in a command substitution fails" 'echo "$(docker ps)"' "$docker_run"
+expect_step_fails "a docker-compose fails" 'docker-compose up' "$docker_run"
+
+new_tree
+printf '      - run: |\n          echo hi\n          podman ps\n' >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a podman on a later line of a run block fails" 1 "$podman_run"
+
+new_tree
+printf '      - run: |\n          dock\\\n          er ps\n' >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a docker split over a continued line fails" 1 "$docker_run"
+
+new_tree
+printf '      - run: ps\n        shell: podman exec x sh {0}\n' >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "a podman as a step's shell fails" 1 "$podman_run"
+
+new_tree
+printf '      - run: |\n          # docker and podman stay out of this step\n          echo $DOCKER_HOST dockerfile\n' >>"$work/repo/.github/workflows/ci.yml"
+expect_exit "docker in a run's comment or inside a longer word passes" 0
+
+new_tree
+replace_in_ci '{ print } /^  web:$/ { print "    name: no container, no docker" }'
+expect_exit "docker in a plain value outside a run: passes" 0
+
 # Every uses: is a step's, naming exactly one action on the allow list.
 not_allowed="an action not on the allow list:"
 
@@ -385,6 +583,8 @@ expect_use "setup-node at another SHA fails" 1 "actions/setup-node@$sha # v7.1.0
     "an action not at its reviewed commit: actions/setup-node@$sha"
 expect_use "checkout at another SHA fails" 1 "actions/checkout@$sha # v7.0.1" \
     "an action not at its reviewed commit: actions/checkout@$sha"
+expect_use "upload-artifact at another SHA fails" 1 "actions/upload-artifact@$sha # v7.0.2" \
+    "an action not at its reviewed commit: actions/upload-artifact@$sha"
 expect_use "a reviewed SHA with more after its @ fails" 1 "$checkout@$sha # v7.0.1" \
     "an action not at its reviewed commit: $checkout@$sha"
 

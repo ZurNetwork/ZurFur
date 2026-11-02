@@ -3,7 +3,14 @@
 	import type { Snippet } from 'svelte';
 	import { useEnvironment } from '../environment/context';
 	import Icon from '../icons/Icon.svelte';
-	import { stepRow, watchRow, type StepSide } from './step-row';
+	import {
+		measureRow,
+		rowEdges,
+		stepRow,
+		watchRow,
+		type RowEdges,
+		type StepSide
+	} from './step-row';
 	import type { TabItem, TabStep } from './types';
 
 	interface Props {
@@ -42,9 +49,20 @@
 	let atStart = $state(true);
 	let atEnd = $state(true);
 
-	/** Steps the list's own scroll by one tab in `side`; no other box is scrolled. */
+	/** Shows where the list stands on the two step buttons. */
+	function showEdges(edges: RowEdges): void {
+		atStart = edges.atStart;
+		atEnd = edges.atEnd;
+	}
+
+	/**
+	 * Steps the list's own scroll by one tab in `side`, no other box, and shows its
+	 * new edges at once, so a press right after the step is not lost.
+	 */
 	function step(side: StepSide): void {
-		if (list !== undefined) stepRow(list, side);
+		if (list === undefined) return;
+		stepRow(list, side);
+		showEdges(rowEdges(measureRow(list)));
 	}
 
 	const back = $derived<TabStep>({
@@ -68,10 +86,7 @@
 	/** Keeps the list and where it stands while it steps; leaves nothing behind. */
 	function follow(node: HTMLElement): () => void {
 		list = node;
-		const stop = watchRow(node, (edges) => {
-			atStart = edges.atStart;
-			atEnd = edges.atEnd;
-		});
+		const stop = watchRow(node, showEdges);
 		return () => {
 			stop();
 			list = undefined;

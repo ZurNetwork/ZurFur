@@ -48,6 +48,10 @@ expect "scripts, Justfile" "code=false lock=false npmlock=false " "scripts/jj-pu
 scripts/hooks/pins.sh
 Justfile
 "
+expect "the screenshot script is run by the ui job" "code=true lock=false npmlock=false " "scripts/gallery-shots.sh"
+expect "the screenshot script's tests are not" "code=false lock=false npmlock=false " "scripts/gallery-shots.test.sh
+scripts/gallery-image-pins.test.sh
+"
 expect "a Rust file among docs" "code=true lock=false npmlock=false " "README.md
 backend/crates/domain/src/lib.rs
 "

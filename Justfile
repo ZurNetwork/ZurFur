@@ -20,6 +20,13 @@ export CARGO_DENY_VERSION := "0.20.2"
 export BUF_VERSION := "1.72.0"
 export JUST_VERSION := "1.49.0"
 
+# The Playwright image the gallery's screenshots are made in (scripts/gallery-shots.sh),
+# pinned by tag and digest. Trust rests on the digest alone: the registry holds no
+# signature for it. Its tag version moves with the Playwright frontend/yarn.lock
+# locks (@playwright/test, playwright and playwright-core); the script refuses a
+# mismatch. scripts/gallery-image-pins.test.sh pins this line.
+export PLAYWRIGHT_IMAGE := "mcr.microsoft.com/playwright:v1.61.1-noble@sha256:cf0daee9b994042e011bc29f20cdff1a9f682a039b43fcd738f7d8a9d3bcd9d6"
+
 # The design corpus (github.com/ZurNetwork/zurfur-design — private; the single
 # source of truth for Zurfur's glossary, decisions, scope and architecture),
 # checked out as a sibling of this repo. Override for a different checkout.
@@ -137,6 +144,21 @@ gallery:
 gallery-build:
     yarn --cwd frontend/ui run build-storybook
     node frontend/ui/src/checks/built-output.ts --storybook frontend/ui/storybook-static
+
+# Screenshots of every story and docs page in both skins, made in the pinned
+# Playwright image (PLAYWRIGHT_IMAGE) with no network, after the guarded install
+# and the gallery build, and checked against frontend/ui/shots/__screenshots__.
+# `--update` remakes the references instead. Needs Podman or Docker.
+gallery-shots *ARGS:
+    just frontend-install
+    just gallery-build
+    just gallery-shots-run "$@"
+
+# The same screenshot run on an existing gallery build, with no install and no
+# build first (CI and the gate call this one). `--update` remakes the
+# references; `--ci` marks a CI run. Needs Podman or Docker.
+gallery-shots-run *ARGS:
+    bash scripts/gallery-shots.sh run "$@"
 
 # --- Docker ---
 
@@ -343,15 +365,16 @@ hooks-test:
 # hook, den-fill, the dev logs, the private-papers check, the cargo-config
 # check, the node-tree guard, the nodes 0.7 node-text edits, the `jj push`
 # gate's argument guard, workspace-init, the npm advisory scan, CI's npm-lock
-# driver and its pins (the design-index check's own tests run under
-# `design-index-check-test`). CI runs it in the `hooks` job, which has no jj
-# and no nodes: the jj fixtures and the node-text edits' tests skip themselves
-# there.
+# driver and its pins, the gallery's screenshot script and its image pins (the
+# design-index check's own tests run under `design-index-check-test`). CI runs
+# it in the `hooks` job, which has no jj and no nodes: the jj fixtures and the
+# node-text edits' tests skip themselves there. The screenshot script's tests
+# always run against a stub runtime, never a real one.
 scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/nodes-install.test.sh scripts/nodes-fmt-hook.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/cargo-config-check.test.sh scripts/nodes-tree-check.test.sh scripts/nodes-0-7-edits.test.sh scripts/jj-push.test.sh scripts/workspace-init.test.sh scripts/build-id.test.sh scripts/npm-advisories.test.sh scripts/npm-lock-ci.test.sh scripts/npm-lock-pins.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/nodes-install.test.sh scripts/nodes-fmt-hook.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/cargo-config-check.test.sh scripts/nodes-tree-check.test.sh scripts/nodes-0-7-edits.test.sh scripts/jj-push.test.sh scripts/workspace-init.test.sh scripts/build-id.test.sh scripts/npm-advisories.test.sh scripts/npm-lock-ci.test.sh scripts/npm-lock-pins.test.sh scripts/gallery-shots.test.sh scripts/gallery-image-pins.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done
@@ -475,7 +498,9 @@ check:
 # one-time `yarn --cwd frontend/ui playwright install chromium` for web's and
 # ui's browser-mode component tests (one hoisted Playwright serves both), and
 # the `buf` CLI at BUF_VERSION for the contract lint
-# (https://buf.build/docs/installation — a single Go binary).
+# (https://buf.build/docs/installation — a single Go binary). The gallery's
+# screenshots (`just gallery-shots-run`) need Podman or Docker, as the
+# testcontainers tests already do, and pull the pinned PLAYWRIGHT_IMAGE once.
 # The npm lockfiles' 7-day floor is CI-only (its npm-lock job): it compares
 # against a PR's base; `just npm-lock-review <rev>` runs it by hand. The
 # licence sweep (`just npm-licences`) runs here, before the advisory scan.
@@ -512,6 +537,8 @@ gate:
     yarn --cwd frontend/ui run build
     node frontend/ui/src/checks/built-output.ts frontend/ui/build
     just gallery-build
+    yarn --cwd frontend/ui run test:shots
+    just gallery-shots-run
     just engineer-tools-test
     just npm-licences
     just npm-advisories
