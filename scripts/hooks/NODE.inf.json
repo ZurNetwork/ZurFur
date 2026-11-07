@@ -60,16 +60,6 @@
       "node": false
     },
     {
-      "name": "orchestrate.sh",
-      "role": "SessionStart(startup|resume|clear|compact) hook — states that the main session is the Orchestrator and that CLAUDE.md's first rule has it load the teams:orchestrate skill; SessionStart never fires for a subagent",
-      "node": false
-    },
-    {
-      "name": "orchestrate.test.sh",
-      "role": "fixture-driven tests for orchestrate.sh, plus its wiring in ../../.claude/settings.json and that every wired hook script exists",
-      "node": false
-    },
-    {
       "name": "pins.sh",
       "role": "SubagentStart / SessionStart(compact|resume) hook — re-states ../../.claude/pins.md (+ the untracked user-level pins file) to a subagent or after compaction",
       "node": false

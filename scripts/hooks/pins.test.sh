@@ -375,6 +375,28 @@ exit_code=$(run "SubagentStart" "" "Explore")
 unset ZURFUR_HOOKS_OFF ZURFUR_HOOKS_DEBUG
 expect_contains "ambient ZURFUR_HOOKS_OFF/DEBUG don't leak through env -i" "First pin statement."
 
+# --- the wiring in .claude/settings.json ---
+settings="$repo_root/.claude/settings.json"
+# Every script a hook command names exists, so a deleted hook can't stay wired.
+jq -r '.hooks[][] | .hooks[].command' "$settings" \
+    | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /\$CLAUDE_PROJECT_DIR/) { p = $i; gsub(/"/, "", p); sub(/^\$CLAUDE_PROJECT_DIR\/?/, "", p); print p } }' \
+    >"$work/wired"
+missing=0
+while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if [ ! -f "$repo_root/$path" ]; then
+        fail "settings: hook command names a missing script: $path"
+        missing=1
+    fi
+done <"$work/wired"
+[ -s "$work/wired" ] || fail "settings: found no hook script paths to check"
+[ "$missing" -eq 0 ] && ok "settings: every wired hook script exists"
+if jq -r '.hooks[][] | .hooks[].command' "$settings" | grep -qF 'orchestrate.sh'; then
+    fail "settings: the retired Orchestrator hook is still wired"
+else
+    ok "settings: no Orchestrator hook is wired"
+fi
+
 if [ "$failures" -eq 0 ]; then
     echo "pins.test.sh: all cases passed"
 else
