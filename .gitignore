@@ -31,3 +31,6 @@ WORKSHEET.md
 
 # Team working papers are private too; scripts/private-papers-check.sh fails if any is tracked.
 /.teams/
+
+# zaf state: profiles, workspaces, run folders, ask log (machine-private)
+.zaf/
