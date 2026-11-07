@@ -110,7 +110,7 @@ fi
 # since is refused there, and this check reads origin as that same fetch saw it.
 rewritten=$(jj_run log --no-graph -r "remote_bookmarks(exact:\"$slice\", exact:\"origin\") ~ ::@-" -T 'commit_id ++ "\n"') || exit 2
 if [ -n "$rewritten" ]; then
-    echo "origin has commits $slice lacks, or $slice rewrote a pushed commit; nothing was pushed" >&2
+    echo "origin's $slice, as the last fetch saw it, has commits the slice lacks, or the slice rewrote a pushed commit; nothing was pushed: fetch and check again before retrying" >&2
     exit 1
 fi
 
