@@ -904,12 +904,11 @@ async fn founding_rejects_a_duplicate_handle() {
     );
 }
 
-// A handle reserved by a SOFT-DELETED (tombstoned) account is invisible to the
-// resolver (404) but still reserves the handle: founding over it is a 409, NOT a
-// 500 (the founding pre-check filters soft-deleted rows, so this exercises the
-// store-level `HandleTaken` backstop — the global unique index, DD 23003138).
+// A deactivated account's handle still resolves to its DID and stays reserved:
+// founding over it is a 409 refused before any DID is minted, so the next valid
+// founding gets the first mem DID.
 #[tokio::test]
-async fn founding_over_a_soft_deleted_handle_is_409_not_500() {
+async fn a_deactivated_handle_resolves_and_founding_over_it_mints_nothing() {
     let did = "did:plc:e2etombstone";
     let served = serve(
         test_support::runtime::mem(&Did::from(did.to_string())).profile(Profile::new(
@@ -921,21 +920,22 @@ async fn founding_over_a_soft_deleted_handle_is_409_not_500() {
     .await;
     let (base, backend) = (served.base_url, served.backend);
 
-    // Seed a tombstoned account holding `gone.zurfur.app` (no soft-delete write path
-    // exists yet, so insert it directly — the mem mirror of an UPDATE deleted_at).
     let reserved = "gone.zurfur.app".parse::<Handle>().unwrap();
     backend.seed_soft_deleted_account(&Did::from("did:plc:tombstoned".to_string()), &reserved);
 
-    // The resolver does not serve a tombstoned handle.
     let res = client()
         .get(format!("{base}/.well-known/atproto-did"))
         .header(reqwest::header::HOST, "gone.zurfur.app")
         .send()
         .await
         .expect("GET /.well-known/atproto-did");
-    assert_eq!(res.status(), 404, "a tombstoned handle does not resolve");
+    assert_eq!(res.status(), 200, "a deactivated handle still resolves");
+    assert_eq!(
+        res.text().await.expect("the body"),
+        "did:plc:tombstoned",
+        "to the deactivated account's DID"
+    );
 
-    // ...but founding over it is a clean 409 (the store backstop), not a 500.
     let client = client();
     sign_in(&client, &base, "owner.bsky.social").await;
     let res = client
@@ -945,6 +945,19 @@ async fn founding_over_a_soft_deleted_handle_is_409_not_500() {
         .await
         .expect("POST /accounts");
     common::assert_problem(res, 409, "handle_taken").await;
+
+    let res = client
+        .post(format!("{base}/accounts"))
+        .json(&serde_json::json!({ "name": "Fresh", "handle": "fresh.zurfur.app" }))
+        .send()
+        .await
+        .expect("POST /accounts");
+    assert_eq!(res.status(), 201);
+    let founded_did = res.json::<serde_json::Value>().await.expect("json")["did"].clone();
+    assert_eq!(
+        founded_did, "did:plc:mem000000",
+        "the refused founding minted no DID"
+    );
 }
 
 // ZMVP-44 — atproto handle resolution. A GET to `/.well-known/atproto-did` with the
@@ -1388,5 +1401,60 @@ async fn create_account_rejects_unknown_request_fields() {
         422,
         "an unknown request field is rejected (contract §6 server obligation), \
          so a misspelled client field fails loudly instead of being dropped"
+    );
+}
+
+// A handle change onto a deactivated account's handle is a 409 refused before the
+// directory is asked to re-point the caller's DID document.
+#[tokio::test]
+async fn a_handle_change_to_a_deactivated_handle_never_reaches_the_directory() {
+    let did = Did::from("did:plc:e2erenamer".to_owned());
+    let profile = Profile::new(did.clone(), "owner.bsky.social");
+    let log = test_support::recording::CallLog::default();
+    let recording = log.clone();
+    let served = serve(
+        test_support::runtime::mem(&did).profile(profile),
+        |runtime| {
+            let did_minter = std::sync::Arc::new(test_support::recording::RecordingDidMinter::new(
+                std::sync::Arc::clone(&runtime.did_minter),
+                recording,
+            ));
+            let recorded = composition::Runtime {
+                did_minter,
+                ..runtime
+            };
+            api::app(recorded)
+        },
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
+    let reserved = "gone.zurfur.app".parse::<Handle>().expect("a valid handle");
+    backend.seed_soft_deleted_account(&Did::from("did:plc:tombstoned".to_owned()), &reserved);
+    let client = client();
+    sign_in(&client, &base, "owner.bsky.social").await;
+    let founding = serde_json::json!({ "name": "Mine", "handle": "mine.zurfur.app" });
+    let founded = client
+        .post(format!("{base}/accounts"))
+        .json(&founding)
+        .send()
+        .await
+        .expect("POST /accounts");
+    assert_eq!(founded.status(), 201);
+    let body: serde_json::Value = founded.json().await.expect("json");
+    let id = body["id"].as_str().expect("the account id").to_owned();
+
+    let renaming = serde_json::json!({ "handle": "gone.zurfur.app" });
+    let res = client
+        .patch(format!("{base}/accounts/{id}/handle"))
+        .json(&renaming)
+        .send()
+        .await
+        .expect("PATCH /accounts/{id}/handle");
+
+    common::assert_problem(res, 409, "handle_taken").await;
+    let events = log.events();
+    assert!(
+        !events.contains(&"update_handle"),
+        "the directory was never asked: {events:?}"
     );
 }

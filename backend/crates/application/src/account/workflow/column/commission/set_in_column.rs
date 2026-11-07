@@ -8,7 +8,9 @@ use domain::elements::{
 
 use crate::{
     Ports,
-    account::{AccountEntity, AccountError, AccountResult, require_live_account},
+    account::{
+        AccountEntity, AccountError, AccountResult, lock_live_account, require_live_account,
+    },
     commission::Commissions,
 };
 
@@ -110,6 +112,7 @@ impl Commissions<'_> {
             }
         })?;
         let uow = uow.open().await?;
+        lock_live_account(uow, &account_id).await?;
         uow.columns().set_commissions(&column).await?;
 
         let commissions = column.into_iter().collect();

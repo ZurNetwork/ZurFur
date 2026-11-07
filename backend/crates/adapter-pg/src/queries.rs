@@ -380,7 +380,8 @@ pub mod account {
 
     /// `queries/account/find_did_by_handle.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// Resolve a live account's handle to its DID. The account's id IS its DID,
+    /// Resolve a live or deactivated account's handle to its DID: a deactivated account
+    /// keeps its handle reserved and still resolving. The account's id IS its DID,
     /// so this is a plain lookup on `accounts` — the
     /// actor_identity join it used to need is gone with the surrogate key. `handle` stays
     /// the authoritative, globally unique claim; this backs the `/.well-known/atproto-did`

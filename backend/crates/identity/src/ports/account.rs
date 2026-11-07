@@ -31,9 +31,9 @@ pub trait AccountStore: Send + Sync {
     /// Resolve an [`InvitationId`] to its [`Invitation`] in any state, or `None`.
     async fn find_invitation(&self, id: &InvitationId) -> anyhow::Result<Option<Invitation>>;
 
-    /// The sovereign [`Did`] of the live account holding `handle`, or `None`.
-    /// Exact-match; soft-deleted accounts never match. Backs atproto handle
-    /// resolution and the founding-time duplicate check.
+    /// The sovereign [`Did`] of the account holding `handle`, live or deactivated,
+    /// or `None`. Exact-match. Backs atproto handle resolution and the founding-time
+    /// duplicate check.
     async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>>;
 
     /// How many handle changes `account` has recorded on or after `since`. The
@@ -101,7 +101,8 @@ pub trait AccountWrites: Send {
     /// Change the role of an existing member. Never seats anyone, never grants
     /// Owner, never changes the Owner's role. Fails, writing nothing, when the pair
     /// holds no membership, when the member is the Owner, or when `role` is Owner.
-    /// Idempotent for a member.
+    /// Idempotent for a member. Fails with [`AccountDeactivated`](crate::ports::AccountDeactivated) when the Account is
+    /// deactivated.
     async fn grant_role(
         &mut self,
         user: &UserId,
@@ -112,29 +113,33 @@ pub trait AccountWrites: Send {
     /// Remove a non-Owner member's membership: revokes the invitations they had
     /// issued, re-homes their role-tree children to their own parent, and deletes the
     /// membership, in one transaction. Fails, writing nothing, when the member is the
-    /// Owner. Idempotent on a non-member.
+    /// Owner. Idempotent on a non-member. Passes on a deactivated Account, as a
+    /// departure does; refusing it there is the caller's.
     async fn revoke_role(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()>;
 
     /// A member leaves their own account: the same store effects and the same Owner
     /// refusal as [`revoke_role`](AccountWrites::revoke_role), self-initiated so no
-    /// rank check applies.
+    /// rank check applies. Passes on a deactivated Account.
     async fn leave(&mut self, user: &UserId, account: &AccountId) -> anyhow::Result<()>;
 
     /// Persist a freshly issued, pending [`Invitation`]. At most one pending
     /// invitation may exist per (account, invited user); a duplicate is a no-op
     /// rather than a second row. Fails, writing nothing, when the inviter isn't a
-    /// member of the account.
+    /// member of the account. Fails with [`AccountDeactivated`](crate::ports::AccountDeactivated) when the Account is
+    /// deactivated.
     async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<Invitation>;
 
     /// Transition a pending invitation to revoked. Idempotent on a non-pending or
-    /// absent invitation — a no-op, not an error.
+    /// absent invitation — a no-op, not an error. Passes on a deactivated Account, as
+    /// a decline does; refusing an issuer's revoke there is the caller's.
     async fn revoke_invitation(&mut self, id: &InvitationId) -> anyhow::Result<()>;
 
     /// Accept a pending invitation: in one transaction flip it to Accepted and seat
     /// the invited User with `parent = inviter` and their `listed_on_profile`
     /// choice. The guard is atomic with the seat — a lost race seats no member.
     /// Records the Account's member fact in the same unit, at the flip's instant;
-    /// an Account that already holds it keeps its first time.
+    /// an Account that already holds it keeps its first time. Fails with
+    /// [`AccountDeactivated`](crate::ports::AccountDeactivated) when the Account is deactivated.
     async fn accept_invitation(
         &mut self,
         invitation: Invitation,
@@ -144,7 +149,8 @@ pub trait AccountWrites: Send {
     /// Transfer ownership to another existing member, in one transaction: the
     /// incoming member becomes the sole `Owner` with no parent, the outgoing Owner
     /// is demoted to `Admin` under them. Its own seam because ownership is
-    /// singular — `grant_role` never grants Owner.
+    /// singular — `grant_role` never grants Owner. Fails with [`AccountDeactivated`](crate::ports::AccountDeactivated)
+    /// when the Account is deactivated.
     async fn transfer_ownership(
         &mut self,
         old_owner: &UserId,
@@ -165,8 +171,9 @@ pub trait AccountWrites: Send {
     /// commissions on them survive (User-owned) and the custody keys are left in
     /// place. Tombstoning the DID is a separate retryable step. The caller holds the
     /// row from [`find_for_update`](AccountReads::find_for_update) and has read the
-    /// [`facts`](AccountReads::facts) in the same unit. Fails, ending the unit, on an
-    /// absent or deactivated Account and on one holding a fact.
+    /// [`facts`](AccountReads::facts) in the same unit. Fails, ending the unit, on a
+    /// deactivated Account and on one holding a fact. On an absent Account the
+    /// PostgreSQL store fails and the in-memory store succeeds, removing nothing.
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()>;
 }
 

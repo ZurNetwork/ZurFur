@@ -4,7 +4,7 @@ use domain::elements::{account::AccountId, role::Role, user::UserId};
 
 use crate::{
     Ports,
-    account::{AccountError, AccountResult, Accounts, require_live_account},
+    account::{AccountError, AccountResult, Accounts, lock_live_account, require_live_account},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +54,7 @@ impl Accounts<'_> {
             .ok_or(AccountError::NotAMember)?;
 
         let uow = uow.open().await?;
+        lock_live_account(uow, &account_id).await?;
         uow.accounts()
             .transfer_ownership(&actor_id, &target_id, &account_id)
             .await?;
