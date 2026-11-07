@@ -91,6 +91,11 @@ async fn a_leave_losing_to_a_transfer_answers_409_and_warns_once_without_a_did()
         .filter(|line| line.contains(RACE_WARNING))
         .collect();
     assert_eq!(warnings.len(), 1, "one race warning: {warnings:#?}");
+    let raised: Vec<&str> = text
+        .lines()
+        .filter(|line| matches!(level_of(line), Some("WARN" | "ERROR")))
+        .collect();
+    assert_eq!(raised, warnings, "the race warning is the only one raised");
     assert_eq!(level_of(warnings[0]), Some("WARN"), "{}", warnings[0]);
     assert!(
         !warnings[0].contains("did:"),
