@@ -7,3 +7,5 @@
 !roles/**
 **/.env
 **/.env.*
+**/.envrc
+**/*.env
