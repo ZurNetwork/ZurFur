@@ -9,7 +9,7 @@ use application::account;
 use chrono::Utc;
 use domain::elements::{did::Did, handle::HandleDomain, user::UserId};
 use domain::ports::{Database, UnitOfWork};
-use test_support::log_capture::CapturedLog;
+use test_support::log_capture::{self, CapturedLog};
 use tracing_subscriber::fmt::format::FmtSpan;
 
 /// The name the founding command carries; it must never reach a use-case line.
@@ -68,7 +68,7 @@ async fn a_use_case_logs_its_start_its_outcome_and_its_error_by_display_alone() 
     let user = recognized(&*runtime.database, &did).await;
     let app = runtime.app();
     let log = CapturedLog::default();
-    let _guard = tracing::subscriber::set_default(subscriber(&log));
+    let _guard = log_capture::set_default(subscriber(&log));
 
     let founded = app
         .accounts()

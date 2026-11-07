@@ -7,7 +7,7 @@ use adapter_mem::{MemAuthenticator, MemProfileSource};
 use api::AppState;
 use domain::elements::{did::Did, profile::Profile};
 use test_support::http::{client, sign_in};
-use test_support::log_capture::CapturedLog;
+use test_support::log_capture::{self, CapturedLog};
 use tower_sessions::session::Id;
 use tracing_subscriber::EnvFilter;
 
@@ -62,7 +62,7 @@ async fn no_log_line_names_a_session_cookie_value_from_two_pairs() {
     let log = CapturedLog::default();
     let filter = EnvFilter::new("trace");
     let subscriber = api::logging::subscriber(&api::Environment::DEV, filter, log.clone());
-    let _guard = tracing::subscriber::set_default(subscriber);
+    let _guard = log_capture::set_default(subscriber);
     let three_pairs = format!("zurfur.sid={live}; zurfur.sid=junkvalue; zurfur.sid={planted}");
 
     let res = me_with_cookie(&base, &three_pairs).await;

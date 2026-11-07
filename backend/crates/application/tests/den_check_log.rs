@@ -17,7 +17,7 @@ use domain::elements::{
     user::{User, UserId},
 };
 use domain::ports::{UnitOfWork, UserStore};
-use test_support::log_capture::CapturedLog;
+use test_support::log_capture::{self, CapturedLog};
 use uuid::Uuid;
 
 /// The owner's DID: the check opens their own root.
@@ -91,7 +91,7 @@ async fn each_answer_is_logged_by_its_node_kind_and_class_and_never_an_id() {
         .with_ansi(false)
         .with_writer(log.clone())
         .finish();
-    let _guard = tracing::subscriber::set_default(subscriber);
+    let _guard = log_capture::set_default(subscriber);
 
     let own_root = MeQuery {
         user_id: owner.clone(),

@@ -9,4 +9,9 @@ disallowed-methods = [
     { path = "domain::ports::UnitOfWork::changelog", reason = "a driver appends to a commission's changelog only through a use case; each site left carries an `#[expect]` until ARC-4 moves it into one, and a unit-of-work double carries an `#[expect]` and a reason" },
     { path = "axum::serve", reason = "serve the app through `http_stack::serve`, which runs every request to its end inside the detach layer" },
     { path = "domain::ports::WriteCapability::gate_issued", reason = "only the den's write gate issues a write capability; a test double carries an `#[allow]` and a reason" },
+    { path = "tracing::subscriber::set_default", reason = "install a test's log capture through `test_support::log_capture::set_default` or `with_default`, which keeps a second dispatcher alive so a parallel test can't cache a callsite as never" },
+    { path = "tracing::subscriber::with_default", reason = "install a test's log capture through `test_support::log_capture::set_default` or `with_default`, which keeps a second dispatcher alive so a parallel test can't cache a callsite as never" },
+    { path = "tracing::dispatcher::set_default", reason = "install a test's log capture through `test_support::log_capture::set_default` or `with_default`, which keeps a second dispatcher alive so a parallel test can't cache a callsite as never" },
+    { path = "tracing::dispatcher::with_default", reason = "install a test's log capture through `test_support::log_capture::set_default` or `with_default`, which keeps a second dispatcher alive so a parallel test can't cache a callsite as never" },
+    { path = "tracing_subscriber::util::SubscriberInitExt::set_default", reason = "install a test's log capture through `test_support::log_capture::set_default` or `with_default`, which keeps a second dispatcher alive so a parallel test can't cache a callsite as never" },
 ]
