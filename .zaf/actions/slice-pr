@@ -1,0 +1,108 @@
+#!/bin/sh
+# zaf description: publish a task's slice: `commit` what is left (skipped when nothing is), `push`, then `pr-open` against the base titled `[release-<version>] <title> (<board>#<task>)` with the task's goal as the body, handing back the pull request number
+# zaf 1: refused: the arguments are not <task>, or a step refused (the slice is not open, jj-push.sh stopped the push, the remote has work the slice lacks, or the forge refused)
+# zaf 2: a backend failed (jj or gh is missing or refused, or the task could not be read from the board)
+# zaf mode: 750
+# zaf group: team
+# zaf target: task
+# zaf phases: build, check, review
+# zaf timeout: 75
+
+# The task as a bare number; zaf has already read it as one.
+task=${1#\#}
+# zaf sets ZAF_SLICE, ZAF_BASE and ZAF_TASK_TITLE on a `target: task` run; a hand-written call has none.
+if [ "$#" -ne 1 ] || [ -z "$ZAF_ROOT" ] || [ -z "$ZAF_SLICE" ] || [ -z "$ZAF_BASE" ] || [ -z "$ZAF_TASK_TITLE" ]; then
+    echo "usage: slice-pr <task>, run by zaf with ZAF_SLICE, ZAF_BASE and ZAF_TASK_TITLE set" >&2
+    exit 1
+fi
+case $task in
+    "" | *[!0-9]*)
+        echo "task $1 is not an issue number" >&2
+        exit 1
+        ;;
+esac
+
+# The repository a manifest table names, from the first manifest that names one, in the order
+# zaf reads them.
+manifest_repo() {
+    for manifest in "$ZAF_ROOT/.zaf.toml" "$ZAF_ROOT/.zaf/config.toml" "$ZAF_ROOT/ZAF.toml"; do
+        [ -f "$manifest" ] || continue
+        found=$(awk -v table="$1" '
+            /^[ \t]*\[/ { in_table = ($0 ~ ("^[ \t]*\\[" table "\\][ \t]*(#.*)?$")); next }
+            in_table && /^[ \t]*repo[ \t]*=/ {
+                line = $0
+                sub(/^[^=]*=[ \t]*"/, "", line)
+                sub(/".*$/, "", line)
+                print line
+                exit
+            }
+        ' "$manifest")
+        if [ -n "$found" ]; then
+            echo "$found"
+            return
+        fi
+    done
+}
+
+# The task is an issue on the board's repository, not the forge's, so every reference to it
+# names that repository.
+board=$(manifest_repo board)
+if [ -z "$board" ]; then
+    echo "the manifest names no [board] repo" >&2
+    exit 2
+fi
+
+# The task's goal, read before anything moves, so a board that cannot be read leaves the slice
+# as it was. Its bare #<n> references are the board's issues, and are written that way.
+issue=$(gh issue view "$task" --repo "$board" --json body --jq .body) || exit 2
+goal=$(printf '%s\n' "$issue" | awk -v repo="$board" '
+    { sub(/\r$/, "") }
+    in_goal && /^[A-Z][A-Za-z ]*:/ { exit }
+    /^Goal:/ { in_goal = 1; sub(/^Goal:[ \t]*/, "") }
+    in_goal {
+        out = ""
+        rest = $0
+        while (match(rest, /#[0-9]+/)) {
+            before = (RSTART > 1) ? substr(rest, RSTART - 1, 1) : ""
+            out = out substr(rest, 1, RSTART - 1)
+            if (before ~ /[A-Za-z0-9_\/.-]/) {
+                out = out substr(rest, RSTART, RLENGTH)
+            } else {
+                out = out repo substr(rest, RSTART, RLENGTH)
+            }
+            rest = substr(rest, RSTART + RLENGTH)
+        }
+        print out rest
+    }
+')
+refs="Refs $board#$task."
+if [ -n "$goal" ]; then
+    body=$(printf '%s\n\n%s' "$goal" "$refs")
+else
+    body=$refs
+fi
+
+# `commit` and `pr-open` each put the release in front, as `[release-<version>] `.
+title="$ZAF_TASK_TITLE ($board#$task)"
+dir=$ZAF_ROOT/.zaf/workspaces/$ZAF_SLICE
+
+# What is left is the working copy's own change: jj snapshots the files on disk first. `commit`
+# refuses an empty one, so an empty one is skipped here rather than told from a real refusal.
+empty=$(cd "$dir" && jj --no-pager --color=never log --no-graph -r @ -T empty) || exit 2
+if [ "$empty" != "true" ]; then
+    zaf do commit "$ZAF_SLICE" "$title" || exit $?
+fi
+
+zaf do push "$ZAF_SLICE" || exit $?
+
+# A successful `zaf do` prints nothing, so `--more` brings the step's whole log back; its last
+# non-empty line is the pull request number.
+log=$(zaf do --more pr-open "$ZAF_SLICE" "$ZAF_BASE" "$title" "$body") || exit $?
+number=$(printf '%s\n' "$log" | awk 'NF { line = $0 } END { print line }')
+if [ -z "$number" ]; then
+    echo "pr-open handed back no pull request number" >&2
+    exit 2
+fi
+
+# The hand-back: zaf keeps this line as the task's pull request record.
+echo "$number"
