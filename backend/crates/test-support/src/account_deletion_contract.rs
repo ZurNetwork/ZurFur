@@ -56,11 +56,12 @@ macro_rules! account_deletion_contract_tests {
 /// Recognizes `did` as a User in a unit of its own.
 pub async fn recognized(runtime: &Runtime, did: &str) -> UserId {
     let did = Did::from(did.to_owned());
-    let user = application::transaction(&*runtime.database, async move |uow: &mut dyn UnitOfWork| {
-        uow.users().provision(&did).await
-    })
-    .await
-    .expect("provision the user");
+    let user =
+        application::transaction(&*runtime.database, async move |uow: &mut dyn UnitOfWork| {
+            uow.users().provision(&did).await
+        })
+        .await
+        .expect("provision the user");
     user.id
 }
 
@@ -82,7 +83,13 @@ pub async fn founded(runtime: &Runtime, owner: &UserId, handle: &str) -> Account
 }
 
 /// `inviter` offers `invitee` a seat in `account` at `role`.
-pub async fn offer(runtime: &Runtime, account: &AccountId, inviter: &UserId, invitee: &UserId, role: Role) {
+pub async fn offer(
+    runtime: &Runtime,
+    account: &AccountId,
+    inviter: &UserId,
+    invitee: &UserId,
+    role: Role,
+) {
     let issuing = invitation::issue::Command {
         account_id: account.clone(),
         target_id: invitee.clone(),
@@ -376,7 +383,10 @@ pub async fn accept_records_the_member_fact_once(
 
     let after = facts_of(runtime, &account).await;
 
-    assert!(before.is_empty(), "a founded Account holds none: {before:?}");
+    assert!(
+        before.is_empty(),
+        "a founded Account holds none: {before:?}"
+    );
     assert_eq!(after, [AccountFactKind::Member]);
 }
 

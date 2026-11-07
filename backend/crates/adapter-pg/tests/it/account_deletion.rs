@@ -102,7 +102,10 @@ async fn a_delete_waiting_on_an_accept_goes_soft() {
         matches!(outcome, Ok(DeleteOutcome::Soft)),
         "the delete saw the fact committed while it waited"
     );
-    assert!(!is_live(&runtime, &account).await, "the Account is deactivated");
+    assert!(
+        !is_live(&runtime, &account).await,
+        "the Account is deactivated"
+    );
 }
 
 // An accept arriving while a hard delete holds the Account seats no one and records no fact
