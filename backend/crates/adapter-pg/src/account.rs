@@ -368,6 +368,29 @@ impl AccountReads for PgAccountWrites<'_> {
         let role = sql::role_of(&mut *self.conn, user.as_ref(), account.as_ref()).await?;
         Ok(role.map(|role| Role::from_str(&role)).transpose()?)
     }
+
+    /// [`role_of`](Self::role_of) with the membership row locked `FOR SHARE`.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn role_of_for_share(
+        &mut self,
+        user: &UserId,
+        account: &AccountId,
+    ) -> anyhow::Result<Option<Role>> {
+        let role = sql::role_of_for_share(&mut *self.conn, user.as_ref(), account.as_ref()).await?;
+        Ok(role.map(|role| Role::from_str(&role)).transpose()?)
+    }
+
+    /// [`role_of`](Self::role_of) with the membership row locked `FOR UPDATE`.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn role_of_for_update(
+        &mut self,
+        user: &UserId,
+        account: &AccountId,
+    ) -> anyhow::Result<Option<Role>> {
+        let role =
+            sql::role_of_for_update(&mut *self.conn, user.as_ref(), account.as_ref()).await?;
+        Ok(role.map(|role| Role::from_str(&role)).transpose()?)
+    }
 }
 
 #[async_trait::async_trait]

@@ -1977,6 +1977,26 @@ impl AccountReads for MemAccountWrites {
     ) -> anyhow::Result<Option<Role>> {
         MemAccountStore(self.0.clone()).role_of(user, account).await
     }
+
+    /// `role_of`: no lock to take in process.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn role_of_for_share(
+        &mut self,
+        user: &UserId,
+        account: &AccountId,
+    ) -> anyhow::Result<Option<Role>> {
+        MemAccountStore(self.0.clone()).role_of(user, account).await
+    }
+
+    /// `role_of`: no lock to take in process.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn role_of_for_update(
+        &mut self,
+        user: &UserId,
+        account: &AccountId,
+    ) -> anyhow::Result<Option<Role>> {
+        MemAccountStore(self.0.clone()).role_of(user, account).await
+    }
 }
 
 /// In-memory [`Database`] write factory: `begin` snapshots the shared domain

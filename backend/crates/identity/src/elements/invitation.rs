@@ -6,7 +6,8 @@
 //! Authority to issue is the grant rule
 //! ([`Role::can_grant`](crate::elements::role::Role::can_grant)); the inviter is
 //! recorded because on acceptance they become the new member's Parent. There is
-//! no expiry.
+//! no expiry. An offer stays valid only while its issuer is a member whose role
+//! may still offer its role.
 
 mod entity;
 mod errors;

@@ -101,8 +101,10 @@ pub trait AccountWrites: Send {
     /// Change the role of an existing member. Never seats anyone, never grants
     /// Owner, never changes the Owner's role. Fails, writing nothing, when the pair
     /// holds no membership, when the member is the Owner, or when `role` is Owner.
-    /// Idempotent for a member. Fails with [`AccountDeactivated`](crate::ports::AccountDeactivated) when the Account is
-    /// deactivated.
+    /// Idempotent for a member. Then revokes, in the same unit, the pending offers
+    /// the member issued in this Account at roles their new role can't offer. Fails
+    /// with [`AccountDeactivated`](crate::ports::AccountDeactivated) when the
+    /// Account is deactivated.
     async fn grant_role(
         &mut self,
         user: &UserId,
@@ -149,8 +151,10 @@ pub trait AccountWrites: Send {
     /// Transfer ownership to another existing member, in one transaction: the
     /// incoming member becomes the sole `Owner` with no parent, the outgoing Owner
     /// is demoted to `Admin` under them. Its own seam because ownership is
-    /// singular — `grant_role` never grants Owner. Fails with [`AccountDeactivated`](crate::ports::AccountDeactivated)
-    /// when the Account is deactivated.
+    /// singular — `grant_role` never grants Owner. Then revokes, in the same unit,
+    /// the pending offers the outgoing Owner issued at roles an Admin can't offer.
+    /// Fails with [`AccountDeactivated`](crate::ports::AccountDeactivated) when the
+    /// Account is deactivated.
     async fn transfer_ownership(
         &mut self,
         old_owner: &UserId,
@@ -198,6 +202,24 @@ pub trait AccountReads: Send {
     /// `user`'s role in `account`, or `None`; as [`AccountStore::role_of`].
     async fn role_of(&mut self, user: &UserId, account: &AccountId)
     -> anyhow::Result<Option<Role>>;
+
+    /// [`role_of`](Self::role_of), with the member's row locked `FOR SHARE` until
+    /// commit: a change of that member's role waits for this unit. For the actor
+    /// of an act.
+    async fn role_of_for_share(
+        &mut self,
+        user: &UserId,
+        account: &AccountId,
+    ) -> anyhow::Result<Option<Role>>;
+
+    /// [`role_of`](Self::role_of), with the member's row locked `FOR UPDATE` until
+    /// commit: any other write of that row waits for this unit. For the target of
+    /// a grant, a revoke, a leave or a transfer.
+    async fn role_of_for_update(
+        &mut self,
+        user: &UserId,
+        account: &AccountId,
+    ) -> anyhow::Result<Option<Role>>;
 }
 
 /// An account unit of work: [`AccountReads`] + [`AccountWrites`] on one

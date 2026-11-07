@@ -653,6 +653,34 @@ pub mod account {
             .map(|r| r.rows_affected())
     }
 
+    /// `queries/account/revoke_outranked_invitations.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// state receives the revoked state; grantable lists the roles the issuer's new role may
+    /// still offer (an empty list revokes every pending offer they issued); inv_state selects
+    /// the still-pending offers. Sets only state and updated_at.
+    pub async fn revoke_outranked_invitations(
+        conn: impl sqlx::PgExecutor<'_>,
+        state: &str,
+        updated_at: chrono::DateTime<chrono::Utc>,
+        account_id: &str,
+        inviter: &str,
+        inv_state: &str,
+        role: &[String],
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!(
+            "../queries/account/revoke_outranked_invitations.sql"
+        ))
+        .bind(state)
+        .bind(updated_at)
+        .bind(account_id)
+        .bind(inviter)
+        .bind(inv_state)
+        .bind(role)
+        .execute(conn)
+        .await
+        .map(|r| r.rows_affected())
+    }
+
     /// `queries/account/role_of.sql`, contract inferred from the SQL against the migrated schema.
     pub async fn role_of(
         conn: impl sqlx::PgExecutor<'_>,
@@ -660,6 +688,38 @@ pub mod account {
         account_id: &str,
     ) -> sqlx::Result<Option<String>> {
         sqlx::query_scalar(include_str!("../queries/account/role_of.sql"))
+            .bind(user_id)
+            .bind(account_id)
+            .fetch_optional(conn)
+            .await
+    }
+
+    /// `queries/account/role_of_for_share.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// `role_of`, with the membership row locked FOR SHARE until the unit commits: a
+    /// change of that member's role waits, while other share holders proceed.
+    pub async fn role_of_for_share(
+        conn: impl sqlx::PgExecutor<'_>,
+        user_id: &str,
+        account_id: &str,
+    ) -> sqlx::Result<Option<String>> {
+        sqlx::query_scalar(include_str!("../queries/account/role_of_for_share.sql"))
+            .bind(user_id)
+            .bind(account_id)
+            .fetch_optional(conn)
+            .await
+    }
+
+    /// `queries/account/role_of_for_update.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// `role_of`, with the membership row locked FOR UPDATE until the unit commits: any
+    /// other write or lock of that row waits.
+    pub async fn role_of_for_update(
+        conn: impl sqlx::PgExecutor<'_>,
+        user_id: &str,
+        account_id: &str,
+    ) -> sqlx::Result<Option<String>> {
+        sqlx::query_scalar(include_str!("../queries/account/role_of_for_update.sql"))
             .bind(user_id)
             .bind(account_id)
             .fetch_optional(conn)
@@ -3051,6 +3111,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "account::hard_delete_memberships",
     "account::record_fact",
     "account::revoke_invitation",
+    "account::revoke_outranked_invitations",
     "account::soft_delete",
     "account::transfer_demote_owner",
     "account::transfer_promote_heir",
