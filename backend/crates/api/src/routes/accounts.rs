@@ -234,15 +234,6 @@ async fn create_account(
     Ok(response)
 }
 
-// Fails to compile once the first account-fact table registers (assert below).
-const _: () = assert!(
-    adapter_pg::ACCOUNT_FACT_TABLES.is_empty(),
-    "an account-anchored fact store was registered: replace the constant-`false` body \
-     of application::account::facts::exist::run with a real query over it (an account \
-     bearing such a fact must be soft-deleted, never hard-deleted), then remove this \
-     guard and its sibling in adapter_pg::account"
-);
-
 /// Parses a body's `user` field — an actor DID — into a [`UserId`], rejecting a
 /// malformed value as `422 invalid_request`.
 fn parse_user_did(raw: &str) -> Result<UserId, Problem> {

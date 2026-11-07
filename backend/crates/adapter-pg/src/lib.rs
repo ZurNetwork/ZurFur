@@ -38,7 +38,10 @@ mod session_store;
 mod uow;
 mod user;
 mod workflow;
-pub use account::{ACCOUNT_FACT_TABLES, ACCOUNT_NON_FACT_TABLES, PgAccountStore, PgAccountWrites};
+pub use account::{
+    ACCOUNT_FACT_RECORD, ACCOUNT_FACT_SOURCES, ACCOUNT_SEVERED_TABLES, PgAccountStore,
+    PgAccountWrites,
+};
 pub use actor_identity::{PgActorIdentityStore, PgActorIdentityWrites};
 pub use bug_report::{PgBugReportStore, PgBugReportWrites};
 pub use character::PgCharacterStore;
