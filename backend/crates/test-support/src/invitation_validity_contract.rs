@@ -22,7 +22,9 @@ use application::account::{self, invitation};
 
 pub use composition::Runtime;
 
-use crate::account_deletion_contract::{accept, founded, offer, recognized, seat, try_transfer};
+use crate::account_deletion_contract::{
+    AccountError, accept, founded, offer, recognized, seat, try_transfer,
+};
 
 /// Writes one `#[tokio::test]` per suite case. `$setup` is an async fn returning
 /// `(Runtime, impl Sized)` over one fresh store; the second item is kept alive for the test.
@@ -47,6 +49,59 @@ macro_rules! invitation_validity_contract_tests {
             }
         )*
     };
+}
+
+/// `actor` grants `target` `role` in `account`, answering what the use case answered.
+pub async fn try_grant(
+    runtime: &Runtime,
+    account: &AccountId,
+    actor: &UserId,
+    target: &UserId,
+    role: Role,
+) -> Result<(), AccountError> {
+    let granting = account::role::grant::Command {
+        account_id: account.clone(),
+        target_id: target.clone(),
+        actor_id: actor.clone(),
+        role,
+    };
+    let app = runtime.app();
+    app.accounts().roles().grant(granting).await.map(|_| ())
+}
+
+/// `user` leaves `account`, answering what the use case answered.
+pub async fn try_leave(
+    runtime: &Runtime,
+    account: &AccountId,
+    user: &UserId,
+) -> Result<(), AccountError> {
+    let leaving = account::leave::Command {
+        leaving_user_id: user.clone(),
+        account_id: account.clone(),
+    };
+    runtime.app().accounts().leave(leaving).await.map(|_| ())
+}
+
+/// `inviter` offers `invitee` `role` in `account`, answering what the use case answered.
+pub async fn try_offer(
+    runtime: &Runtime,
+    account: &AccountId,
+    inviter: &UserId,
+    invitee: &UserId,
+    role: Role,
+) -> Result<(), AccountError> {
+    let issuing = account::invitation::issue::Command {
+        account_id: account.clone(),
+        target_id: invitee.clone(),
+        actor_id: inviter.clone(),
+        role,
+    };
+    let app = runtime.app();
+    app.accounts()
+        .invitations()
+        .issue(issuing, Utc::now())
+        .await
+        .map(|_| ())
 }
 
 /// `actor` changes `target`'s role in `account` to `role`, which must succeed.
