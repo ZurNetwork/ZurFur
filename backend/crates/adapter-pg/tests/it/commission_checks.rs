@@ -449,22 +449,24 @@ async fn pool_in_zone(url: &str, zone: &'static str) -> PgPool {
         .expect("pool connects")
 }
 
-/// Whether some statement in this test's own database waits for a lock on `commission`.
+/// Whether some statement in this test's own database waits for an ACCESS EXCLUSIVE lock on
+/// `commission`.
 async fn a_lock_on_commission_waits(pool: &PgPool) -> bool {
     sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM pg_locks l
                         WHERE NOT l.granted
                           AND l.database = (SELECT oid FROM pg_database
                                             WHERE datname = current_database())
-                          AND l.relation = 'commission'::regclass)",
+                          AND l.relation = 'commission'::regclass
+                          AND l.mode = 'AccessExclusiveLock')",
     )
     .fetch_one(pool)
     .await
     .expect("read pg_locks")
 }
 
-/// Polls until a statement waits for a lock on `commission`, and fails the test if none does
-/// within `LOCK_WAIT_POLLS` polls (about ten seconds).
+/// Polls until a statement waits for an ACCESS EXCLUSIVE lock on `commission`, and fails the
+/// test if none does within `LOCK_WAIT_POLLS` polls (about ten seconds).
 async fn wait_until_a_lock_waits(pool: &PgPool) {
     for _ in 0..LOCK_WAIT_POLLS {
         if a_lock_on_commission_waits(pool).await {
@@ -472,7 +474,9 @@ async fn wait_until_a_lock_waits(pool: &PgPool) {
         }
         tokio::time::sleep(LOCK_WAIT_INTERVAL).await;
     }
-    panic!("the migration never waited for a lock on commission while the writer held one");
+    panic!(
+        "the migration never waited for an ACCESS EXCLUSIVE lock on commission while the writer held one"
+    );
 }
 
 /// Asserts that `statement` on `pool` waits for a lock on `commission`: with a short lock
@@ -553,11 +557,12 @@ async fn each_time_out_of_range_is_refused() {
     }
 }
 
-// Each `_known` constraint lists exactly its enum's stored words, and so do the node level's
-// and the deadline status's; Late is derived when read and never stored.
+// On the fully migrated schema, each `_known` constraint lists exactly its enum's stored words,
+// and so do the node level's and the deadline status's; Late is derived when read and never
+// stored.
 #[tokio::test]
 async fn each_check_lists_exactly_its_enum_s_words() {
-    let (pool, _commission, _container) = checked().await;
+    let (pool, _db) = test_support::pg::fresh_pool().await;
     let lifecycle: BTreeSet<String> = LifecycleStep::VARIANTS
         .iter()
         .map(|step| <&'static str>::from(step).to_owned())

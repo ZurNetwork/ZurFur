@@ -472,9 +472,9 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
     assert_eq!(rerun, nothing_to_do);
     assert_eq!(custody::store_snapshot(&pool).await, before_rerun);
 
-    // 7. Rollback rehearsal: the commission checks and the dispute columns rolled back first, then the rollback recipe's
-    // statements, in its order and in one transaction, back to the parent's schema, where the
-    // 0.1 opener opens both.
+    // 7. Rollback rehearsal: the commission checks and the dispute columns rolled back first,
+    // then the rollback recipe's statements, in its order and in one transaction, back to the
+    // parent's schema, where the 0.1 opener opens both.
     let mut rollback = pool.begin().await.expect("the rollback begins");
     sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ANY($1)")
         .bind(&later_versions)
