@@ -430,41 +430,109 @@ async fn an_admin_demoted_meanwhile_gets_forbidden_whether_or_not_the_target_lef
     );
 }
 
+/// Waits, for at most ten seconds, until a connection to this database waits on a lock that
+/// the backend `holder` holds.
+async fn wait_for_a_wait_on(pool: &PgPool, holder: i32) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity \
+             WHERE datname = current_database() AND $1 = ANY (pg_blocking_pids(pid))",
+        )
+        .bind(holder)
+        .fetch_one(pool)
+        .await
+        .expect("read the blocked backends");
+        if waiting >= 1 {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no connection waited on backend {holder} within ten seconds"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Opens a transaction holding `user`'s membership row in `account` `FOR SHARE`, and answers
+/// it with its backend's pid.
+async fn hold_member_shared(
+    pool: &PgPool,
+    account: &AccountId,
+    user: &UserId,
+) -> (sqlx::Transaction<'static, sqlx::Postgres>, i32) {
+    let mut holding = pool.begin().await.expect("begin the member hold");
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *holding)
+        .await
+        .expect("read the hold's pid");
+    sqlx::query(
+        "SELECT 1 FROM account_members WHERE account_id = $1 AND user_id = $2 FOR SHARE",
+    )
+    .bind(AsRef::<str>::as_ref(account))
+    .bind(AsRef::<str>::as_ref(user))
+    .fetch_one(&mut *holding)
+    .await
+    .expect("hold the member row");
+    (holding, pid)
+}
+
 // Two grants on each other's rows, each having passed its check under opposite ranks, lock
-// both rows in the same order: one waits for the other, and neither deadlocks.
+// both rows in ascending DID order: X holds the lower row shared and waits on the higher one,
+// Y waits on the lower one behind X, so X decides first and Y then finishes. Locking the actor
+// first instead lets Y share the higher row while X waits to update it: a deadlock, which
+// PostgreSQL breaks by aborting one unit. The store's refusal triggers are off on this
+// database: the rank swap must commit while the Account row is held.
 #[tokio::test]
-#[ignore = "hangs: the rank swap waits on the held Account row; to be reworked"]
 async fn two_units_locking_each_others_rows_through_the_helper_both_finish() {
     let (runtime, _kept) = fresh().await;
-    let (account, _owner, first, second) = owner_admin_member(&runtime, "racecycle").await;
+    let (account, _owner, lower, higher) = owner_admin_member(&runtime, "racecycle").await;
+    assert!(
+        AsRef::<str>::as_ref(&lower) < AsRef::<str>::as_ref(&higher),
+        "X's actor holds the lower DID"
+    );
+    sqlx::query("ALTER TABLE account_members DISABLE TRIGGER account_members_refuse_deactivated")
+        .execute(&runtime.pool)
+        .await
+        .expect("disable the refusal");
 
-    let holding = hold_account(&runtime.pool, &account).await;
+    // X passes its check while `lower` is the Admin, then waits at its unit's first statement.
+    let account_hold = hold_account(&runtime.pool, &account).await;
     let x_runtime = runtime.clone();
-    let (x_account, x_actor, x_target) = (account.clone(), first.clone(), second.clone());
+    let (x_account, x_actor, x_target) = (account.clone(), lower.clone(), higher.clone());
     let x = tokio::spawn(async move {
         try_grant(&x_runtime, &x_account, &x_actor, &x_target, Role::Manager).await
     });
     wait_for_lock_waits(&runtime.pool, 1).await;
+
     let mut swapping = runtime.pool.begin().await.expect("begin the swap");
-    set_role(&mut swapping, &account, &second, "admin").await;
-    set_role(&mut swapping, &account, &first, "member").await;
+    set_role(&mut swapping, &account, &higher, "admin").await;
+    set_role(&mut swapping, &account, &lower, "member").await;
     swapping.commit().await.expect("swap the ranks");
+
+    // X takes the lower row shared, then waits to update the higher row behind the share.
+    let (member_hold, member_holder) = hold_member_shared(&runtime.pool, &account, &higher).await;
+    account_hold.rollback().await.expect("release the account");
+    wait_for_a_wait_on(&runtime.pool, member_holder).await;
+
+    // Y passes its check while `higher` is the Admin; it waits on the lower row behind X.
     let y_runtime = runtime.clone();
-    let (y_account, y_actor, y_target) = (account.clone(), second.clone(), first.clone());
+    let (y_account, y_actor, y_target) = (account.clone(), higher.clone(), lower.clone());
     let y = tokio::spawn(async move {
         try_grant(&y_runtime, &y_account, &y_actor, &y_target, Role::Manager).await
     });
     wait_for_lock_waits(&runtime.pool, 2).await;
-    holding.rollback().await.expect("release the account");
+    member_hold.rollback().await.expect("release the member row");
 
     let x_now = x.await.expect("X finishes");
     let y_now = y.await.expect("Y finishes");
     assert!(
-        !matches!(x_now, Err(AccountError::Infrastructure(_))),
-        "X never deadlocks: {x_now:?}"
+        matches!(x_now, Err(AccountError::IncorrectRole)),
+        "X, now a Member, is refused: {x_now:?}"
     );
-    assert!(
-        !matches!(y_now, Err(AccountError::Infrastructure(_))),
-        "Y never deadlocks: {y_now:?}"
+    assert!(y_now.is_ok(), "Y, now the Admin, grants: {y_now:?}");
+    assert_eq!(
+        role_now(&runtime.pool, &account, &lower).await.as_deref(),
+        Some("manager")
     );
 }
