@@ -45,7 +45,7 @@ DECLARE
     breaking bigint;
 BEGIN
     SELECT count(*) INTO breaking FROM account_invitations i
-    WHERE i.state = 'accepted'
+    WHERE lower(i.state) = 'accepted'
       AND NOT (i.updated_at BETWEEN '0001-01-01 00:00:00+00' AND '9999-12-31 23:59:59.999999+00');
     IF breaking > 0 THEN
         RAISE EXCEPTION 'the account fact backfill stops: % accepted invitations have an acceptance time outside years 1 to 9999', breaking;
@@ -54,19 +54,20 @@ END
 $$;
 
 -- An Account holds the member fact when it has an accepted invitation, two or more
--- members, or a member who is not an Owner. It was reached when its earliest
--- invitation was accepted; with none accepted, at this migration's time.
+-- members, or a member who is not an Owner; a state or role token matches in any
+-- letter case. It is dated by its earliest accepted invitation; with none accepted,
+-- by this migration's time, when it was recorded: when it was reached is unknown.
 INSERT INTO account_fact (account_id, kind, reached_at)
 SELECT a.id,
        'member',
        COALESCE(
            (SELECT min(i.updated_at) FROM account_invitations i
-            WHERE i.account_id = a.id AND i.state = 'accepted'),
+            WHERE i.account_id = a.id AND lower(i.state) = 'accepted'),
            now()
        )
 FROM accounts a
 WHERE EXISTS (SELECT 1 FROM account_invitations i
-              WHERE i.account_id = a.id AND i.state = 'accepted')
+              WHERE i.account_id = a.id AND lower(i.state) = 'accepted')
    OR (SELECT count(*) FROM account_members m WHERE m.account_id = a.id) >= 2
    OR EXISTS (SELECT 1 FROM account_members m
-              WHERE m.account_id = a.id AND m.role <> 'owner');
+              WHERE m.account_id = a.id AND lower(m.role) <> 'owner');

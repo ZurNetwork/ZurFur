@@ -1,7 +1,8 @@
 //! The Account facts table's migration: its backfill seeds made-up Accounts, members and
 //! invitations with raw SQL on the schema just before it, then runs it. Checks that each of
-//! the backfill's three conditions records the member fact at its time and that an Owner
-//! alone with unaccepted offers records none; that an accepted invitation's time out of
+//! the backfill's three conditions records the member fact at its time, a state token in any
+//! letter case included, and that an Owner alone (its role in any letter case) with unaccepted
+//! offers records none; that an accepted invitation's time out of
 //! range stops it by count alone; that a fact is never changed, removed or truncated; that
 //! an Account holding one cannot be deleted; and that its kind and time are checked.
 //! Requires a container runtime socket (DOCKER_HOST honored).
@@ -165,12 +166,22 @@ async fn the_backfill_records_each_account_that_had_a_member() {
     for user in [&owner, &invitee, &other, &heir] {
         seed_user(&pool, user).await;
     }
-    let [departed, two_owners, with_member, handed_over, alone] = [
+    let [
+        departed,
+        two_owners,
+        with_member,
+        handed_over,
+        alone,
+        capital_accepted,
+        capital_owner,
+    ] = [
         "bfadeparted",
         "bfbtwoowners",
         "bfcwithmember",
         "bfdhandedover",
         "bfealone",
+        "bffcapitalaccepted",
+        "bfgcapitalowner",
     ]
     .map(did);
     seed_account(&pool, &departed, "departed").await;
@@ -206,6 +217,19 @@ async fn the_backfill_records_each_account_that_had_a_member() {
     seat(&pool, &alone, &owner, "owner").await;
     offer(&pool, &alone, &owner, &invitee, "pending", FIRST_ACCEPTED).await;
     offer(&pool, &alone, &owner, &other, "revoked", LATER_ACCEPTED).await;
+    seed_account(&pool, &capital_accepted, "capitalaccepted").await;
+    seat(&pool, &capital_accepted, &owner, "owner").await;
+    offer(
+        &pool,
+        &capital_accepted,
+        &owner,
+        &invitee,
+        "Accepted",
+        FIRST_ACCEPTED,
+    )
+    .await;
+    seed_account(&pool, &capital_owner, "capitalowner").await;
+    seat(&pool, &capital_owner, &owner, "Owner").await;
     let before = Utc::now();
 
     run_migrations_through(&pool, FACT_VERSION).await;
@@ -218,7 +242,14 @@ async fn the_backfill_records_each_account_that_had_a_member() {
         .collect();
     assert_eq!(
         accounts,
-        [&departed, &two_owners, &with_member, &handed_over].map(String::as_str),
+        [
+            &departed,
+            &two_owners,
+            &with_member,
+            &handed_over,
+            &capital_accepted
+        ]
+        .map(String::as_str),
         "every Account that had a member besides its founder, and no other: {recorded:?}"
     );
     assert!(
@@ -241,6 +272,11 @@ async fn the_backfill_records_each_account_that_had_a_member() {
         at(&handed_over),
         instant(FIRST_ACCEPTED),
         "the heir's acceptance"
+    );
+    assert_eq!(
+        at(&capital_accepted),
+        instant(FIRST_ACCEPTED),
+        "an acceptance stored in capitals, its member gone"
     );
     for account in [&two_owners, &with_member] {
         let reached_at = at(account);
