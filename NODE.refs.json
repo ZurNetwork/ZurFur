@@ -574,7 +574,7 @@
     {
       "page": 23003138,
       "title": "Account Deletion, Tombstoning & Handle Reuse",
-      "governs": "delete.rs: the facts and the Owner read in the delete's own unit after the Account row's lock; soft with a fact, hard without"
+      "governs": "delete.rs: the facts and the Owner read in the delete's own unit after the Account row's lock, soft with a fact, hard without; account.rs lock_live_account and lock_account_row: every account write locks the Account row first and a deactivated Account refuses it, except a departure and a decline"
     },
     {
       "page": 24182820,
