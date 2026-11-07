@@ -26,6 +26,11 @@
       "node": false
     },
     {
+      "name": "src/account_deletion_contract.rs",
+      "role": "the shared account-deletion suite: one pub async fn per case over (&Runtime, &dyn CommissionSeeder), driving the account use cases (found, offer, accept, decline, revoke, leave, transfer, delete) as a driver would: an Account with a member, one whose member left and one handed over delete soft; an empty one, one with a board card and one with a declined and a revoked offer delete hard, the handle founding again; accept records the member fact once; a deactivated Account never deletes hard (a second delete answers not found, the store's hard delete refuses a deactivated row); its helpers (recognized, founded, offer, try_accept, accept, seat, delete, deleted, is_live, is_deactivated_for) and re-exports (Runtime, DeleteOutcome, AccountError, AccountEntity) serve adapter-pg's race tests; account_deletion_contract_tests!(setup) writes one #[tokio::test] per case",
+      "node": false
+    },
+    {
       "name": "src/commission_standing_contract.rs",
       "role": "the shared commission-standing suite: one pub async fn per case over (&dyn Database, &dyn CommissionStore, &dyn ParticipantRows, &dyn CommissionSeeder), seeding its commissions (Listed and Public too) through seeder.rs, checking the pool's standing and a unit's standing_for_update alike, and that the locked read answers the commission's own node; ParticipantRows is each adapter's own write of the participant rows no port writes; commission_standing_contract_tests!(setup) writes one #[tokio::test] per case; the pool's find_summary by the shown rule (a literal table: owner, Participant and stranger at each level, live and archived, and an absent id), the owner without a participant row included",
       "node": false

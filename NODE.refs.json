@@ -200,7 +200,7 @@
     {
       "page": 23003138,
       "title": "Account Deletion, Tombstoning & Handle Reuse",
-      "governs": "`src/account.rs`, `migrations/20260630140000_add_account_handle.sql`, `20260718194008_drop_projection_did.sql`, `tests/it/account.rs`"
+      "governs": "`src/account.rs`, `migrations/20260630140000_add_account_handle.sql`, `20260718194008_drop_projection_did.sql`, `tests/it/account.rs`; the facts table (`migrations/20261107174548_create_account_fact.sql`, `queries/account/facts.sql`) and the facts check in the delete's unit (`tests/it/account_deletion.rs`)"
     },
     {
       "page": 24150017,
@@ -574,7 +574,7 @@
     {
       "page": 23003138,
       "title": "Account Deletion, Tombstoning & Handle Reuse",
-      "governs": ""
+      "governs": "delete.rs: the facts and the Owner read in the delete's own unit after the Account row's lock; soft with a fact, hard without"
     },
     {
       "page": 24182820,
