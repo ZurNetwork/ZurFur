@@ -1,5 +1,5 @@
 #!/bin/sh
-# zaf description: land a task's slice with CI as the only gate: `merge-base`; when the base moved the head, `push` it and stop so the team runs `check pr` again; otherwise `pr-merge`, `zaf board done` and `workspace-drop`, stopping at the first that fails
+# zaf description: land a task's slice with CI as the only gate: `merge-base`; when the base moved the head, `push` it and stop so the team runs `check pr` again; otherwise `pr-merge`, `zaf board done` and `workspace-drop`, stopping at the first that fails; a pull request already merged goes straight to `zaf board done` and `workspace-drop`
 # zaf 1: refused: the arguments are not <task>, the base conflicts (the paths are in the log, the slice is unchanged), the base merge was pushed and needs a new `zaf check pr`, or a step refused
 # zaf 2: a backend failed (jj, gh or the board failed, or a step did not run (it exited 125), or a step ended with a code `slice-merge` does not know); after `pr-merge` the merge may already have happened
 # zaf mode: 750
@@ -27,6 +27,42 @@ stop() {
         *) exit 2 ;;
     esac
 }
+
+# The forge repository the manifest names, the first manifest that names one, in the order zaf
+# reads them. With none, gh works the repository out from the root's remotes, as it does by hand.
+forge_repo() {
+    for manifest in "$ZAF_ROOT/.zaf.toml" "$ZAF_ROOT/.zaf/config.toml" "$ZAF_ROOT/ZAF.toml"; do
+        [ -f "$manifest" ] || continue
+        found=$(awk '
+            /^[ \t]*\[/ { in_forge = ($0 ~ /^[ \t]*\[forge\][ \t]*(#.*)?$/); next }
+            in_forge && /^[ \t]*repo[ \t]*=/ {
+                line = $0
+                sub(/^[^=]*=[ \t]*"/, "", line)
+                sub(/".*$/, "", line)
+                print line
+                exit
+            }
+        ' "$manifest")
+        if [ -n "$found" ]; then
+            echo "$found"
+            return
+        fi
+    done
+}
+
+# A re-run after the merge itself went through (the board or the drop failed) finishes the
+# rest: a base merge now would move the head of a merged pull request and push it.
+repo=$(forge_repo)
+if [ -n "$repo" ]; then
+    state=$(gh pr view "${ZAF_PR#\#}" --json state --jq .state --repo "$repo") || exit 2
+else
+    state=$(gh pr view "${ZAF_PR#\#}" --json state --jq .state) || exit 2
+fi
+if [ "$state" = MERGED ]; then
+    zaf board done "$1" || stop $?
+    zaf do workspace-drop "$ZAF_SLICE" || stop $?
+    exit 0
+fi
 
 # The slice's latest commit, which is what the pull request's head is compared with.
 head_of() {

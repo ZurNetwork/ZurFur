@@ -12,8 +12,9 @@ if [ -z "$ZAF_ROOT" ] || [ "$#" -ne 2 ]; then
     exit 1
 fi
 
-# A slice name is a relative path of plain parts, below the workspaces directory, and fit to
-# sit inside a revset string.
+# A slice name is a relative path of plain parts, below the workspaces directory, written in
+# the characters `push` accepts, so it also sits safely inside a revset string. It is checked
+# before any bookmark or workspace is made.
 case "/$slice/" in
     *//* | */./* | */../*)
         echo "slice name $slice is not a relative path inside the workspaces directory" >&2
@@ -21,7 +22,7 @@ case "/$slice/" in
         ;;
 esac
 case $slice in
-    "" | /* | -* | *\"* | *\\*)
+    "" | /* | -* | *[!A-Za-z0-9._/+-]*)
         echo "slice name $slice is not a relative path inside the workspaces directory" >&2
         exit 1
         ;;

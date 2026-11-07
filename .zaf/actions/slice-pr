@@ -60,6 +60,12 @@ body="Refs $board#$task."
 title="$ZAF_TASK_TITLE ($board#$task)"
 dir=$ZAF_ROOT/.zaf/workspaces/$ZAF_SLICE
 
+# Any jj workspace at the slice's path is the slice's, as `commit` reads it.
+if [ ! -d "$dir/.jj" ]; then
+    echo "slice $ZAF_SLICE is not open" >&2
+    exit 1
+fi
+
 # What is left is the working copy's own change: jj snapshots the files on disk first. `commit`
 # refuses an empty one, so an empty one is skipped here rather than told from a real refusal.
 empty=$(cd "$dir" && jj --no-pager --color=never log --no-graph -r @ -T empty) || exit 2
