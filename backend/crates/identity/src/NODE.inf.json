@@ -37,7 +37,7 @@
     },
     {
       "name": "ports/",
-      "role": "trait seams: account (AccountReads also find_for_share, the live Account locked FOR SHARE, and facts, read on the unit), user, profile, identity (DidMinter, DidOperations, KeyStore, PlcOperationLog), identity_resolver (IdentityResolver — handle↔DID lookups of actors Zurfur does not own), character, bug_report (BugReportStore: list_since; BugReportWrites: lock_reporter_and_count_since — the rate limit's count, reporter locked until the unit ends — and file), actor_identity, authenticator, public_records; errors.rs (HandleTaken, AccountDeactivated, DidBelongsToAnotherActor, PublicRecordsError, AccountMismatch, BrowserMismatch, ResolveError)",
+      "role": "trait seams: account (AccountReads also find_for_share, the live Account locked FOR SHARE, role_of_for_share and role_of_for_update, a member's role with their row locked, and facts, read on the unit; grant_role and transfer_ownership revoke the pending offers their member can no longer make), user, profile, identity (DidMinter, DidOperations, KeyStore, PlcOperationLog), identity_resolver (IdentityResolver — handle↔DID lookups of actors Zurfur does not own), character, bug_report (BugReportStore: list_since; BugReportWrites: lock_reporter_and_count_since — the rate limit's count, reporter locked until the unit ends — and file), actor_identity, authenticator, public_records; errors.rs (HandleTaken, AccountDeactivated, DidBelongsToAnotherActor, PublicRecordsError, AccountMismatch, BrowserMismatch, ResolveError)",
       "node": false
     }
   ],
