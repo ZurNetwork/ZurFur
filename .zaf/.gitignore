@@ -5,3 +5,5 @@
 !actions/**
 !roles/
 !roles/**
+**/.env
+**/.env.*
