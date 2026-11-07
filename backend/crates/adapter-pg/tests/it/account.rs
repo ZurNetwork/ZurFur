@@ -1016,11 +1016,9 @@ async fn create_rejects_a_duplicate_handle() {
     );
 }
 
-// A soft-deleted (tombstoned) account still reserves its handle: it is invisible to
-// resolution (`find_did_by_handle` → None) yet founding over its handle still fails
-// with `HandleTaken`. The index is GLOBAL, not filtered on deleted_at — DD 23003138
-// "Account Deletion, Tombstoning & Handle Reuse". This is the case the founding
-// handler's live pre-check cannot see, so the constraint is the authoritative 409.
+// A soft-deleted account still reserves its handle and still resolves by it, and founding
+// over its handle at the store still fails with `HandleTaken`: the index is global, not
+// filtered on deleted_at.
 #[tokio::test]
 async fn a_soft_deleted_account_still_reserves_its_handle() {
     let (pool, _container) = fresh_pool().await;
@@ -1040,10 +1038,11 @@ async fn a_soft_deleted_account_still_reserves_its_handle() {
     // Soft-delete through the real write path (ZMVP-34's `AccountWrites::soft_delete`).
     soft_delete(&pool, &a1.id).await;
 
-    // Invisible to resolution — the resolver would 404.
-    assert!(
-        find_did_by_handle(&pool, &handle).await.is_none(),
-        "a tombstoned handle does not resolve"
+    let resolved = find_did_by_handle(&pool, &handle).await;
+    assert_eq!(
+        resolved.as_ref().map(|did| did.as_ref()),
+        Some("did:plc:ts-a1"),
+        "a deactivated handle still resolves to its DID"
     );
 
     // ...but the handle is still reserved: founding over it fails with HandleTaken,
