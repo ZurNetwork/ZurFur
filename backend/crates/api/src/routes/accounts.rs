@@ -261,7 +261,7 @@ async fn delete_account(
 
     let deleted = state.app().accounts().delete(cmd).await.map_err(|err| {
         if let AccountError::Infrastructure(cause) = &err {
-            tracing::error!(error = ?cause, "deleting the account failed in the store");
+            tracing::error!(error = %cause, "deleting the account failed in the store");
         }
         Problem::from(err)
     })?;
