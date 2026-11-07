@@ -792,9 +792,9 @@ async fn update_uses_only_the_operational_key_carrying_public_fields_from_the_lo
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
     // A genesis op signed with REAL keys, logged as the DID's only op.
-    let cold = Secp256k1Keypair::create(&mut rand::thread_rng());
-    let operational = Secp256k1Keypair::create(&mut rand::thread_rng());
-    let signing = Secp256k1Keypair::create(&mut rand::thread_rng());
+    let cold = Secp256k1Keypair::create(&mut OsRng);
+    let operational = Secp256k1Keypair::create(&mut OsRng);
+    let signing = Secp256k1Keypair::create(&mut OsRng);
     let genesis = PlcOperation::identity_only(
         vec![cold.did(), operational.did()],
         signing.did(),
