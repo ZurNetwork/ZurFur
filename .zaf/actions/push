@@ -1,5 +1,5 @@
 #!/bin/sh
-# zaf description: move a slice's bookmark forward to its workspace's latest commit and push it with scripts/jj-push.sh (fmt, clippy and the private-papers check first, in a build slot), after the root's own copy of the private-papers check, overwriting nothing: origin's bookmark, as the last fetch saw it, must be an ancestor of what is pushed; never fetches; a slice with nothing new is quiet; hands back the pushed commit
+# zaf description: move a slice's bookmark forward to its workspace's latest commit and push it with the root's scripts/jj-push.sh (fmt, clippy and the private-papers check first, in a build slot), after the root's own copy of the private-papers check, overwriting nothing: origin's bookmark, as the last fetch saw it, must be an ancestor of what is pushed; never fetches; a slice with nothing new is quiet; hands back the pushed commit
 # zaf 1: refused: uncommitted work, a backward or sideways move of the bookmark, origin's bookmark not an ancestor of the slice (the push would rewrite a pushed commit), a remote with work the slice lacks, fmt, clippy, a hand-typed migration name or a private paper stopped the push, no workspace for the slice, or a slice name that is not a workspace path or a task branch, or is the base
 # zaf 2: a backend failed (jj, cargo or the build slot is missing or refused, or a papers check could not run)
 # zaf mode: 750
@@ -66,8 +66,11 @@ if [ ! -x "$slot" ]; then
     echo "the build slot $slot is missing" >&2
     exit 2
 fi
-if [ ! -f scripts/jj-push.sh ]; then
-    echo "the slice has no scripts/jj-push.sh to push with" >&2
+# The root's copy of jj-push.sh, like the papers check below: run from the slice's workspace, it
+# finds the slice through `jj workspace root` and pushes it.
+jj_push=$ZAF_ROOT/scripts/jj-push.sh
+if [ ! -f "$jj_push" ]; then
+    echo "the root has no $jj_push to push with" >&2
     exit 2
 fi
 # The root's copy of the papers check, which nothing in the slice can edit.
@@ -123,7 +126,7 @@ if [ -n "$published" ]; then
 fi
 
 # The papers check first from the root's copy, over every commit the push could send that origin
-# lacks: the slice's own jj-push.sh runs it again, but the slice could have edited that one.
+# lacks: jj-push.sh runs the slice's own copy again, but the slice could have edited that one.
 status=0
 sh "$papers" --unpushed "@- | $bookmark" >&2 || status=$?
 case $status in
@@ -135,11 +138,11 @@ case $status in
     *) exit 2 ;;
 esac
 
-# The only sanctioned push: the workspace's own jj-push.sh, as `jj push` runs it, with one plain
+# The only sanctioned push: the root's jj-push.sh, as `jj push` runs it, with one plain
 # bookmark. It pushes to origin with a lease to the last fetch, so a remote whose bookmark moved
 # past what jj last saw refuses it; the ancestry check above keeps it from moving one sideways.
 status=0
-pushed=$(CARGO_BUILD_JOBS=8 nice -n 19 "$slot" sh scripts/jj-push.sh -b "$slice" 2>&1) || status=$?
+pushed=$(CARGO_BUILD_JOBS=8 nice -n 19 "$slot" sh "$jj_push" -b "$slice" 2>&1) || status=$?
 printf '%s\n' "$pushed" >&2
 if [ "$status" -ne 0 ]; then
     case $pushed in
