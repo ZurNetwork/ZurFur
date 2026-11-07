@@ -1,6 +1,7 @@
 //! The Account delete over PostgreSQL: the shared suite
 //! (`test_support::account_deletion_contract`), and the races only row locks decide: a delete
-//! waiting on an accept, an accept waiting on a delete, and a delete waiting on a hand-over.
+//! waiting on an accept, an accept waiting on a delete, a delete waiting on a hand-over, and a
+//! handle change waiting on a delete, each through the use cases' own Account lock.
 //! Also the store's own refusals: a hard delete of a deactivated Account deletes nothing, and
 //! one racing an accept that took no lock is refused by the facts' foreign key; and what a
 //! soft delete keeps. Then the store's refusal of every write into a deactivated Account,
@@ -24,8 +25,8 @@ use domain::elements::{
 };
 use domain::ports::AccountDeactivated;
 use test_support::account_deletion_contract::{
-    AccountError, DeleteOutcome, Runtime, accept, delete, deleted, founded, is_live, offer,
-    recognized, seat, try_accept,
+    AccountEntity, AccountError, DeleteOutcome, Runtime, accept, delete, deleted, founded, is_live,
+    offer, recognized, seat, try_accept, try_change_handle, try_transfer,
 };
 use test_support::seeder::{CommissionSeeder, seed_commission};
 
@@ -40,26 +41,43 @@ async fn fresh() -> (Runtime, Arc<dyn CommissionSeeder>, impl Sized) {
 
 test_support::account_deletion_contract_tests!(fresh);
 
-/// Waits, for at most ten seconds, until some connection to this database waits on a lock.
-async fn wait_for_a_lock_wait(pool: &PgPool) {
+/// Waits, for at most ten seconds, until `count` connections to this database wait on a lock.
+async fn wait_for_lock_waits(pool: &PgPool, count: i64) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
-        let waiting: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
-             WHERE datname = current_database() AND wait_event_type = 'Lock')",
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity \
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
         )
         .fetch_one(pool)
         .await
         .expect("read pg_stat_activity");
-        if waiting {
+        if waiting >= count {
             return;
         }
         assert!(
             tokio::time::Instant::now() < deadline,
-            "no connection waited on a lock within ten seconds"
+            "{count} connections did not wait on a lock within ten seconds"
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+/// Opens a transaction on the pool holding every row of `table` naming `account`
+/// `FOR UPDATE`, so a use case writing one of them waits until it ends.
+async fn hold_rows(
+    pool: &PgPool,
+    table: &str,
+    account: &AccountId,
+) -> sqlx::Transaction<'static, sqlx::Postgres> {
+    let mut holding = pool.begin().await.expect("begin the hold");
+    let locking = format!("SELECT 1 FROM {table} WHERE account_id = $1 FOR UPDATE");
+    sqlx::query(sqlx::AssertSqlSafe(locking))
+        .bind(AsRef::<str>::as_ref(account))
+        .fetch_all(&mut *holding)
+        .await
+        .expect("hold the rows");
+    holding
 }
 
 /// How many rows of `table` name `account`.
@@ -84,8 +102,9 @@ async fn invitations_in(pool: &PgPool, account: &AccountId, state: &str) -> i64 
     .expect("count the invitations")
 }
 
-// An accept holding the Account `FOR SHARE` commits its member fact while the delete waits for
-// the row: the delete reads the facts after its lock, so it goes soft.
+// The accept use case locks the Account `FOR SHARE` first, then waits on its offer's row; a
+// delete arriving meanwhile waits for the Account row, so it reads the fact the accept
+// commits and goes soft.
 #[tokio::test]
 async fn a_delete_waiting_on_an_accept_goes_soft() {
     let pg = test_support::pg_app::pg_runtime().await;
@@ -94,25 +113,14 @@ async fn a_delete_waiting_on_an_accept_goes_soft() {
     let invitee = recognized(&runtime, "did:plc:raceacceptinvitee").await;
     let account = founded(&runtime, &owner, "raceaccept.zurfur.app").await;
     offer(&runtime, &account, &owner, &invitee, Role::Member).await;
-    let invitation = runtime
-        .accounts
-        .find_pending_invitation(&account, &invitee)
-        .await
-        .expect("read the offer")
-        .expect("the offer is pending");
 
-    let mut accepting = runtime.database.begin().await.expect("begin the accept");
-    accepting
-        .accounts()
-        .find_for_share(&account)
-        .await
-        .expect("lock the account")
-        .expect("the account is live");
-    accepting
-        .accounts()
-        .accept_invitation(invitation, true)
-        .await
-        .expect("accept the offer");
+    let holding = hold_rows(&runtime.pool, "account_invitations", &account).await;
+    let acceptor = runtime.clone();
+    let accepting = account.clone();
+    let accepting_invitee = invitee.clone();
+    let accept =
+        tokio::spawn(async move { try_accept(&acceptor, &accepting, &accepting_invitee).await });
+    wait_for_lock_waits(&runtime.pool, 1).await;
     let deleter = runtime.clone();
     let deleting = account.clone();
     let deleting_owner = owner.clone();
@@ -121,10 +129,12 @@ async fn a_delete_waiting_on_an_accept_goes_soft() {
             .await
             .map(|deleted| deleted.outcome)
     });
-    wait_for_a_lock_wait(&runtime.pool).await;
-    accepting.commit().await.expect("commit the accept");
+    wait_for_lock_waits(&runtime.pool, 2).await;
+    holding.rollback().await.expect("release the offer");
 
+    let accepted = accept.await.expect("the accept finishes");
     let outcome = waiting.await.expect("the delete finishes");
+    assert!(accepted.is_ok(), "the accept commits: {accepted:?}");
     assert!(
         matches!(outcome, Ok(DeleteOutcome::Soft)),
         "the delete saw the fact committed while it waited"
@@ -167,16 +177,19 @@ async fn an_accept_waiting_on_a_delete_answers_not_found_and_seats_no_one() {
     let acceptor = runtime.clone();
     let accepting = account.clone();
     let accepting_invitee = invitee.clone();
-    let waiting = tokio::spawn(async move {
-        try_accept(&acceptor, &accepting, &accepting_invitee)
-            .await
-            .is_ok()
-    });
-    wait_for_a_lock_wait(&runtime.pool).await;
+    let waiting =
+        tokio::spawn(async move { try_accept(&acceptor, &accepting, &accepting_invitee).await });
+    wait_for_lock_waits(&runtime.pool, 1).await;
     deleting.commit().await.expect("commit the delete");
 
     let accepted = waiting.await.expect("the accept finishes");
-    assert!(!accepted, "the accept is refused");
+    assert!(
+        matches!(
+            accepted,
+            Err(AccountError::NotFound(AccountEntity::Account))
+        ),
+        "the accept answers the Account not found: {accepted:?}"
+    );
     assert_eq!(
         rows_naming(&runtime.pool, "account_members", &account).await,
         0,
@@ -190,8 +203,9 @@ async fn an_accept_waiting_on_a_delete_answers_not_found_and_seats_no_one() {
     assert!(!is_live(&runtime, &account).await, "the Account is gone");
 }
 
-// An Owner whose hand-over commits while their delete waits for the Account row is no longer
-// its Owner when the delete runs: the delete is refused and the Account stays live.
+// The transfer use case locks the Account `FOR SHARE` first, then waits on the memberships it
+// rewrites; the Owner's delete arriving meanwhile waits for the Account row, and once the
+// hand-over commits its in-unit role read refuses the former Owner. The Account stays live.
 #[tokio::test]
 async fn a_delete_by_an_owner_who_handed_over_meanwhile_is_refused() {
     let pg = test_support::pg_app::pg_runtime().await;
@@ -201,18 +215,13 @@ async fn a_delete_by_an_owner_who_handed_over_meanwhile_is_refused() {
     let account = founded(&runtime, &founder, "racehand.zurfur.app").await;
     seat(&runtime, &account, &founder, &heir).await;
 
-    let mut handing_over = runtime.database.begin().await.expect("begin the hand-over");
-    handing_over
-        .accounts()
-        .find_for_share(&account)
-        .await
-        .expect("lock the account")
-        .expect("the account is live");
-    handing_over
-        .accounts()
-        .transfer_ownership(&founder, &heir, &account)
-        .await
-        .expect("hand the account over");
+    let holding = hold_rows(&runtime.pool, "account_members", &account).await;
+    let handing = runtime.clone();
+    let (handed, handing_founder, handing_heir) = (account.clone(), founder.clone(), heir.clone());
+    let hand_over = tokio::spawn(async move {
+        try_transfer(&handing, &handed, &handing_founder, &handing_heir).await
+    });
+    wait_for_lock_waits(&runtime.pool, 1).await;
     let deleter = runtime.clone();
     let deleting = account.clone();
     let deleting_founder = founder.clone();
@@ -221,15 +230,72 @@ async fn a_delete_by_an_owner_who_handed_over_meanwhile_is_refused() {
             .await
             .map(|deleted| deleted.outcome)
     });
-    wait_for_a_lock_wait(&runtime.pool).await;
-    handing_over.commit().await.expect("commit the hand-over");
+    wait_for_lock_waits(&runtime.pool, 2).await;
+    holding.rollback().await.expect("release the memberships");
 
+    let handed_over = hand_over.await.expect("the hand-over finishes");
     let outcome = waiting.await.expect("the delete finishes");
+    assert!(
+        handed_over.is_ok(),
+        "the hand-over commits: {handed_over:?}"
+    );
     assert!(
         matches!(outcome, Err(AccountError::IncorrectRole)),
         "the former Owner is refused"
     );
     assert!(is_live(&runtime, &account).await, "the Account stays live");
+}
+
+// A handle change whose checks pass while a soft delete holds the Account waits for the row
+// in its unit, and answers the Account not found once the delete commits; the handle stays.
+#[tokio::test]
+async fn a_handle_change_waiting_on_a_delete_answers_not_found() {
+    let pg = test_support::pg_app::pg_runtime().await;
+    let runtime = pg.runtime.clone();
+    let owner = recognized(&runtime, "did:plc:racerenameowner").await;
+    let member = recognized(&runtime, "did:plc:racerenamemember").await;
+    let account = founded(&runtime, &owner, "racerename.zurfur.app").await;
+    seat(&runtime, &account, &owner, &member).await;
+
+    let mut deleting = runtime.database.begin().await.expect("begin the delete");
+    deleting
+        .accounts()
+        .find_for_update(&account)
+        .await
+        .expect("lock the account")
+        .expect("the account is live");
+    deleting
+        .accounts()
+        .soft_delete(&account)
+        .await
+        .expect("soft-delete the account");
+    let renamer = runtime.clone();
+    let (renaming, renaming_owner) = (account.clone(), owner.clone());
+    let waiting = tokio::spawn(async move {
+        try_change_handle(
+            &renamer,
+            &renaming,
+            &renaming_owner,
+            "racerenamed.zurfur.app",
+        )
+        .await
+    });
+    wait_for_lock_waits(&runtime.pool, 1).await;
+    deleting.commit().await.expect("commit the delete");
+
+    let renamed = waiting.await.expect("the handle change finishes");
+    assert!(
+        matches!(renamed, Err(AccountError::NotFound(AccountEntity::Account))),
+        "the handle change answers the Account not found: {renamed:?}"
+    );
+    let held: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM accounts WHERE id = $1 AND handle = 'racerename.zurfur.app'",
+    )
+    .bind(AsRef::<str>::as_ref(&account))
+    .fetch_one(&runtime.pool)
+    .await
+    .expect("read the handle");
+    assert_eq!(held, 1, "the deactivated Account keeps its handle");
 }
 
 // A hard delete aimed at a deactivated Account is refused before it deletes anything: a unit
