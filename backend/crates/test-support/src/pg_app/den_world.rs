@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::{PgServed, StatementLog, serve, serve_recording};
+use crate::pg::allow_any_commission_token;
 
 mod identity;
 
@@ -245,8 +246,11 @@ impl DenWorld {
         assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
     }
 
-    /// Stores a lifecycle token no parser reads on `commission`'s row, a test-only update.
+    /// Stores a lifecycle token no parser reads on `commission`'s row, a test-only update. The
+    /// commission table refuses one, so this drops its word and time checks in this world's own
+    /// database first.
     pub async fn store_unparsable_lifecycle(&self, commission: CommissionId) {
+        allow_any_commission_token(&self.served.runtime.pool).await;
         let updated = sqlx::query("UPDATE commission SET lifecycle = $1 WHERE id = $2")
             .bind(UNPARSABLE_LIFECYCLE)
             .bind(Uuid::from(commission))
@@ -316,13 +320,15 @@ impl DenWorld {
 
     /// Sets `time` on `commission`'s row to `infinity`, a test-only update. Planting
     /// [`CommissionTime::Disputed`] also moves the commission into the Disputed step, from
-    /// Active, as the dispute CHECK requires.
+    /// Active, as the dispute CHECK requires. The commission table refuses an infinite time, so
+    /// this drops its word and time checks in this world's own database first.
     pub async fn plant_infinite_time(
         &self,
         commission: CommissionId,
         time: CommissionTime,
         infinity: Infinity,
     ) {
+        allow_any_commission_token(&self.served.runtime.pool).await;
         let statement = match time {
             CommissionTime::Created => {
                 "UPDATE commission SET created_at = $1::text::timestamptz WHERE id = $2"

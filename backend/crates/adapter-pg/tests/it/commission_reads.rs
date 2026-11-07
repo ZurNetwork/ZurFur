@@ -866,7 +866,8 @@ async fn a_node_less_commission_reads_as_absent_and_its_standing_as_private() {
     assert_eq!(locked, None, "the locked standing reads it as absent");
 }
 
-// An archive time chrono can't hold (`infinity`, by a test-only update) never
+// An archive time chrono can't hold (`infinity`, by a test-only update with the
+// commission's time checks dropped in this test's database) never
 // reaches a decoder: the summary and the participant listing each read the
 // commission as archived, and neither panics.
 #[tokio::test]
@@ -874,6 +875,7 @@ async fn an_archive_time_out_of_range_reads_as_archived_without_a_panic() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:infinityowner").await;
     let id = seed_commission(&pool, &owner, "Old sketch").await;
+    test_support::pg::allow_any_commission_token(&pool).await;
     let updated = sqlx::query("UPDATE commission SET archived_at = 'infinity' WHERE id = $1")
         .bind(uuid::Uuid::from(id))
         .execute(&pool)

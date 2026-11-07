@@ -236,12 +236,13 @@ async fn a_tampered_maturity_token_surfaces_as_an_error() {
     let (pool, _container) = fresh_pool().await;
     let commission = seed_commission(&pool, "did:plc:tamper-owner").await;
     let store = PgCommissionStore::new(pool.clone());
+    test_support::pg::allow_any_commission_token(&pool).await;
 
     sqlx::query("UPDATE commission SET maturity = 'explicit', graphic = false WHERE id = $1")
         .bind(uuid::Uuid::from(commission.id))
         .execute(&pool)
         .await
-        .expect("tamper the row (the superseded vocabulary passes no CHECK — only the enum)");
+        .expect("tamper the row (with the rating's CHECK dropped in this test's database)");
 
     let err = store
         .find(&commission.id)

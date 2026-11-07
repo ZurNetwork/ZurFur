@@ -16,6 +16,7 @@ mod bug_report;
 mod codegen_current;
 mod commission;
 mod commission_changelog;
+mod commission_checks;
 mod commission_deadline;
 mod commission_dispute;
 mod commission_drop;
