@@ -73,7 +73,8 @@ if [ ! -f "$jj_push" ]; then
     echo "the root has no $jj_push to push with" >&2
     exit 2
 fi
-# The root's copy of the papers check, which nothing in the slice can edit.
+# The root's copy of the papers check: no commit in the slice can edit it, though a programmer
+# with edit rights on the root could.
 papers=$ZAF_ROOT/scripts/private-papers-check.sh
 if [ ! -f "$papers" ]; then
     echo "the root has no $papers to check the slice with" >&2
