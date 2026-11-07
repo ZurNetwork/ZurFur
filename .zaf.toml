@@ -75,7 +75,8 @@ steps = ["ci"]
 # spaces included, so `jj -* push` is a push with global flags before the verb
 # (`jj --no-pager push -b x`), and `jj git -* push` one with flags after `git`. A `-*` deny
 # also catches a few commit messages that hold "push"; that is known and accepted. `jj util exec`
-# runs any program, so it is denied whole: instances have no use for it. The `gh api` lines are a
+# runs any program, and flags can sit between `util` and `exec`, so `jj util` is denied whole:
+# instances have no use for any of it. The `gh api` lines are a
 # raw merge through the REST endpoint (`.../pulls/<n>/merge`) or the GraphQL mutation.
 [forbidden]
 commands = [
@@ -92,8 +93,8 @@ commands = [
     "git push",
     "jj push",
     "jj -* push",
-    "jj util exec",
-    "jj -* util exec",
+    "jj util",
+    "jj -* util",
     "scripts/jj-push.sh",
     "sh scripts/jj-push.sh",
 ]
