@@ -1,7 +1,7 @@
 #!/bin/sh
 # Tests for scripts/zaf-tests.sh: each branch's exact arguments, the exit status
-# of the run it started (a failing test included), and the usage refusal that
-# starts nothing. Fake `yarn` and `cargo` on PATH record their arguments and
+# of the run it started (a failing test included), and the usage refusals that
+# start nothing. Fake `yarn` and `cargo` on PATH record their arguments and
 # working directory. Run directly, or via `just scripts-test`.
 set -eu
 
@@ -67,6 +67,7 @@ STUB_STATUS=4 check "a failing story run passes its status through" 4 "$story_lo
 STUB_STATUS=101 check "a failing cargo run passes its status through" 101 "$cargo_log" some_test
 check "no name exits 2 and starts nothing" 2 ""
 check "two names exit 2 and start nothing" 2 "" a.spec.ts b.spec.ts
+check "a name starting with - exits 2 and starts nothing" 2 "" --release
 
 if [ "$failures" -gt 0 ]; then
     echo "$failures zaf-tests check(s) failed"

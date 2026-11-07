@@ -3,7 +3,8 @@
 # run that fits it out. A *.spec.ts name (relative to frontend/ui) runs under
 # Vitest, a *.stories.svelte name runs in the two Storybook projects, and any
 # other name is a cargo test filter over the workspace. Exits with the status
-# of the run it started; no name, or more than one, exits 2 and starts nothing.
+# of the run it started; no name, more than one, or one starting with `-` (an
+# option, not a test) exits 2 and starts nothing.
 # Works from any working directory. Run `scripts/zaf-tests.sh <name>`.
 set -eu
 
@@ -12,6 +13,12 @@ if [ "$#" -ne 1 ]; then
     exit 2
 fi
 name="$1"
+case "$name" in
+    -*)
+        echo "zaf-tests.sh: $name is an option, not a test name" >&2
+        exit 2
+        ;;
+esac
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
