@@ -21,8 +21,8 @@ tokio = { version = "1.49.0", features = ["full"] }
 # by the api crate; pbjson/pbjson-types carry the canonical-ProtoJSON serde
 # (lowerCamelCase, absent-optional omission, strict Timestamp grammar).
 prost = "0.14.4"
-pbjson = "0.8.0"
-pbjson-types = "0.8.0"
+pbjson = "0.9.0"
+pbjson-types = "0.9.0"
 serde = { version = "1.0.228", features = ["derive"] }
 uuid = { version = "1.20.0", features = ["v7", "serde"] }
 # Content identifiers: atproto record and blob CIDs, and the hash on every Atta node.
@@ -59,9 +59,9 @@ http = { version = "1.4" }
 # no-store` on the authenticated cookie surface (CWE-525, ZMVP-151). `timeout`:
 # http-stack's `RequestBodyTimeoutLayer`, a per-frame idle timeout on request
 # bodies. `trace`: http-stack's request log (`TraceLayer`, its span and its
-# start/finish events). Already in the tree transitively (reqwest
-# decompression) — this just turns on the modules.
-tower-http = { version = "0.6", features = ["set-header", "timeout", "trace"] }
+# start/finish events). reqwest brings its own 0.6 copy (decompression); this
+# turns on 0.7's modules.
+tower-http = { version = "0.7", features = ["set-header", "timeout", "trace"] }
 # `io`: `StreamReader`/`ReaderStream`, the axum-multipart <-> AsyncRead
 # adapters the streaming FileStore seam needs (ZMVP-88/205). `rt`: the
 # `TaskTracker` http-stack's detached requests and graceful shutdown wait on.
@@ -119,7 +119,9 @@ proptest = "1.11.0"
 insta = { version = "1.48.0", features = ["json", "redactions"] }
 # Quiet upstream since 2025-08; re-check activity before any bump.
 wiremock = "0.6.5"
-rand = { version = "0.8" }
+rand = { version = "0.10" }
+# atrium-crypto's keypair bound takes rand_core 0.6 until it moves.
+rand_core = { version = "0.6", features = ["getrandom"] }
 # --- ZMVP-49: real did:plc minter, key custody, envelope encryption ---
 # secp256k1 keygen + atproto-canonical ECDSA-SHA256 sign (low-S, 64-byte r‖s) +
 # did:key multikey formatting. The vetted primitive, not hand-rolled k256.

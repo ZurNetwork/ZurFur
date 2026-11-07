@@ -17,7 +17,8 @@ use domain::{
     },
     ports::{DidMinter, KeyStore, PlcOperationLog},
 };
-use rand::Rng;
+use rand::RngExt as _;
+use rand_core::OsRng;
 use std::sync::Arc;
 
 use crate::plc::{PlcOperation, TombstoneOperation};
@@ -98,10 +99,9 @@ impl RealDidMinter {
 }
 
 /// Generate the three per-mint secp256k1 keypairs (cold-recovery, operational,
-/// signing) in a block so the non-`Send` `ThreadRng` is dropped before any
-/// `.await` the caller runs next (the keypairs themselves are `Send`).
+/// signing) from the OS random source.
 fn generate_keypairs() -> (Secp256k1Keypair, Secp256k1Keypair, Secp256k1Keypair) {
-    let mut rng = rand::thread_rng();
+    let mut rng = OsRng;
     (
         Secp256k1Keypair::create(&mut rng),
         Secp256k1Keypair::create(&mut rng),
@@ -309,9 +309,9 @@ impl StubDidMinter {
 /// A well-formed synthetic `did:plc:` suffix: 24 random lowercase base32
 /// chars, shared by every [`StubDidMinter`] mint regardless of alias.
 fn random_suffix() -> String {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     (0..24)
-        .map(|_| PLC_BASE32[rng.gen_range(0..PLC_BASE32.len())] as char)
+        .map(|_| PLC_BASE32[rng.random_range(0..PLC_BASE32.len())] as char)
         .collect()
 }
 
