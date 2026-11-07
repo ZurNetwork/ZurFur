@@ -397,9 +397,8 @@ pub mod account {
 
     /// `queries/account/find_for_share.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// `find`, with the row locked FOR SHARE until the unit of work commits: writers of
-    /// the account's members and invitations, which lock it the same way, proceed side by
-    /// side, while an update or a delete of the account row waits for them all.
+    /// `find`, with the row locked FOR SHARE until the unit of work commits: an update or
+    /// a delete of the account row waits until then, while other share holders proceed.
     pub async fn find_for_share(
         conn: impl sqlx::PgExecutor<'_>,
         id: &str,

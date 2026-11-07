@@ -1,6 +1,5 @@
--- `find`, with the row locked FOR SHARE until the unit of work commits: writers of
--- the account's members and invitations, which lock it the same way, proceed side by
--- side, while an update or a delete of the account row waits for them all.
+-- `find`, with the row locked FOR SHARE until the unit of work commits: an update or
+-- a delete of the account row waits until then, while other share holders proceed.
 SELECT a.id, a.handle, a.name, a.created_at, a.updated_at, a.deleted_at
 FROM accounts a
 WHERE a.id = $1
