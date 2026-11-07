@@ -20,6 +20,7 @@ use domain::{
 };
 use sqlx::{PgConnection, PgPool};
 
+use crate::account::deactivated::deactivation_aware;
 use crate::queries::{column as column_sql, workflow as workflow_sql};
 
 /// Re-validate a stored `visibility` token into its [`Level`]. An `Err`
@@ -125,14 +126,15 @@ impl WorkflowWrites for PgWorkflowWrites<'_> {
     ) -> anyhow::Result<Workflow> {
         let workflow = Workflow::new(name.clone(), account_id.clone(), Level::Private);
 
-        workflow_sql::create(
+        let creating = workflow_sql::create(
             &mut *self.conn,
             uuid::Uuid::from(workflow.id),
             account_id.as_ref(),
             name.as_ref(),
             <&'static str>::from(&workflow.visibility),
         )
-        .await?;
+        .await;
+        deactivation_aware(creating)?;
 
         Ok(workflow)
     }
@@ -141,7 +143,8 @@ impl WorkflowWrites for PgWorkflowWrites<'_> {
     /// commissions they pointed at. No-op on an absent board.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn delete(&mut self, workflow_id: &WorkflowId) -> anyhow::Result<()> {
-        workflow_sql::delete(&mut *self.conn, uuid::Uuid::from(*workflow_id)).await?;
+        let deleting = workflow_sql::delete(&mut *self.conn, uuid::Uuid::from(*workflow_id)).await;
+        deactivation_aware(deleting)?;
         Ok(())
     }
 
@@ -151,7 +154,7 @@ impl WorkflowWrites for PgWorkflowWrites<'_> {
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_indexes(&mut self, workflow: &Workflow) -> anyhow::Result<()> {
         for column in workflow.iter() {
-            workflow_sql::upsert_column(
+            let upserting = workflow_sql::upsert_column(
                 &mut *self.conn,
                 uuid::Uuid::from(column.id),
                 uuid::Uuid::from(workflow.id),
@@ -159,7 +162,8 @@ impl WorkflowWrites for PgWorkflowWrites<'_> {
                 <&'static str>::from(&column.visibility),
                 column.position.as_ref(),
             )
-            .await?;
+            .await;
+            deactivation_aware(upserting)?;
         }
         Ok(())
     }
@@ -233,7 +237,8 @@ impl ColumnWrites for PgColumnWrites<'_> {
     /// Deletes one column; card edges cascade. No-op on an absent column.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn delete(&mut self, column_id: &ColumnId) -> anyhow::Result<()> {
-        column_sql::delete(&mut *self.conn, uuid::Uuid::from(*column_id)).await?;
+        let deleting = column_sql::delete(&mut *self.conn, uuid::Uuid::from(*column_id)).await;
+        deactivation_aware(deleting)?;
         Ok(())
     }
 
@@ -242,19 +247,21 @@ impl ColumnWrites for PgColumnWrites<'_> {
     /// `(column_id, position)` unique constraint is DEFERRABLE, checked at COMMIT.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_commissions(&mut self, column: &Column) -> anyhow::Result<()> {
-        column_sql::clear_cards(&mut *self.conn, uuid::Uuid::from(column.id)).await?;
+        let clearing = column_sql::clear_cards(&mut *self.conn, uuid::Uuid::from(column.id)).await;
+        deactivation_aware(clearing)?;
 
         for (index, commission) in column.iter().enumerate() {
             let position = i32::try_from(index)
                 .map_err(|_| anyhow::anyhow!("column holds more cards than a position can hold"))?;
 
-            column_sql::add_card(
+            let placing = column_sql::add_card(
                 &mut *self.conn,
                 uuid::Uuid::from(column.id),
                 uuid::Uuid::from(*commission),
                 position,
             )
-            .await?;
+            .await;
+            deactivation_aware(placing)?;
         }
         Ok(())
     }
@@ -263,12 +270,13 @@ impl ColumnWrites for PgColumnWrites<'_> {
     /// for the board-level uniqueness check already made.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn rename(&mut self, column: &Column) -> anyhow::Result<()> {
-        column_sql::rename(
+        let renaming = column_sql::rename(
             &mut *self.conn,
             uuid::Uuid::from(column.id),
             column.name.as_ref(),
         )
-        .await?;
+        .await;
+        deactivation_aware(renaming)?;
         Ok(())
     }
 }

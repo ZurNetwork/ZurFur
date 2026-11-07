@@ -73,8 +73,8 @@ use domain::elements::{
     user_account::UserAccount,
     workflow::{ColumnId, WorkflowId},
 };
-use domain::ports::DidBelongsToAnotherActor;
 use domain::ports::character::{CharacterStore, CharacterWrites};
+use domain::ports::{AccountDeactivated, DidBelongsToAnotherActor};
 use domain::ports::{
     AccountReads, AccountRepo, AccountStore, AccountWrites, ActorIdentityStore,
     ActorIdentityWrites, Authenticator, BrowserBinding, BugReportStore, BugReportWrites,
@@ -740,8 +740,8 @@ impl MemBackend {
     }
 
     /// Seed a soft-deleted account holding `handle` (test-only) by inserting a
-    /// deactivated row directly, with no member.
-    /// A tombstone is invisible to `find` but still reserves its handle.
+    /// deactivated row directly, with no member. It is invisible to `find`, but still
+    /// reserves its handle and resolves by it.
     pub fn seed_soft_deleted_account(&self, did: &Did, handle: &Handle) {
         let now = Utc::now();
         self.accounts
@@ -1271,8 +1271,8 @@ impl AccountStore for MemAccountStore {
             .map(|stored| rebuild_invitation(*id, stored)))
     }
 
-    /// Scan for the live account whose handle matches, returning its DID. A
-    /// soft-deleted account resolves to `None`; handle equality is exact.
+    /// Scan for the account, live or deactivated, whose handle matches, returning its
+    /// DID; handle equality is exact.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>> {
         let accounts = self
@@ -1280,9 +1280,9 @@ impl AccountStore for MemAccountStore {
             .accounts
             .lock()
             .expect("MemBackend accounts mutex poisoned");
-        Ok(accounts.iter().find_map(|(id, stored)| {
-            (stored.deleted_at.is_none() && &stored.handle == handle).then(|| id.did().clone())
-        }))
+        Ok(accounts
+            .iter()
+            .find_map(|(id, stored)| (&stored.handle == handle).then(|| id.did().clone())))
     }
 
     /// Count this account's recorded handle changes at or after `since`.
@@ -1412,6 +1412,7 @@ pub struct MemAccountWrites(MemBackend);
 impl MemAccountWrites {
     /// A member departing: refuses the Owner before touching anything, else removes the
     /// membership and revokes their pending issued invitations (no role tree to re-home).
+    /// Passes on a deactivated Account, as the PostgreSQL store lets a departure through.
     /// Overlapping units still merge last-writer-wins, so a departure whose unit opened
     /// before a transfer committed can still remove the new Owner, in dev and tests only.
     fn settle_member_departure(&self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
@@ -1604,6 +1605,7 @@ impl AccountWrites for MemAccountWrites {
         account: &AccountId,
         role: &Role,
     ) -> anyhow::Result<()> {
+        self.0.ensure_live(account)?;
         if matches!(role, Role::Owner) {
             anyhow::bail!(
                 "grant_role: ownership moves only by transfer; account {} user {}",
@@ -1648,6 +1650,7 @@ impl AccountWrites for MemAccountWrites {
     /// Returns the offer that now stands — the fresh one, or the pending one on file.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<Invitation> {
+        self.0.ensure_live(&invitation.account)?;
         let issuer_seat = (invitation.account.clone(), invitation.inviter.clone());
         let issuer_is_member = self
             .0
@@ -1694,7 +1697,8 @@ impl AccountWrites for MemAccountWrites {
     }
 
     /// Flip a pending invitation to revoked and stamp `updated_at`. A non-pending
-    /// or absent invitation is a no-op, not an error.
+    /// or absent invitation is a no-op, not an error. Passes on a deactivated Account,
+    /// as the PostgreSQL store lets a decline through.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn revoke_invitation(&mut self, id: &InvitationId) -> anyhow::Result<()> {
         let mut invitations = self
@@ -1722,6 +1726,7 @@ impl AccountWrites for MemAccountWrites {
         invitation: Invitation,
         listed_on_profile: bool,
     ) -> anyhow::Result<UserAccount> {
+        self.0.ensure_live(&invitation.account)?;
         let now = Utc::now();
         {
             // Matching no pending offer means it was accepted or revoked since,
@@ -1787,6 +1792,7 @@ impl AccountWrites for MemAccountWrites {
         new_owner: &UserId,
         account: &AccountId,
     ) -> anyhow::Result<()> {
+        self.0.ensure_live(account)?;
         let mut memberships = self
             .0
             .memberships
@@ -1852,7 +1858,8 @@ impl AccountWrites for MemAccountWrites {
     /// The commissions those cards pointed at are untouched (they are User-owned),
     /// and so are view grants, which are no longer an account rail. Custody keys
     /// are not modeled here. Errs, removing nothing, on a deactivated Account and on
-    /// one holding a fact, as the PostgreSQL store does; an absent one is a no-op here.
+    /// one holding a fact, as the PostgreSQL store does. On an absent Account it removes
+    /// that Account's leftover rows and succeeds, where the PostgreSQL store errs.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
         let holds_a_fact = self
@@ -1986,6 +1993,21 @@ impl Database for MemDatabase {
 }
 
 impl MemBackend {
+    /// Refuses with [`AccountDeactivated`] a write into a deactivated Account, as the
+    /// PostgreSQL store does inside the writing statement. An absent Account passes.
+    pub(crate) fn ensure_live(&self, account: &AccountId) -> anyhow::Result<()> {
+        let deactivated = self
+            .accounts
+            .lock()
+            .expect("MemBackend accounts mutex poisoned")
+            .get(account)
+            .is_some_and(|stored| stored.deleted_at.is_some());
+        if deactivated {
+            return Err(anyhow::Error::new(AccountDeactivated));
+        }
+        Ok(())
+    }
+
     /// A unit of work over this store, as [`MemDatabase::begin`] opens one, unboxed for
     /// the crate's own seeders.
     pub(crate) fn unit(&self) -> MemUnitOfWork {

@@ -28,6 +28,10 @@ use std::str::FromStr;
 use crate::queries::account as sql;
 use crate::queries::actor_identity as actor_sql;
 
+pub(crate) mod deactivated;
+
+use deactivated::deactivation_aware;
+
 /// The table recording each fact an Account has reached; one row keeps it from a hard
 /// delete. Its foreign key onto `accounts` does not cascade.
 pub const ACCOUNT_FACT_RECORD: &str = "account_fact";
@@ -267,7 +271,7 @@ impl PgAccountWrites<'_> {
 
         // Revoke before re-homing: an accept of one of these offers either loses to the
         // revocation or commits first, and then the re-homing below sees its new seat.
-        sql::departure_revoke_invitations(
+        let revoking = sql::departure_revoke_invitations(
             &mut *self.conn,
             <&'static str>::from(InvitationState::Revoked),
             Utc::now(),
@@ -275,28 +279,34 @@ impl PgAccountWrites<'_> {
             user.as_ref(),
             <&'static str>::from(InvitationState::Pending),
         )
-        .await?;
+        .await;
+        deactivation_aware(revoking)?;
 
         // Scoped to this account; `parent` is a `users(id)`, may be parent elsewhere.
-        sql::departure_rehome_children(
+        let rehoming = sql::departure_rehome_children(
             &mut *self.conn,
             departing.parent.as_deref(),
             account.as_ref(),
             user.as_ref(),
         )
-        .await?;
+        .await;
+        deactivation_aware(rehoming)?;
 
-        sql::departure_delete_membership(&mut *self.conn, account.as_ref(), user.as_ref()).await?;
+        let deleting =
+            sql::departure_delete_membership(&mut *self.conn, account.as_ref(), user.as_ref())
+                .await;
+        deactivation_aware(deleting)?;
 
         // Read Committed: a new statement sees a child committed under this member while
         // the first re-homing waited (their own parent departing at once), so re-home again.
-        sql::departure_rehome_children(
+        let rehoming_again = sql::departure_rehome_children(
             &mut *self.conn,
             departing.parent.as_deref(),
             account.as_ref(),
             user.as_ref(),
         )
-        .await?;
+        .await;
+        deactivation_aware(rehoming_again)?;
 
         Ok(())
     }
@@ -408,9 +418,8 @@ impl AccountStore for PgAccountStore {
             .transpose()
     }
 
-    /// A live account's `did` by normalized `handle`; filters `deleted_at IS
-    /// NULL` like [`find`](PgAccountStore::find). Backs `/.well-known/atproto-did`
-    /// resolution and the duplicate-handle pre-check.
+    /// The `did` of the account holding the normalized `handle`, live or deactivated.
+    /// Backs `/.well-known/atproto-did` resolution and the duplicate-handle pre-check.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>> {
         Ok(sql::find_did_by_handle(&self.pool, handle.as_str())
@@ -577,7 +586,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             );
         }
 
-        sql::change_handle_audit(
+        let auditing = sql::change_handle_audit(
             &mut *self.conn,
             uuid::Uuid::now_v7(),
             account.as_ref(),
@@ -585,7 +594,8 @@ impl AccountWrites for PgAccountWrites<'_> {
             new.as_str(),
             at,
         )
-        .await?;
+        .await;
+        deactivation_aware(auditing)?;
 
         Ok(())
     }
@@ -609,14 +619,15 @@ impl AccountWrites for PgAccountWrites<'_> {
         }
 
         // Zero rows: no membership, or the member is the Owner.
-        let updated = sql::grant_role(
+        let granting = sql::grant_role(
             &mut *self.conn,
             account.as_ref(),
             user.as_ref(),
             <&'static str>::from(role),
             <&'static str>::from(&Role::Owner),
         )
-        .await?;
+        .await;
+        let updated = deactivation_aware(granting)?;
         if updated != 1 {
             anyhow::bail!(
                 "grant_role: user {} is not a non-Owner member of account {}; nothing changed",
@@ -664,7 +675,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             return Err(issuer_not_a_member);
         }
 
-        sql::create_invitation(
+        let issuing = sql::create_invitation(
             &mut *self.conn,
             uuid::Uuid::from(invitation.id),
             invitation.account.as_ref(),
@@ -675,7 +686,8 @@ impl AccountWrites for PgAccountWrites<'_> {
             invitation.created_at,
             invitation.updated_at,
         )
-        .await?;
+        .await;
+        deactivation_aware(issuing)?;
 
         let standing = sql::find_pending_invitation(
             &mut *self.conn,
@@ -698,14 +710,15 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// already-terminal invitation.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn revoke_invitation(&mut self, id: &InvitationId) -> anyhow::Result<()> {
-        sql::revoke_invitation(
+        let revoking = sql::revoke_invitation(
             &mut *self.conn,
             <&'static str>::from(InvitationState::Revoked),
             Utc::now(),
             uuid::Uuid::from(*id),
             <&'static str>::from(InvitationState::Pending),
         )
-        .await?;
+        .await;
+        deactivation_aware(revoking)?;
 
         Ok(())
     }
@@ -722,14 +735,15 @@ impl AccountWrites for PgAccountWrites<'_> {
         listed_on_profile: bool,
     ) -> anyhow::Result<UserAccount> {
         let now = Utc::now();
-        let accepted = sql::accept_invitation_flip(
+        let flipping = sql::accept_invitation_flip(
             &mut *self.conn,
             <&'static str>::from(InvitationState::Accepted),
             now,
             uuid::Uuid::from(invitation.id),
             <&'static str>::from(InvitationState::Pending),
         )
-        .await?;
+        .await;
+        let accepted = deactivation_aware(flipping)?;
 
         // No matching pending row means the offer was already spent; roll back.
         if accepted == 0 {
@@ -739,7 +753,7 @@ impl AccountWrites for PgAccountWrites<'_> {
             ));
         }
 
-        let seated = sql::accept_invitation_seat(
+        let seating = sql::accept_invitation_seat(
             &mut *self.conn,
             invitation.account.as_ref(),
             invitation.invited_user.as_ref(),
@@ -747,7 +761,8 @@ impl AccountWrites for PgAccountWrites<'_> {
             <&'static str>::from(&invitation.role),
             listed_on_profile,
         )
-        .await?;
+        .await;
+        let seated = deactivation_aware(seating)?;
 
         // Already seated: RETURNING gave nothing, so read the persisted role instead.
         let (role, alias) = match seated {
@@ -771,13 +786,14 @@ impl AccountWrites for PgAccountWrites<'_> {
             }
         };
 
-        sql::record_fact(
+        let recording = sql::record_fact(
             &mut *self.conn,
             invitation.account.as_ref(),
             <&'static str>::from(AccountFactKind::Member),
             now,
         )
-        .await?;
+        .await;
+        deactivation_aware(recording)?;
 
         Ok(UserAccount {
             account_id: invitation.account,
@@ -799,7 +815,7 @@ impl AccountWrites for PgAccountWrites<'_> {
         account: &AccountId,
     ) -> anyhow::Result<()> {
         // Only while old_owner is still Owner; zero rows means a race already moved it.
-        let demoted = sql::transfer_demote_owner(
+        let demoting = sql::transfer_demote_owner(
             &mut *self.conn,
             <&'static str>::from(&Role::Admin),
             account.as_ref(),
@@ -807,7 +823,8 @@ impl AccountWrites for PgAccountWrites<'_> {
             Some(new_owner.as_ref()),
             <&'static str>::from(&Role::Owner),
         )
-        .await?;
+        .await;
+        let demoted = deactivation_aware(demoting)?;
         if demoted != 1 {
             anyhow::bail!(
                 "transfer_ownership: user {} is not the current Owner of account {}; nothing transferred",
@@ -817,13 +834,14 @@ impl AccountWrites for PgAccountWrites<'_> {
         }
 
         // Only while new_owner is still a member; zero rows means they vanished mid-transfer.
-        let promoted = sql::transfer_promote_heir(
+        let promoting = sql::transfer_promote_heir(
             &mut *self.conn,
             <&'static str>::from(&Role::Owner),
             account.as_ref(),
             new_owner.as_ref(),
         )
-        .await?;
+        .await;
+        let promoted = deactivation_aware(promoting)?;
         if promoted != 1 {
             anyhow::bail!(
                 "transfer_ownership: user {} is not a member of account {}; nothing transferred",
@@ -848,8 +866,8 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// Locks the live `accounts` row, then deletes invitations, then memberships, then
     /// the row (those FKs don't cascade). Frees the handle for reuse. Custody
     /// `account_keys` rows are deliberately left in place (the PLC recovery window).
-    /// Errs, before any delete, on an absent or deactivated row, and when the Account
-    /// holds a fact; neither text names it.
+    /// Errs, before any delete, on an absent or deactivated row; and, at the row's delete,
+    /// when the Account holds a fact, which ends the unit. Neither text names it.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
         if sql::find_for_update(&mut *self.conn, account.as_ref())

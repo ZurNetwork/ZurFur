@@ -7,7 +7,7 @@ use domain::{
         handle::{Handle, HandleDomain, HandleError},
         workflow::WorkflowError,
     },
-    ports::{DidBelongsToAnotherActor, DidMinter, HandleTaken},
+    ports::{AccountDeactivated, DidBelongsToAnotherActor, DidMinter, HandleTaken},
 };
 use shared::settings::HANDLE_QUARANTINE_WINDOW;
 
@@ -76,7 +76,7 @@ pub enum AccountEntity {
 /// [`source`](std::error::Error::source).
 #[derive(Debug)]
 pub enum AccountError {
-    /// The handle is claimed — live, tombstoned or quarantined.
+    /// The handle is claimed — by a live or deactivated account, or quarantined.
     HandleTaken,
     /// The handle's namespace isn't supported for this operation.
     UnsupportedHandle,
@@ -237,7 +237,8 @@ impl std::error::Error for AccountError {
 impl std::error::Error for AccountEntity {}
 
 /// The one place a store error becomes a use-case error: [`HandleTaken`] and
-/// [`DidBelongsToAnotherActor`] are recognized as state conflicts, anything
+/// [`DidBelongsToAnotherActor`] are recognized as state conflicts,
+/// [`AccountDeactivated`] answers as an absent Account, anything
 /// else stays [`Infrastructure`](AccountError::Infrastructure).
 impl From<anyhow::Error> for AccountError {
     fn from(err: anyhow::Error) -> Self {
@@ -245,6 +246,8 @@ impl From<anyhow::Error> for AccountError {
             Self::HandleTaken
         } else if err.downcast_ref::<DidBelongsToAnotherActor>().is_some() {
             Self::DidBelongsToAnotherActor
+        } else if err.downcast_ref::<AccountDeactivated>().is_some() {
+            Self::NotFound(AccountEntity::Account)
         } else {
             Self::Infrastructure(err)
         }
@@ -270,7 +273,7 @@ pub(crate) async fn require_live_account(
 
 /// The one handle-claim gate: refuse with `InvalidHandle` when `handle_domain`
 /// withholds `handle` (its apex or a reserved label), and with `HandleTaken`
-/// when a live account already holds it, or when, inside the Zurfur namespace,
+/// when an account, live or deactivated, already holds it, or when, inside the Zurfur namespace,
 /// another account vacated it within the quarantine window. `exempt` names the
 /// account whose own vacated handle does not count against it.
 // TODO(Engineer): Characters claim through this gate too once their handle

@@ -100,6 +100,18 @@ fn workflow_of(backend: &MemBackend, id: &WorkflowId) -> anyhow::Result<Option<W
     Ok(Some(workflow))
 }
 
+/// Refuses a write onto a deactivated Account's board, through
+/// [`MemBackend::ensure_live`]. An absent board passes.
+fn ensure_board_live(backend: &MemBackend, workflow_id: &WorkflowId) -> anyhow::Result<()> {
+    let owner = backend
+        .workflows
+        .lock()
+        .expect("MemBackend workflows mutex poisoned")
+        .get(workflow_id)
+        .map(|stored| stored.account_id.clone());
+    owner.map_or(Ok(()), |account| backend.ensure_live(&account))
+}
+
 /// In-memory [`WorkflowWrites`] over the unit's staged backend, so board
 /// mutations land only on commit.
 pub struct MemWorkflowWrites(pub(crate) MemBackend);
@@ -114,6 +126,7 @@ impl WorkflowWrites for MemWorkflowWrites {
         name: &WorkflowName,
         account_id: &AccountId,
     ) -> anyhow::Result<Workflow> {
+        self.0.ensure_live(account_id)?;
         let workflow = Workflow::new(name.clone(), account_id.clone(), Level::Private);
         let stored = StoredWorkflow {
             account_id: account_id.clone(),
@@ -134,6 +147,7 @@ impl WorkflowWrites for MemWorkflowWrites {
     /// pointed at. Deleting an absent board is a no-op.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn delete(&mut self, workflow_id: &WorkflowId) -> anyhow::Result<()> {
+        ensure_board_live(&self.0, workflow_id)?;
         self.0
             .workflows
             .lock()
@@ -153,6 +167,7 @@ impl WorkflowWrites for MemWorkflowWrites {
     /// column, since the caller hands the whole board over.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_indexes(&mut self, workflow: &Workflow) -> anyhow::Result<()> {
+        ensure_board_live(&self.0, &workflow.id)?;
         let mut columns = self
             .0
             .columns
@@ -252,9 +267,13 @@ impl ColumnWrites for MemColumnWrites {
     }
 
     /// Persist the column's card list as the domain holds it: a wholesale
-    /// replacement, since the list has no per-card key.
+    /// replacement, since the list has no per-card key. Placing any card on a
+    /// deactivated Account's board is refused; emptying the column is not.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_commissions(&mut self, column: &Column) -> anyhow::Result<()> {
+        if column.iter().next().is_some() {
+            ensure_board_live(&self.0, &column.workflow_id)?;
+        }
         let mut columns = self
             .0
             .columns
@@ -272,6 +291,7 @@ impl ColumnWrites for MemColumnWrites {
     /// Rename one column; the duplicate-name check happens before this.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn rename(&mut self, column: &Column) -> anyhow::Result<()> {
+        ensure_board_live(&self.0, &column.workflow_id)?;
         let mut columns = self
             .0
             .columns

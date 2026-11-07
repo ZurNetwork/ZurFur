@@ -46,7 +46,9 @@ fn handle_from_host(host: &str, handle_domain: &HandleDomain) -> Option<Handle> 
 /// `GET /.well-known/atproto-did` — resolves the `Host` header's handle to its
 /// account's `did:plc`, `text/plain` (`200`).
 ///
-/// - `404` — `Host` not a claimable subdomain of `handle_domain`, or no live account holds it
+/// A deactivated account's handle still resolves to its DID.
+///
+/// - `404` — `Host` not a claimable subdomain of `handle_domain`, or no account holds it
 async fn atproto_did(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let Some(host) = headers.get(header::HOST).and_then(|h| h.to_str().ok()) else {
         return StatusCode::NOT_FOUND.into_response();
