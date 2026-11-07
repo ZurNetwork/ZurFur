@@ -1,0 +1,122 @@
+#!/bin/sh
+# zaf description: open a slice's jj workspace and same-named bookmark at the base as it stands on origin, handing back the workspace path; a workspace already open is handed back as is, whatever its base
+# zaf 1: refused: the arguments are not <slice> <base>, the slice's directory is not a jj workspace, jj holds the slice's workspace at another directory, the base is not on origin, or the slice name leaves the workspaces directory or is not a task branch or is the base
+# zaf 2: a backend failed (jj is missing or refused, or the fetch failed)
+# zaf mode: 750
+# zaf group: team
+slice=$1
+base=$2
+
+if [ -z "$ZAF_ROOT" ] || [ "$#" -ne 2 ]; then
+    echo "usage: workspace-open <slice> <base>, with ZAF_ROOT set" >&2
+    exit 1
+fi
+
+# A slice name is a relative path of plain parts, below the workspaces directory, written in
+# the characters `push` accepts, so it also sits safely inside a revset string. It is checked
+# before any bookmark or workspace is made.
+case "/$slice/" in
+    *//* | */./* | */../*)
+        echo "slice name $slice is not a relative path inside the workspaces directory" >&2
+        exit 1
+        ;;
+esac
+case $slice in
+    "" | /* | -* | *[!A-Za-z0-9._/+-]*)
+        echo "slice name $slice is not a relative path inside the workspaces directory" >&2
+        exit 1
+        ;;
+esac
+# A slice is a task branch as the manifest's task pattern writes it,
+# feature/release-<version>-<epic>-<task> with bare numbers for the epic and the task, and never
+# the base it merges into.
+task_branch() {
+    case $1 in
+        feature/release-?*-?*-?*) ;;
+        *) return 1 ;;
+    esac
+    branch_rest=${1#feature/release-}
+    branch_task=${branch_rest##*-}
+    branch_rest=${branch_rest%-*}
+    branch_epic=${branch_rest##*-}
+    branch_version=${branch_rest%-*}
+    case $branch_task in "" | *[!0-9]*) return 1 ;; esac
+    case $branch_epic in "" | *[!0-9]*) return 1 ;; esac
+    case $branch_version in "" | *[!A-Za-z0-9.-]*) return 1 ;; esac
+}
+if ! task_branch "$slice"; then
+    echo "slice name $slice is not a task branch, feature/release-<version>-<epic>-<task>" >&2
+    exit 1
+fi
+if [ -n "$ZAF_BASE" ] && [ "$slice" = "$ZAF_BASE" ]; then
+    echo "slice name $slice is the base, not a task branch" >&2
+    exit 1
+fi
+if [ "$slice" = "$base" ]; then
+    echo "slice name $slice is the base, not a task branch" >&2
+    exit 1
+fi
+case $base in
+    "" | -* | *\"* | *\\*)
+        echo "base $base is not a usable bookmark name" >&2
+        exit 1
+        ;;
+esac
+
+dir=$ZAF_ROOT/.zaf/workspaces/$slice
+
+# Root commands never snapshot the root's own working copy: it is someone else's checkout.
+root_jj() {
+    jj --no-pager --color=never --ignore-working-copy -R "$ZAF_ROOT" "$@"
+}
+
+# Open already: handed back as it stands, on whatever base it was opened on. The base is merged
+# into it at slice-merge, never rebased under it, so nothing here changes it.
+if [ -e "$dir" ]; then
+    if [ -d "$dir/.jj" ]; then
+        echo "$dir"
+        exit 0
+    fi
+    echo "$dir exists and is not a jj workspace" >&2
+    exit 1
+fi
+
+# A workspace whose directory was removed by hand still holds the name, and is forgotten below.
+# One jj holds at another directory is someone else's: refused before anything is made.
+real_root=$(cd "$ZAF_ROOT" && pwd -P) || exit 2
+real_dir=$real_root/.zaf/workspaces/$slice
+listing=$(root_jj workspace list -T 'name ++ "\t" ++ self.root() ++ "\n"') || exit 2
+held=$(printf '%s\n' "$listing" | awk -F '\t' -v name="$slice" '$1 == name { print $2; exit }')
+if [ -n "$held" ] && [ "$held" != "$dir" ] && [ "$held" != "$real_dir" ]; then
+    echo "jj holds workspace $slice at $held, not $dir" >&2
+    exit 1
+fi
+
+# The base as origin has it now, so a new slice starts from the current integration branch.
+root_jj git fetch --remote origin --branch "exact:$base" || exit 2
+
+base_revset="remote_bookmarks(exact:\"$base\", exact:\"origin\")"
+slice_revset="bookmarks(exact:\"$slice\")"
+
+found=$(root_jj log --no-graph -r "$base_revset" -T 'commit_id ++ "\n"') || exit 2
+if [ -z "$found" ]; then
+    echo "unknown base $base: origin has no such branch" >&2
+    exit 1
+fi
+
+# A bookmark left by an earlier drop keeps its place: its commits are the slice's.
+found=$(root_jj log --no-graph -r "$slice_revset" -T 'commit_id ++ "\n"') || exit 2
+if [ -z "$found" ]; then
+    root_jj bookmark create "$slice" -r "$base_revset" || exit 2
+fi
+
+if [ -n "$held" ]; then
+    root_jj workspace forget "$slice" || exit 2
+fi
+
+mkdir -p "$(dirname "$dir")" || exit 2
+# `workspace add` refuses to run without the root's working copy, so this one snapshots it.
+jj --no-pager --color=never -R "$ZAF_ROOT" workspace add --name "$slice" -r "$slice_revset" "$dir" || exit 2
+(cd "$dir" && jj --no-pager --color=never config set --workspace zaf.slice-base "$base") || exit 2
+
+echo "$dir"

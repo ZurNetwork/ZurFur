@@ -8,6 +8,7 @@ name = "zurfur"
 jj = "*"
 gh = "*"
 just = "*"
+yarn = "*"
 
 # Tickets live on the private design repo, beside the pages they cite.
 [board]
@@ -27,7 +28,7 @@ repo = "ZurNetwork/ZurFur"
 kind = "git-sibling"
 repo = "ZurNetwork/zurfur-design"
 path = "../zurfur-design"
-index = "docs/design-index.md"
+index = "../zurfur/docs/design-index.md"
 
 [workspaces]
 path = ".zaf/workspaces"
@@ -40,7 +41,7 @@ task = "feature/release-{version}-{epic}-{task}"
 [gate]
 full = "just gate"
 light = "just gate-light"
-tests = "cargo test --workspace {name}"
+tests = "sh scripts/zaf-tests.sh {name}"
 
 # The teams pack, installed from the ways marketplace on GitHub (ProgrammingCheetah/ways).
 [pack]
@@ -48,7 +49,7 @@ tag = "2.0.0"
 
 [runners.claude]
 command = "claude -p {prompt} --model {model} --add-dir {root}"
-timeout_minutes = 45
+timeout_minutes = 180
 
 [roles.programmer]
 model = "sonnet"
@@ -63,9 +64,26 @@ profile = "build"
 turns = 200
 batch = 4
 
-# CodeQL joins once default setup is enabled; CodeRabbit reviews PRs into main only, so it is not a slice step.
+# CodeQL (default setup) and CodeRabbit run on PRs into main only, so neither is a slice step.
 [check.pr]
 steps = ["ci"]
+
+# Merges and pushes go through the actions only: `slice-merge` merges a slice (pr-merge runs nested
+# inside it, where these denies do not reach), merges into main are the lead's by hand, and every
+# push is scripts/jj-push.sh, through `zaf do push`.
+[forbidden]
+commands = [
+    "gh pr merge",
+    "zaf do pr-merge",
+    "zaf do --tier machine pr-merge",
+    "zaf do --more pr-merge",
+    "zaf do --json pr-merge",
+    "jj git push",
+    "git push",
+    "jj push",
+    "scripts/jj-push.sh",
+    "sh scripts/jj-push.sh",
+]
 
 [ask]
 ladder = ["haiku", "sonnet"]
