@@ -1386,25 +1386,6 @@ impl CommissionRows for MemCommissionStore {
             .expect("MemBackend commissions mutex poisoned");
         Ok(commissions.get(&id).map(|stored| stored.rebuild(id)))
     }
-
-    /// Scan `commissions` for `owner`'s rows, drop archived ones, and rebuild
-    /// each. Sorted by [`CommissionId`] (UUIDv7, so creation order), since the
-    /// `HashMap` scan has no natural order.
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
-        let commissions = self
-            .0
-            .commissions
-            .lock()
-            .expect("MemBackend commissions mutex poisoned");
-        let mut owned: Vec<Commission> = commissions
-            .iter()
-            .filter(|(_, stored)| &stored.owner_id == owner && stored.archived_at.is_none())
-            .map(|(id, stored)| stored.rebuild(*id))
-            .collect();
-        owned.sort_by_key(|commission| uuid::Uuid::from(commission.id));
-        Ok(owned)
-    }
 }
 
 #[async_trait]

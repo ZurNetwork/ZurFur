@@ -621,11 +621,6 @@ impl CommissionRows for RecordingCommissionRows {
         self.log.record("find");
         self.inner.find(id).await
     }
-
-    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
-        self.log.record("list_owned_by");
-        self.inner.list_owned_by(owner).await
-    }
 }
 
 /// A [`ChangelogStore`] that logs `entries` before delegating.

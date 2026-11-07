@@ -5301,8 +5301,8 @@ const UNIT_READS: [&str; 7] = [
 /// The pool's whole-row reads, apart from the canonical read port.
 const COMMISSION_ROWS: &str = "CommissionRows";
 
-/// The whole-row reads' methods: the two whole-row reads, never a write.
-const ROW_READS: [&str; 2] = ["find", "list_owned_by"];
+/// The whole-row reads' methods: the one whole-row read, never a write.
+const ROW_READS: [&str; 1] = ["find"];
 
 /// The port file holding the commission unit's views.
 fn commission_port_file() -> PathBuf {

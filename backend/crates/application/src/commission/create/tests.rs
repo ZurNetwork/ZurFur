@@ -114,10 +114,10 @@ async fn a_create_for_an_unknown_user_is_a_store_failure() {
         ),
         "{created:?}"
     );
-    let owned = ports
-        .commission_rows
-        .list_owned_by(&unknown)
+    let joined = ports
+        .commissions
+        .list_participating(&unknown)
         .await
         .expect("the store reads");
-    assert!(owned.is_empty());
+    assert!(joined.is_empty(), "{joined:?}");
 }

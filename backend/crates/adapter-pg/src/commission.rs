@@ -696,7 +696,7 @@ impl PgCommissionStore {
     }
 }
 
-/// Fields shared by the `find`, `find_for_update`, and `list_owned_by` rows, so
+/// Fields shared by the `find` and `find_for_update` rows, so
 /// [`to_commission`] rebuilds them through one body, re-validating every token.
 /// Every field is a raw column value — nothing here is trusted.
 struct CommissionFields {
@@ -751,27 +751,6 @@ impl From<sql::FindForUpdateRow> for CommissionFields {
     /// From `queries/commission/find_for_update.sql`'s row (same columns as
     /// [`FindRow`](sql::FindRow) under a locking read).
     fn from(row: sql::FindForUpdateRow) -> Self {
-        Self {
-            owner_id: row.owner_id,
-            lifecycle: row.lifecycle,
-            disputed_from: row.disputed_from,
-            disputed_at: row.disputed_at,
-            deadline: row.deadline,
-            maturity: row.maturity,
-            graphic: row.graphic,
-            direction_status: row.direction_status,
-            deadline_status: row.deadline_status,
-            linked_channel: row.linked_channel,
-            archived_at: row.archived_at,
-            created_at: row.created_at,
-        }
-    }
-}
-
-impl From<sql::ListOwnedByRow> for CommissionFields {
-    /// From `queries/commission/list_owned_by.sql`'s row; the `id` column is
-    /// dropped here and lifted separately by the caller.
-    fn from(row: sql::ListOwnedByRow) -> Self {
         Self {
             owner_id: row.owner_id,
             lifecycle: row.lifecycle,
@@ -1028,20 +1007,6 @@ impl CommissionRows for PgCommissionStore {
             return Ok(None);
         };
         to_commission(*id, row.into()).map(Some)
-    }
-
-    /// Active commissions (`archived_at IS NULL`) owned by `owner`, ordered by
-    /// id, each rebuilt through `to_commission`: tokens re-validated.
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
-        sql::list_owned_by(&self.pool, owner.as_ref())
-            .await?
-            .into_iter()
-            .map(|row| {
-                let id = CommissionId::from(row.id);
-                to_commission(id, row.into())
-            })
-            .collect()
     }
 }
 

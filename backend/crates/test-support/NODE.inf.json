@@ -147,7 +147,7 @@
     },
     {
       "name": "src/recording.rs",
-      "role": "CallLog + recording wrappers over Database/UnitOfWork (nodes() delegates unrecorded), DidMinter, FileStore, CommissionStore (standing logged as standing, the sweep's scan as lapsed_deadlines), ChangelogStore (entries) and WorkflowStore (its find logged as find_workflow) — tests read the order of begin/commit/rollback, external calls and store reads; SubjectLog + recording wrappers over the identity reads (AccountStore, UserStore, CharacterStore, ProfileCache, ProfileSource) — tests read which reads ran and whose data each asked for; RecordingCommissionRows over CommissionRows (find, list_owned_by)",
+      "role": "CallLog + recording wrappers over Database/UnitOfWork (nodes() delegates unrecorded), DidMinter, FileStore, CommissionStore (standing logged as standing, the sweep's scan as lapsed_deadlines), ChangelogStore (entries) and WorkflowStore (its find logged as find_workflow) — tests read the order of begin/commit/rollback, external calls and store reads; SubjectLog + recording wrappers over the identity reads (AccountStore, UserStore, CharacterStore, ProfileCache, ProfileSource) — tests read which reads ran and whose data each asked for; RecordingCommissionRows over CommissionRows (find)",
       "node": false
     },
     {

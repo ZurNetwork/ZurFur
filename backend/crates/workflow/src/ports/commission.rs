@@ -156,11 +156,6 @@ pub trait CommissionRows: Send + Sync {
     /// The commission `id` names, or `None`. An archived commission is still
     /// found — filtering it out is a listing projection's job.
     async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
-
-    /// The commissions `owner` owns — owner-POV only, not the participant
-    /// projection. Archived commissions are excluded; ordered by
-    /// [`CommissionId`], unpaginated.
-    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>>;
 }
 
 /// The **write** surface of Zurfur's record of commissions — reachable only on an

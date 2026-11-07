@@ -1175,24 +1175,6 @@ pub mod commission {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
-    pub struct ListOwnedByRow {
-        pub id: uuid::Uuid,
-        pub owner_id: String,
-        pub lifecycle: String,
-        pub disputed_from: Option<String>,
-        pub disputed_at: Option<chrono::DateTime<chrono::Utc>>,
-        pub deadline: Option<chrono::DateTime<chrono::Utc>>,
-        pub maturity: Option<String>,
-        pub graphic: Option<bool>,
-        pub direction_status: Option<String>,
-        pub deadline_status: Option<String>,
-        pub linked_channel: Option<String>,
-        pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
-        pub created_at: chrono::DateTime<chrono::Utc>,
-    }
-
-    /// Row shape read back from the prepared statement's metadata.
-    #[derive(Debug, sqlx::FromRow)]
     pub struct ListParticipatingRow {
         pub id: uuid::Uuid,
         pub name: String,
@@ -1751,22 +1733,6 @@ pub mod commission {
             .bind(mark_kind)
             .bind(rearm_kind)
             .fetch_one(conn)
-            .await
-    }
-
-    /// `queries/commission/list_owned_by.sql`, contract inferred from the SQL against the migrated schema.
-    ///
-    /// The signed-in user's OWNED commissions, owner-POV only. Archived
-    /// commissions are excluded — an active-view listing, per the documented
-    /// listing-projection contract on `commission.archived_at`. Ordered by id
-    /// (UUIDv7 sorts as creation order).
-    pub async fn list_owned_by(
-        conn: impl sqlx::PgExecutor<'_>,
-        owner_id: &str,
-    ) -> sqlx::Result<Vec<ListOwnedByRow>> {
-        sqlx::query_as(include_str!("../queries/commission/list_owned_by.sql"))
-            .bind(owner_id)
-            .fetch_all(conn)
             .await
     }
 
