@@ -6,15 +6,16 @@
 -- between them. Reads go on.
 LOCK TABLE account_members IN SHARE MODE;
 
--- Counts the Accounts the index would refuse: the predicate is the index's own, grouped by
--- Account. The refusal names the count alone.
+-- Counts the Accounts holding more than one Owner in any letter case, as the application reads
+-- a role, so the count catches at least every Account the index would refuse. The refusal
+-- names the count alone.
 DO $$
 DECLARE
     breaking bigint;
 BEGIN
     SELECT count(*) INTO breaking FROM (
         SELECT 1 FROM account_members m
-        WHERE m.role = 'owner'
+        WHERE lower(m.role) = 'owner'
         GROUP BY m.account_id
         HAVING count(*) > 1
     ) doubled;

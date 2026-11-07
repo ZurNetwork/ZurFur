@@ -582,10 +582,16 @@ struct RevokeInvitationResponse {
 }
 
 /// `DELETE /accounts/{id}/invitations` — revokes a pending invitation.
-/// Idempotent: unknown user or no pending offer is a `200` no-op.
 ///
 /// - `200 { "account", "user" }`
-/// - `401` — not signed in · `403` — not allowed to revoke that invitation
+/// - `401` — not signed in
+/// - `404 member_not_found` — the caller holds no role here that may revoke that offer
+/// - `404 no_pending_invitation` — no pending offer to that user
+/// - `404 account_not_found` — the Account is deactivated
+/// - `409` — that user is already a member
+/// - `422` — malformed body
+///
+/// A revoke whose actor lost standing meanwhile answers `404 member_not_found`.
 async fn revoke_invitation_to_account(
     State(state): State<AppState>,
     Path(account_id): Path<AccountId>,

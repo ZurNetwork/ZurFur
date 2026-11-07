@@ -236,7 +236,7 @@ async fn an_offer_issued_after_its_issuers_demotion_is_refused() {
     assert!(pending.is_none(), "no offer is stored");
 }
 
-// Invitation Validity's ordering: an accept that commits before its issuer's demotion keeps
+// An accept that commits before its issuer's demotion keeps
 // its seat at the offered role.
 #[tokio::test]
 async fn an_accept_committing_before_a_demotion_seats_its_member() {
@@ -256,7 +256,7 @@ async fn an_accept_committing_before_a_demotion_seats_its_member() {
     );
 }
 
-// R-185: a leave that passed its check before a transfer made the leaver the Owner answers
+// A leave that passed its check before a transfer made the leaver the Owner answers
 // `OwnerCannotLeave`, and the new Owner stays.
 #[tokio::test]
 async fn a_leave_losing_to_a_transfer_answers_owner_cannot_leave() {

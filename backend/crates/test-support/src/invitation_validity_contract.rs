@@ -215,7 +215,7 @@ async fn demotion_revokes_every_offer_of_the_demoted(runtime: &Runtime, to: Role
     .await;
 }
 
-// R-240: an Admin demoted to Manager can offer nothing, so every pending offer they issued
+// An Admin demoted to Manager can offer nothing, so every pending offer they issued
 // is revoked with the demotion.
 pub async fn demoting_an_admin_to_manager_revokes_all_their_pending_offers(runtime: &Runtime) {
     demotion_revokes_every_offer_of_the_demoted(runtime, Role::Manager, "tomanager").await;
@@ -226,7 +226,7 @@ pub async fn demoting_an_admin_to_member_revokes_all_their_pending_offers(runtim
     demotion_revokes_every_offer_of_the_demoted(runtime, Role::Member, "tomember").await;
 }
 
-// R-230: a transfer makes the old Owner an Admin, who can't offer Admin: their pending Admin
+// A transfer makes the old Owner an Admin, who can't offer Admin: their pending Admin
 // offer is revoked, their Manager and Member offers stay.
 pub async fn a_transfer_revokes_the_old_owners_admin_offers_and_keeps_manager_and_member_offers(
     runtime: &Runtime,

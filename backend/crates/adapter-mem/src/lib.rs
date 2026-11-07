@@ -1410,11 +1410,6 @@ impl AccountStore for MemAccountStore {
 pub struct MemAccountWrites(MemBackend);
 
 impl MemAccountWrites {
-    /// A member departing: refuses the Owner before touching anything, else removes the
-    /// membership and revokes their pending issued invitations (no role tree to re-home).
-    /// Passes on a deactivated Account, as the PostgreSQL store lets a departure through.
-    /// Overlapping units still merge last-writer-wins, so a departure whose unit opened
-    /// before a transfer committed can still remove the new Owner, in dev and tests only.
     /// Revokes the pending offers `issuer` made in `account` at roles `issuer_role` can't
     /// offer; the in-memory twin of pg's statement run after a role change.
     fn revoke_outranked_offers(&self, issuer: &UserId, account: &AccountId, issuer_role: &Role) {
@@ -1437,6 +1432,11 @@ impl MemAccountWrites {
         }
     }
 
+    /// A member departing: refuses the Owner before touching anything, else removes the
+    /// membership and revokes their pending issued invitations (no role tree to re-home).
+    /// Passes on a deactivated Account, as the PostgreSQL store lets a departure through.
+    /// Overlapping units still merge last-writer-wins, so a departure whose unit opened
+    /// before a transfer committed can still remove the new Owner, in dev and tests only.
     fn settle_member_departure(&self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
         let mut memberships = self
             .0
