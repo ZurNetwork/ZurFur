@@ -221,7 +221,7 @@ dependencies = [
  "http-cookies",
  "http-stack",
  "insta",
- "pbjson 0.8.0",
+ "pbjson",
  "pbjson-types",
  "prost 0.14.4",
  "reqwest 0.13.4",
@@ -3860,16 +3860,6 @@ dependencies = [
 
 [[package]]
 name = "pbjson"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "898bac3fa00d0ba57a4e8289837e965baa2dee8c3749f3b11d45a64b4223d9c3"
-dependencies = [
- "base64",
- "serde",
-]
-
-[[package]]
-name = "pbjson"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8edd1efdd8ab23ba9cb9ace3d9987a72663d5d7c9f74fa00b51d6213645cf6c"
@@ -3898,7 +3888,7 @@ checksum = "a14e2757d877c0f607a82ce1b8560e224370f159d66c5d52eb55ea187ef0350e"
 dependencies = [
  "bytes",
  "chrono",
- "pbjson 0.9.0",
+ "pbjson",
  "pbjson-build",
  "prost 0.14.4",
  "prost-build 0.14.4",
