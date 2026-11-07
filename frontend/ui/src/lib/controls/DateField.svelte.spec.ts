@@ -319,6 +319,13 @@ describe('DateField', () => {
 		expect(shown()).toEqual(['09', 'Monat', 'Jahr']);
 	});
 
+	it('shows a day up to 31 before the month, when startFrom lies in a 30-day month', async () => {
+		const novemberStart = day('2026-11-15');
+		render(DateField, props({ startFrom: novemberStart }));
+		await typeFromDay('31');
+		expect(shown()).toEqual(['31', 'Monat', 'Jahr']);
+	});
+
 	it('moves between segments with the arrow keys', async () => {
 		render(DateField, props({ value: day('2026-03-04') }));
 		segments().day.focus();
