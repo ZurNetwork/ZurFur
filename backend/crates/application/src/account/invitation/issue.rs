@@ -12,7 +12,10 @@ use domain::{
 
 use crate::{
     Ports,
-    account::{AccountError, AccountResult, invitation::Invitations, require_live_account},
+    account::{
+        AccountError, AccountResult, invitation::Invitations, lock_live_account,
+        require_live_account,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +92,7 @@ impl Invitations<'_> {
         }
 
         let uow = uow.open().await?;
+        lock_live_account(uow, &account_id).await?;
         let target = uow.users().provision(target_id.did()).await?;
         let invitation = Invitation::issue(account_id, target.id, role, actor_id, now);
 

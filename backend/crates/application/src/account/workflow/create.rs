@@ -8,7 +8,9 @@ use domain::elements::{
 
 use crate::{
     Ports,
-    account::{AccountError, AccountResult, require_live_account, workflow::Workflows},
+    account::{
+        AccountError, AccountResult, lock_live_account, require_live_account, workflow::Workflows,
+    },
     den::{DenName, DenNameError},
 };
 
@@ -47,6 +49,7 @@ impl Workflows<'_> {
         let workflow_name = den_workflow_name(&workflow_name)?;
 
         let uow = uow.open().await?;
+        lock_live_account(uow, &account_id).await?;
         let workflow = uow.workflows().create(&workflow_name, &account_id).await?;
 
         Ok(Output { workflow })

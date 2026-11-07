@@ -5,7 +5,8 @@ use domain::elements::{role::Role, user::UserId, workflow::ColumnId};
 use crate::{
     Ports,
     account::{
-        AccountEntity, AccountError, AccountResult, require_live_account, workflow::column::Columns,
+        AccountEntity, AccountError, AccountResult, lock_live_account, require_live_account,
+        workflow::column::Columns,
     },
 };
 
@@ -49,6 +50,7 @@ impl Columns<'_> {
         }
 
         let uow = uow.open().await?;
+        lock_live_account(uow, &account_id).await?;
         uow.columns().delete(&column_id).await?;
         Ok(Output)
     }

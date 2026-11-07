@@ -4,7 +4,7 @@ use domain::elements::{account::AccountId, role::Role, user::UserId};
 
 use crate::{
     Ports,
-    account::{AccountError, AccountResult, require_live_account, role::Roles},
+    account::{AccountError, AccountResult, lock_live_account, require_live_account, role::Roles},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +60,7 @@ impl Roles<'_> {
         }
 
         let uow = uow.open().await?;
+        lock_live_account(uow, &account_id).await?;
         uow.accounts()
             .grant_role(&target_id, &account_id, &role)
             .await?;

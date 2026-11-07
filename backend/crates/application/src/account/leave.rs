@@ -4,7 +4,7 @@ use domain::elements::{account::AccountId, role::Role, user::UserId};
 
 use crate::{
     Ports,
-    account::{AccountError, AccountResult, Accounts},
+    account::{AccountError, AccountResult, Accounts, lock_account_row},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +39,7 @@ impl<'a> Accounts<'a> {
         };
 
         let uow = uow.open().await?;
+        lock_account_row(uow, &account_id).await?;
         // The store refuses the Owner, so a transfer that lands after the check above
         // fails this unit instead of removing the new Owner.
         uow.accounts().leave(&leaving_user_id, &account_id).await?;
