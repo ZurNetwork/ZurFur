@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use anyhow::{Context as _, bail};
-use rand::RngCore as _;
+use rand::TryRng as _;
 use serde_json::{Value, json};
 use testcontainers::core::{Host, IntoContainerPort as _, Mount};
 use testcontainers::runners::AsyncRunner as _;
@@ -57,8 +57,8 @@ impl ThrowawayPds {
         // A structurally valid secp256k1 scalar (a raw random 32-byte string
         // is not guaranteed to be one; an invalid key crashes the PDS boot).
         // Same vetted primitive the did:plc minter uses.
-        use atrium_crypto::keypair::{Export as _, Secp256k1Keypair};
-        let rotation_key = Secp256k1Keypair::create(&mut rand::thread_rng());
+        use atrium_crypto::keypair::Export as _;
+        let rotation_key = random_rotation_key();
         let rotation_key_hex = data_encoding::HEXLOWER.encode(&rotation_key.export());
 
         let image_ref = crate::pds_image();
@@ -190,9 +190,22 @@ async fn wait_for_health(client: &reqwest::Client, endpoint: &str) -> anyhow::Re
     }
 }
 
+/// A secp256k1 keypair from OS randomness, redrawn until the bytes are a valid scalar.
+fn random_rotation_key() -> atrium_crypto::keypair::Secp256k1Keypair {
+    loop {
+        let mut bytes = [0u8; 32];
+        let filled = rand::rngs::SysRng.try_fill_bytes(&mut bytes);
+        filled.expect("the OS random source is available");
+        if let Ok(key) = atrium_crypto::keypair::Secp256k1Keypair::import(&bytes) {
+            return key;
+        }
+    }
+}
+
 /// `len` random bytes, hex-encoded — throwaway secrets for a throwaway PDS.
 fn random_hex(len: usize) -> String {
     let mut bytes = vec![0u8; len];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    let filled = rand::rngs::SysRng.try_fill_bytes(&mut bytes);
+    filled.expect("the OS random source is available");
     data_encoding::HEXLOWER.encode(&bytes)
 }

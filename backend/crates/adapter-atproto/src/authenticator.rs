@@ -26,7 +26,7 @@ use jacquard_oauth::{
     session::{ClientData, ClientSessionData, SessionRegistry},
     types::CallbackParams,
 };
-use rand::RngCore as _;
+use rand::TryRng as _;
 use sha2::{Digest as _, Sha256};
 use smol_str::SmolStr;
 use sqlx::PgPool;
@@ -628,7 +628,8 @@ fn log_revocation_failure(failure: &RevocationFailure) {
 /// A fresh browser token: 256 random bits from the OS, base64url, unpadded.
 fn new_browser_token() -> String {
     let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    let filled = rand::rngs::SysRng.try_fill_bytes(&mut bytes);
+    filled.expect("the OS random source is available");
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
