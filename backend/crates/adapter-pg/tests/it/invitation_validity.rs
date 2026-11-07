@@ -466,14 +466,12 @@ async fn hold_member_shared(
         .fetch_one(&mut *holding)
         .await
         .expect("read the hold's pid");
-    sqlx::query(
-        "SELECT 1 FROM account_members WHERE account_id = $1 AND user_id = $2 FOR SHARE",
-    )
-    .bind(AsRef::<str>::as_ref(account))
-    .bind(AsRef::<str>::as_ref(user))
-    .fetch_one(&mut *holding)
-    .await
-    .expect("hold the member row");
+    sqlx::query("SELECT 1 FROM account_members WHERE account_id = $1 AND user_id = $2 FOR SHARE")
+        .bind(AsRef::<str>::as_ref(account))
+        .bind(AsRef::<str>::as_ref(user))
+        .fetch_one(&mut *holding)
+        .await
+        .expect("hold the member row");
     (holding, pid)
 }
 
@@ -522,7 +520,10 @@ async fn two_units_locking_each_others_rows_through_the_helper_both_finish() {
         try_grant(&y_runtime, &y_account, &y_actor, &y_target, Role::Manager).await
     });
     wait_for_lock_waits(&runtime.pool, 2).await;
-    member_hold.rollback().await.expect("release the member row");
+    member_hold
+        .rollback()
+        .await
+        .expect("release the member row");
 
     let x_now = x.await.expect("X finishes");
     let y_now = y.await.expect("Y finishes");
