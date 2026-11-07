@@ -77,7 +77,7 @@
     },
     {
       "name": "src/invitation_validity_contract.rs",
-      "role": "the shared invitation-validity suite: one pub async fn per case over &Runtime, driving the account use cases and reading the offers back from the store: a demotion to Manager or to Member revokes every pending offer the Admin issued, a transfer revokes the old Owner's Admin offers and keeps their Manager and Member offers, a promotion and a re-grant of the same role revoke nothing, and the revoke touches only that issuer's pending offers in that Account (another issuer's, another Account's, an accepted and a revoked row keep state and updated_at); invitation_validity_contract_tests!(setup) writes one #[tokio::test] per case",
+      "role": "the shared invitation-validity suite: one pub async fn per case over &Runtime, driving the account use cases and reading the offers back from the store: a demotion to Manager or to Member revokes every pending offer the Admin issued, a transfer revokes the old Owner's Admin offers and keeps their Manager and Member offers, a promotion and a re-grant of the same role revoke nothing, and the revoke touches only that issuer's pending offers in that Account (another issuer's, another Account's, an accepted and a revoked row keep state and updated_at); try_grant, try_leave and try_offer answer what the use case answered, for adapter-pg's race tests; invitation_validity_contract_tests!(setup) writes one #[tokio::test] per case",
       "node": false
     },
     {

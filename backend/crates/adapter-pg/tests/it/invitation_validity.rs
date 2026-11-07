@@ -435,7 +435,7 @@ async fn an_admin_demoted_meanwhile_gets_forbidden_whether_or_not_the_target_lef
 #[tokio::test]
 async fn two_units_locking_each_others_rows_through_the_helper_both_finish() {
     let (runtime, _kept) = fresh().await;
-    let (account, owner, first, second) = owner_admin_member(&runtime, "racecycle").await;
+    let (account, _owner, first, second) = owner_admin_member(&runtime, "racecycle").await;
 
     let holding = hold_account(&runtime.pool, &account).await;
     let x_runtime = runtime.clone();
@@ -444,12 +444,10 @@ async fn two_units_locking_each_others_rows_through_the_helper_both_finish() {
         try_grant(&x_runtime, &x_account, &x_actor, &x_target, Role::Manager).await
     });
     wait_for_lock_waits(&runtime.pool, 1).await;
-    try_grant(&runtime, &account, &owner, &second, Role::Admin)
-        .await
-        .expect("promote the second");
     let mut swapping = runtime.pool.begin().await.expect("begin the swap");
+    set_role(&mut swapping, &account, &second, "admin").await;
     set_role(&mut swapping, &account, &first, "member").await;
-    swapping.commit().await.expect("demote the first");
+    swapping.commit().await.expect("swap the ranks");
     let y_runtime = runtime.clone();
     let (y_account, y_actor, y_target) = (account.clone(), second.clone(), first.clone());
     let y = tokio::spawn(async move {

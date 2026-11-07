@@ -78,8 +78,11 @@ impl Roles<'_> {
             &target_id,
         )
         .await?;
-        let actor_now =
-            actor_now.ok_or_else(|| refused_after_a_race("revoke", AccountError::IncorrectRole))?;
+        // Standing is a role that may remove someone at all, so a demoted actor is refused
+        // the same way whether or not the target is still a member.
+        let actor_now = actor_now
+            .filter(|r| !r.grantable_roles().is_empty())
+            .ok_or_else(|| refused_after_a_race("revoke", AccountError::IncorrectRole))?;
         let target_now =
             target_now.ok_or_else(|| refused_after_a_race("revoke", AccountError::NotAMember))?;
         if !actor_now.can_grant(&target_now) {
