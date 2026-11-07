@@ -1403,3 +1403,58 @@ async fn create_account_rejects_unknown_request_fields() {
          so a misspelled client field fails loudly instead of being dropped"
     );
 }
+
+// A handle change onto a deactivated account's handle is a 409 refused before the
+// directory is asked to re-point the caller's DID document.
+#[tokio::test]
+async fn a_handle_change_to_a_deactivated_handle_never_reaches_the_directory() {
+    let did = Did::from("did:plc:e2erenamer".to_owned());
+    let profile = Profile::new(did.clone(), "owner.bsky.social");
+    let log = test_support::recording::CallLog::default();
+    let recording = log.clone();
+    let served = serve(
+        test_support::runtime::mem(&did).profile(profile),
+        |runtime| {
+            let did_minter = std::sync::Arc::new(test_support::recording::RecordingDidMinter::new(
+                std::sync::Arc::clone(&runtime.did_minter),
+                recording,
+            ));
+            let recorded = composition::Runtime {
+                did_minter,
+                ..runtime
+            };
+            api::app(recorded)
+        },
+    )
+    .await;
+    let (base, backend) = (served.base_url, served.backend);
+    let reserved = "gone.zurfur.app".parse::<Handle>().expect("a valid handle");
+    backend.seed_soft_deleted_account(&Did::from("did:plc:tombstoned".to_owned()), &reserved);
+    let client = client();
+    sign_in(&client, &base, "owner.bsky.social").await;
+    let founding = serde_json::json!({ "name": "Mine", "handle": "mine.zurfur.app" });
+    let founded = client
+        .post(format!("{base}/accounts"))
+        .json(&founding)
+        .send()
+        .await
+        .expect("POST /accounts");
+    assert_eq!(founded.status(), 201);
+    let body: serde_json::Value = founded.json().await.expect("json");
+    let id = body["id"].as_str().expect("the account id").to_owned();
+
+    let renaming = serde_json::json!({ "handle": "gone.zurfur.app" });
+    let res = client
+        .patch(format!("{base}/accounts/{id}/handle"))
+        .json(&renaming)
+        .send()
+        .await
+        .expect("PATCH /accounts/{id}/handle");
+
+    common::assert_problem(res, 409, "handle_taken").await;
+    let events = log.events();
+    assert!(
+        !events.contains(&"update_handle"),
+        "the directory was never asked: {events:?}"
+    );
+}
