@@ -70,7 +70,9 @@ steps = ["ci"]
 
 # Merges and pushes go through the actions only: `slice-merge` merges a slice (pr-merge runs nested
 # inside it, where these denies do not reach), merges into main are the lead's by hand, and every
-# push is scripts/jj-push.sh, through `zaf do push`.
+# push is scripts/jj-push.sh, through `zaf do push`. zaf denies each line bare and with ` *` after
+# it, and a `*` in a permission rule matches any text, spaces included, so `jj -* push` is a push
+# with global flags before the verb (`jj --no-pager push -b x`).
 [forbidden]
 commands = [
     "gh pr merge",
@@ -79,8 +81,10 @@ commands = [
     "zaf do --more pr-merge",
     "zaf do --json pr-merge",
     "jj git push",
+    "jj -* git push",
     "git push",
     "jj push",
+    "jj -* push",
     "scripts/jj-push.sh",
     "sh scripts/jj-push.sh",
 ]
