@@ -845,12 +845,19 @@ impl AccountWrites for PgAccountWrites<'_> {
         Ok(())
     }
 
-    /// Deletes invitations, then memberships, then the live `accounts` row (those
-    /// FKs don't cascade). Frees the handle for reuse. Custody `account_keys` rows are
-    /// deliberately left in place (the PLC recovery window). Errs unless exactly one
-    /// live row was deleted, and when the Account holds a fact; neither text names it.
+    /// Locks the live `accounts` row, then deletes invitations, then memberships, then
+    /// the row (those FKs don't cascade). Frees the handle for reuse. Custody
+    /// `account_keys` rows are deliberately left in place (the PLC recovery window).
+    /// Errs, before any delete, on an absent or deactivated row, and when the Account
+    /// holds a fact; neither text names it.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
+        if sql::find_for_update(&mut *self.conn, account.as_ref())
+            .await?
+            .is_none()
+        {
+            anyhow::bail!("no live account was hard-deleted; it is absent or deactivated");
+        }
         sql::hard_delete_invitations(&mut *self.conn, account.as_ref()).await?;
         sql::hard_delete_memberships(&mut *self.conn, account.as_ref()).await?;
         let deleted = sql::hard_delete_account(&mut *self.conn, account.as_ref())
