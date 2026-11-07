@@ -57,8 +57,8 @@ impl ThrowawayPds {
         // A structurally valid secp256k1 scalar (a raw random 32-byte string
         // is not guaranteed to be one; an invalid key crashes the PDS boot).
         // Same vetted primitive the did:plc minter uses.
-        use atrium_crypto::keypair::Export as _;
-        let rotation_key = atrium_crypto::keypair::Secp256k1Keypair::create(&mut rand_core::OsRng);
+        use atrium_crypto::keypair::{Export as _, Secp256k1Keypair};
+        let rotation_key = Secp256k1Keypair::create(&mut rand_core::OsRng);
         let rotation_key_hex = data_encoding::HEXLOWER.encode(&rotation_key.export());
 
         let image_ref = crate::pds_image();
