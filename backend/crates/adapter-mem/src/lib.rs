@@ -1415,6 +1415,28 @@ impl MemAccountWrites {
     /// Passes on a deactivated Account, as the PostgreSQL store lets a departure through.
     /// Overlapping units still merge last-writer-wins, so a departure whose unit opened
     /// before a transfer committed can still remove the new Owner, in dev and tests only.
+    /// Revokes the pending offers `issuer` made in `account` at roles `issuer_role` can't
+    /// offer; the in-memory twin of pg's statement run after a role change.
+    fn revoke_outranked_offers(&self, issuer: &UserId, account: &AccountId, issuer_role: &Role) {
+        let grantable = issuer_role.grantable_roles();
+        let mut invitations = self
+            .0
+            .invitations
+            .lock()
+            .expect("MemBackend invitations mutex poisoned");
+        for invitation in invitations.values_mut() {
+            let outranked = !grantable.contains(&invitation.role);
+            if &invitation.account == account
+                && &invitation.inviter == issuer
+                && matches!(invitation.state, InvitationState::Pending)
+                && outranked
+            {
+                invitation.state = InvitationState::Revoked;
+                invitation.updated_at = Utc::now();
+            }
+        }
+    }
+
     fn settle_member_departure(&self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
         let mut memberships = self
             .0
@@ -1630,6 +1652,9 @@ impl AccountWrites for MemAccountWrites {
             );
         };
         stored.role = role.clone();
+        drop(memberships);
+
+        self.revoke_outranked_offers(user, account, role);
         Ok(())
     }
 
@@ -1830,6 +1855,10 @@ impl AccountWrites for MemAccountWrites {
         if let Some(incoming) = memberships.get_mut(&incoming_seat) {
             incoming.role = Role::Owner;
         }
+        drop(memberships);
+
+        // The outgoing Owner is an Admin now: their pending Admin offers are void.
+        self.revoke_outranked_offers(old_owner, account, &Role::Admin);
         Ok(())
     }
 

@@ -37,6 +37,7 @@ mod custody_envelope;
 mod custody_migrator;
 mod delete_inflight_signin_rows;
 mod delete_stored_oauth_sessions;
+mod invitation_validity;
 mod key_store;
 mod migration_steps;
 mod no_bare_pool_writes;
