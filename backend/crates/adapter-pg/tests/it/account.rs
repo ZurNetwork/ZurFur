@@ -11,13 +11,16 @@ use crate::seed;
 use std::collections::BTreeSet;
 
 use adapter_pg::{
-    ACCOUNT_FACT_TABLES, ACCOUNT_NON_FACT_TABLES, PgAccountStore, PgColumnStore, PgCommissionStore,
-    PgDatabase, PgPool, PgWorkflowStore,
+    ACCOUNT_FACT_RECORD, ACCOUNT_FACT_SOURCES, ACCOUNT_SEVERED_TABLES, PgAccountStore,
+    PgColumnStore, PgCommissionStore, PgDatabase, PgPool, PgWorkflowStore,
 };
 use chrono::{Duration, Utc};
 use domain::{
     elements::{
-        account::{Account, AccountId, AccountMembership, AccountName, ListingScope},
+        account::{
+            Account, AccountFactKind, AccountFacts, AccountId, AccountMembership, AccountName,
+            ListingScope,
+        },
         did::Did,
         handle::Handle,
         invitation::{Invitation, InvitationId, InvitationState},
@@ -1491,22 +1494,16 @@ async fn change_handle_rejects_a_stale_old_handle() {
 
 // ── ZMVP-57: account-anchored fact gate & positioning severance ──────────────────
 
-/// THE ACCOUNT-FACT TRIPWIRE (mirrors the equivalent commission tripwire): every
-/// table holding a foreign key onto `accounts(id)` must be **deliberately
-/// classified** — registered in [`ACCOUNT_FACT_TABLES`] (its rows are
-/// account-anchored facts; an account bearing one is soft-deleted, never hard) or in
-/// [`ACCOUNT_NON_FACT_TABLES`] (bookkeeping severed with the account, never a fact).
-/// A migration that adds an `accounts`-referencing table trips this test until its
-/// author makes that call in code — and registering a fact table trips the
-/// compile-time guards in `adapter_pg::account` and beside `account_has_facts` in the
-/// `api` crate, which refuse to build until that seam stops returning its unexamined
-/// constant `false`. Neither step can happen by accident.
+/// THE ACCOUNT-FACT TRIPWIRE: every table holding a foreign key onto `accounts(id)`
+/// is classified on purpose: the facts record itself ([`ACCOUNT_FACT_RECORD`]), a
+/// table whose writes bring an Account to a fact ([`ACCOUNT_FACT_SOURCES`]), or one
+/// severed with the Account ([`ACCOUNT_SEVERED_TABLES`]). A migration adding an
+/// `accounts`-referencing table trips it until its author makes that call in code.
 #[tokio::test]
-async fn every_account_referencing_table_is_classified_as_fact_or_non_fact() {
+async fn every_account_referencing_table_is_classified() {
     let (pool, _container) = fresh_pool().await;
 
-    // Every table holding a foreign key onto `accounts` — the schema-level superset
-    // of possible account-anchored storage.
+    // Every table holding a foreign key onto `accounts`.
     let referencing: Vec<String> = sqlx::query_scalar(
         r#"
         SELECT conrelid::regclass::text
@@ -1519,32 +1516,40 @@ async fn every_account_referencing_table_is_classified_as_fact_or_non_fact() {
     .expect("scan foreign keys onto accounts");
 
     let referencing: BTreeSet<&str> = referencing.iter().map(String::as_str).collect();
-    let facts: BTreeSet<&str> = ACCOUNT_FACT_TABLES.iter().copied().collect();
-    let non_facts: BTreeSet<&str> = ACCOUNT_NON_FACT_TABLES.iter().copied().collect();
+    let sources: BTreeSet<&str> = ACCOUNT_FACT_SOURCES.iter().copied().collect();
+    let severed: BTreeSet<&str> = ACCOUNT_SEVERED_TABLES.iter().copied().collect();
+    let record = BTreeSet::from([ACCOUNT_FACT_RECORD]);
 
-    let overlap: Vec<&&str> = facts.intersection(&non_facts).collect();
+    let overlaps: Vec<&str> = sources
+        .intersection(&severed)
+        .chain(sources.intersection(&record))
+        .chain(severed.intersection(&record))
+        .copied()
+        .collect();
     assert!(
-        overlap.is_empty(),
-        "a table cannot be both fact and non-fact: {overlap:?}"
+        overlaps.is_empty(),
+        "a table is classified once: {overlaps:?}"
     );
 
-    // AC2 (structural) — commissions are NOT account facts (Ownership Separation DD
-    // 29130754): a commission is User-owned and carries no foreign key onto
-    // `accounts`, so it can never enter this scan and can never be wired into
-    // `account_has_facts`. Assert that structural fact directly.
+    // A commission is User-owned and carries no foreign key onto `accounts`, so it never
+    // keeps an Account from a hard delete.
     assert!(
         !referencing.contains("commission"),
         "commission must not reference accounts(id) — it is User-owned and survives \
          account deletion, never an account-anchored fact",
     );
 
-    let classified: BTreeSet<&str> = facts.union(&non_facts).copied().collect();
+    let classified: BTreeSet<&str> = sources
+        .union(&severed)
+        .copied()
+        .chain(record.iter().copied())
+        .collect();
     assert_eq!(
         referencing, classified,
-        "every table referencing accounts(id) must be listed in exactly one of \
-         ACCOUNT_FACT_TABLES (the account_has_facts registry, Account Deletion DD 23003138) \
-         or ACCOUNT_NON_FACT_TABLES (deliberate exemptions) in adapter-pg/src/account.rs — \
-         classify it there, in the same change that adds the table"
+        "every table referencing accounts(id) is listed once in adapter-pg/src/account.rs: \
+         ACCOUNT_FACT_SOURCES when its writes can bring an Account to a fact, or \
+         ACCOUNT_SEVERED_TABLES when its rows go with the Account. A new fact source writes \
+         account_fact in the same unit and adds its kind to account_fact_kind_known"
     );
 }
 
@@ -2632,4 +2637,158 @@ async fn an_issue_waiting_on_its_issuers_departure_is_refused() {
     );
     assert_eq!(role_of(&pool, &x, &account).await, None);
     assert_eq!(role_of(&pool, &y, &account).await, None);
+}
+
+// ── The Account's facts ──────────────────────────────────────────────────────────
+
+/// The facts `account` holds, read on a unit's own connection.
+async fn facts_of(pool: &PgPool, account: &AccountId) -> AccountFacts {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    uow.accounts().facts(account).await.expect("read the facts")
+}
+
+/// When `account` reached its member fact, read from the table.
+async fn member_fact_reached_at(
+    pool: &PgPool,
+    account: &AccountId,
+) -> Option<chrono::DateTime<Utc>> {
+    sqlx::query_scalar(
+        "SELECT reached_at FROM account_fact WHERE account_id = $1 AND kind = 'member'",
+    )
+    .bind(AsRef::<str>::as_ref(account))
+    .fetch_optional(pool)
+    .await
+    .expect("read the fact's time")
+}
+
+/// When invitation `id` was accepted, read from its row.
+async fn accepted_at(pool: &PgPool, id: InvitationId) -> chrono::DateTime<Utc> {
+    sqlx::query_scalar("SELECT updated_at FROM account_invitations WHERE id = $1")
+        .bind(uuid::Uuid::from(id))
+        .fetch_one(pool)
+        .await
+        .expect("read the acceptance time")
+}
+
+// A founded Account holds no fact; the first accept records the member fact at its
+// flip's instant, and a second accept leaves it at that first time, one row.
+#[tokio::test]
+async fn accept_records_the_member_fact_once() {
+    let (pool, _container) = fresh_pool().await;
+    let (account, owner, invitee) = invitation_fixture(&pool, "factonce").await;
+    let second = provision(&pool, "did:plc:pginvitee2-factonce").await.id;
+    assert!(
+        facts_of(&pool, &account.id).await.is_empty(),
+        "a founded Account holds none"
+    );
+
+    let first_offer = Invitation::issue(
+        account.id.clone(),
+        invitee,
+        Role::Member,
+        owner.clone(),
+        Utc::now(),
+    );
+    let first_id = first_offer.id;
+    create_invitation(&pool, &first_offer).await;
+    accept_invitation(&pool, first_offer, false).await;
+    let first_time = accepted_at(&pool, first_id).await;
+    let second_offer =
+        Invitation::issue(account.id.clone(), second, Role::Member, owner, Utc::now());
+    create_invitation(&pool, &second_offer).await;
+    accept_invitation(&pool, second_offer, false).await;
+
+    let facts = facts_of(&pool, &account.id).await;
+    assert_eq!(facts.iter().collect::<Vec<_>>(), [AccountFactKind::Member]);
+    assert_eq!(
+        member_fact_reached_at(&pool, &account.id).await,
+        Some(first_time),
+        "the first acceptance's instant is kept"
+    );
+}
+
+// The share-locking read answers the live Account, and nothing once it is deactivated.
+#[tokio::test]
+async fn find_for_share_answers_only_a_live_account() {
+    let (pool, _container) = fresh_pool().await;
+    let (account, _owner, _invitee) = invitation_fixture(&pool, "share").await;
+    let db = PgDatabase::new(pool.clone());
+
+    let mut uow = db.begin().await.expect("begin");
+    let found = uow
+        .accounts()
+        .find_for_share(&account.id)
+        .await
+        .expect("read the account");
+    drop(uow);
+    soft_delete(&pool, &account.id).await;
+    let mut uow = db.begin().await.expect("begin");
+    let deactivated = uow
+        .accounts()
+        .find_for_share(&account.id)
+        .await
+        .expect("read the account");
+
+    assert_eq!(found.map(|found| found.id), Some(account.id.clone()));
+    assert_eq!(deactivated.map(|found| found.id), None);
+}
+
+/// Hard-deletes `account` in its own unit, answering the error's text.
+async fn hard_delete_refusal(pool: &PgPool, account: &AccountId) -> String {
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let refused = uow
+        .accounts()
+        .hard_delete(account)
+        .await
+        .expect_err("the hard delete is refused");
+    format!("{refused} | {refused:?}")
+}
+
+// The store never hard-deletes an Account holding a fact, nor a deactivated one; each
+// refusal names no DID, and the Account is still there.
+#[tokio::test]
+async fn the_store_never_hard_deletes_an_account_with_a_fact_or_a_deactivated_one() {
+    let (pool, _container) = fresh_pool().await;
+    let (with_fact, owner, invitee) = invitation_fixture(&pool, "keptfact").await;
+    let offer = Invitation::issue(
+        with_fact.id.clone(),
+        invitee,
+        Role::Member,
+        owner,
+        Utc::now(),
+    );
+    create_invitation(&pool, &offer).await;
+    accept_invitation(&pool, offer, false).await;
+    let (deactivated, _owner, _invitee) = invitation_fixture(&pool, "keptsoft").await;
+    soft_delete(&pool, &deactivated.id).await;
+
+    let fact_refusal = hard_delete_refusal(&pool, &with_fact.id).await;
+    let deactivated_refusal = hard_delete_refusal(&pool, &deactivated.id).await;
+
+    assert!(
+        fact_refusal.contains("the account holds a fact"),
+        "{fact_refusal}"
+    );
+    assert!(
+        deactivated_refusal.contains("no live account was hard-deleted"),
+        "{deactivated_refusal}"
+    );
+    for refusal in [&fact_refusal, &deactivated_refusal] {
+        assert!(
+            !refusal.contains("did:"),
+            "the refusal names no DID: {refusal}"
+        );
+    }
+    assert!(
+        find_account(&pool, &with_fact.id).await.is_some(),
+        "the Account stays"
+    );
+    let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM accounts WHERE id = $1")
+        .bind(AsRef::<str>::as_ref(&deactivated.id))
+        .fetch_one(&pool)
+        .await
+        .expect("count the account");
+    assert_eq!(kept, 1, "the deactivated Account's row stays");
 }

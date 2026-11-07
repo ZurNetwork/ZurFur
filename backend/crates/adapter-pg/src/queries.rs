@@ -38,6 +38,17 @@ pub mod account {
 
     /// Row shape read back from the prepared statement's metadata.
     #[derive(Debug, sqlx::FromRow)]
+    pub struct FindForShareRow {
+        pub id: String,
+        pub handle: String,
+        pub name: String,
+        pub created_at: chrono::DateTime<chrono::Utc>,
+        pub updated_at: chrono::DateTime<chrono::Utc>,
+        pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+    }
+
+    /// Row shape read back from the prepared statement's metadata.
+    #[derive(Debug, sqlx::FromRow)]
     pub struct FindForUpdateRow {
         pub id: String,
         pub handle: String,
@@ -342,6 +353,19 @@ pub mod account {
         .map(|r| r.rows_affected())
     }
 
+    /// `queries/account/facts.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Every fact kind the account has reached, in token order.
+    pub async fn facts(
+        conn: impl sqlx::PgExecutor<'_>,
+        account_id: &str,
+    ) -> sqlx::Result<Vec<String>> {
+        sqlx::query_scalar(include_str!("../queries/account/facts.sql"))
+            .bind(account_id)
+            .fetch_all(conn)
+            .await
+    }
+
     /// `queries/account/find.sql`, contract inferred from the SQL against the migrated schema.
     ///
     /// One live account by id. `accounts.id` IS the account's DID, so the row
@@ -367,6 +391,20 @@ pub mod account {
     ) -> sqlx::Result<Option<String>> {
         sqlx::query_scalar(include_str!("../queries/account/find_did_by_handle.sql"))
             .bind(handle)
+            .fetch_optional(conn)
+            .await
+    }
+
+    /// `queries/account/find_for_share.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// `find`, with the row locked FOR SHARE until the unit of work commits: an update or
+    /// a delete of the account row waits until then, while other share holders proceed.
+    pub async fn find_for_share(
+        conn: impl sqlx::PgExecutor<'_>,
+        id: &str,
+    ) -> sqlx::Result<Option<FindForShareRow>> {
+        sqlx::query_as(include_str!("../queries/account/find_for_share.sql"))
+            .bind(id)
             .fetch_optional(conn)
             .await
     }
@@ -459,6 +497,9 @@ pub mod account {
     }
 
     /// `queries/account/hard_delete_account.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Delete a live account's row. A deactivated account matches no row, and one holding
+    /// a fact is refused by the facts table's foreign key.
     pub async fn hard_delete_account(
         conn: impl sqlx::PgExecutor<'_>,
         id: &str,
@@ -569,6 +610,25 @@ pub mod account {
             .bind(honor_privacy)
             .fetch_all(conn)
             .await
+    }
+
+    /// `queries/account/record_fact.sql`, contract inferred from the SQL against the migrated schema.
+    ///
+    /// Record that the account reached the fact `kind` at `reached_at`. An account that
+    /// already holds the fact keeps its first time.
+    pub async fn record_fact(
+        conn: impl sqlx::PgExecutor<'_>,
+        account_id: &str,
+        kind: &str,
+        reached_at: chrono::DateTime<chrono::Utc>,
+    ) -> sqlx::Result<u64> {
+        sqlx::query(include_str!("../queries/account/record_fact.sql"))
+            .bind(account_id)
+            .bind(kind)
+            .bind(reached_at)
+            .execute(conn)
+            .await
+            .map(|r| r.rows_affected())
     }
 
     /// `queries/account/revoke_invitation.sql`, contract inferred from the SQL against the migrated schema.
@@ -2988,6 +3048,7 @@ pub static WRITE_QUERY_FNS: &[&str] = &[
     "account::hard_delete_account",
     "account::hard_delete_invitations",
     "account::hard_delete_memberships",
+    "account::record_fact",
     "account::revoke_invitation",
     "account::soft_delete",
     "account::transfer_demote_owner",

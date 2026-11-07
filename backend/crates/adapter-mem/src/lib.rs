@@ -50,7 +50,10 @@ use async_trait::async_trait;
 use chrono::Utc;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
-    account::{Account, AccountId, AccountMembership, AccountName, ListingScope},
+    account::{
+        Account, AccountFactKind, AccountFacts, AccountId, AccountMembership, AccountName,
+        ListingScope,
+    },
     account_keys::AccountKeys,
     actor_identity::{ActorIdentityId, ActorKind, ActorState},
     bug_report::NewBugReport,
@@ -98,6 +101,9 @@ pub struct MemBackend {
     /// [`StoredInvitation`] parts keyed by [`InvitationId`]; at most one pending
     /// offer per (account, user), enforced by scanning before insert.
     invitations: Arc<Mutex<HashMap<InvitationId, StoredInvitation>>>,
+    /// When each Account first reached each fact; an entry is only ever inserted.
+    /// Staged.
+    account_facts: Arc<Mutex<HashMap<(AccountId, AccountFactKind), DateTimeUtc>>>,
     /// Cached profiles keyed by DID; entries never expire here.
     profiles: Arc<Mutex<HashMap<Did, Profile>>>,
     /// Append-only handle-change audit log, backing the change rate limit and
@@ -275,6 +281,12 @@ impl MemBackend {
                     .expect("MemBackend invitations mutex poisoned")
                     .clone(),
             )),
+            account_facts: Arc::new(Mutex::new(
+                self.account_facts
+                    .lock()
+                    .expect("MemBackend account_facts mutex poisoned")
+                    .clone(),
+            )),
             // Shared, not copied: the profile cache is a Unit-of-Work exemption.
             profiles: self.profiles.clone(),
             handle_changes: Arc::new(Mutex::new(
@@ -410,6 +422,20 @@ impl MemBackend {
     /// snapshot (a grant whose unit opened before a leave committed seats the
     /// leaver again); this fake runs in dev and tests only.
     fn merge(&self, base: &MemBackend, staged: &MemBackend) {
+        merge_map(
+            &mut self
+                .account_facts
+                .lock()
+                .expect("MemBackend account_facts mutex poisoned"),
+            &base
+                .account_facts
+                .lock()
+                .expect("MemBackend account_facts mutex poisoned"),
+            &staged
+                .account_facts
+                .lock()
+                .expect("MemBackend account_facts mutex poisoned"),
+        );
         merge_map(
             &mut self.users.lock().expect("MemBackend users mutex poisoned"),
             &base.users.lock().expect("MemBackend users mutex poisoned"),
@@ -714,7 +740,7 @@ impl MemBackend {
     }
 
     /// Seed a soft-deleted account holding `handle` (test-only) by inserting a
-    /// tombstoned row directly — there is no soft-delete write path yet.
+    /// deactivated row directly, with no member.
     /// A tombstone is invisible to `find` but still reserves its handle.
     pub fn seed_soft_deleted_account(&self, did: &Did, handle: &Handle) {
         let now = Utc::now();
@@ -1696,6 +1722,7 @@ impl AccountWrites for MemAccountWrites {
         invitation: Invitation,
         listed_on_profile: bool,
     ) -> anyhow::Result<UserAccount> {
+        let now = Utc::now();
         {
             // Matching no pending offer means it was accepted or revoked since,
             // so seat no member.
@@ -1707,7 +1734,7 @@ impl AccountWrites for MemAccountWrites {
             match invitations.get_mut(&invitation.id) {
                 Some(stored) if stored.state == InvitationState::Pending => {
                     stored.state = InvitationState::Accepted;
-                    stored.updated_at = Utc::now();
+                    stored.updated_at = now;
                 }
                 _ => {
                     return Err(anyhow::anyhow!(
@@ -1733,6 +1760,14 @@ impl AccountWrites for MemAccountWrites {
         let stored = memberships
             .entry((invitation.account.clone(), invitation.invited_user.clone()))
             .or_insert(seated);
+
+        // The first time wins: a later accept leaves the recorded instant alone.
+        self.0
+            .account_facts
+            .lock()
+            .expect("MemBackend account_facts mutex poisoned")
+            .entry((invitation.account.clone(), AccountFactKind::Member))
+            .or_insert(now);
 
         Ok(UserAccount {
             account_id: invitation.account.clone(),
@@ -1816,14 +1851,34 @@ impl AccountWrites for MemAccountWrites {
     /// invitation and handle-change row, and sever its boards, columns and cards.
     /// The commissions those cards pointed at are untouched (they are User-owned),
     /// and so are view grants, which are no longer an account rail. Custody keys
-    /// are not modeled here; removing an absent account is a no-op.
+    /// are not modeled here. Errs, removing nothing, on a deactivated Account and on
+    /// one holding a fact, as the PostgreSQL store does; an absent one is a no-op here.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
-        self.0
-            .accounts
+        let holds_a_fact = self
+            .0
+            .account_facts
             .lock()
-            .expect("MemBackend accounts mutex poisoned")
-            .remove(account);
+            .expect("MemBackend account_facts mutex poisoned")
+            .keys()
+            .any(|(fact_account, _)| fact_account == account);
+        if holds_a_fact {
+            anyhow::bail!("the account holds a fact; it is never hard-deleted");
+        }
+        {
+            let mut accounts = self
+                .0
+                .accounts
+                .lock()
+                .expect("MemBackend accounts mutex poisoned");
+            let deactivated = accounts
+                .get(account)
+                .is_some_and(|stored| stored.deleted_at.is_some());
+            if deactivated {
+                anyhow::bail!("no live account was hard-deleted; the account is deactivated");
+            }
+            accounts.remove(account);
+        }
 
         self.0
             .memberships
@@ -1885,6 +1940,26 @@ impl AccountReads for MemAccountWrites {
     #[tracing::instrument(level = "debug", skip_all)]
     async fn find_for_update(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>> {
         MemAccountStore(self.0.clone()).find(id).await
+    }
+
+    /// `find`: no lock to take in process.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn find_for_share(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>> {
+        MemAccountStore(self.0.clone()).find(id).await
+    }
+
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn facts(&mut self, id: &AccountId) -> anyhow::Result<AccountFacts> {
+        let facts = self
+            .0
+            .account_facts
+            .lock()
+            .expect("MemBackend account_facts mutex poisoned")
+            .keys()
+            .filter(|(account, _)| account == id)
+            .map(|(_, kind)| *kind)
+            .collect();
+        Ok(facts)
     }
 
     #[tracing::instrument(level = "debug", skip_all)]

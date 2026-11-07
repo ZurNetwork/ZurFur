@@ -161,9 +161,8 @@ async fn found_account(client: &reqwest::Client, base: &str, name: &str) -> Stri
         .to_string()
 }
 
-// ZMVP-34 — the Owner deletes their account. With no facts persisted yet (the
-// `account_has_facts` seam is `false` until commission storage lands), deletion is a
-// hard-delete: the account is removed and its handle freed. Returns 204.
+// The Owner deletes their account. An Account its founder alone ever held holds no fact,
+// so the deletion is hard: the account is removed and its handle freed. Returns 200.
 #[tokio::test]
 async fn owner_deletes_their_empty_account() {
     let did = "did:plc:e2edeleter";

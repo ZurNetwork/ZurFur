@@ -10,6 +10,7 @@ use std::any::type_name;
 /// the pin: a module that stops resolving fails to compile.
 #[allow(unused_imports, reason = "each import pins one façade path")]
 mod element_modules {
+    use domain::elements::account::{AccountFactKind, AccountFacts, UnknownAccountFactKind};
     use domain::elements::commission::{AsOwner, AsParticipant, AsSystem};
     use domain::elements::custody::{ForDidCustody, ForSigninSecrets, SealPurposeMarker};
     use domain::elements::node::{
@@ -43,16 +44,17 @@ fn defining_crate(name: &str) -> &str {
 fn every_flat_port_name_resolves_to_its_crate() {
     use domain::elements::custody::ForDidCustody;
     use domain::ports::{
-        AccountMismatch, AccountReads, AccountRepo, AccountStore, AccountWrites,
-        ActorIdentityStore, ActorIdentityWrites, Authenticator, BrowserBinding, BrowserMismatch,
-        BugReportStore, BugReportWrites, ChangelogStore, ChangelogWrites, CharacterStore,
-        CharacterWrites, ColumnStore, ColumnWrites, CommissionReads, CommissionRepo,
-        CommissionStore, CommissionWrites, Creator, Database, DidBelongsToAnotherActor, DidMinter,
-        ElementNotFound, FileStore, HandleTaken, IdentityResolver, KeyCustodian, KeyStore, New,
-        NodeReads, NodeRepo, NodeStore, NodeWrites, PlcOperationLog, ProfileCache, ProfileSource,
-        PublicRecords, PublicRecordsError, ResolveError, ScopedMac, ScopedSealer, SegmentTaken,
-        SigninStarted, Unit, UnitOfWork, UnknownSurface, UnknownTab, UserStore, UserWrites,
-        WorkflowStore, WorkflowWrites, WriteCapability,
+        AccountDeactivated, AccountMismatch, AccountReads, AccountRepo, AccountStore,
+        AccountWrites, ActorIdentityStore, ActorIdentityWrites, Authenticator, BrowserBinding,
+        BrowserMismatch, BugReportStore, BugReportWrites, ChangelogStore, ChangelogWrites,
+        CharacterStore, CharacterWrites, ColumnStore, ColumnWrites, CommissionReads,
+        CommissionRepo, CommissionStore, CommissionWrites, Creator, Database,
+        DidBelongsToAnotherActor, DidMinter, ElementNotFound, FileStore, HandleTaken,
+        IdentityResolver, KeyCustodian, KeyStore, New, NodeReads, NodeRepo, NodeStore, NodeWrites,
+        PlcOperationLog, ProfileCache, ProfileSource, PublicRecords, PublicRecordsError,
+        ResolveError, ScopedMac, ScopedSealer, SegmentTaken, SigninStarted, Unit, UnitOfWork,
+        UnknownSurface, UnknownTab, UserStore, UserWrites, WorkflowStore, WorkflowWrites,
+        WriteCapability,
     };
 
     let identity_names = [
@@ -69,6 +71,7 @@ fn every_flat_port_name_resolves_to_its_crate() {
         type_name::<dyn BugReportWrites>(),
         type_name::<dyn CharacterStore>(),
         type_name::<dyn CharacterWrites>(),
+        type_name::<AccountDeactivated>(),
         type_name::<AccountMismatch>(),
         type_name::<BrowserMismatch>(),
         type_name::<DidBelongsToAnotherActor>(),

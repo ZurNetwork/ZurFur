@@ -8,7 +8,10 @@ use chrono::Utc;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        account::{Account, AccountId, AccountMembership, AccountName, ListingScope},
+        account::{
+            Account, AccountFactKind, AccountFacts, AccountId, AccountMembership, AccountName,
+            ListingScope,
+        },
         actor_identity::{ActorKind, ActorState},
         did::Did,
         handle::Handle,
@@ -25,33 +28,33 @@ use std::str::FromStr;
 use crate::queries::account as sql;
 use crate::queries::actor_identity as actor_sql;
 
-/// Account-anchored fact tables: tables whose rows would be orphaned
-/// by removing an account, so a bearing account is soft- never hard-deleted.
-/// Empty today. Every table referencing `accounts` must appear here or in
-/// [`ACCOUNT_NON_FACT_TABLES`]; a schema tripwire test enforces it.
-pub const ACCOUNT_FACT_TABLES: &[&str] = &[];
+/// The table recording each fact an Account has reached; one row keeps it from a hard
+/// delete. Its foreign key onto `accounts` does not cascade.
+pub const ACCOUNT_FACT_RECORD: &str = "account_fact";
 
-/// Tables with a foreign key onto `accounts(id)` that are deliberately NOT
-/// account facts — severed with the account instead of blocking its deletion.
-/// Every `accounts`-referencing table must appear here or in
-/// [`ACCOUNT_FACT_TABLES`]; a schema tripwire test enforces it.
-pub const ACCOUNT_NON_FACT_TABLES: &[&str] = &[
-    "workflow",
+/// Tables whose writes can bring an Account to a fact; each such write records the fact
+/// in [`ACCOUNT_FACT_RECORD`] in the same unit. Every table referencing `accounts` is
+/// here, in [`ACCOUNT_SEVERED_TABLES`] or is [`ACCOUNT_FACT_RECORD`]; a schema tripwire
+/// test enforces it.
+pub const ACCOUNT_FACT_SOURCES: &[&str] = &[
+    // A member besides the founder; `accept_records_the_member_fact_once` proves an
+    // accept records it.
     "account_members",
+    // The record of every accepted offer, past members included; the same test.
     "account_invitations",
+];
+
+/// Tables referencing `accounts` whose rows are never a fact: deleted with the Account,
+/// never keeping it.
+pub const ACCOUNT_SEVERED_TABLES: &[&str] = &[
+    // The Account's boards: placing a commission on one confers nothing.
+    "workflow",
+    // The handle-change audit, cascading off the account row.
     "account_handle_changes",
 ];
 
-// Fails to compile once ACCOUNT_FACT_TABLES gains an entry — forces replacing
-// account_has_facts' constant-`false` body (api/src/routes/accounts.rs) with a
-// real query first.
-const _: () = assert!(
-    ACCOUNT_FACT_TABLES.is_empty(),
-    "ACCOUNT_FACT_TABLES gained an entry: replace the constant-`false` body of \
-     account_has_facts in api/src/routes/accounts.rs with a real query over every \
-     registered account-fact table (soft-delete an account that bears one), then \
-     remove this guard and its mirror in the api crate"
-);
+/// The facts table's foreign key, whose refusal means the Account holds a fact.
+const ACCOUNT_FACT_FOREIGN_KEY: &str = "account_fact_account_id_fkey";
 
 /// Rebuild a domain [`Account`] from its persisted fields — shared by
 /// [`to_account`] and [`to_account_membership`]. Re-validates the stored
@@ -114,6 +117,19 @@ impl From<sql::FindForUpdateRow> for AccountFields {
     }
 }
 
+impl From<sql::FindForShareRow> for AccountFields {
+    fn from(row: sql::FindForShareRow) -> Self {
+        Self {
+            id: row.id,
+            handle: row.handle,
+            name: row.name,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            deleted_at: row.deleted_at,
+        }
+    }
+}
+
 impl From<sql::ListForUserRow> for AccountFields {
     fn from(row: sql::ListForUserRow) -> Self {
         Self {
@@ -147,6 +163,11 @@ fn to_account(row: sql::FindRow) -> anyhow::Result<Account> {
 
 /// Rebuild a domain [`Account`] from the locking `find_for_update` row. See [`build_account`].
 fn to_account_locked(row: sql::FindForUpdateRow) -> anyhow::Result<Account> {
+    build_account(row.into())
+}
+
+/// Rebuild a domain [`Account`] from the share-locking `find_for_share` row. See [`build_account`].
+fn to_account_shared(row: sql::FindForShareRow) -> anyhow::Result<Account> {
     build_account(row.into())
 }
 
@@ -304,6 +325,27 @@ impl AccountReads for PgAccountWrites<'_> {
             .await?
             .map(to_account_locked)
             .transpose()
+    }
+
+    /// [`find`](Self::find) with `FOR SHARE`: the Account's update or delete waits
+    /// for commit; other share holders proceed.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn find_for_share(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>> {
+        sql::find_for_share(&mut *self.conn, id.as_ref())
+            .await?
+            .map(to_account_shared)
+            .transpose()
+    }
+
+    /// Re-parses each stored kind; an unknown one is an `Err`, never a panic.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn facts(&mut self, id: &AccountId) -> anyhow::Result<AccountFacts> {
+        let kinds = sql::facts(&mut *self.conn, id.as_ref()).await?;
+        let facts = kinds
+            .iter()
+            .map(|kind| AccountFactKind::from_str(kind))
+            .collect::<Result<AccountFacts, _>>()?;
+        Ok(facts)
     }
 
     /// [`AccountStore::role_of`] on the unit's connection.
@@ -671,17 +713,19 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// Flips the invitation to Accepted and seats the member atomically. Errors
     /// (rolling back) if the offer is no longer pending. Seating is `ON CONFLICT
     /// DO NOTHING`: a pair already seated by another invitation is a no-op, and
-    /// the existing role is re-read rather than overwritten.
+    /// the existing role is re-read rather than overwritten. Records the member
+    /// fact at the flip's instant, `ON CONFLICT DO NOTHING`: the first time wins.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn accept_invitation(
         &mut self,
         invitation: Invitation,
         listed_on_profile: bool,
     ) -> anyhow::Result<UserAccount> {
+        let now = Utc::now();
         let accepted = sql::accept_invitation_flip(
             &mut *self.conn,
             <&'static str>::from(InvitationState::Accepted),
-            Utc::now(),
+            now,
             uuid::Uuid::from(invitation.id),
             <&'static str>::from(InvitationState::Pending),
         )
@@ -726,6 +770,14 @@ impl AccountWrites for PgAccountWrites<'_> {
                 (Role::from_str(&existing)?, None)
             }
         };
+
+        sql::record_fact(
+            &mut *self.conn,
+            invitation.account.as_ref(),
+            <&'static str>::from(AccountFactKind::Member),
+            now,
+        )
+        .await?;
 
         Ok(UserAccount {
             account_id: invitation.account,
@@ -793,15 +845,33 @@ impl AccountWrites for PgAccountWrites<'_> {
         Ok(())
     }
 
-    /// Deletes invitations, then memberships, then the `accounts` row (those FKs
-    /// don't cascade). Frees the handle for reuse. Custody `account_keys` rows are
-    /// deliberately left in place (the PLC recovery window). A `DELETE` matching
-    /// no row is a no-op.
+    /// Locks the live `accounts` row, then deletes invitations, then memberships, then
+    /// the row (those FKs don't cascade). Frees the handle for reuse. Custody
+    /// `account_keys` rows are deliberately left in place (the PLC recovery window).
+    /// Errs, before any delete, on an absent or deactivated row, and when the Account
+    /// holds a fact; neither text names it.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
+        if sql::find_for_update(&mut *self.conn, account.as_ref())
+            .await?
+            .is_none()
+        {
+            anyhow::bail!("no live account was hard-deleted; it is absent or deactivated");
+        }
         sql::hard_delete_invitations(&mut *self.conn, account.as_ref()).await?;
         sql::hard_delete_memberships(&mut *self.conn, account.as_ref()).await?;
-        sql::hard_delete_account(&mut *self.conn, account.as_ref()).await?;
+        let deleted = sql::hard_delete_account(&mut *self.conn, account.as_ref())
+            .await
+            .map_err(|err| {
+                if constraint_of(&err) == Some(ACCOUNT_FACT_FOREIGN_KEY) {
+                    anyhow::anyhow!("the account holds a fact; it is never hard-deleted")
+                } else {
+                    anyhow::Error::new(err)
+                }
+            })?;
+        if deleted != 1 {
+            anyhow::bail!("no live account was hard-deleted; {deleted} rows matched");
+        }
         Ok(())
     }
 }

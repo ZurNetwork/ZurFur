@@ -234,15 +234,6 @@ async fn create_account(
     Ok(response)
 }
 
-// Fails to compile once the first account-fact table registers (assert below).
-const _: () = assert!(
-    adapter_pg::ACCOUNT_FACT_TABLES.is_empty(),
-    "an account-anchored fact store was registered: replace the constant-`false` body \
-     of application::account::facts::exist::run with a real query over it (an account \
-     bearing such a fact must be soft-deleted, never hard-deleted), then remove this \
-     guard and its sibling in adapter_pg::account"
-);
-
 /// Parses a body's `user` field — an actor DID — into a [`UserId`], rejecting a
 /// malformed value as `422 invalid_request`.
 fn parse_user_did(raw: &str) -> Result<UserId, Problem> {
@@ -252,7 +243,9 @@ fn parse_user_did(raw: &str) -> Result<UserId, Problem> {
 
 /// `DELETE /accounts/{id}` — the Owner deletes their account.
 ///
-/// - `200 { "outcome": "soft" | "hard" }`
+/// - `200 { "outcome": "soft" }` — the Account holds a fact (a member ever seated besides
+///   its founder): it is deactivated, its handle kept
+/// - `200 { "outcome": "hard" }` — it holds none: it is removed and its handle freed
 /// - `401` — not signed in
 /// - `403` — not this account's Owner
 /// - `404` — no such live account
@@ -268,7 +261,7 @@ async fn delete_account(
 
     let deleted = state.app().accounts().delete(cmd).await.map_err(|err| {
         if let AccountError::Infrastructure(cause) = &err {
-            tracing::error!(error = ?cause, "deleting the account failed in the store");
+            tracing::error!(error = %cause, "deleting the account failed in the store");
         }
         Problem::from(err)
     })?;
