@@ -43,12 +43,13 @@ BEGIN
 
     -- A decline, and a departure revoking the leaver's offers: a pending offer turned
     -- revoked, changing nothing but its state and `updated_at`.
-    IF TG_TABLE_NAME = 'account_invitations'
-       AND TG_OP = 'UPDATE'
-       AND OLD.state = 'pending'
-       AND NEW.state = 'revoked'
-       AND (to_jsonb(NEW) - 'state' - 'updated_at') = (to_jsonb(OLD) - 'state' - 'updated_at') THEN
-        RETURN NEW;
+    -- Nested, because a condition naming `OLD.state` fails on a table without it.
+    IF TG_TABLE_NAME = 'account_invitations' AND TG_OP = 'UPDATE' THEN
+        IF OLD.state = 'pending'
+           AND NEW.state = 'revoked'
+           AND (to_jsonb(NEW) - 'state' - 'updated_at') = (to_jsonb(OLD) - 'state' - 'updated_at') THEN
+            RETURN NEW;
+        END IF;
     END IF;
 
     RAISE EXCEPTION 'the account is deactivated'
