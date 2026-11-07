@@ -5,9 +5,14 @@ use domain::{
     elements::{
         account::{Account, AccountId},
         handle::{Handle, HandleDomain, HandleError},
+        role::Role,
+        user::UserId,
         workflow::WorkflowError,
     },
-    ports::{AccountDeactivated, DidBelongsToAnotherActor, DidMinter, HandleTaken, UnitOfWork},
+    ports::{
+        AccountDeactivated, AccountRepo, DidBelongsToAnotherActor, DidMinter, HandleTaken,
+        UnitOfWork,
+    },
 };
 use shared::settings::HANDLE_QUARANTINE_WINDOW;
 
@@ -293,6 +298,60 @@ pub(crate) async fn lock_account_row(
 ) -> AccountResult<()> {
     uow.accounts().find_for_share(account_id).await?;
     Ok(())
+}
+
+/// How an act locks its actor's membership row: `Share` for an actor who keeps their role,
+/// `Update` for one the act itself changes, as a transfer demotes its Owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ActorLock {
+    Share,
+    Update,
+}
+
+/// Locks both members' rows in one order every unit shares, so two acts on each other's
+/// rows wait instead of deadlocking. Returns the roles as (actor, target), each `None` for
+/// a non-member. Call it right after the Account row's lock.
+pub(crate) async fn lock_actor_and_target(
+    accounts: &mut dyn AccountRepo,
+    account: &AccountId,
+    actor: &UserId,
+    actor_lock: ActorLock,
+    target: &UserId,
+) -> anyhow::Result<(Option<Role>, Option<Role>)> {
+    let actor_first = AsRef::<str>::as_ref(actor) <= AsRef::<str>::as_ref(target);
+    if actor_first {
+        let actor_role = lock_actor(accounts, account, actor, actor_lock).await?;
+        let target_role = accounts.role_of_for_update(target, account).await?;
+        Ok((actor_role, target_role))
+    } else {
+        let target_role = accounts.role_of_for_update(target, account).await?;
+        let actor_role = lock_actor(accounts, account, actor, actor_lock).await?;
+        Ok((actor_role, target_role))
+    }
+}
+
+/// The actor's role, their row locked as `actor_lock` says.
+async fn lock_actor(
+    accounts: &mut dyn AccountRepo,
+    account: &AccountId,
+    actor: &UserId,
+    actor_lock: ActorLock,
+) -> anyhow::Result<Option<Role>> {
+    match actor_lock {
+        ActorLock::Share => accounts.role_of_for_share(actor, account).await,
+        ActorLock::Update => accounts.role_of_for_update(actor, account).await,
+    }
+}
+
+/// Logs, once at `warn`, that `act` passed its pre-check but was refused inside its unit
+/// because a concurrent change landed first, and hands the refusal back to return.
+pub(crate) fn refused_after_a_race(act: &'static str, refusal: AccountError) -> AccountError {
+    tracing::warn!(
+        act,
+        refusal = %refusal,
+        "an account act lost its race with a concurrent change and was refused"
+    );
+    refusal
 }
 
 /// The one handle-claim gate: refuse with `InvalidHandle` when `handle_domain`

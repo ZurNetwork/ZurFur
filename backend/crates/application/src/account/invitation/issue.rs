@@ -14,7 +14,7 @@ use crate::{
     Ports,
     account::{
         AccountError, AccountResult, invitation::Invitations, lock_live_account,
-        require_live_account,
+        refused_after_a_race, require_live_account,
     },
 };
 
@@ -93,6 +93,13 @@ impl Invitations<'_> {
 
         let uow = uow.open().await?;
         lock_live_account(uow, &account_id).await?;
+        // Decided again with the issuer's row held shared, so a demotion waits for this
+        // offer to commit and its revoke then sees it.
+        uow.accounts()
+            .role_of_for_share(&actor_id, &account_id)
+            .await?
+            .filter(|r| r.can_grant(&role))
+            .ok_or_else(|| refused_after_a_race("issue_invitation", AccountError::IncorrectRole))?;
         let target = uow.users().provision(target_id.did()).await?;
         let invitation = Invitation::issue(account_id, target.id, role, actor_id, now);
 

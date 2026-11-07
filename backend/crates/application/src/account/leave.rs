@@ -4,7 +4,7 @@ use domain::elements::{account::AccountId, role::Role, user::UserId};
 
 use crate::{
     Ports,
-    account::{AccountError, AccountResult, Accounts, lock_account_row},
+    account::{AccountError, AccountResult, Accounts, lock_account_row, refused_after_a_race},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,8 +40,22 @@ impl<'a> Accounts<'a> {
 
         let uow = uow.open().await?;
         lock_account_row(uow, &account_id).await?;
-        // The store refuses the Owner, so a transfer that lands after the check above
-        // fails this unit instead of removing the new Owner.
+        // Decided again on the locked row: a transfer that landed after the check above
+        // made the leaver the Owner, or a revoke removed them.
+        let leaver_role = uow
+            .accounts()
+            .role_of_for_update(&leaving_user_id, &account_id)
+            .await?;
+        match leaver_role {
+            Some(Role::Owner) => {
+                return Err(refused_after_a_race(
+                    "leave",
+                    AccountError::OwnerCannotLeave,
+                ));
+            }
+            Some(_) => {}
+            None => return Err(refused_after_a_race("leave", AccountError::NotAMember)),
+        };
         uow.accounts().leave(&leaving_user_id, &account_id).await?;
         Ok(Output)
     }
