@@ -1552,6 +1552,110 @@ async fn every_account_referencing_table_is_classified() {
     );
 }
 
+/// Tables referencing `accounts` that deliberately run no refusal of writes into a
+/// deactivated Account, each with its reason. Empty: every referencing table refuses.
+const REFUSAL_EXEMPT_TABLES: &[(&str, &str)] = &[];
+
+/// A row trigger's `tgtype` bits: row-level, BEFORE, and the events it fires on.
+const TRIGGER_ROW: i16 = 1;
+const TRIGGER_BEFORE: i16 = 2;
+const TRIGGER_INSERT: i16 = 4;
+const TRIGGER_DELETE: i16 = 8;
+const TRIGGER_UPDATE: i16 = 16;
+
+/// The table's enabled, non-internal BEFORE row triggers running `function`, as the
+/// `tgtype` bits each fires on.
+async fn refusal_trigger_bits(pool: &PgPool, table: &str, function: &str) -> Vec<i16> {
+    sqlx::query_scalar(
+        r#"
+        SELECT t.tgtype
+        FROM pg_trigger t
+        JOIN pg_proc p ON p.oid = t.tgfoid
+        WHERE NOT t.tgisinternal
+          AND t.tgenabled <> 'D'
+          AND t.tgrelid = $1::regclass
+          AND p.proname = $2
+        "#,
+    )
+    .bind(table)
+    .bind(function)
+    .fetch_all(pool)
+    .await
+    .expect("read the table's triggers")
+}
+
+/// THE REFUSAL TRIPWIRE: every table holding a foreign key onto `accounts(id)` runs
+/// `refuse_write_to_deactivated_account()` before each insert, update and delete, unless
+/// listed in [`REFUSAL_EXEMPT_TABLES`] with its reason; the board's columns and cards run
+/// `refuse_board_write_to_deactivated_account()` before each insert and update. A new
+/// `accounts`-referencing table fails until it gets the trigger or is classified.
+#[tokio::test]
+async fn every_account_referencing_table_refuses_writes_to_a_deactivated_account() {
+    let (pool, _container) = fresh_pool().await;
+
+    let referencing: Vec<String> = sqlx::query_scalar(
+        r#"
+        SELECT DISTINCT conrelid::regclass::text
+        FROM pg_constraint
+        WHERE contype = 'f' AND confrelid = 'accounts'::regclass
+        "#,
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("scan foreign keys onto accounts");
+
+    let exempt: BTreeSet<&str> = REFUSAL_EXEMPT_TABLES
+        .iter()
+        .map(|(table, _reason)| *table)
+        .collect();
+    let in_the_set: Vec<&str> = referencing
+        .iter()
+        .map(String::as_str)
+        .filter(|table| exempt.contains(table))
+        .collect();
+    assert_eq!(
+        in_the_set.len(),
+        exempt.len(),
+        "an exempt table must still reference accounts(id); remove the stale entry"
+    );
+
+    let direct = TRIGGER_ROW | TRIGGER_BEFORE | TRIGGER_INSERT | TRIGGER_UPDATE | TRIGGER_DELETE;
+    let mut unrefused: Vec<&str> = Vec::new();
+    for table in referencing.iter().map(String::as_str) {
+        if exempt.contains(table) {
+            continue;
+        }
+        let bits = refusal_trigger_bits(&pool, table, "refuse_write_to_deactivated_account").await;
+        if !bits.iter().any(|bits| bits & direct == direct) {
+            unrefused.push(table);
+        }
+    }
+    assert!(
+        unrefused.is_empty(),
+        "these tables reference accounts(id) but run no refuse_write_to_deactivated_account() \
+         row trigger on insert, update and delete: {unrefused:?}. Add the refusal trigger in \
+         the migration, or classify the table in REFUSAL_EXEMPT_TABLES with its reason"
+    );
+
+    let through_the_board = TRIGGER_ROW | TRIGGER_BEFORE | TRIGGER_INSERT | TRIGGER_UPDATE;
+    let mut unrefused_boards: Vec<&str> = Vec::new();
+    for table in ["workflow_column", "workflow_column_commission"] {
+        let bits =
+            refusal_trigger_bits(&pool, table, "refuse_board_write_to_deactivated_account").await;
+        if !bits
+            .iter()
+            .any(|bits| bits & through_the_board == through_the_board)
+        {
+            unrefused_boards.push(table);
+        }
+    }
+    assert!(
+        unrefused_boards.is_empty(),
+        "these board tables run no refuse_board_write_to_deactivated_account() row trigger on \
+         insert and update: {unrefused_boards:?}. Add the refusal trigger in the migration"
+    );
+}
+
 /// Account hard-delete **severs** the account's placement rails while the
 /// placed **commission survives untouched**. Commissions are User-owned, not
 /// account facts, so a placed commission never

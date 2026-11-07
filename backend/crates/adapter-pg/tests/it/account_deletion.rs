@@ -26,7 +26,7 @@ use domain::elements::{
 use domain::ports::AccountDeactivated;
 use test_support::account_deletion_contract::{
     AccountEntity, AccountError, DeleteOutcome, Runtime, accept, delete, deleted, founded, is_live,
-    offer, recognized, seat, try_accept, try_change_handle, try_transfer,
+    offer, recognized, seat, try_accept, try_change_handle, try_revoke, try_transfer,
 };
 use test_support::seeder::{CommissionSeeder, seed_commission};
 
@@ -244,6 +244,56 @@ async fn a_delete_by_an_owner_who_handed_over_meanwhile_is_refused() {
         "the former Owner is refused"
     );
     assert!(is_live(&runtime, &account).await, "the Account stays live");
+}
+
+// A role revoke whose checks pass while a soft delete holds the Account waits for the row in
+// its unit, and answers the Account not found once the delete commits. The store lets a
+// member's departure through on a deactivated Account, so the use case's own lock is what
+// refuses an Admin's or Owner's revoke; the member stays seated.
+#[tokio::test]
+async fn a_role_revoke_waiting_on_a_soft_delete_answers_not_found_and_keeps_the_member() {
+    let pg = test_support::pg_app::pg_runtime().await;
+    let runtime = pg.runtime.clone();
+    let owner = recognized(&runtime, "did:plc:racerevokeowner").await;
+    let member = recognized(&runtime, "did:plc:racerevokemember").await;
+    let account = founded(&runtime, &owner, "racerevoke.zurfur.app").await;
+    seat(&runtime, &account, &owner, &member).await;
+
+    let mut deleting = runtime.database.begin().await.expect("begin the delete");
+    deleting
+        .accounts()
+        .find_for_update(&account)
+        .await
+        .expect("lock the account")
+        .expect("the account is live");
+    deleting
+        .accounts()
+        .soft_delete(&account)
+        .await
+        .expect("soft-delete the account");
+    let revoker = runtime.clone();
+    let (revoking, revoking_owner, revoked_member) =
+        (account.clone(), owner.clone(), member.clone());
+    let waiting = tokio::spawn(async move {
+        try_revoke(&revoker, &revoking, &revoking_owner, &revoked_member).await
+    });
+    wait_for_lock_waits(&runtime.pool, 1).await;
+    deleting.commit().await.expect("commit the delete");
+
+    let revoked = waiting.await.expect("the revoke finishes");
+    assert!(
+        matches!(revoked, Err(AccountError::NotFound(AccountEntity::Account))),
+        "the revoke answers the Account not found: {revoked:?}"
+    );
+    let seated: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM account_members WHERE account_id = $1 AND user_id = $2",
+    )
+    .bind(AsRef::<str>::as_ref(&account))
+    .bind(AsRef::<str>::as_ref(&member))
+    .fetch_one(&runtime.pool)
+    .await
+    .expect("read the membership");
+    assert_eq!(seated, 1, "the member stays seated");
 }
 
 // A handle change whose checks pass while a soft delete holds the Account waits for the row

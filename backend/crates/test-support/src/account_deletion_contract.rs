@@ -153,6 +153,22 @@ pub async fn try_transfer(
         .map(|_| ())
 }
 
+/// `actor` revokes `target`'s role in `account`, answering what the use case answered.
+pub async fn try_revoke(
+    runtime: &Runtime,
+    account: &AccountId,
+    actor: &UserId,
+    target: &UserId,
+) -> Result<(), AccountError> {
+    let revoking = account::role::revoke::Command {
+        account_id: account.clone(),
+        actor_id: actor.clone(),
+        target_id: target.clone(),
+    };
+    let app = runtime.app();
+    app.accounts().roles().revoke(revoking).await.map(|_| ())
+}
+
 /// `actor` changes `account`'s handle to `handle`, answering what the use case answered.
 pub async fn try_change_handle(
     runtime: &Runtime,
