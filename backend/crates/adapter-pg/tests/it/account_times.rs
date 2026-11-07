@@ -41,40 +41,40 @@ const RESTORE: &str =
 /// One of `accounts`' three times.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::VariantArray)]
 enum Time {
-    CreatedAt,
-    UpdatedAt,
-    DeletedAt,
+    Created,
+    Updated,
+    Deleted,
 }
 
 impl Time {
     /// The column as the migration's refusal names it, with its article.
     fn named(self) -> &'static str {
         match self {
-            Self::CreatedAt => "a created_at",
-            Self::UpdatedAt => "an updated_at",
-            Self::DeletedAt => "a deleted_at",
+            Self::Created => "a created_at",
+            Self::Updated => "an updated_at",
+            Self::Deleted => "a deleted_at",
         }
     }
 
     /// The constraint that holds this time in range.
     fn constraint(self) -> &'static str {
         match self {
-            Self::CreatedAt => "accounts_created_at_in_range",
-            Self::UpdatedAt => "accounts_updated_at_in_range",
-            Self::DeletedAt => "accounts_deleted_at_in_range",
+            Self::Created => "accounts_created_at_in_range",
+            Self::Updated => "accounts_updated_at_in_range",
+            Self::Deleted => "accounts_deleted_at_in_range",
         }
     }
 
     /// Sets this time on every Account whose id is in `$1` to `$2`.
     fn plant_statement(self) -> &'static str {
         match self {
-            Self::CreatedAt => {
+            Self::Created => {
                 "UPDATE accounts SET created_at = $2::text::timestamptz WHERE id = ANY($1)"
             }
-            Self::UpdatedAt => {
+            Self::Updated => {
                 "UPDATE accounts SET updated_at = $2::text::timestamptz WHERE id = ANY($1)"
             }
-            Self::DeletedAt => {
+            Self::Deleted => {
                 "UPDATE accounts SET deleted_at = $2::text::timestamptz WHERE id = ANY($1)"
             }
         }
@@ -203,7 +203,7 @@ async fn each_accounts_time_out_of_range_is_refused() {
                 .unwrap_or_else(|error| panic!("{time:?} keeps {value}: {error}"));
         }
     }
-    plant(&pool, Time::DeletedAt, &accounts, None)
+    plant(&pool, Time::Deleted, &accounts, None)
         .await
         .expect("a live Account keeps no deletion time");
 }

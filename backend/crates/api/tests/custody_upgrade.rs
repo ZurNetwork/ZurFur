@@ -44,6 +44,14 @@ const SLOT_TITLE_DROP: i64 = 20261026131355;
 /// back first.
 const COMMISSION_CHECKS: i64 = 20261107164601;
 
+/// The fifth migration after the custody upgrade: the Account facts table, rolled back
+/// second.
+const ACCOUNT_FACT: i64 = 20261107174548;
+
+/// The sixth migration after the custody upgrade: the Account time checks, rolled back
+/// first.
+const ACCOUNT_TIMES: i64 = 20261107174549;
+
 /// The purposes the API boot derives.
 const BOOT_PURPOSES: [Purpose; 3] = [Purpose::DidCustody, Purpose::SigninSecrets, Purpose::DenMac];
 
@@ -253,7 +261,9 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
             DISPUTE_COLUMNS,
             SLOT_FILL,
             SLOT_TITLE_DROP,
-            COMMISSION_CHECKS
+            COMMISSION_CHECKS,
+            ACCOUNT_FACT,
+            ACCOUNT_TIMES
         ],
         "the migrations after the custody upgrade"
     );
@@ -472,7 +482,8 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
     assert_eq!(rerun, nothing_to_do);
     assert_eq!(custody::store_snapshot(&pool).await, before_rerun);
 
-    // 7. Rollback rehearsal: the commission checks and the dispute columns rolled back first,
+    // 7. Rollback rehearsal: the Account time checks, the Account facts table, the commission
+    // checks and the dispute columns rolled back first,
     // then the rollback recipe's statements, in its order and in one transaction, back to the
     // parent's schema, where the 0.1 opener opens both.
     let mut rollback = pool.begin().await.expect("the rollback begins");
@@ -481,6 +492,23 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
         .execute(&mut *rollback)
         .await
         .expect("forget the migrations after the upgrade");
+    sqlx::query(
+        "ALTER TABLE accounts
+             DROP CONSTRAINT accounts_created_at_in_range,
+             DROP CONSTRAINT accounts_updated_at_in_range,
+             DROP CONSTRAINT accounts_deleted_at_in_range",
+    )
+    .execute(&mut *rollback)
+    .await
+    .expect("roll back the Account time checks first");
+    sqlx::query("DROP TABLE account_fact")
+        .execute(&mut *rollback)
+        .await
+        .expect("roll back the Account facts table next");
+    sqlx::query("DROP FUNCTION account_fact_refuse_change()")
+        .execute(&mut *rollback)
+        .await
+        .expect("and its insert-only function");
     sqlx::query(
         "ALTER TABLE commission
              DROP CONSTRAINT commission_lifecycle_known,

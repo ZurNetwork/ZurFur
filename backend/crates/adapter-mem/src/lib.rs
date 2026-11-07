@@ -1851,8 +1851,8 @@ impl AccountWrites for MemAccountWrites {
     /// invitation and handle-change row, and sever its boards, columns and cards.
     /// The commissions those cards pointed at are untouched (they are User-owned),
     /// and so are view grants, which are no longer an account rail. Custody keys
-    /// are not modeled here. Errs, removing nothing, on an absent or deactivated
-    /// Account and on one holding a fact, as the PostgreSQL store does.
+    /// are not modeled here. Errs, removing nothing, on a deactivated Account and on
+    /// one holding a fact, as the PostgreSQL store does; an absent one is a no-op here.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
         let holds_a_fact = self
@@ -1871,11 +1871,11 @@ impl AccountWrites for MemAccountWrites {
                 .accounts
                 .lock()
                 .expect("MemBackend accounts mutex poisoned");
-            let live = accounts
+            let deactivated = accounts
                 .get(account)
-                .is_some_and(|stored| stored.deleted_at.is_none());
-            if !live {
-                anyhow::bail!("no live account was hard-deleted; 0 rows matched");
+                .is_some_and(|stored| stored.deleted_at.is_some());
+            if deactivated {
+                anyhow::bail!("no live account was hard-deleted; the account is deactivated");
             }
             accounts.remove(account);
         }
