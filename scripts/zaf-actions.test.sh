@@ -74,11 +74,12 @@ if ! command -v jj >/dev/null 2>&1; then
     exit 0
 fi
 
-# The push fixtures run a copy of `push` whose build slot is a stub that runs
-# its command at once: the real slot would wait on the slot the gate running
-# this test already holds.
+# The fixtures run copies of the actions, `push`'s with a build slot that is a
+# stub running its command at once: the real slot would wait on the slot the
+# gate running this test already holds.
 slot_line='slot=/home/zuri/.cache/zurfur-locks/build-slot.sh'
 mkdir -p "$tmp/actions"
+cp "$actions"/* "$tmp/actions/"
 printf '#!/bin/sh\nexec "$@"\n' >"$tmp/slot"
 chmod +x "$tmp/slot"
 awk -v from="$slot_line" -v to="slot=$tmp/slot" '$0 == from { print to; found = 1; next } { print } END { exit !found }' \
@@ -143,5 +144,20 @@ before="$(on_origin)"
 (cd "$dir" && jj describe -r @- -m "merge base, rewritten" >/dev/null 2>&1)
 expect "push refuses a rewritten pushed commit" 1 "rewrote a pushed commit" push "$slice"
 [ "$(on_origin)" = "$before" ] && ok "origin keeps the pushed commit" || fail "origin keeps the pushed commit" "origin moved to $(on_origin)"
+
+# workspace-open hands back a directory only when jj holds it under the
+# slice's name: not when jj holds the slice elsewhere and another workspace
+# sits at its directory, and not when another workspace alone sits there.
+expect "workspace-open hands back the slice's own workspace" 0 "$dir" workspace-open "$slice" base
+moved=feature/release-0.3-1-3
+taken=feature/release-0.3-1-4
+(
+    cd "$root"
+    jj workspace add --name "$moved" -r base "$tmp/elsewhere" >/dev/null 2>&1
+    jj workspace add --name other -r base "$root/.zaf/workspaces/$moved" >/dev/null 2>&1
+    jj workspace add --name another -r base "$root/.zaf/workspaces/$taken" >/dev/null 2>&1
+)
+expect "workspace-open refuses a slice jj holds elsewhere" 1 "jj holds workspace $moved at $tmp/elsewhere" workspace-open "$moved" base
+expect "workspace-open refuses another workspace at the slice's directory" 1 "is jj workspace another, not $taken" workspace-open "$taken" base
 
 [ "$failures" -eq 0 ] || exit 1

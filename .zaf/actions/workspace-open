@@ -1,6 +1,6 @@
 #!/bin/sh
 # zaf description: open a slice's jj workspace and same-named bookmark at the base as it stands on origin, handing back the workspace path; a workspace already open is handed back as is, whatever its base
-# zaf 1: refused: the arguments are not <slice> <base>, the slice's directory is not a jj workspace, jj holds the slice's workspace at another directory, the base is not on origin, or the slice name leaves the workspaces directory or is not a task branch or is the base
+# zaf 1: refused: the arguments are not <slice> <base>, the slice's directory is not a jj workspace or is not the one jj holds under the slice's name, jj holds the slice's workspace at another directory, the base is not on origin, or the slice name leaves the workspaces directory or is not a task branch or is the base
 # zaf 2: a backend failed (jj is missing or refused, or the fetch failed)
 # zaf mode: 750
 # zaf group: team
@@ -70,25 +70,39 @@ root_jj() {
     jj --no-pager --color=never --ignore-working-copy -R "$ZAF_ROOT" "$@"
 }
 
-# Open already: handed back as it stands, on whatever base it was opened on. The base is merged
-# into it at slice-merge, never rebased under it, so nothing here changes it.
-if [ -e "$dir" ]; then
-    if [ -d "$dir/.jj" ]; then
-        echo "$dir"
-        exit 0
-    fi
+if [ -e "$dir" ] && [ ! -d "$dir/.jj" ]; then
     echo "$dir exists and is not a jj workspace" >&2
     exit 1
 fi
 
-# A workspace whose directory was removed by hand still holds the name, and is forgotten below.
-# One jj holds at another directory is someone else's: refused before anything is made.
+# Every workspace jj holds, by name and directory: the directory it holds the slice's name at,
+# and the name it holds the slice's directory under, the directory as jj may record it with the
+# root's symbolic links resolved. Either is empty when jj holds none.
 real_root=$(cd "$ZAF_ROOT" && pwd -P) || exit 2
 real_dir=$real_root/.zaf/workspaces/$slice
 listing=$(root_jj workspace list -T 'name ++ "\t" ++ self.root() ++ "\n"') || exit 2
 held=$(printf '%s\n' "$listing" | awk -F '\t' -v name="$slice" '$1 == name { print $2; exit }')
+holder=$(printf '%s\n' "$listing" | awk -F '\t' -v a="$dir" -v b="$real_dir" '$2 == a || $2 == b { print $1; exit }')
+
+# One jj holds at another directory is someone else's: refused before anything is made.
 if [ -n "$held" ] && [ "$held" != "$dir" ] && [ "$held" != "$real_dir" ]; then
     echo "jj holds workspace $slice at $held, not $dir" >&2
+    exit 1
+fi
+
+# Open already: handed back as it stands, on whatever base it was opened on, but only when jj
+# holds it under the slice's name, so a later step never works in another workspace. The base is
+# merged into it at slice-merge, never rebased under it, so nothing here changes it.
+if [ -e "$dir" ]; then
+    if [ -n "$held" ]; then
+        echo "$dir"
+        exit 0
+    fi
+    if [ -n "$holder" ]; then
+        echo "$dir is jj workspace $holder, not $slice" >&2
+    else
+        echo "$dir is a jj workspace jj does not hold as $slice; workspace-drop clears it" >&2
+    fi
     exit 1
 fi
 
@@ -110,6 +124,7 @@ if [ -z "$found" ]; then
     root_jj bookmark create "$slice" -r "$base_revset" || exit 2
 fi
 
+# A workspace whose directory was removed by hand still holds the name: it is forgotten here.
 if [ -n "$held" ]; then
     root_jj workspace forget "$slice" || exit 2
 fi
