@@ -1,7 +1,7 @@
 #!/bin/sh
 # zaf description: fetch and merge the base as it stands on the remote into a slice with a new merge commit, never a rebase, moving a lagging local base up and never back; up to date is quiet
 # zaf 1: conflicted: the merge stops on conflicts, the paths are in the log and the slice is unchanged
-# zaf 2: a backend failed or the call was refused (the arguments are not <slice> <base>, the slice has no jj workspace, it records another base, it has uncommitted work, jj is missing or the fetch failed); the slice is unchanged
+# zaf 2: a backend failed or the call was refused (the arguments are not <slice> <base>, the slice name is not a task branch or is the base, the slice has no jj workspace, it records another base, it has uncommitted work, jj is missing or the fetch failed); the slice is unchanged
 # zaf mode: 750
 # zaf group: team
 slice=$1
@@ -27,6 +27,35 @@ case $slice in
         exit 2
         ;;
 esac
+# A slice is a task branch as the manifest's task pattern writes it,
+# feature/release-<version>-<epic>-<task> with bare numbers for the epic and the task, and never
+# the base it merges into.
+task_branch() {
+    case $1 in
+        feature/release-?*-?*-?*) ;;
+        *) return 1 ;;
+    esac
+    branch_rest=${1#feature/release-}
+    branch_task=${branch_rest##*-}
+    branch_rest=${branch_rest%-*}
+    branch_epic=${branch_rest##*-}
+    branch_version=${branch_rest%-*}
+    case $branch_task in "" | *[!0-9]*) return 1 ;; esac
+    case $branch_epic in "" | *[!0-9]*) return 1 ;; esac
+    case $branch_version in "" | *[!A-Za-z0-9.-]*) return 1 ;; esac
+}
+if ! task_branch "$slice"; then
+    echo "slice name $slice is not a task branch, feature/release-<version>-<epic>-<task>" >&2
+    exit 2
+fi
+if [ -n "$ZAF_BASE" ] && [ "$slice" = "$ZAF_BASE" ]; then
+    echo "slice name $slice is the base, not a task branch" >&2
+    exit 2
+fi
+if [ "$slice" = "$base" ]; then
+    echo "slice name $slice is the base, not a task branch" >&2
+    exit 2
+fi
 case $base in
     "" | -* | *\"* | *\\*)
         echo "base $base is not a usable bookmark name" >&2
