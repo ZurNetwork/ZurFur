@@ -73,8 +73,10 @@ steps = ["ci"]
 # hand, after QA and CodeRabbit, and every push is scripts/jj-push.sh, through `zaf do push`. zaf
 # denies each line bare and with ` *` after it, and a `*` in a permission rule matches any text,
 # spaces included, so `jj -* push` is a push with global flags before the verb
-# (`jj --no-pager push -b x`). The `gh api` lines are a raw merge through the REST endpoint
-# (`.../pulls/<n>/merge`) or the GraphQL mutation.
+# (`jj --no-pager push -b x`), and `jj git -* push` one with flags after `git`. A `-*` deny
+# also catches a few commit messages that hold "push"; that is known and accepted. `jj util exec`
+# runs any program, so it is denied whole: instances have no use for it. The `gh api` lines are a
+# raw merge through the REST endpoint (`.../pulls/<n>/merge`) or the GraphQL mutation.
 [forbidden]
 commands = [
     "gh pr merge",
@@ -86,9 +88,12 @@ commands = [
     "zaf do --json pr-merge",
     "jj git push",
     "jj -* git push",
+    "jj git -* push",
     "git push",
     "jj push",
     "jj -* push",
+    "jj util exec",
+    "jj -* util exec",
     "scripts/jj-push.sh",
     "sh scripts/jj-push.sh",
 ]
