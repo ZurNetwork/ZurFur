@@ -2,7 +2,8 @@
 //! with `log` records bridged, writes no token, cookie, session id or key at any level (the
 //! planted root's PRK and purpose keys as hex, base64 and a byte list included), and no DID,
 //! handle or key id of the planted root at info or above. The visit founds an Account, files bug reports, creates two
-//! commissions with one title, opens the Den and one twin, and renames it. Alone in its binary:
+//! commissions with one title, opens the Den and one twin, renames it, and deletes the Account,
+//! whose tombstone the directory refuses. Alone in its binary:
 //! it installs the global subscriber. The visitor's own thread stays out of the capture (this
 //! crate's node says why).
 
@@ -11,8 +12,13 @@ use std::sync::Arc;
 
 use api::{AppState, Environment};
 use async_trait::async_trait;
-use domain::elements::{custody::Purpose, did::Did, handle::AtHandle, profile::Profile};
-use domain::ports::{Authenticator, BrowserBinding, BrowserMismatch, SigninStarted};
+use domain::elements::{
+    custody::Purpose,
+    did::Did,
+    handle::{AtHandle, Handle},
+    profile::Profile,
+};
+use domain::ports::{Authenticator, BrowserBinding, BrowserMismatch, DidMinter, SigninStarted};
 use strum::VariantArray as _;
 use test_support::{custody, http::client, log_capture::CapturedLog, pg_app};
 use tracing_subscriber::{
@@ -104,6 +110,28 @@ impl Authenticator for CanaryAuthenticator {
     }
 }
 
+/// The live minter, except that the directory refuses every tombstone, in words naming no DID.
+struct RefusingTombstone(Arc<dyn DidMinter>);
+
+#[async_trait]
+impl DidMinter for RefusingTombstone {
+    async fn mint(&self, handle: &Handle) -> anyhow::Result<Did> {
+        self.0.mint(handle).await
+    }
+
+    async fn mint_handleless(&self) -> anyhow::Result<Did> {
+        self.0.mint_handleless().await
+    }
+
+    async fn tombstone(&self, _did: &Did) -> anyhow::Result<()> {
+        anyhow::bail!("the directory refused the tombstone")
+    }
+
+    async fn update_handle(&self, did: &Did, handle: &Handle) -> anyhow::Result<()> {
+        self.0.update_handle(did, handle).await
+    }
+}
+
 /// `text` without its ANSI color escapes.
 fn without_colors(text: &str) -> String {
     let mut plain = String::with_capacity(text.len());
@@ -172,8 +200,10 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         .expect("the canary's subscriber is this binary's only one");
     let served = pg_app::serve_configured(
         |runtime| {
+            let did_minter = Arc::new(RefusingTombstone(Arc::clone(&runtime.did_minter)));
             let state = AppState {
                 auth: Arc::new(CanaryAuthenticator),
+                did_minter,
                 ..runtime
             };
             api::app(state)
@@ -223,6 +253,12 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         .send()
         .await
         .expect("POST /accounts");
+    let founded_status = founded.status();
+    let founded_account: serde_json::Value = founded.json().await.expect("a JSON account");
+    let account_id = founded_account["id"]
+        .as_str()
+        .expect("the account's id")
+        .to_owned();
     let report = serde_json::json!({
         "description": REPORT_DESCRIPTION,
         "page": REPORT_PAGE,
@@ -275,6 +311,13 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         .send()
         .await
         .expect("PATCH /commissions/{id}/title");
+    let deleted = browser
+        .delete(format!("{base}/accounts/{account_id}"))
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}");
+    let deleted_status = deleted.status();
+    let deletion: serde_json::Value = deleted.json().await.expect("a JSON outcome");
     let signed_out = browser
         .post(format!("{base}/logout"))
         .send()
@@ -284,7 +327,7 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
     assert_eq!(started.status(), 303);
     assert_eq!(callback.status(), 303);
     assert_eq!(me.status(), 200);
-    assert_eq!(founded.status(), 201);
+    assert_eq!(founded_status, 201);
     assert_eq!(filed.status(), 201);
     assert_eq!(refused.status(), 422);
     assert_eq!(root.status(), 200);
@@ -304,6 +347,8 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         "the Den numbers the newer twin: {twin_node}"
     );
     assert_eq!(renamed.status(), 200);
+    assert_eq!(deleted_status, 200);
+    assert_eq!(deletion["outcome"], "hard", "an empty Account deletes hard");
     assert_eq!(signed_out.status(), 303);
 
     let text = without_colors(&log.text());
@@ -311,7 +356,7 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
     if let Some(dump) = std::env::var_os("LOG_CANARY_DUMP") {
         std::fs::write(dump, &text).expect("the dump file is writable");
     }
-    let controls: [(&str, &[&str]); 10] = [
+    let controls: [(&str, &[&str]); 11] = [
         (
             "the callback's finish",
             &["request finished", "route=\"/signin-callback\""],
@@ -349,6 +394,14 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
             &["use case finished", "outcome=\"ok\""],
         ),
         ("a store span's close", &["adapter_pg::", "close time.busy"]),
+        (
+            "the refused tombstone's warning",
+            &[
+                "WARN",
+                "did:plc tombstone failed after hard delete",
+                "the directory refused the tombstone",
+            ],
+        ),
         (
             "the den check's answer",
             &["den check answered", "answer=\"opens\""],

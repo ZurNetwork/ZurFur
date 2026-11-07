@@ -202,8 +202,7 @@ async fn the_owner_deletes_an_empty_account_hard() {
         .await
         .unwrap();
 
-    // No account-anchored fact store exists yet, so a fresh account is empty
-    // and every deletion is hard (`application::account::account_has_facts`).
+    // A freshly founded Account holds no fact, so its deletion is hard.
     assert_eq!(value["outcome"], "hard");
     let keys: Vec<&str> = value
         .as_object()

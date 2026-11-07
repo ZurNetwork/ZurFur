@@ -243,7 +243,9 @@ fn parse_user_did(raw: &str) -> Result<UserId, Problem> {
 
 /// `DELETE /accounts/{id}` — the Owner deletes their account.
 ///
-/// - `200 { "outcome": "soft" | "hard" }`
+/// - `200 { "outcome": "soft" }` — the Account holds a fact (a member ever seated besides
+///   its founder): it is deactivated, its handle kept
+/// - `200 { "outcome": "hard" }` — it holds none: it is removed and its handle freed
 /// - `401` — not signed in
 /// - `403` — not this account's Owner
 /// - `404` — no such live account
