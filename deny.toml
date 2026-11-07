@@ -44,6 +44,18 @@ ignore = [
     # whether 0.5.5 has the listed leaks is unverified. SECURITY-RELEVANT --
     # flagged for the Engineer; re-check before anything is deployed.
     { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.5 timing variability; transitive via atrium-crypto / jacquard (k256, p256, p384) -> elliptic-curve 0.13; the fix needs elliptic-curve 0.14, which no released upstream uses. Flagged for the Engineer -- did:plc signing and DPoP keys; re-check before deployment." },
+    # Transitive, dev-only: testcontainers 0.27.3 -> astral-tokio-tar 0.6.2
+    # (reached through test-support's [dev-dependencies]; never in a shipped
+    # binary). Every version is marked unmaintained and none is patched. Not a
+    # direct dependency. Retire it when testcontainers moves off
+    # astral-tokio-tar.
+    { id = "RUSTSEC-2026-0440", reason = "astral-tokio-tar unmaintained, no patched version; transitive via testcontainers (test-support dev-dependency); not a direct dependency; retire when testcontainers drops it." },
+
+    # Transitive: hyper 1.8.1 -> pin-utils 0.1.0 (hyper is pulled by axum 0.8.9
+    # and the HTTP clients). The upstream repository was archived on 2026-10-01
+    # and no patched version exists. Not a direct dependency. Retire it when
+    # hyper drops pin-utils.
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils unmaintained (upstream archived 2026-10-01), no patched version; transitive via hyper 1.8.1 (axum 0.8.9); not a direct dependency; retire when hyper drops it." },
 ]
 
 [licenses]
