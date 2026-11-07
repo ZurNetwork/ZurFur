@@ -97,18 +97,18 @@ facts=$(gh pr view "$pr" --json state,baseRefName,mergeable,statusCheckRollup --
     .state,
     .baseRefName,
     .mergeable,
-    ([.statusCheckRollup[]
+    ([(.statusCheckRollup // [])[]
         | select(
             (.__typename == "CheckRun" and .status == "COMPLETED"
                 and (.conclusion == "SUCCESS" or .conclusion == "SKIPPED" or .conclusion == "NEUTRAL" | not))
             or (.__typename == "StatusContext" and (.state == "FAILURE" or .state == "ERROR")))
         | (.name // .context)] | join(", ")),
-    ([.statusCheckRollup[]
+    ([(.statusCheckRollup // [])[]
         | select(
             (.__typename == "CheckRun" and .status != "COMPLETED")
             or (.__typename == "StatusContext" and (.state == "PENDING" or .state == "EXPECTED")))
         | (.name // .context)] | join(", ")),
-    (.statusCheckRollup | length)
+    (.statusCheckRollup // [] | length)
 ' "$@") || exit 2
 fact() {
     printf '%s\n' "$facts" | awk -v n="$1" 'NR == n'
@@ -142,14 +142,10 @@ if [ "$base" = main ]; then
     exit 1
 fi
 
-# The strategy fits the base. Kept for the day a release action merges into main: main is
-# squashed, through the merge queue; a slice merges into its integration branch with a merge
-# commit, never squashed or rebased.
-if [ "$base" = main ] && [ "$strategy" != --squash ]; then
-    echo "pull request #$pr is into main, which takes only --squash" >&2
-    exit 1
-fi
-if [ "$base" != main ] && [ "$strategy" = --squash ]; then
+# The strategy fits the base: a slice merges into its integration branch with a merge commit,
+# never squashed or rebased. `--squash` stays in the arguments zaf names for `pr-merge`, and every
+# base it is given for here is refused.
+if [ "$strategy" = --squash ]; then
     echo "pull request #$pr is into $base, which takes a merge commit, never --squash" >&2
     exit 1
 fi

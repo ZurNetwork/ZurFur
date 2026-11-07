@@ -1,7 +1,7 @@
 #!/bin/sh
 # zaf description: drop a task's slice with `workspace-drop`: the workspace goes, the branch stays; zaf forgets the task's records
-# zaf 1: refused: the arguments are not <task>, or `workspace-drop` refused the slice name
-# zaf 2: a backend failed (jj is missing or refused, or the directory could not be removed)
+# zaf 1: refused: the arguments are not <task>, or `workspace-drop` refused (the slice name, a workspace jj holds elsewhere, or a directory that is not the slice's jj workspace)
+# zaf 2: a backend failed (jj is missing or refused, the directory could not be removed, or `workspace-drop` did not run (it exited 125) or ended with a code `slice-drop` does not know)
 # zaf mode: 750
 # zaf group: team
 # zaf target: task
@@ -13,5 +13,15 @@ if [ "$#" -ne 1 ] || [ -z "$ZAF_SLICE" ]; then
     exit 1
 fi
 
+# A step ends this action with its own code when it is 1, a refusal, or 2. 125 is zaf's alone, a
+# step that never ran, so it is never passed on as this action's own: a step that did not run is a
+# backend that failed, exit 2. Any other code is a failure too.
+stop() {
+    case $1 in
+        1 | 2) exit "$1" ;;
+        *) exit 2 ;;
+    esac
+}
+
 # `workspace-drop` leaves the bookmark where it is, so the branch and its pull request stay.
-zaf do workspace-drop "$ZAF_SLICE" || exit $?
+zaf do workspace-drop "$ZAF_SLICE" || stop $?

@@ -1,7 +1,7 @@
 #!/bin/sh
 # zaf description: publish a task's slice: `commit` what is left (skipped when nothing is), `push`, then `pr-open` against the base titled `[release-<version>] <title> (<board>#<task>)`, its body a reference to the task, handing back the pull request number
-# zaf 1: refused: the arguments are not <task>, or a step refused (the slice is not open, jj-push.sh stopped the push, the remote has work the slice lacks, or the forge refused)
-# zaf 2: a backend failed (jj or gh is missing or refused), or the manifest names no [board] repo
+# zaf 1: refused: the arguments are not <task>, or a step refused (the slice is not open or its name is not a task branch, jj-push.sh or the private-papers check stopped the push, the push would rewrite a pushed commit, the remote has work the slice lacks, or the forge refused)
+# zaf 2: a backend failed (jj or gh is missing or refused, or a step did not run (it exited 125) or ended with a code `slice-pr` does not know), or the manifest names no [board] repo
 # zaf mode: 750
 # zaf group: team
 # zaf target: task
@@ -21,6 +21,16 @@ case $task in
         exit 1
         ;;
 esac
+
+# A step ends this action with its own code when it is 1, a refusal, or 2. 125 is zaf's alone, a
+# step that never ran, so it is never passed on as this action's own: a step that did not run is a
+# backend that failed, exit 2. Any other code is a failure too.
+stop() {
+    case $1 in
+        1 | 2) exit "$1" ;;
+        *) exit 2 ;;
+    esac
+}
 
 # The repository a manifest table names, from the first manifest that names one, in the order
 # zaf reads them.
@@ -70,14 +80,14 @@ fi
 # refuses an empty one, so an empty one is skipped here rather than told from a real refusal.
 empty=$(cd "$dir" && jj --no-pager --color=never log --no-graph -r @ -T empty) || exit 2
 if [ "$empty" != "true" ]; then
-    zaf do commit "$ZAF_SLICE" "$title" || exit $?
+    zaf do commit "$ZAF_SLICE" "$title" || stop $?
 fi
 
-zaf do push "$ZAF_SLICE" || exit $?
+zaf do push "$ZAF_SLICE" || stop $?
 
 # A successful `zaf do` prints nothing, so `--more` brings the step's whole log back; its last
 # non-empty line is the pull request number.
-log=$(zaf do --more pr-open "$ZAF_SLICE" "$ZAF_BASE" "$title" "$body") || exit $?
+log=$(zaf do --more pr-open "$ZAF_SLICE" "$ZAF_BASE" "$title" "$body") || stop $?
 number=$(printf '%s\n' "$log" | awk 'NF { line = $0 } END { print line }')
 if [ -z "$number" ]; then
     echo "pr-open handed back no pull request number" >&2
