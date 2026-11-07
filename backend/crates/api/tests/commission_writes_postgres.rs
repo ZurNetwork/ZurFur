@@ -202,6 +202,43 @@ async fn a_participant_who_is_not_the_owner_gets_forbidden() {
     assert_eq!(stored(&world, untitled).await.title, "Untitled");
 }
 
+/// `POST /commissions` as Alice with `deadline`, sent as written.
+async fn create_with_deadline(world: &DenWorld, deadline: &str) -> reqwest::Response {
+    let request = json!({ "title": "Edge of time", "deadline": deadline });
+    world
+        .alice
+        .post(format!("{}/commissions", world.base_url()))
+        .json(&request)
+        .send()
+        .await
+        .expect("the create is answered")
+}
+
+// The wire's first instant and the store's last are stored as deadlines, a deadline a
+// nanosecond short of the year 10000 is cut to the last microsecond and stored, and the year
+// 10000 itself is refused before it reaches the store.
+#[tokio::test]
+async fn the_wire_s_first_and_last_instants_are_stored() {
+    let world = pg_app::den_world(api::app).await;
+    let kept = [
+        ("0001-01-01T00:00:00Z", "0001-01-01T00:00:00Z"),
+        ("9999-12-31T23:59:59.999999Z", "9999-12-31T23:59:59.999999Z"),
+        (
+            "9999-12-31T23:59:59.999999999Z",
+            "9999-12-31T23:59:59.999999Z",
+        ),
+    ];
+
+    for (sent, kept_as) in kept {
+        let response = create_with_deadline(&world, sent).await;
+        let body = json_with_status(response, 201).await;
+        let row = stored(&world, answered(&body).id).await;
+        assert_eq!(row.deadline, instant(&json!(kept_as)), "{sent}");
+    }
+    let refused = create_with_deadline(&world, "10000-01-01T00:00:00Z").await;
+    json_with_status(refused, 422).await;
+}
+
 // `require_owner` reads more for someone else's commission than for an absent id; the
 // answers must still be equal, byte for byte.
 #[tokio::test]

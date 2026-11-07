@@ -40,6 +40,10 @@ const SLOT_FILL: i64 = 20261026080502;
 /// statements, which read and write the title, fail after it.
 const SLOT_TITLE_DROP: i64 = 20261026131355;
 
+/// The fourth migration after the custody upgrade: the commission word and time checks, rolled
+/// back first.
+const COMMISSION_CHECKS: i64 = 20261107164601;
+
 /// The purposes the API boot derives.
 const BOOT_PURPOSES: [Purpose; 3] = [Purpose::DidCustody, Purpose::SigninSecrets, Purpose::DenMac];
 
@@ -245,7 +249,12 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
     let later_versions = embedded_versions(|version| version > SIGNIN_ROWS_DELETE);
     assert_eq!(
         later_versions,
-        [DISPUTE_COLUMNS, SLOT_FILL, SLOT_TITLE_DROP],
+        [
+            DISPUTE_COLUMNS,
+            SLOT_FILL,
+            SLOT_TITLE_DROP,
+            COMMISSION_CHECKS
+        ],
         "the migrations after the custody upgrade"
     );
     let parent_versions = embedded_versions(|version| version < CUSTODY_ENVELOPE);
@@ -463,9 +472,9 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
     assert_eq!(rerun, nothing_to_do);
     assert_eq!(custody::store_snapshot(&pool).await, before_rerun);
 
-    // 7. Rollback rehearsal: the dispute columns rolled back first, then the rollback recipe's
-    // statements, in its order and in one transaction, back to the parent's schema, where the
-    // 0.1 opener opens both.
+    // 7. Rollback rehearsal: the commission checks and the dispute columns rolled back first,
+    // then the rollback recipe's statements, in its order and in one transaction, back to the
+    // parent's schema, where the 0.1 opener opens both.
     let mut rollback = pool.begin().await.expect("the rollback begins");
     sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ANY($1)")
         .bind(&later_versions)
@@ -474,13 +483,26 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
         .expect("forget the migrations after the upgrade");
     sqlx::query(
         "ALTER TABLE commission
+             DROP CONSTRAINT commission_lifecycle_known,
+             DROP CONSTRAINT commission_direction_status_known,
+             DROP CONSTRAINT commission_maturity_known,
+             DROP CONSTRAINT commission_created_at_in_range,
+             DROP CONSTRAINT commission_deadline_in_range,
+             DROP CONSTRAINT commission_archived_at_in_range,
+             DROP CONSTRAINT commission_disputed_at_in_range",
+    )
+    .execute(&mut *rollback)
+    .await
+    .expect("roll back the commission checks first");
+    sqlx::query(
+        "ALTER TABLE commission
              DROP CONSTRAINT commission_dispute_matches_its_step,
              DROP COLUMN disputed_from,
              DROP COLUMN disputed_at",
     )
     .execute(&mut *rollback)
     .await
-    .expect("roll back the dispute columns first");
+    .expect("roll back the dispute columns next");
     sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ANY($1)")
         .bind(&id_1_versions)
         .execute(&mut *rollback)

@@ -121,6 +121,25 @@ pub async fn fresh_pool() -> (adapter_pg::PgPool, TestDb) {
     (pool, db)
 }
 
+/// Drops the commission table's word and time constraints in this test's own database.
+const DROP_COMMISSION_TOKEN_CHECKS: &str = "ALTER TABLE commission
+    DROP CONSTRAINT IF EXISTS commission_lifecycle_known,
+    DROP CONSTRAINT IF EXISTS commission_direction_status_known,
+    DROP CONSTRAINT IF EXISTS commission_maturity_known,
+    DROP CONSTRAINT IF EXISTS commission_created_at_in_range,
+    DROP CONSTRAINT IF EXISTS commission_deadline_in_range,
+    DROP CONSTRAINT IF EXISTS commission_archived_at_in_range,
+    DROP CONSTRAINT IF EXISTS commission_disputed_at_in_range";
+
+/// Drops the commission table's word and time constraints in `pool`'s own database, so a
+/// test can plant a word or time no reader knows and prove the read's fallback.
+pub async fn allow_any_commission_token(pool: &adapter_pg::PgPool) {
+    sqlx::query(DROP_COMMISSION_TOKEN_CHECKS)
+        .execute(pool)
+        .await
+        .expect("drop the commission's word and time constraints in the test database");
+}
+
 /// The live shared container, booting it (and building the template) if this
 /// test is first — or the first after a drain.
 async fn shared() -> Arc<SharedPg> {
