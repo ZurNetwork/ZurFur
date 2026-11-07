@@ -62,7 +62,10 @@ expect "workspace-open refuses main" 1 "is not a task branch" workspace-open mai
 expect "workspace-drop refuses the integration branch" 1 "is not a task branch" workspace-drop feature/release-0.3
 expect "merge-base refuses main" 2 "is not a task branch" merge-base main feature/release-0.3
 expect "pr-open refuses its own base" 1 "is the base" pr-open feature/release-0-3-1 feature/release-0-3-1 title body
-expect "pr-open reaches only the stub gh" 2 "gh stub: pr list" pr-open feature/release-0-3-1-2 feature/release-0-3-1 title body
+export ZAF_BASE=feature/release-0.3
+expect "pr-open refuses a slice of another release" 1 "is not a task branch of release 0.3" pr-open feature/release-0.4-1-2 feature/release-0.3 title body
+expect "pr-open refuses a base other than ZAF_BASE" 1 "is not ZAF_BASE" pr-open feature/release-0.3-1-2 main title body
+expect "pr-open reaches only the stub gh" 2 "gh stub: pr list" pr-open feature/release-0.3-1-2 feature/release-0.3 title body
 export ZAF_BASE=feature/release-0-3-1
 expect "push refuses the base" 1 "is the base" push feature/release-0-3-1
 expect "commit refuses the base" 1 "is the base" commit feature/release-0-3-1 message

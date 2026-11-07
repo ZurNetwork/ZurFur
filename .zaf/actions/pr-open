@@ -1,6 +1,6 @@
 #!/bin/sh
 # zaf description: open a pull request for a slice's branch against its base, titled `[release-<version>] <title>`, the body ending with the Claude Code line, handing back its number; a slice with an open one hands back that number
-# zaf 1: refused: the arguments are not <slice> <base> <title> <body>, ZAF_VERSION is unset or not a version, the slice is not a task branch or is the base, or the base is not a usable branch name
+# zaf 1: refused: the arguments are not <slice> <base> <title> <body>, ZAF_VERSION is unset or not a version, the slice is not a task branch of release ZAF_VERSION or is the base, or the base is not ZAF_BASE
 # zaf 2: a backend failed (gh is missing or refused, or printed no pull request number)
 # zaf mode: 750
 # zaf group: team
@@ -10,7 +10,7 @@ title=$3
 body=$4
 
 if [ -z "$ZAF_ROOT" ] || [ "$#" -ne 4 ]; then
-    echo "usage: pr-open <slice> <base> <title> <body>, with ZAF_ROOT and ZAF_VERSION set" >&2
+    echo "usage: pr-open <slice> <base> <title> <body>, with ZAF_ROOT, ZAF_VERSION and ZAF_BASE set" >&2
     exit 1
 fi
 # A slice is a task branch as the manifest's task pattern writes it,
@@ -55,6 +55,16 @@ case $ZAF_VERSION in
         exit 1
         ;;
 esac
+# The pull request belongs to the release zaf runs: the slice's version part is ZAF_VERSION, and
+# the base is ZAF_BASE, the integration branch zaf fills from it. Nothing opens otherwise.
+if [ "$branch_version" != "$ZAF_VERSION" ]; then
+    echo "slice $slice is not a task branch of release $ZAF_VERSION" >&2
+    exit 1
+fi
+if [ -z "$ZAF_BASE" ] || [ "$base" != "$ZAF_BASE" ]; then
+    echo "base $base is not ZAF_BASE '$ZAF_BASE', the release's integration branch" >&2
+    exit 1
+fi
 
 # The title and body as Zurfur writes them: the release first in the title, the Claude Code line
 # and a blank line last in the body. Either one already there is kept once.
