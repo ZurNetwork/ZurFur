@@ -3,9 +3,10 @@
 # (a rewritten pushed commit is refused; a forward commit and a base merge
 # push), and the task-branch check of `commit`, `push` and `pr-open` (main and
 # the integration branch are refused before anything runs). The push fixtures
-# use a scratch jj repo and a local bare origin, never the real one. Run
-# directly, or via `just scripts-test`. Without jj or the build slot (CI's
-# `hooks` job) the push fixtures print a skip line.
+# use a scratch jj repo and a local bare origin, never the real one, and a
+# copy of `push` whose build slot is a stub, so a gate that already holds a
+# slot never waits on another. Run directly, or via `just scripts-test`.
+# Without jj (CI's `hooks` job) the push fixtures print a skip line.
 set -eu
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -23,7 +24,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 # expect <name> <want exit> <text the output must hold> <action> <args...>:
-# runs the action with ZAF_ROOT set to the scratch root.
+# runs the action from $actions with ZAF_ROOT set to the scratch root.
 expect() {
     name="$1" want="$2" text="$3" action="$4"
     shift 4
@@ -54,12 +55,25 @@ expect "push refuses the base" 1 "is the base" push feature/release-0-3-1
 expect "commit refuses the base" 1 "is the base" commit feature/release-0-3-1 message
 unset ZAF_BASE ZAF_VERSION
 
-slot=/home/zuri/.cache/zurfur-locks/build-slot.sh
-if ! command -v jj >/dev/null 2>&1 || [ ! -x "$slot" ]; then
-    echo "skip (no jj or no build slot): the push fixtures"
+if ! command -v jj >/dev/null 2>&1; then
+    echo "skip (no jj): the push fixtures"
     [ "$failures" -eq 0 ] || exit 1
     exit 0
 fi
+
+# The push fixtures run a copy of `push` whose build slot is a stub that runs
+# its command at once: the real slot would wait on the slot the gate running
+# this test already holds.
+slot_line='slot=/home/zuri/.cache/zurfur-locks/build-slot.sh'
+mkdir -p "$tmp/actions"
+printf '#!/bin/sh\nexec "$@"\n' >"$tmp/slot"
+chmod +x "$tmp/slot"
+awk -v from="$slot_line" -v to="slot=$tmp/slot" '$0 == from { print to; found = 1; next } { print } END { exit !found }' \
+    "$actions/push" >"$tmp/actions/push" || {
+    fail "push's copy" "push has no line $slot_line to point at the stub"
+    exit 1
+}
+actions="$tmp/actions"
 
 # One scratch repo, isolated as scripts/jj-push.test.sh isolates it. The root
 # commits the two scripts push runs from the root (no .rs/.toml, so the cargo
