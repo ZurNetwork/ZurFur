@@ -26,8 +26,9 @@ pub use super::errors::{ElementNotFound, UnknownSurface, UnknownTab};
 /// The **read** surface of Zurfur's record of commissions — pool-backed and
 /// non-transactional. The one canonical commission read port: later work extends
 /// it rather than growing siblings, except the whole-row reads, which live on
-/// [`CommissionRows`] so their callers can be held to a list. Authorization is
-/// always the caller's, settled before any of these is reached.
+/// [`CommissionRows`] so their callers can be held to a list. Authority is decided
+/// from [`find_summary`](Self::find_summary) and [`standing`](Self::standing); the
+/// rest run after the caller has settled it.
 #[async_trait]
 pub trait CommissionStore: Send + Sync {
     /// The [`ViewedSummary`] of the commission `id` names, as `viewer` reads it, or `None`.
@@ -367,9 +368,9 @@ pub trait CommissionWrites: Send {
     ) -> anyhow::Result<bool>;
 }
 
-/// The **read** side of a commission unit of work — the same lookups as
-/// [`CommissionStore`], on the unit's own connection so they see its uncommitted
-/// writes and can hold row locks until commit.
+/// The **read** side of a commission unit of work — lookups like those of
+/// [`CommissionRows`] and [`CommissionStore`], on the unit's own connection so they
+/// see its uncommitted writes and can hold row locks until commit.
 #[async_trait]
 pub trait CommissionReads: Send {
     /// The commission `id` names, or `None`; as [`CommissionRows::find`].
