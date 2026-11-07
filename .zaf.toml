@@ -76,8 +76,13 @@ commands = [
     "gh pr merge",
     "zaf do pr-merge",
     "zaf do --tier machine pr-merge",
+    "zaf do --more pr-merge",
+    "zaf do --json pr-merge",
     "jj git push",
     "git push",
+    "jj push",
+    "scripts/jj-push.sh",
+    "sh scripts/jj-push.sh",
 ]
 
 [ask]
