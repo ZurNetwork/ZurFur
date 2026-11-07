@@ -72,10 +72,13 @@ steps = ["ci"]
 # inside it, where these denies do not reach), merges into main are the lead's by hand, and every
 # push is scripts/jj-push.sh, through `zaf do push`. zaf denies each line bare and with ` *` after
 # it, and a `*` in a permission rule matches any text, spaces included, so `jj -* push` is a push
-# with global flags before the verb (`jj --no-pager push -b x`).
+# with global flags before the verb (`jj --no-pager push -b x`). The `gh api` lines are a raw
+# merge through the REST endpoint (`.../pulls/<n>/merge`) or the GraphQL mutation.
 [forbidden]
 commands = [
     "gh pr merge",
+    "gh api *pulls/*/merge",
+    "gh api *mergePullRequest*",
     "zaf do pr-merge",
     "zaf do --tier machine pr-merge",
     "zaf do --more pr-merge",
