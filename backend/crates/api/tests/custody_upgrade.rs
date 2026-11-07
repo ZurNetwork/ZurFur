@@ -56,6 +56,10 @@ const ACCOUNT_TIMES: i64 = 20261107174549;
 /// deactivated Account, rolled back first.
 const DEACTIVATED_REFUSAL: i64 = 20261107174550;
 
+/// The eighth migration after the custody upgrade: the one-Owner index on the memberships,
+/// rolled back first.
+const ONE_OWNER: i64 = 20261107174551;
+
 /// The purposes the API boot derives.
 const BOOT_PURPOSES: [Purpose; 3] = [Purpose::DidCustody, Purpose::SigninSecrets, Purpose::DenMac];
 
@@ -268,7 +272,8 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
             COMMISSION_CHECKS,
             ACCOUNT_FACT,
             ACCOUNT_TIMES,
-            DEACTIVATED_REFUSAL
+            DEACTIVATED_REFUSAL,
+            ONE_OWNER
         ],
         "the migrations after the custody upgrade"
     );
@@ -487,7 +492,7 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
     assert_eq!(rerun, nothing_to_do);
     assert_eq!(custody::store_snapshot(&pool).await, before_rerun);
 
-    // 7. Rollback rehearsal: the deactivated-Account refusal, the Account time checks, the
+    // 7. Rollback rehearsal: the one-Owner index, the deactivated-Account refusal, the Account time checks, the
     // Account facts table, the commission
     // checks and the dispute columns rolled back first,
     // then the rollback recipe's statements, in its order and in one transaction, back to the
@@ -498,14 +503,18 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
         .execute(&mut *rollback)
         .await
         .expect("forget the migrations after the upgrade");
+    sqlx::query("DROP INDEX account_members_one_owner")
+        .execute(&mut *rollback)
+        .await
+        .expect("roll back the one-Owner index first");
     sqlx::query("DROP FUNCTION refuse_write_to_deactivated_account() CASCADE")
         .execute(&mut *rollback)
         .await
-        .expect("roll back the account tables' refusal first");
+        .expect("roll back the account tables' refusal next");
     sqlx::query("DROP FUNCTION refuse_board_write_to_deactivated_account() CASCADE")
         .execute(&mut *rollback)
         .await
-        .expect("roll back the board tables' refusal");
+        .expect("roll back the board tables' refusal too");
     sqlx::query(
         "ALTER TABLE accounts
              DROP CONSTRAINT accounts_created_at_in_range,

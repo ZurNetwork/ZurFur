@@ -243,6 +243,34 @@ pub struct PgAccountWrites<'a> {
 }
 
 impl PgAccountWrites<'_> {
+    /// Revokes the pending offers `issuer` made in `account` at roles `issuer_role` can't
+    /// offer. A statement of its own, run after the role change: a single command with the
+    /// change would not see an offer committed while the change waited on its row.
+    async fn revoke_outranked_offers(
+        &mut self,
+        issuer: &UserId,
+        account: &AccountId,
+        issuer_role: &Role,
+    ) -> anyhow::Result<()> {
+        let grantable: Vec<String> = issuer_role
+            .grantable_roles()
+            .iter()
+            .map(|role| <&'static str>::from(role).to_owned())
+            .collect();
+        let revoking = sql::revoke_outranked_invitations(
+            &mut *self.conn,
+            <&'static str>::from(InvitationState::Revoked),
+            Utc::now(),
+            account.as_ref(),
+            issuer.as_ref(),
+            <&'static str>::from(InvitationState::Pending),
+            &grantable,
+        )
+        .await;
+        deactivation_aware(revoking)?;
+        Ok(())
+    }
+
     /// Settle a member's departure, shared by [`leave`](AccountWrites::leave) and
     /// [`revoke_role`](AccountWrites::revoke_role): locks the membership and refuses the
     /// Owner before writing anything, else revokes pending issued invitations, re-homes
@@ -366,6 +394,29 @@ impl AccountReads for PgAccountWrites<'_> {
         account: &AccountId,
     ) -> anyhow::Result<Option<Role>> {
         let role = sql::role_of(&mut *self.conn, user.as_ref(), account.as_ref()).await?;
+        Ok(role.map(|role| Role::from_str(&role)).transpose()?)
+    }
+
+    /// [`role_of`](Self::role_of) with the membership row locked `FOR SHARE`.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn role_of_for_share(
+        &mut self,
+        user: &UserId,
+        account: &AccountId,
+    ) -> anyhow::Result<Option<Role>> {
+        let role = sql::role_of_for_share(&mut *self.conn, user.as_ref(), account.as_ref()).await?;
+        Ok(role.map(|role| Role::from_str(&role)).transpose()?)
+    }
+
+    /// [`role_of`](Self::role_of) with the membership row locked `FOR UPDATE`.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn role_of_for_update(
+        &mut self,
+        user: &UserId,
+        account: &AccountId,
+    ) -> anyhow::Result<Option<Role>> {
+        let role =
+            sql::role_of_for_update(&mut *self.conn, user.as_ref(), account.as_ref()).await?;
         Ok(role.map(|role| Role::from_str(&role)).transpose()?)
     }
 }
@@ -603,6 +654,7 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// Changes an existing non-Owner member's role, never to Owner. Refuses Owner
     /// before any SQL; the `UPDATE` must touch exactly one row, so a non-member or
     /// the Owner fails and writes nothing. Leaves alias, listing and parent alone.
+    /// Then revokes the member's pending offers their new role can't make.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn grant_role(
         &mut self,
@@ -635,6 +687,9 @@ impl AccountWrites for PgAccountWrites<'_> {
                 AsRef::<str>::as_ref(account)
             );
         }
+
+        // Runs for a promotion too, where every pending offer is still offerable.
+        self.revoke_outranked_offers(user, account, role).await?;
         Ok(())
     }
 
@@ -807,6 +862,7 @@ impl AccountWrites for PgAccountWrites<'_> {
     /// re-homed under the incoming Owner, promotes the incoming member to Owner.
     /// Each precondition is enforced inside its `UPDATE` and must touch exactly
     /// one row, so a concurrent transfer fails closed rather than minting two Owners.
+    /// Then revokes the outgoing Owner's pending Admin offers.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn transfer_ownership(
         &mut self,
@@ -849,6 +905,10 @@ impl AccountWrites for PgAccountWrites<'_> {
                 AsRef::<str>::as_ref(account)
             );
         }
+
+        // The outgoing Owner is an Admin now: their pending Admin offers are void.
+        self.revoke_outranked_offers(old_owner, account, &Role::Admin)
+            .await?;
 
         Ok(())
     }

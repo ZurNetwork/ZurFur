@@ -15,6 +15,7 @@ pub mod den;
 mod fixture;
 pub mod http;
 pub mod identity_resolver_contract;
+pub mod invitation_validity_contract;
 pub mod log_capture;
 pub mod membership;
 pub mod node_contract;

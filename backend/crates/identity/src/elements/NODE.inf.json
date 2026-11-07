@@ -114,7 +114,7 @@
     },
     {
       "name": "role.rs",
-      "role": "Role — data-less Owner/Admin/Manager/Member enum + can_grant rule; RoleAlias newtype + UnknownRole/InvalidRoleAlias errors; Display impls",
+      "role": "Role — data-less Owner/Admin/Manager/Member enum + can_grant rule and grantable_roles; RoleAlias newtype + UnknownRole/InvalidRoleAlias errors; Display impls",
       "node": false
     },
     {
