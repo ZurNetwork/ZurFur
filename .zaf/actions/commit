@@ -51,7 +51,7 @@ cd "$dir" || exit 2
 # The message as Zurfur writes it: the first line carries the release, and the last line is the
 # co-author. A message that has either already keeps it once.
 prefix="[release-$ZAF_VERSION] "
-trailer="Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+trailer="Co-Authored-By: Claude <noreply@anthropic.com>"
 first=$(printf '%s\n' "$message" | head -n 1)
 rest=$(printf '%s\n' "$message" | tail -n +2)
 case $first in

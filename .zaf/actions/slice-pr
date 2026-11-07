@@ -1,7 +1,7 @@
 #!/bin/sh
-# zaf description: publish a task's slice: `commit` what is left (skipped when nothing is), `push`, then `pr-open` against the base titled `[release-<version>] <title> (<board>#<task>)` with the task's goal as the body, handing back the pull request number
+# zaf description: publish a task's slice: `commit` what is left (skipped when nothing is), `push`, then `pr-open` against the base titled `[release-<version>] <title> (<board>#<task>)`, its body a reference to the task, handing back the pull request number
 # zaf 1: refused: the arguments are not <task>, or a step refused (the slice is not open, jj-push.sh stopped the push, the remote has work the slice lacks, or the forge refused)
-# zaf 2: a backend failed (jj or gh is missing or refused, or the task could not be read from the board)
+# zaf 2: a backend failed (jj or gh is missing or refused), or the manifest names no [board] repo
 # zaf mode: 750
 # zaf group: team
 # zaf target: task
@@ -52,35 +52,9 @@ if [ -z "$board" ]; then
     exit 2
 fi
 
-# The task's goal, read before anything moves, so a board that cannot be read leaves the slice
-# as it was. Its bare #<n> references are the board's issues, and are written that way.
-issue=$(gh issue view "$task" --repo "$board" --json body --jq .body) || exit 2
-goal=$(printf '%s\n' "$issue" | awk -v repo="$board" '
-    { sub(/\r$/, "") }
-    in_goal && /^[A-Z][A-Za-z ]*:/ { exit }
-    /^Goal:/ { in_goal = 1; sub(/^Goal:[ \t]*/, "") }
-    in_goal {
-        out = ""
-        rest = $0
-        while (match(rest, /#[0-9]+/)) {
-            before = (RSTART > 1) ? substr(rest, RSTART - 1, 1) : ""
-            out = out substr(rest, 1, RSTART - 1)
-            if (before ~ /[A-Za-z0-9_\/.-]/) {
-                out = out substr(rest, RSTART, RLENGTH)
-            } else {
-                out = out repo substr(rest, RSTART, RLENGTH)
-            }
-            rest = substr(rest, RSTART + RLENGTH)
-        }
-        print out rest
-    }
-')
-refs="Refs $board#$task."
-if [ -n "$goal" ]; then
-    body=$(printf '%s\n\n%s' "$goal" "$refs")
-else
-    body=$refs
-fi
+# The forge is public and the board is private, so the body points at the task and carries
+# none of its text; `pr-open` adds the Claude Code line.
+body="Refs $board#$task."
 
 # `commit` and `pr-open` each put the release in front, as `[release-<version>] `.
 title="$ZAF_TASK_TITLE ($board#$task)"

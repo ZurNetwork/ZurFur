@@ -1,6 +1,6 @@
 #!/bin/sh
-# zaf description: merge a pull request with a merge commit, or squashed with --squash (main only), only once every check on it has passed and only at the head commit named with --match-head-commit <sha> when one is given; one already merged is quiet; a merge refused for a moved base is retried up to three times, 15 seconds apart
-# zaf 1: refused: the arguments are not <pr> [--squash] [--match-head-commit <sha>], the strategy does not fit the base (main is squashed, every other base takes a merge commit), a check is failing or pending or none has reported, the pull request conflicts or is closed unmerged, or the forge refuses the merge (a head other than the named one is refused)
+# zaf description: merge a pull request into any base but main with a merge commit, only once every check on it has passed and only at the head commit named with --match-head-commit <sha> when one is given; one already merged is quiet; a merge refused for a moved base is retried up to three times, 15 seconds apart
+# zaf 1: refused: the arguments are not <pr> [--squash] [--match-head-commit <sha>], the pull request is into main (merges into main are not zaf's), --squash was given for a base that takes a merge commit, a check is failing or pending or none has reported, the pull request conflicts or is closed unmerged, or the forge refuses the merge (a head other than the named one is refused)
 # zaf 2: a backend failed (gh is missing or refused to read the pull request, or printed no state)
 # zaf mode: 750
 # zaf group: team
@@ -135,8 +135,16 @@ case $state in
         ;;
 esac
 
-# main is squashed, through the merge queue; a slice merges into its integration branch with a
-# merge commit, never squashed or rebased.
+# Nothing run through zaf merges into main: a merge there waits for the top-level QA and
+# CodeRabbit to review the head, and goes through the merge queue by hand.
+if [ "$base" = main ]; then
+    echo "pull request #$pr is into main: merges into main are the lead's, through the merge queue after the top-level QA and CodeRabbit have reviewed its head" >&2
+    exit 1
+fi
+
+# The strategy fits the base. Kept for the day a release action merges into main: main is
+# squashed, through the merge queue; a slice merges into its integration branch with a merge
+# commit, never squashed or rebased.
 if [ "$base" = main ] && [ "$strategy" != --squash ]; then
     echo "pull request #$pr is into main, which takes only --squash" >&2
     exit 1
