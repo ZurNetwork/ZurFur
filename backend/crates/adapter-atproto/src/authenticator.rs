@@ -116,13 +116,15 @@ struct Grant {
     data: ClientSessionData,
 }
 
-/// The grant behind a session jacquard's callback saved.
-impl From<Session> for Grant {
-    fn from(session: Session) -> Self {
+impl Grant {
+    /// The grant behind a session jacquard's callback saved. The session's data
+    /// is shared behind a lock, so the grant takes a copy of it.
+    async fn from_session(session: Session) -> Self {
+        let data = session.data.read().await.clone();
         Self {
             client: session.client,
             registry: session.registry,
-            data: session.data.into_inner(),
+            data,
         }
     }
 }
@@ -286,7 +288,7 @@ impl Signin {
         };
         let called_back = self.oauth.callback(params).await;
         let grant = match called_back {
-            Ok(session) => Box::new(Grant::from(session)),
+            Ok(session) => Box::new(Grant::from_session(session).await),
             Err(error) => self
                 .take_refused(Some(&state))
                 .ok_or_else(|| SigninFailure::Callback(Box::new(error)))?,
