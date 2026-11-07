@@ -102,7 +102,7 @@
     },
     {
       "name": "src/pg.rs",
-      "role": "shared Postgres harness: one container per process, migrated template, TEMPLATE clone per test; TestDb::psql_command, the command line that runs psql inside the container on one clone",
+      "role": "shared Postgres harness: one container per process, migrated template, TEMPLATE clone per test; TestDb::psql_command, the command line that runs psql inside the container on one clone; allow_any_commission_token drops the commission table's word and time constraints in one test's database, so a test can plant a word or time no reader knows",
       "node": false
     },
     {
@@ -112,7 +112,7 @@
     },
     {
       "name": "src/pg_app/den_world.rs",
-      "role": "den_world(app) -> DenWorld, and den_world_recording(app, &StatementLog) through the statement proxy: alice, bob and a stranger signed in (profiles cached through GET /me); alice's Account \"Supreme Arts\" (Workflow \"Queue\") and bob's \"Night Shift\" (\"Backlog\"); \"Untitled\" and the archived \"Old sketch\", a file and a slot each, all through routes or use cases; bob a Participant of \"Untitled\" and test-only writes: set_visibility (the commission node's level), store_unparsable_level (drops node_level_known in the world's own database, then writes a level no parser reads onto the node), store_legacy_title (the node's name and the created entry's payload); set_lifecycle_step (the commission row's undisputed step; the dispute CHECK refuses Disputed, which only PUT …/dispute enters); add_backlog_column adds a column to bob's \"Backlog\" through the add use case; set_profile_cache(ProfileCacheState::{Warm, Cold}) fixes the profile cache's state for all three users; absent_* ids no seed writes; other_absent_commission; plant_infinite_time (a commission row's created_at, deadline, archived_at or disputed_at set to ±infinity: CommissionTime, Infinity); seed_stranger_board (the stranger's Account, Workflow and first column: StrangerBoard), add_stranger_column, take_stranger_card_off",
+      "role": "den_world(app) -> DenWorld, and den_world_recording(app, &StatementLog) through the statement proxy: alice, bob and a stranger signed in (profiles cached through GET /me); alice's Account \"Supreme Arts\" (Workflow \"Queue\") and bob's \"Night Shift\" (\"Backlog\"); \"Untitled\" and the archived \"Old sketch\", a file and a slot each, all through routes or use cases; bob a Participant of \"Untitled\" and test-only writes: set_visibility (the commission node's level), store_unparsable_level (drops node_level_known in the world's own database, then writes a level no parser reads onto the node), store_legacy_title (the node's name and the created entry's payload); set_lifecycle_step (the commission row's undisputed step; the dispute CHECK refuses Disputed, which only PUT …/dispute enters); add_backlog_column adds a column to bob's \"Backlog\" through the add use case; set_profile_cache(ProfileCacheState::{Warm, Cold}) fixes the profile cache's state for all three users; absent_* ids no seed writes; other_absent_commission; plant_infinite_time (a commission row's created_at, deadline, archived_at or disputed_at set to ±infinity: CommissionTime, Infinity) and store_unparsable_lifecycle, each dropping the commission's word and time constraints in the world's own database first; seed_stranger_board (the stranger's Account, Workflow and first column: StrangerBoard), add_stranger_column, take_stranger_card_off",
       "node": false
     },
     {
