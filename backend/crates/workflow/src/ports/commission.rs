@@ -1,5 +1,5 @@
 //! Commission ports: the canonical [`CommissionStore`] read surface, the
-//! [`CommissionRows`] whole-row reads and the [`CommissionWrites`] write view. Commissions are entirely Index-side —
+//! [`CommissionRows`] whole-row read and the [`CommissionWrites`] write view. Commissions are entirely Index-side —
 //! nothing on these surfaces ever touches atproto.
 
 use async_trait::async_trait;
@@ -25,10 +25,11 @@ pub use super::errors::{ElementNotFound, UnknownSurface, UnknownTab};
 
 /// The **read** surface of Zurfur's record of commissions — pool-backed and
 /// non-transactional. The one canonical commission read port: later work extends
-/// it rather than growing siblings, except the whole-row reads, which live on
-/// [`CommissionRows`] so their callers can be held to a list. Authority is decided
-/// from [`find_summary`](Self::find_summary) and [`standing`](Self::standing); the
-/// rest run after the caller has settled it.
+/// it rather than growing siblings, except the whole-row read, which lives on
+/// [`CommissionRows`] so its callers can be held to a list. Authority is decided
+/// from [`find_summary`](Self::find_summary), [`standing`](Self::standing) and, for a
+/// placement, [`view_grant`](Self::view_grant); the rest run after the caller has settled
+/// it, except [`lapsed_deadlines`](Self::lapsed_deadlines), the sweep's viewer-less scan.
 #[async_trait]
 pub trait CommissionStore: Send + Sync {
     /// The [`ViewedSummary`] of the commission `id` names, as `viewer` reads it, or `None`.
@@ -147,10 +148,10 @@ pub trait CommissionStore: Send + Sync {
     ) -> anyhow::Result<Vec<CommissionId>>;
 }
 
-/// The **whole-row** reads of Zurfur's record of commissions — pool-backed and
+/// The **whole-row** read of Zurfur's record of commissions — pool-backed and
 /// non-transactional. Kept apart from [`CommissionStore`] and reached through a field of its
 /// own, so the callers that may read a whole row stay countable. Authorization is the
-/// caller's, settled before any of these is reached.
+/// caller's, settled before it is reached.
 #[async_trait]
 pub trait CommissionRows: Send + Sync {
     /// The commission `id` names, or `None`. An archived commission is still
