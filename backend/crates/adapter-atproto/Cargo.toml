@@ -25,7 +25,8 @@ cid = { workspace = true }
 bytes = "1"
 http = "1"
 chrono = { workspace = true }
-# Randomness for the floor stub minter and for secp256k1 key generation.
+# Randomness for the floor stub minter and the browser token; `rand_core` feeds
+# secp256k1 key generation.
 rand = { workspace = true }
 rand_core = { workspace = true }
 # --- ZMVP-49 real did:plc minter ---

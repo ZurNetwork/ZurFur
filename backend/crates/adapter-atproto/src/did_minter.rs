@@ -99,8 +99,7 @@ impl RealDidMinter {
 }
 
 /// Generate the three per-mint secp256k1 keypairs (cold-recovery, operational,
-/// signing) from the OS random source, in a plain function so no generator is
-/// held across the `.await` the caller runs next.
+/// signing) from the OS random source.
 fn generate_keypairs() -> (Secp256k1Keypair, Secp256k1Keypair, Secp256k1Keypair) {
     let mut rng = OsRng;
     (
