@@ -23,6 +23,14 @@ fail() {
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+# A gh that always fails comes first on PATH, so no action under test can
+# reach the real repository.
+mkdir -p "$tmp/bin"
+printf '#!/bin/sh\necho "gh stub: $*" >&2\nexit 1\n' >"$tmp/bin/gh"
+chmod +x "$tmp/bin/gh"
+PATH="$tmp/bin:$PATH"
+export PATH
+
 # expect <name> <want exit> <text the output must hold> <action> <args...>:
 # runs the action from $actions with ZAF_ROOT set to the scratch root.
 expect() {
@@ -50,6 +58,7 @@ for branch in main feature/release-0.3; do
     expect "pr-open refuses $branch" 1 "is not a task branch" pr-open "$branch" main title body
 done
 expect "pr-open refuses its own base" 1 "is the base" pr-open feature/release-0-3-1 feature/release-0-3-1 title body
+expect "pr-open reaches only the stub gh" 2 "gh stub: pr list" pr-open feature/release-0-3-1-2 feature/release-0-3-1 title body
 export ZAF_BASE=feature/release-0-3-1
 expect "push refuses the base" 1 "is the base" push feature/release-0-3-1
 expect "commit refuses the base" 1 "is the base" commit feature/release-0-3-1 message
