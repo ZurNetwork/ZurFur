@@ -1,7 +1,8 @@
 //! The whole-row commission read (field, trait and aliases) is named only where listed, one
 //! read each in `get` and `clear_channel`; every commissions route naming a commission id has
-//! its row in test-support's call table, and no such route or `CommissionPath` sits outside the
-//! commissions routes; test-support reaches raw commission queries only in two seeders.
+//! its row in test-support's call table; commissions route paths, and `Router` inside their
+//! folder, sit only in the commissions router, `CommissionPath` only in that folder and its
+//! extractor's file; test-support reaches raw commission queries only in two seeders.
 
 mod seams;
 
@@ -10,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use proc_macro2::{Delimiter, TokenStream, TokenTree};
+use proc_macro2::{Delimiter, Group, TokenStream, TokenTree};
 use quote::ToTokens;
 use seams::{
     Scope, crates, fixture_tree, ident_at, identifiers, levels, path_separator_at, punct_at,
@@ -588,100 +589,185 @@ fn a_router_shape_the_scan_cannot_read_is_refused() {
 /// The extractor that reads a commission id from a route's path.
 const COMMISSION_PATH: &str = "CommissionPath";
 
+/// The router type, which inside the commissions routes' folder only the commissions router
+/// names.
+const ROUTER_TYPE: &str = "Router";
+
+/// The scopes of the commissions router's file that may name the router type.
+const ROUTER_TYPE_SCOPES: [&str; 2] = ["use", ROUTER];
+
 /// The crate that mounts the routes, under the crates folder.
 const API_SRC: &str = "api/src";
 
-/// The files that may name the extractor or a route path naming a commission id: every file
-/// of the commissions routes' folder, and the extractor's own file.
+/// The files that may name the extractor: every file of the commissions routes' folder, and
+/// the extractor's own file.
 const COMMISSION_ROUTES_FOLDER: &str = "api/src/routes/commissions/";
 const EXTRACT_FILE: &str = "api/src/extract.rs";
 
 /// The segment a commission id's placeholder follows in a route path.
 const COMMISSIONS_SEGMENT: &str = "commissions";
 
-/// How a placeholder naming a commission starts, as in `{commission_id}`.
+/// What a placeholder naming a commission holds, as in `{commission_id}`.
 const COMMISSION_PLACEHOLDER: &str = "commission";
 
-/// The name inside the placeholder `segment` (`{name}` or `{*name}`), or `None`.
-fn placeholder_name(segment: &str) -> Option<&str> {
-    let inner = segment.strip_prefix('{')?.strip_suffix('}')?;
-    Some(inner.strip_prefix('*').unwrap_or(inner))
+/// What a naming names: the extractor, a commission route's path, or the router type.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Named {
+    Extractor,
+    Route,
+    RouterType,
 }
 
-/// Whether `path` is a route path naming a commission id: a `{commission…}` placeholder, or
-/// any placeholder right after a `commissions` segment.
+/// A naming the route guard found: what it names, its scope, and the name.
+type RouteNaming = (Named, String, String);
+
+/// The names the route guard follows, each with every alias the sources bind to it.
+struct RouteNames {
+    extractor: BTreeSet<String>,
+    router_type: BTreeSet<String>,
+}
+
+/// The extractor's and the router type's names, and every name `sources` bind to one.
+fn route_names(sources: &[String]) -> RouteNames {
+    RouteNames {
+        extractor: with_aliases(&[COMMISSION_PATH], sources),
+        router_type: with_aliases(&[ROUTER_TYPE], sources),
+    }
+}
+
+/// The name inside each placeholder of the path segment `segment` (`{name}` or `{*name}`),
+/// a fixed prefix or suffix around it included.
+fn placeholder_names(segment: &str) -> Vec<&str> {
+    segment
+        .split('{')
+        .skip(1)
+        .filter_map(|rest| rest.split_once('}'))
+        .map(|(inner, _)| inner.strip_prefix('*').unwrap_or(inner))
+        .collect()
+}
+
+/// Whether `path` is a commissions route path: the bare `/commissions`, a placeholder holding
+/// `commission`, or any placeholder in the segment right after a `commissions` segment.
 fn names_a_commission(path: &str) -> bool {
     let segments: Vec<&str> = path.split('/').collect();
     let commission_placeholder = segments.iter().any(|segment| {
-        placeholder_name(segment).is_some_and(|name| name.starts_with(COMMISSION_PLACEHOLDER))
+        placeholder_names(segment)
+            .iter()
+            .any(|name| name.to_ascii_lowercase().contains(COMMISSION_PLACEHOLDER))
     });
     let after_commissions = segments
         .windows(2)
-        .any(|pair| pair[0] == COMMISSIONS_SEGMENT && placeholder_name(pair[1]).is_some());
-    path.starts_with('/') && (commission_placeholder || after_commissions)
+        .any(|pair| pair[0] == COMMISSIONS_SEGMENT && !placeholder_names(pair[1]).is_empty());
+    let bare = path.trim_end_matches('/') == CREATE_PATH;
+    path.starts_with('/') && (bare || commission_placeholder || after_commissions)
 }
 
-/// The value of each string literal in `tokens`, at any depth, but a `doc = "…"` attribute's.
+/// Whether `tree` is the bracket group of a doc attribute: `[doc = "…"]`.
+fn doc_attribute(tree: Option<&TokenTree>) -> bool {
+    let Some(TokenTree::Group(group)) = tree else {
+        return false;
+    };
+    let inside: Vec<TokenTree> = group.stream().into_iter().collect();
+    group.delimiter() == Delimiter::Bracket
+        && inside.len() == 3
+        && ident_at(&inside, 0).as_deref() == Some("doc")
+        && punct_at(&inside, 1, '=')
+        && matches!(inside.get(2), Some(TokenTree::Literal(_)))
+}
+
+/// `tokens` without their doc attributes (`#[doc = …]` and `#![doc = …]`, what `///` and
+/// `//!` become), at any depth.
+fn without_docs(tokens: TokenStream) -> TokenStream {
+    let trees: Vec<TokenTree> = tokens.into_iter().collect();
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(tree) = trees.get(at) {
+        let group_at = at + 1 + usize::from(punct_at(&trees, at + 1, '!'));
+        if punct_at(&trees, at, '#') && doc_attribute(trees.get(group_at)) {
+            at = group_at + 1;
+            continue;
+        }
+        let kept = match tree {
+            TokenTree::Group(group) => {
+                let mut inner = Group::new(group.delimiter(), without_docs(group.stream()));
+                inner.set_span(group.span());
+                TokenTree::Group(inner)
+            }
+            other => other.clone(),
+        };
+        out.push(kept);
+        at += 1;
+    }
+    out.into_iter().collect()
+}
+
+/// The value of each string literal in `tokens`, at any depth, but a doc attribute's.
 fn string_literals(tokens: TokenStream) -> Vec<String> {
-    levels(tokens)
+    levels(without_docs(tokens))
         .iter()
-        .flat_map(|level| {
-            level
-                .iter()
-                .enumerate()
-                .filter_map(|(at, tree)| {
-                    let TokenTree::Literal(literal) = tree else {
-                        return None;
-                    };
-                    let doc = at.checked_sub(2).is_some_and(|name_at| {
-                        ident_at(level, name_at).as_deref() == Some("doc")
-                            && punct_at(level, at - 1, '=')
-                    });
-                    let parsed = syn::parse_str::<syn::LitStr>(&literal.to_string()).ok();
-                    parsed.filter(|_| !doc).map(|string| string.value())
-                })
-                .collect::<Vec<String>>()
+        .flatten()
+        .filter_map(|tree| {
+            let TokenTree::Literal(literal) = tree else {
+                return None;
+            };
+            let parsed = syn::parse_str::<syn::LitStr>(&literal.to_string()).ok()?;
+            Some(parsed.value())
         })
         .collect()
 }
 
-/// The extractor's name, and every name `sources` bind to it, through any chain.
-fn commission_path_names(sources: &[String]) -> BTreeSet<String> {
-    with_aliases(&[COMMISSION_PATH], sources)
-}
-
-/// Each naming in `source`, by scope, of the extractor (any of `names`) or of a route path
-/// naming a commission id.
-fn commission_route_namings(file: &str, source: &str, names: &BTreeSet<String>) -> Vec<Naming> {
+/// Each naming in `source`, by scope, of the extractor, a commissions route path, or the
+/// router type.
+fn commission_route_namings(file: &str, source: &str, names: &RouteNames) -> Vec<RouteNaming> {
     scopes(&parsed(file, source))
         .into_iter()
         .flat_map(|Scope { context, tokens }| {
-            let extractor: Vec<String> = identifiers(tokens.clone())
+            let named_idents: Vec<(Named, String)> = identifiers(tokens.clone())
                 .into_iter()
-                .filter(|ident| names.contains(ident))
+                .filter_map(|ident| {
+                    if names.extractor.contains(&ident) {
+                        Some((Named::Extractor, ident))
+                    } else if names.router_type.contains(&ident) {
+                        Some((Named::RouterType, ident))
+                    } else {
+                        None
+                    }
+                })
                 .collect();
-            let routes: Vec<String> = string_literals(tokens)
+            let routes = string_literals(tokens)
                 .into_iter()
                 .filter(|literal| names_a_commission(literal))
-                .collect();
-            extractor
+                .map(|literal| (Named::Route, literal));
+            named_idents
                 .into_iter()
                 .chain(routes)
-                .map(move |name| (context.clone(), name))
+                .map(move |(named, name)| (named, context.clone(), name))
+                .collect::<Vec<RouteNaming>>()
         })
         .collect()
 }
 
-/// Each naming in `source`, the file at `file` under the crates folder, outside the files
-/// that may hold one.
-fn commission_route_findings(file: &str, source: &str, names: &BTreeSet<String>) -> Vec<String> {
-    let allowed = file == EXTRACT_FILE || file.starts_with(COMMISSION_ROUTES_FOLDER);
-    if allowed {
-        return Vec::new();
+/// Whether the file at `file` may name `named` in the scope `scope`: the extractor in the
+/// commissions routes' folder and its own file; a commissions route path only in the
+/// commissions router; the router type outside the folder, or in the router's file's `use`
+/// and the router itself.
+fn may_name(file: &str, scope: &str, named: Named) -> bool {
+    let in_folder = file.starts_with(COMMISSION_ROUTES_FOLDER);
+    let router_file = file == ROUTER_FILE;
+    match named {
+        Named::Extractor => in_folder || file == EXTRACT_FILE,
+        Named::Route => router_file && scope == ROUTER,
+        Named::RouterType => !in_folder || (router_file && ROUTER_TYPE_SCOPES.contains(&scope)),
     }
+}
+
+/// Each naming in `source`, the file at `file` under the crates folder, outside where it may
+/// sit.
+fn commission_route_findings(file: &str, source: &str, names: &RouteNames) -> Vec<String> {
     commission_route_namings(file, source, names)
         .into_iter()
-        .map(|(scope, name)| format!("{file}: `{name}` in {scope}"))
+        .filter(|(named, scope, _)| !may_name(file, scope, *named))
+        .map(|(_, scope, name)| format!("{file}: `{name}` in {scope}"))
         .collect()
 }
 
@@ -689,7 +775,7 @@ fn commission_route_findings(file: &str, source: &str, names: &BTreeSet<String>)
 fn commission_path_and_commission_routes_sit_only_in_the_commissions_routes() {
     let production = walk(&crates().join(API_SRC)).production;
     let sources: Vec<String> = production.iter().map(|path| read(path)).collect();
-    let names = commission_path_names(&sources);
+    let names = route_names(&sources);
 
     let offenders: Vec<String> = production
         .iter()
@@ -701,22 +787,38 @@ fn commission_path_and_commission_routes_sit_only_in_the_commissions_routes() {
 
     assert_eq!(offenders, Vec::<String>::new());
     let seen = [
-        EXTRACT_FILE,
-        ROUTER_FILE,
-        "api/src/routes/commissions/delete.rs",
+        (EXTRACT_FILE, Named::Extractor),
+        (ROUTER_FILE, Named::Route),
+        (ROUTER_FILE, Named::RouterType),
+        ("api/src/routes/commissions/delete.rs", Named::Extractor),
     ];
-    for file in seen {
+    for (file, kind) in seen {
         let path = crates().join(file);
         assert!(production.contains(&path), "{file} is not read");
         let namings = commission_route_namings(file, &read(&path), &names);
-        assert!(!namings.is_empty(), "{file}: the scan saw no naming");
+        let saw = namings.iter().any(|(named, ..)| *named == kind);
+        assert!(saw, "{file}: the scan saw no {kind:?}");
     }
+}
+
+/// The commissions router's file holding `commissions_router` with the route `path`.
+fn router_file_with(path: &str) -> String {
+    format!(
+        "use axum::{{Router, routing::get}};\npub(crate) fn commissions_router() -> Router<AppState> {{ Router::new().route(\"{path}\", get(peek::peek)) }}"
+    )
 }
 
 #[test]
 fn a_commission_path_or_commission_route_in_another_router_is_refused() {
     let alias = "pub use crate::extract::CommissionPath as Held;".to_owned();
-    let names = commission_path_names(std::slice::from_ref(&alias));
+    let router_alias = "use axum::Router as Mount;".to_owned();
+    let names = route_names(&[alias.clone(), router_alias.clone()]);
+    let second_router_in_mod = format!(
+        "{}\nfn more() -> Router<AppState> {{ Router::new().route(\"/commissions/{{id}}/more\", get(x)) }}",
+        router_file_with("/commissions/{id}")
+    );
+    let aliased_router_in_mod =
+        format!("{router_alias}\nfn more() -> Mount<AppState> {{ Mount::new() }}");
     let refused = [
         (
             "api/src/routes/accounts.rs",
@@ -744,6 +846,48 @@ fn a_commission_path_or_commission_route_in_another_router_is_refused() {
             "async fn peek(Held(id): Held) {}",
         ),
         ("api/src/routes/session.rs", alias.as_str()),
+        (
+            "api/src/routes/accounts.rs",
+            "pub fn accounts_router() -> Router<AppState> { Router::new().nest(\"/commissions\", Router::new().route(\"/{id}/peek\", get(peek))) }",
+        ),
+        (
+            "api/src/routes/accounts.rs",
+            "fn mount() -> Router<AppState> { Router::new().route(\"/commissions/c{id}/peek\", get(peek)) }",
+        ),
+        (
+            "api/src/routes/accounts.rs",
+            "fn mount() -> Router<AppState> { Router::new().route(\"/x/item_{commission_id}\", get(peek)) }",
+        ),
+        (
+            "api/src/routes/accounts.rs",
+            "fn mount() -> Router<AppState> { Router::new().route(\"/x/{the_commission}\", get(peek)) }",
+        ),
+        (
+            "api/src/routes/accounts.rs",
+            "fn peek_router() -> Router<AppState> { let doc = \"/commissions/{id}/peek\"; Router::new().route(doc, get(peek)) }",
+        ),
+        (
+            EXTRACT_FILE,
+            "pub fn peek_router() -> Router<AppState> { Router::new().route(\"/commissions/{id}/peek\", get(peek)) }",
+        ),
+        (
+            "api/src/routes/commissions/extra.rs",
+            "use axum::{Router, routing::get};\npub(crate) fn extra_router() -> Router<AppState> { Router::new().route(\"/commissions/{id}/peek\", get(super::get::get_commission)) }",
+        ),
+        (
+            "api/src/routes/commissions/files.rs",
+            "pub(crate) fn files_router() -> axum::Router<AppState> { axum::Router::new().nest(\"/commissions\", axum::Router::new().route(\"/{id}/peek\", get(peek))) }",
+        ),
+        (
+            "api/src/routes/commissions/peek.rs",
+            "pub(crate) const PEEK: &str = \"/commissions/{id}/peek\";",
+        ),
+        (
+            "api/src/routes/commissions/peek.rs",
+            "pub(crate) fn peek_router() -> Mount<AppState> { Mount::new() }",
+        ),
+        (ROUTER_FILE, second_router_in_mod.as_str()),
+        (ROUTER_FILE, aliased_router_in_mod.as_str()),
     ];
 
     for (file, source) in refused {
@@ -754,12 +898,35 @@ fn a_commission_path_or_commission_route_in_another_router_is_refused() {
 }
 
 #[test]
+fn a_second_router_in_the_commissions_folder_is_refused_at_each_naming() {
+    let names = route_names(&[]);
+    let extra = "api/src/routes/commissions/extra.rs";
+    let source = "use axum::{Router, routing::get};\npub(crate) fn extra_router() -> Router<AppState> { Router::new().route(\"/commissions/{id}/peek\", get(super::get::get_commission)) }";
+
+    let found = commission_route_findings(extra, source, &names);
+
+    let expected = [
+        format!("{extra}: `Router` in use"),
+        format!("{extra}: `Router` in extra_router"),
+        format!("{extra}: `Router` in extra_router"),
+        format!("{extra}: `/commissions/{{id}}/peek` in extra_router"),
+    ];
+    assert_eq!(found, expected);
+}
+
+#[test]
 fn the_commissions_routes_own_namings_and_other_routes_are_kept() {
-    let names = commission_path_names(&[]);
+    let names = route_names(&[]);
+    let router = router_file_with("/commissions/{id}/peek");
     let kept = [
         (
             "api/src/routes/commissions/peek.rs",
-            "async fn peek(CommissionPath(id): CommissionPath) {}\nfn mount() -> Router<AppState> { Router::new().route(\"/commissions/{id}/peek\", get(peek)) }",
+            "async fn peek(CommissionPath(id): CommissionPath) {}",
+        ),
+        (ROUTER_FILE, router.as_str()),
+        (
+            ROUTER_FILE,
+            "fn channel_methods() -> MethodRouter<AppState> { put(x).delete(y) }",
         ),
         (EXTRACT_FILE, "pub struct CommissionPath(pub CommissionId);"),
         (
@@ -769,6 +936,18 @@ fn the_commissions_routes_own_namings_and_other_routes_are_kept() {
         (
             "api/src/routes/accounts.rs",
             "/// Unlike `/commissions/{id}` and `CommissionPath`, reads an account.\nfn x() {}",
+        ),
+        (
+            "api/src/routes/accounts.rs",
+            "#[doc = \"/commissions/{id}\"]\nfn y() {}",
+        ),
+        (
+            "api/src/routes/accounts.rs",
+            "//! Never `/commissions/{id}`.\nfn z() {}",
+        ),
+        (
+            "api/src/routes/commissions/peek.rs",
+            "/// Served at `/commissions/{id}/peek` by the [`Router`].\nasync fn peek(CommissionPath(id): CommissionPath) {}",
         ),
         (
             "api/src/routes/accounts.rs",
