@@ -9,7 +9,8 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            CommissionId, CommissionMarkup, FileKey, Markup, MarkupKey, NewChangelogEntry, OpenKind,
+            CommissionId, CommissionMarkup, CommissionRole, FileKey, Markup, MarkupKey,
+            NewChangelogEntry, OpenKind,
         },
         user::UserId,
     },
@@ -18,7 +19,7 @@ use serde_json::json;
 
 use crate::{
     Ports,
-    commission::{CommissionError, CommissionResult, Commissions},
+    commission::{CommissionError, CommissionResult, Commissions, require},
 };
 
 /// The annotating Participant, the commission, the file entry and the
@@ -56,13 +57,13 @@ impl Commissions<'_> {
             file_key,
             markup,
         } = cmd;
-        if !ports
-            .commissions
-            .is_participant(&commission_id, &actor_id)
-            .await?
-        {
-            return Err(CommissionError::NotAMember);
-        }
+        require(
+            ports,
+            &commission_id,
+            &actor_id,
+            CommissionRole::Participant,
+        )
+        .await?;
 
         markup.validate().map_err(CommissionError::InvalidMarkup)?;
 

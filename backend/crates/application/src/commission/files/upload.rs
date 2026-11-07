@@ -4,7 +4,8 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            CommissionFile, CommissionId, FileKey, FileName, NewChangelogEntry, OpenKind,
+            CommissionFile, CommissionId, CommissionRole, FileKey, FileName, NewChangelogEntry,
+            OpenKind,
         },
         user::UserId,
     },
@@ -14,7 +15,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::{
     Ports,
-    commission::{CommissionError, CommissionResult, files::Files},
+    commission::{CommissionError, CommissionResult, files::Files, require},
     den::DenName,
 };
 
@@ -55,13 +56,13 @@ impl Files<'_> {
             filename,
             content_type,
         } = cmd;
-        if !ports
-            .commissions
-            .is_participant(&commission_id, &actor_id)
-            .await?
-        {
-            return Err(CommissionError::NotAMember);
-        }
+        require(
+            ports,
+            &commission_id,
+            &actor_id,
+            CommissionRole::Participant,
+        )
+        .await?;
 
         let filename = FileName::try_from(filename.unwrap_or_default())
             .map_err(CommissionError::InvalidFileName)?;

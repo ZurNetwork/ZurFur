@@ -22,6 +22,7 @@ async fn health_is_green_against_fresh_postgres() {
     let state = AppState {
         accounts: backend.account_store(),
         commissions: backend.commission_store(),
+        commission_rows: backend.commission_rows(),
         workflows: backend.workflow_store(),
         columns: backend.column_store(),
         characters: backend.character_store(),

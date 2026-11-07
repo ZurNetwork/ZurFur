@@ -17,7 +17,8 @@ use domain::{
     ports::UnitOfWork,
 };
 use test_support::recording::{
-    CallLog, RecordingChangelogStore, RecordingCommissionStore, RecordingFileStore,
+    CallLog, RecordingChangelogStore, RecordingCommissionRows, RecordingCommissionStore,
+    RecordingFileStore,
 };
 use uuid::Uuid;
 
@@ -125,8 +126,8 @@ pub(crate) async fn read(
     Ok(read)
 }
 
-/// The fixture world with its commission, file and changelog stores recording every read into
-/// the returned log.
+/// The fixture world with its commission, whole-row, file and changelog stores recording every
+/// read into the returned log.
 pub(crate) async fn recorded() -> (World, CallLog) {
     let World {
         runtime,
@@ -135,9 +136,11 @@ pub(crate) async fn recorded() -> (World, CallLog) {
     } = world().await;
     let log = CallLog::default();
     let commissions = RecordingCommissionStore::new(ports.commissions.clone(), log.clone());
+    let rows = RecordingCommissionRows::new(ports.commission_rows.clone(), log.clone());
     let files = RecordingFileStore::new(ports.files.clone(), log.clone());
     let changelog = RecordingChangelogStore::new(ports.changelog.clone(), log.clone());
     ports.commissions = Arc::new(commissions);
+    ports.commission_rows = Arc::new(rows);
     ports.files = Arc::new(files);
     ports.changelog = Arc::new(changelog);
     let world = World {

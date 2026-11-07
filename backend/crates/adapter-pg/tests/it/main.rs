@@ -40,6 +40,7 @@ mod node;
 mod node_backfill;
 mod plc_operation_log;
 mod profile_cache;
+mod read_pair_timing;
 mod schema_status;
 mod seed;
 mod session_store;

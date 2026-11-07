@@ -235,10 +235,10 @@ async fn telling_twins_apart_stores_nothing() {
         let stored = world
             .ports
             .commissions
-            .find_summary(&commission)
+            .find_summary(&commission, &alice)
             .await
             .expect("the store answers")
             .expect("the twin is stored");
-        assert_eq!(stored.title.as_str(), TWIN_TITLE);
+        assert_eq!(stored.summary.title.as_str(), TWIN_TITLE);
     }
 }

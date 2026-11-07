@@ -109,20 +109,13 @@ async fn creating_a_commission_persists_its_owners_participant_row() {
         "exactly the owner's membership row is born with the commission"
     );
 
-    let store = PgCommissionStore::new(pool.clone());
     assert!(
-        store
-            .is_participant(&commission.id, &owner.id)
-            .await
-            .expect("predicate"),
+        seed::participates(&pool, &commission.id, &owner.id).await,
         "the owner is a Participant"
     );
     let stranger = provision(&pool, "did:plc:stranger").await;
     assert!(
-        !store
-            .is_participant(&commission.id, &stranger.id)
-            .await
-            .expect("predicate"),
+        !seed::participates(&pool, &commission.id, &stranger.id).await,
         "a stranger is not"
     );
 }
@@ -137,12 +130,8 @@ async fn is_participant_reads_the_membership_record_not_the_owner_column() {
     let seated = provision(&pool, "did:plc:seated-later").await;
     let commission = create_commission(&pool, &owner, "Seated later").await;
 
-    let store = PgCommissionStore::new(pool.clone());
     assert!(
-        !store
-            .is_participant(&commission.id, &seated.id)
-            .await
-            .expect("predicate"),
+        !seed::participates(&pool, &commission.id, &seated.id).await,
         "no membership row yet"
     );
 
@@ -158,10 +147,7 @@ async fn is_participant_reads_the_membership_record_not_the_owner_column() {
     .expect("seed a seated membership row");
 
     assert!(
-        store
-            .is_participant(&commission.id, &seated.id)
-            .await
-            .expect("predicate"),
+        seed::participates(&pool, &commission.id, &seated.id).await,
         "a membership row alone makes a Participant"
     );
 }
@@ -230,12 +216,7 @@ async fn the_migration_backfills_the_owners_participant_row() {
         vec![owner.id.clone()],
         "the backfill seated the owner"
     );
-    assert!(
-        PgCommissionStore::new(pool.clone())
-            .is_participant(&commission, &owner.id)
-            .await
-            .expect("predicate")
-    );
+    assert!(seed::participates(&pool, &commission, &owner.id).await);
 }
 
 // ZMVP-140 — a second add_participant for a pair that's already a member is a

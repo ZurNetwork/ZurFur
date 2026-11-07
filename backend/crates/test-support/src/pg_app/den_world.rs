@@ -37,6 +37,8 @@ pub const UNNAMED: &str = "Unnamed";
 
 /// A commission id no seed writes: a UUIDv7 from 2025, before any row's.
 const ABSENT_COMMISSION: Uuid = Uuid::from_u128(0x0193_0000_0000_7000_8000_0000_0000_0a01);
+/// A second commission id no seed writes, for the pairs of two made-up ids.
+const OTHER_ABSENT_COMMISSION: Uuid = Uuid::from_u128(0x0193_0000_0000_7000_8000_0000_0000_0a05);
 /// A file key no seed writes.
 const ABSENT_FILE: Uuid = Uuid::from_u128(0x0193_0000_0000_7000_8000_0000_0000_0a02);
 /// A slot id no seed writes.
@@ -53,6 +55,40 @@ pub enum ProfileCacheState {
     /// The cache empty: each root's name is looked up, and the lookup fills the cache.
     #[strum(serialize = "cold cache")]
     Cold,
+}
+
+/// A time on a commission's row that a test can set to infinity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+pub enum CommissionTime {
+    /// When the commission was created.
+    Created,
+    /// Its deadline.
+    Deadline,
+    /// When it was archived.
+    Archived,
+    /// When its dispute was raised, which also puts it in the Disputed step.
+    Disputed,
+}
+
+/// Which infinity a time is set to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::VariantArray)]
+pub enum Infinity {
+    /// After every time.
+    #[strum(serialize = "infinity")]
+    Positive,
+    /// Before every time.
+    #[strum(serialize = "-infinity")]
+    Negative,
+}
+
+/// The board of the stranger's own: its Workflow and its first column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StrangerBoard {
+    /// The Workflow on the stranger's Account.
+    pub workflow: WorkflowId,
+    /// Its first column.
+    pub column: ColumnId,
 }
 
 /// A commission the world seeds: its id, the one file uploaded to it and its one slot.
@@ -278,6 +314,78 @@ impl DenWorld {
         assert_eq!(renamed.rows_affected(), 1, "one blob is renamed");
     }
 
+    /// Sets `time` on `commission`'s row to `infinity`, a test-only update. Planting
+    /// [`CommissionTime::Disputed`] also moves the commission into the Disputed step, from
+    /// Active, as the dispute CHECK requires.
+    pub async fn plant_infinite_time(
+        &self,
+        commission: CommissionId,
+        time: CommissionTime,
+        infinity: Infinity,
+    ) {
+        let statement = match time {
+            CommissionTime::Created => {
+                "UPDATE commission SET created_at = $1::text::timestamptz WHERE id = $2"
+            }
+            CommissionTime::Deadline => {
+                "UPDATE commission SET deadline = $1::text::timestamptz WHERE id = $2"
+            }
+            CommissionTime::Archived => {
+                "UPDATE commission SET archived_at = $1::text::timestamptz WHERE id = $2"
+            }
+            CommissionTime::Disputed => {
+                "UPDATE commission SET lifecycle = 'disputed', disputed_from = 'active', \
+                 disputed_at = $1::text::timestamptz WHERE id = $2"
+            }
+        };
+        let planted = sqlx::query(statement)
+            .bind(infinity.to_string())
+            .bind(Uuid::from(commission))
+            .execute(&self.served.runtime.pool)
+            .await
+            .expect("plant the infinite time");
+        assert_eq!(planted.rows_affected(), 1, "one commission row is updated");
+    }
+
+    /// Founds an Account of the stranger's with a Workflow and one column on its board, as
+    /// the stranger: a board the stranger owns while holding no role on any commission. Once
+    /// per world: it founds the Account.
+    pub async fn seed_stranger_board(&self) -> StrangerBoard {
+        let account = found_account(
+            &self.served,
+            &self.stranger,
+            "Stranger House",
+            "stranger-house",
+        )
+        .await;
+        let workflow = create_workflow(&self.served, stranger(), &account, "Stranger Board").await;
+        let column = self.add_column(stranger(), workflow, "To do").await;
+        StrangerBoard { workflow, column }
+    }
+
+    /// Adds the column `name` to the stranger's `board`, for a card the first column holds
+    /// already: a column takes a commission once.
+    pub async fn add_stranger_column(&self, board: &StrangerBoard, name: &str) -> ColumnId {
+        self.add_column(stranger(), board.workflow, name).await
+    }
+
+    /// Takes `commission`'s card off the stranger's `board`, through the remove use case, so
+    /// it can be placed again.
+    pub async fn take_stranger_card_off(&self, board: &StrangerBoard, commission: CommissionId) {
+        let command = application::account::workflow::column::commission::remove::Command {
+            actor_id: stranger(),
+            commission_id: commission,
+            workflow_id: board.workflow,
+        };
+        let app = self.served.runtime.app();
+        let accounts = app.accounts();
+        accounts
+            .workflows()
+            .remove(command)
+            .await
+            .expect("the card comes off the board");
+    }
+
     /// Makes bob a Participant of the archived "Old sketch" too, a test-only insert as for
     /// "Untitled". Opt-in: the world's other pairs use "Old sketch" as a commission bob isn't in.
     pub async fn add_bob_to_old_sketch(&self) {
@@ -332,9 +440,16 @@ impl DenWorld {
     /// Adds the column `name` to "Night Shift"'s Workflow "Backlog" as bob, through the add
     /// use case, and answers its id.
     pub async fn add_backlog_column(&self, name: &str) -> ColumnId {
+        self.add_column(adapter_mem::fixture::bob(), self.backlog, name)
+            .await
+    }
+
+    /// Adds the column `name` to `workflow` as `actor`, through the add use case, and answers
+    /// its id.
+    async fn add_column(&self, actor: UserId, workflow: WorkflowId, name: &str) -> ColumnId {
         let command = application::account::workflow::column::add::Command {
-            actor_id: adapter_mem::fixture::bob(),
-            workflow_id: self.backlog,
+            actor_id: actor,
+            workflow_id: workflow,
             column_name: name.parse().expect("a valid column name"),
             position: 0,
         };
@@ -371,6 +486,11 @@ impl DenWorld {
 /// A commission id no seed writes.
 pub fn absent_commission() -> CommissionId {
     CommissionId::from(ABSENT_COMMISSION)
+}
+
+/// A second commission id no seed writes.
+pub fn other_absent_commission() -> CommissionId {
+    CommissionId::from(OTHER_ABSENT_COMMISSION)
 }
 
 /// A file key no seed writes.

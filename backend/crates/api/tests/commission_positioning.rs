@@ -385,12 +385,14 @@ async fn a_granted_accounts_member_gains_no_in_commission_authority() {
         "the actor really is a member of the placed account",
     );
     // ...yet the grant/placement made them no Participant of the commission.
-    assert!(
-        !backend
-            .commission_store()
-            .is_participant(&cid, &member.id)
-            .await
-            .unwrap(),
+    let member_role = backend
+        .commission_store()
+        .standing(&cid, &member.id)
+        .await
+        .unwrap()
+        .and_then(|standing| standing.role);
+    assert_eq!(
+        member_role, None,
         "a view grant / placement never makes its holder a Participant (D8)",
     );
 

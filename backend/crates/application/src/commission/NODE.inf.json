@@ -44,7 +44,7 @@
     },
     {
       "name": "den.rs",
-      "role": "commission's Den arm: CommissionPlace and its leaves — a commission by its real path (find then is_participant, always both), its four fixed entries, its files from its own file list, its slots, the viewer's commission mounts; products empty until Products can be stored; and the write's verdict (Verdict, StandingFacts, verdict, pool_verdict): no commission or no role is the one not-found, a role below the act's need forbidden; tests beside it in den/tests.rs",
+      "role": "commission's Den arm: CommissionPlace and its leaves — a commission by its real path (one find_summary as the viewer reads it: an absent commission and one the viewer can't be shown answer alike; any role, the owner's included, lifts it), its four fixed entries, its files from its own file list, its slots, the viewer's commission mounts; products empty until Products can be stored; and the write's verdict (Verdict, StandingFacts, verdict, pool_verdict): no commission or no role is the one not-found, a role below the act's need forbidden; tests beside it in den/tests.rs",
       "node": false
     },
     {
@@ -59,7 +59,7 @@
     },
     {
       "name": "get.rs",
-      "role": "the commission read (Query { actor_id, commission_id }, a flat Output of domain values): den's check opens the commission's node (else NotAMember, so a stranger and a made-up id read only the check's pair), then its summary, its row and the viewer's standing; the title as the Den shows it, the deadline status derived at the read's time, never the owner nor the linked channel; for a viewer whose standing holds a role, den's allowed_acts, else no acts and no targets",
+      "role": "the commission read (Query { actor_id, commission_id }, a flat Output of domain values): den's check opens the commission's node (else NotAMember, so a stranger and a made-up id read only the check's one statement), then its summary as the viewer reads it (the title and the role, the standing derived from it) and its row through commission_rows; the title as the Den shows it, the deadline status derived at the read's time, never the owner nor the linked channel; for a viewer whose standing holds a role, den's allowed_acts, else no acts and no targets",
       "node": false
     },
     {
@@ -124,7 +124,7 @@
     }
   ],
   "notes": [
-    "**The closed door.** The Den's write answers a non-participant the commission's not-found, and `require_owner`'s outsider `NotAMember` renders byte-identically to an absent commission — never `403`, which would confirm private work exists on a caller-chosen id. `require_owner` splits three ways: owner passes, a non-owner Participant gets `InsufficientPermissions` (they already know it exists), everyone else gets the same `404`. Every gate in this tree follows it — including `markup`, where a key from another commission answers `FileNotFound`. `files/download` and `changelog/read` ask den's check instead: the download refuses a stranger `NotAMember` at the commission's node, and a key the commission's `attachments` doesn't hold `FileNotFound` — so a stranger on a Public, live commission, whose node opens to them but whose `attachments` doesn't, gets `FileNotFound`.",
+    "**The closed door.** The Den's write answers a non-participant the commission's not-found, and `require`'s outsider `NotAMember` renders byte-identically to an absent commission — never `403`, which would confirm private work exists on a caller-chosen id. `require` decides from the pool's one standing statement before any row loads and splits three ways: a role at or above the act's need passes, a lower role gets `InsufficientPermissions` (they already know it exists), anyone else or an absent id the same `404`; `delete`, `view/grant` and `view/revoke` use `require_or_not_found`, every refusal the commission's not-found. Every gate in this tree follows it — including `markup`, where a key from another commission answers `FileNotFound`. `files/download` and `changelog/read` ask den's check instead: the download refuses a stranger `NotAMember` at the commission's node, and a key the commission's `attachments` doesn't hold `FileNotFound` — so a stranger on a Public, live commission, whose node opens to them but whose `attachments` doesn't, gets `FileNotFound`.",
     "**Ordering rule.** Authorize before anything observable or written: before a byte of an upload is read, before a no-op is noticed (each act through the Den's write, whose grant comes before its rule), and before `provision` (`view/grant`, `view/revoke`, `invitations/issue`).",
     "**Atomicity.** A state write and the changelog entry recording it share one unit of work, and entries are keyed on a REAL transition — an idempotent no-op writes nothing and appends nothing. Blob bytes cannot ride a Postgres transaction, so `files/upload` writes the blob first and deletes the orphan before refusing.",
     "`seq` on a changelog entry is the STORE's ordering key (a `bigserial` in pg): monotonic per stream but not gapless, and never renumbered off a page position.",

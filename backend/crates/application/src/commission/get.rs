@@ -3,8 +3,8 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            CommissionId, CommissionState, CommissionTitle, DeadlineStatus, DirectionStatus,
-            LifecycleStep,
+            CommissionId, CommissionStanding, CommissionState, CommissionTitle, DeadlineStatus,
+            DirectionStatus, LifecycleStep,
         },
         level::Level,
         maturity::Maturity,
@@ -79,22 +79,18 @@ impl Commissions<'_> {
             return Err(CommissionError::NotAMember);
         };
 
-        let summary = ports
+        let viewed = ports
             .commissions
-            .find_summary(&commission_id)
+            .find_summary(&commission_id, &actor_id)
             .await?
             .ok_or_else(gone)?;
         let stored = ports
-            .commissions
+            .commission_rows
             .find(&commission_id)
             .await?
             .ok_or_else(gone)?;
-        let standing = ports
-            .commissions
-            .standing(&commission_id, &actor_id)
-            .await?
-            .ok_or_else(gone)?;
-        let shown = names::stored_name(summary.title.as_str()).ok_or_else(|| {
+        let standing = CommissionStanding::from(&viewed);
+        let shown = names::stored_name(viewed.summary.title.as_str()).ok_or_else(|| {
             let unnamed = anyhow::anyhow!("the Den's fallback name breaks the name rule");
             CommonError::Infrastructure(unnamed)
         })?;
@@ -119,7 +115,7 @@ impl Commissions<'_> {
             id: commission_id,
             title,
             lifecycle: stored.lifecycle_step.clone(),
-            visibility: summary.visibility,
+            visibility: viewed.summary.visibility,
             deadline: stored.deadline,
             maturity: stored.maturity,
             direction_status: stored.direction_status,

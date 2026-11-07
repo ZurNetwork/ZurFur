@@ -25,8 +25,12 @@ const WHOLE_COMMISSION: &str = "commission/find";
 const WORKFLOW_BY_KEY: &str = "workflow/find";
 
 /// What den's check reads of a commission for a stranger, and all of it: the narrow
-/// projection and the viewer's participant row.
-const STRANGER_CHECK: [&str; 2] = ["commission/find_summary", "commission/is_participant"];
+/// projection as the viewer reads it, their participation probed inside it.
+const STRANGER_CHECK: [&str; 1] = ["commission/find_summary"];
+
+/// What the den routes read of commission data for a stranger, and all of it: the viewer's own
+/// mounts, since `/den/commissions/{id}` is their own `commissions` folder.
+const STRANGER_MOUNTS: [&str; 1] = ["commission/list_participating"];
 
 /// What a stranger's causes must never run on commission's reads: the whole row, anything by
 /// key, a file's name or bytes, and the changelog's entries.
@@ -251,6 +255,7 @@ async fn a_stranger_s_causes_run_the_same_statements_through_the_den_routes() {
 
             for statements in runs {
                 assert_runs_none_of(&statements, &[WHOLE_COMMISSION], &label);
+                assert_eq!(commission_data(&statements), STRANGER_MOUNTS, "{label}");
             }
         }
     }
@@ -533,12 +538,8 @@ async fn a_stranger_s_rename_and_a_made_up_id_s_run_the_same_statements() {
 }
 
 /// Everything the commission read runs for someone it doesn't open to, and all of it: the
-/// session's load, then den's check, the narrow projection and the viewer's participant row.
-const GET_COMMISSION_MISS: [&str; 3] = [
-    "session/load",
-    "commission/find_summary",
-    "commission/is_participant",
-];
+/// session's load, then den's check, the narrow projection as the viewer reads it.
+const GET_COMMISSION_MISS: [&str; 2] = ["session/load", "commission/find_summary"];
 
 #[tokio::test]
 async fn get_commission_runs_the_check_s_pair_alike_for_a_stranger_and_a_made_up_id() {
@@ -612,5 +613,91 @@ async fn a_stranger_and_a_made_up_id_run_the_same_statements_on_every_new_call()
             assert_eq!(opened, None, "{}, {cause}: a unit opened", call.label);
         }
         assert_eq!(texts(&absent), texts(&not_yours), "{}", call.label);
+    }
+}
+
+// The tests below walk the router's whole table of commission calls.
+use test_support::pg_app::{CallKind, every_commission_call};
+
+/// Everything a read of a commission the viewer can't be shown runs, and all of it: the
+/// session's load, then the one summary statement.
+const READ_MISS: [&str; 2] = ["session/load", "commission/find_summary"];
+
+#[tokio::test]
+async fn every_commission_call_runs_one_standing_statement_for_both_causes() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let stranger = stranger(world);
+    let column = world.seed_stranger_board().await.column;
+    let table = every_commission_call(column);
+
+    for (target, visibility) in stranger_targets(world) {
+        world.set_visibility(target.id, visibility).await;
+        let lifecycle = world.archived_or_live(&target);
+        for call in table.iter().filter(|call| call.kind == CallKind::Call) {
+            let pair = call.pair(&target);
+            let label = format!("{visibility} {lifecycle}, {}", call.label);
+
+            let not_yours = call_statements(&recorded, &stranger, call, &pair.not_yours).await;
+            let absent = call_statements(&recorded, &stranger, call, &pair.absent).await;
+
+            for (cause, statements) in [("not yours", &not_yours), ("absent", &absent)] {
+                assert_eq!(names(statements), WRITE_MISS, "{label}, {cause}");
+                let opened = statements.iter().find(|statement| begins(statement));
+                assert_eq!(opened, None, "{label}, {cause}: a unit opened");
+                assert_runs_none_of(statements, &[WHOLE_COMMISSION], &label);
+            }
+            assert_eq!(texts(&absent), texts(&not_yours), "{label}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn every_commission_read_runs_the_summary_alone_for_both_causes() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let stranger = stranger(world);
+    let column = world.seed_stranger_board().await.column;
+    let table = every_commission_call(column);
+
+    for (target, visibility) in stranger_targets(world) {
+        world.set_visibility(target.id, visibility).await;
+        let lifecycle = world.archived_or_live(&target);
+        for call in table.iter().filter(|call| call.kind == CallKind::Read) {
+            let pair = call.pair(&target);
+            let label = format!("{visibility} {lifecycle}, {}", call.label);
+
+            let not_yours = call_statements(&recorded, &stranger, call, &pair.not_yours).await;
+            let absent = call_statements(&recorded, &stranger, call, &pair.absent).await;
+
+            for (cause, statements) in [("not yours", &not_yours), ("absent", &absent)] {
+                assert_eq!(names(statements), READ_MISS, "{label}, {cause}");
+                assert_runs_none_of(statements, &NEVER_FOR_A_STRANGER, &label);
+            }
+            assert_eq!(texts(&absent), texts(&not_yours), "{label}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_stranger_s_board_card_of_every_stranger_target_runs_the_same_commission_statements() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let stranger = stranger(world);
+    let column = world.seed_stranger_board().await.column;
+
+    // The stranger owns a board and holds no role and no grant on any target.
+    for (target, visibility) in stranger_targets(world) {
+        world.set_visibility(target.id, visibility).await;
+        let lifecycle = world.archived_or_live(&target);
+        let label = format!("{visibility} {lifecycle}");
+
+        let not_yours = placement_statements(&recorded, &stranger, target.id, column, 404).await;
+        let absent =
+            placement_statements(&recorded, &stranger, absent_commission(), column, 404).await;
+
+        assert_eq!(commission_data(&not_yours), BOARD_CARD_CHECK, "{label}");
+        assert_eq!(commission_data(&absent), BOARD_CARD_CHECK, "{label}");
+        assert_eq!(texts(&absent), texts(&not_yours), "{label}");
     }
 }

@@ -1168,25 +1168,9 @@ pub mod commission {
         pub found: Option<bool>,
         pub name: Option<String>,
         pub level: Option<String>,
+        pub is_owner: Option<bool>,
+        pub is_participant: Option<bool>,
         pub archived: Option<bool>,
-    }
-
-    /// Row shape read back from the prepared statement's metadata.
-    #[derive(Debug, sqlx::FromRow)]
-    pub struct ListOwnedByRow {
-        pub id: uuid::Uuid,
-        pub owner_id: String,
-        pub lifecycle: String,
-        pub disputed_from: Option<String>,
-        pub disputed_at: Option<chrono::DateTime<chrono::Utc>>,
-        pub deadline: Option<chrono::DateTime<chrono::Utc>>,
-        pub maturity: Option<String>,
-        pub graphic: Option<bool>,
-        pub direction_status: Option<String>,
-        pub deadline_status: Option<String>,
-        pub linked_channel: Option<String>,
-        pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
-        pub created_at: chrono::DateTime<chrono::Utc>,
     }
 
     /// Row shape read back from the prepared statement's metadata.
@@ -1650,20 +1634,25 @@ pub mod commission {
 
     /// `queries/commission/find_summary.sql`, contract inferred from the SQL against the migrated schema.
     ///
-    /// One commission's summary, always as exactly one row: a one-row probe
-    /// left-joined to `commission` and then to `node`, so an absent id and a present
-    /// one probe the node index once each. An absent id, or a commission with no
-    /// node, probes it with the nil uuid, which no node is minted with. `found` is
-    /// true only when the commission exists and the joined node is the one it points
-    /// at; then the row holds that node's name and level and whether the commission
-    /// is archived, and nothing else of the row. The archive time itself is never
-    /// decoded. Archived commissions are found.
+    /// One commission's summary as one viewer reads it, always as exactly one row.
+    /// A materialized one-row probe is left-joined to `commission` and then to
+    /// `node`, so an absent id and a present one probe the node index once each and
+    /// run the participant probe exactly once. An absent id, or a commission with no
+    /// node, probes the node index with the nil uuid, which no node is minted with.
+    /// The row is shown when the commission exists with its node and the viewer owns
+    /// it, takes part in it, or it is live and Listed or Public. A row not shown is
+    /// the absent id's: `found` false and every other column NULL, its name never
+    /// read. A shown row holds the node's name and level, the viewer's ownership and
+    /// participation, and whether the commission is archived; the archive time
+    /// itself is never decoded.
     pub async fn find_summary(
         conn: impl sqlx::PgExecutor<'_>,
         commission_id: uuid::Uuid,
+        viewer: &str,
     ) -> sqlx::Result<Vec<FindSummaryRow>> {
         sqlx::query_as(include_str!("../queries/commission/find_summary.sql"))
             .bind(commission_id)
+            .bind(viewer)
             .fetch_all(conn)
             .await
     }
@@ -1744,22 +1733,6 @@ pub mod commission {
             .bind(mark_kind)
             .bind(rearm_kind)
             .fetch_one(conn)
-            .await
-    }
-
-    /// `queries/commission/list_owned_by.sql`, contract inferred from the SQL against the migrated schema.
-    ///
-    /// The signed-in user's OWNED commissions, owner-POV only. Archived
-    /// commissions are excluded — an active-view listing, per the documented
-    /// listing-projection contract on `commission.archived_at`. Ordered by id
-    /// (UUIDv7 sorts as creation order).
-    pub async fn list_owned_by(
-        conn: impl sqlx::PgExecutor<'_>,
-        owner_id: &str,
-    ) -> sqlx::Result<Vec<ListOwnedByRow>> {
-        sqlx::query_as(include_str!("../queries/commission/list_owned_by.sql"))
-            .bind(owner_id)
-            .fetch_all(conn)
             .await
     }
 

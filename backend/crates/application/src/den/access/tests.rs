@@ -20,7 +20,9 @@ use domain::{
     },
     ports::{ProfileSource, UnitOfWork, UserStore},
 };
-use test_support::recording::{CallLog, RecordingCommissionStore, RecordingFileStore};
+use test_support::recording::{
+    CallLog, RecordingCommissionRows, RecordingCommissionStore, RecordingFileStore,
+};
 use tokio::time::Instant;
 use uuid::Uuid;
 
@@ -233,12 +235,14 @@ async fn a_public_commission_opens_for_a_stranger_but_its_private_changelog_does
     assert!(not_found(&changelog));
 }
 
-/// The fixture world with its commission and file stores recording every read.
+/// The fixture world with its commission, whole-row and file stores recording every read.
 async fn recorded() -> (World, CallLog) {
     let mut world = test_world::world().await;
     let log = CallLog::default();
     let commissions = RecordingCommissionStore::new(world.ports.commissions.clone(), log.clone());
+    let rows = RecordingCommissionRows::new(world.ports.commission_rows.clone(), log.clone());
     world.ports.commissions = Arc::new(commissions);
+    world.ports.commission_rows = Arc::new(rows);
     world.ports.files = Arc::new(RecordingFileStore::new(
         world.ports.files.clone(),
         log.clone(),
@@ -267,7 +271,7 @@ async fn a_stranger_s_absent_and_not_theirs_changelog_run_the_same_reads() {
     let for_not_theirs =
         reads_for(&world, &log, &stranger, ServedNode::Changelog(untitled())).await;
 
-    assert_eq!(for_absent, ["find_summary", "is_participant"]);
+    assert_eq!(for_absent, ["find_summary"]);
     assert_eq!(for_not_theirs, for_absent);
 }
 
@@ -282,7 +286,7 @@ async fn an_absent_and_another_commission_s_file_key_run_the_same_reads() {
     let for_elsewhere =
         reads_for(&world, &log, &bob, ServedNode::File(untitled(), elsewhere)).await;
 
-    assert_eq!(for_absent, ["find_summary", "is_participant", "files"]);
+    assert_eq!(for_absent, ["find_summary", "files"]);
     assert_eq!(for_elsewhere, for_absent);
 }
 
@@ -293,10 +297,7 @@ async fn a_file_that_opens_runs_only_the_walk_s_reads_and_lists_no_folder() {
 
     let reads = reads_for(&world, &log, &bob(), ServedNode::File(untitled(), ref_abco)).await;
 
-    assert_eq!(
-        reads,
-        ["find_summary", "is_participant", "files", "filename"]
-    );
+    assert_eq!(reads, ["find_summary", "files", "filename"]);
 }
 
 #[tokio::test]

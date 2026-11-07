@@ -21,7 +21,7 @@ use domain::elements::{
         DeadlineChange, DelayedChange, DirectionChange, Dispute, DisputeClear, ElementId, FileKey,
         FileSummary, GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode,
         LockedStanding, MaturitySet, NewCommission, NewElement, NewSeat, NewSlot, Seat,
-        SeatInvitation, SeatInvitationId, Slot, SlotBirth, TabId, TabRow,
+        SeatInvitation, SeatInvitationId, Slot, SlotBirth, TabId, TabRow, ViewedSummary,
     },
     did::Did,
     handle::Handle,
@@ -424,12 +424,12 @@ impl ScriptedStanding {
 
 #[async_trait]
 impl CommissionStore for ScriptedStanding {
-    async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
-        self.inner.find(id).await
-    }
-
-    async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>> {
-        self.inner.find_summary(id).await
+    async fn find_summary(
+        &self,
+        id: &CommissionId,
+        viewer: &UserId,
+    ) -> anyhow::Result<Option<ViewedSummary>> {
+        self.inner.find_summary(id, viewer).await
     }
 
     // The one interposition.
@@ -472,14 +472,6 @@ impl CommissionStore for ScriptedStanding {
         self.inner.view_grant(commission_id, user_id).await
     }
 
-    async fn is_participant(
-        &self,
-        commission: &CommissionId,
-        user: &UserId,
-    ) -> anyhow::Result<bool> {
-        self.inner.is_participant(commission, user).await
-    }
-
     async fn seats(&self, commission: &CommissionId) -> anyhow::Result<Vec<Seat>> {
         self.inner.seats(commission).await
     }
@@ -516,10 +508,6 @@ impl CommissionStore for ScriptedStanding {
         self.inner
             .find_pending_seat_invitation(commission, seat, user)
             .await
-    }
-
-    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
-        self.inner.list_owned_by(owner).await
     }
 
     async fn list_participating(&self, user: &UserId) -> anyhow::Result<Vec<CommissionSummary>> {

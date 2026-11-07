@@ -27,8 +27,8 @@ use domain::{
         workflow::{ColumnName, LexOrdering, WorkflowName},
     },
     ports::{
-        AccountStore, ColumnStore, CommissionStore, Database, HandleTaken, UnitOfWork,
-        WorkflowStore,
+        AccountStore, ColumnStore, CommissionRows, CommissionStore, Database, HandleTaken,
+        UnitOfWork, WorkflowStore,
     },
 };
 

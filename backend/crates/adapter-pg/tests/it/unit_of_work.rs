@@ -94,12 +94,12 @@ async fn a_swallowed_statement_failure_fails_the_commit_and_keeps_nothing() {
     );
 
     let stored = PgCommissionStore::new(pool.clone())
-        .find_summary(&id)
+        .find_summary(&id, &owner.id)
         .await
         .expect("read back")
         .expect("the seeded commission exists");
     assert_eq!(
-        stored.title.as_ref(),
+        stored.summary.title.as_ref(),
         "Before",
         "the rename in the refused unit was not kept"
     );

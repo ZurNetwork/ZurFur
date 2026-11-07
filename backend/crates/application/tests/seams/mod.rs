@@ -445,3 +445,150 @@ pub fn node_port_scanned() -> Vec<Member> {
     scanned.push(application.clone());
     scanned
 }
+
+/// `path` relative to the crates folder, with `/` between its parts.
+pub fn relative_to_crates(path: &Path) -> String {
+    let crates = crates();
+    let inside = path.strip_prefix(&crates).unwrap_or(path);
+    inside
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<String>>()
+        .join("/")
+}
+
+/// A part of a file a finding names, with its tokens: the function it sits in (`Type::method`
+/// in an impl or a trait, `module::` before it in an inline module), `use` for an import, an
+/// impl's or a trait's header, or the item that holds no function.
+pub struct Scope {
+    pub context: String,
+    pub tokens: TokenStream,
+}
+
+fn scopes_in(items: &[Item], prefix: &str, out: &mut Vec<Scope>) {
+    let scope = |context: String, tokens: TokenStream| Scope { context, tokens };
+    for item in items {
+        match item {
+            Item::Fn(function) => out.push(scope(
+                format!("{prefix}{}", function.sig.ident),
+                function.to_token_stream(),
+            )),
+            Item::Use(import) => out.push(scope(format!("{prefix}use"), import.to_token_stream())),
+            Item::Impl(implementation) => {
+                let self_type = &implementation.self_ty;
+                let self_name = match self_type.as_ref() {
+                    syn::Type::Path(path) => path
+                        .path
+                        .segments
+                        .last()
+                        .map(|segment| segment.ident.unraw().to_string())
+                        .unwrap_or_default(),
+                    other => other.to_token_stream().to_string(),
+                };
+                let mut header = self_type.to_token_stream();
+                if let Some((_, trait_path, _)) = &implementation.trait_ {
+                    header.extend(trait_path.to_token_stream());
+                }
+                header.extend(implementation.generics.to_token_stream());
+                for attribute in &implementation.attrs {
+                    header.extend(attribute.to_token_stream());
+                }
+                out.push(scope(format!("{prefix}impl {self_name}"), header));
+                for impl_item in &implementation.items {
+                    let context = match impl_item {
+                        syn::ImplItem::Fn(method) => {
+                            format!("{prefix}{self_name}::{}", method.sig.ident)
+                        }
+                        _ => format!("{prefix}impl {self_name}"),
+                    };
+                    out.push(scope(context, impl_item.to_token_stream()));
+                }
+            }
+            Item::Trait(tr) => {
+                for trait_item in &tr.items {
+                    let context = match trait_item {
+                        syn::TraitItem::Fn(method) => {
+                            format!("{prefix}{}::{}", tr.ident, method.sig.ident)
+                        }
+                        _ => format!("{prefix}trait {}", tr.ident),
+                    };
+                    out.push(scope(context, trait_item.to_token_stream()));
+                }
+                let mut header = tr.supertraits.to_token_stream();
+                header.extend(tr.generics.to_token_stream());
+                for attribute in &tr.attrs {
+                    header.extend(attribute.to_token_stream());
+                }
+                out.push(scope(format!("{prefix}trait {}", tr.ident), header));
+            }
+            Item::Mod(module) => match &module.content {
+                Some((_, content)) => {
+                    let inner = format!("{prefix}{}::", module.ident);
+                    scopes_in(content, &inner, out);
+                }
+                None => out.push(scope(
+                    format!("{prefix}{}", item_name(item)),
+                    item.to_token_stream(),
+                )),
+            },
+            other => out.push(scope(
+                format!("{prefix}{}", item_name(other)),
+                other.to_token_stream(),
+            )),
+        }
+    }
+}
+
+/// Every scope of `file`: its inner attributes, then each of its items' scopes.
+pub fn scopes(file: &syn::File) -> Vec<Scope> {
+    let inner: TokenStream = file
+        .attrs
+        .iter()
+        .map(|attribute| attribute.to_token_stream())
+        .collect();
+    let attributes = Scope {
+        context: "the file's attributes".to_owned(),
+        tokens: inner,
+    };
+    let mut out = vec![attributes];
+    scopes_in(&file.items, "", &mut out);
+    out
+}
+
+/// Each run of sibling token trees in `tokens`, and in every group inside it.
+pub fn levels(tokens: TokenStream) -> Vec<Vec<TokenTree>> {
+    let level: Vec<TokenTree> = tokens.into_iter().collect();
+    let mut out: Vec<Vec<TokenTree>> = level
+        .iter()
+        .filter_map(|tree| match tree {
+            TokenTree::Group(group) => Some(group.stream()),
+            _ => None,
+        })
+        .flat_map(levels)
+        .collect();
+    out.push(level);
+    out
+}
+
+/// The identifier at `at` in `level`, without `r#`.
+pub fn ident_at(level: &[TokenTree], at: usize) -> Option<String> {
+    match level.get(at) {
+        Some(TokenTree::Ident(ident)) => Some(ident.unraw().to_string()),
+        _ => None,
+    }
+}
+
+/// Whether the token at `at` in `level` is the punctuation `character`.
+pub fn punct_at(level: &[TokenTree], at: usize, character: char) -> bool {
+    matches!(level.get(at), Some(TokenTree::Punct(punct)) if punct.as_char() == character)
+}
+
+/// Whether a `::` starts at `at` in `level`.
+pub fn path_separator_at(level: &[TokenTree], at: usize) -> bool {
+    let joint = matches!(
+        level.get(at),
+        Some(TokenTree::Punct(punct))
+            if punct.as_char() == ':' && punct.spacing() == proc_macro2::Spacing::Joint
+    );
+    joint && punct_at(level, at + 1, ':')
+}

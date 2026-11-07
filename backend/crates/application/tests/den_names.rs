@@ -158,12 +158,12 @@ async fn a_commission_title_is_stored_as_the_den_s_rule_keeps_it() {
         .expect("the commission is created");
     let stored = runtime
         .commissions
-        .find_summary(&created.id)
+        .find_summary(&created.id, &alice())
         .await
         .expect("no store fails")
         .expect("the commission is stored");
 
-    assert_eq!(stored.title.as_str(), AS_KEPT);
+    assert_eq!(stored.summary.title.as_str(), AS_KEPT);
 }
 
 #[tokio::test]

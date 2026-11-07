@@ -16,7 +16,7 @@ use domain::{
         maturity::{Maturity, MaturityRating},
         user::User,
     },
-    ports::{CommissionStore, Database},
+    ports::{CommissionRows, Database},
 };
 use strum::VariantArray;
 

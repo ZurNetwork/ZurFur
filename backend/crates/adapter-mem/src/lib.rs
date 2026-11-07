@@ -75,10 +75,10 @@ use domain::ports::character::{CharacterStore, CharacterWrites};
 use domain::ports::{
     AccountReads, AccountRepo, AccountStore, AccountWrites, ActorIdentityStore,
     ActorIdentityWrites, Authenticator, BrowserBinding, BugReportStore, BugReportWrites,
-    ChangelogStore, ChangelogWrites, ColumnStore, ColumnWrites, CommissionRepo, CommissionStore,
-    Database, DidMinter, FileStore, HandleTaken, KeyStore, NodeRepo, NodeStore, PlcOperationLog,
-    ProfileCache, ProfileSource, SigninStarted, UnitOfWork, UserStore, UserWrites, WorkflowStore,
-    WorkflowWrites,
+    ChangelogStore, ChangelogWrites, ColumnStore, ColumnWrites, CommissionRepo, CommissionRows,
+    CommissionStore, Database, DidMinter, FileStore, HandleTaken, KeyStore, NodeRepo, NodeStore,
+    PlcOperationLog, ProfileCache, ProfileSource, SigninStarted, UnitOfWork, UserStore, UserWrites,
+    WorkflowStore, WorkflowWrites,
 };
 
 /// The shared in-memory private store: every map behind its own `Arc<Mutex<…>>`,
@@ -187,6 +187,11 @@ impl MemBackend {
     /// The [`CommissionStore`] read port over this backend's shared state —
     /// the canonical commission read port's fake.
     pub fn commission_store(&self) -> Arc<dyn CommissionStore> {
+        Arc::new(MemCommissionStore(self.clone()))
+    }
+
+    /// The [`CommissionRows`] whole-row read port over this backend's shared state.
+    pub fn commission_rows(&self) -> Arc<dyn CommissionRows> {
         Arc::new(MemCommissionStore(self.clone()))
     }
 

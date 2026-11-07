@@ -86,11 +86,11 @@ impl World {
         let commission = self
             .ports
             .commissions
-            .find_summary(&id)
+            .find_summary(&id, &owner())
             .await
             .expect("the store reads")
             .expect("the commission exists");
-        commission.title.as_str().to_owned()
+        commission.summary.title.as_str().to_owned()
     }
 
     /// Every changelog entry of `id`, in stream order.

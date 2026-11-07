@@ -8,9 +8,9 @@ use adapter_pg::{CustodyMigrator, PgPool};
 use domain::elements::custody::Purpose;
 use domain::ports::character::CharacterStore;
 use domain::ports::{
-    AccountStore, Authenticator, BugReportStore, ChangelogStore, ColumnStore, CommissionStore,
-    Database, DidMinter, FileStore, IdentityResolver, ProfileCache, ProfileSource, ScopedMac,
-    UnitOfWorkFn, UserStore, WorkflowStore,
+    AccountStore, Authenticator, BugReportStore, ChangelogStore, ColumnStore, CommissionRows,
+    CommissionStore, Database, DidMinter, FileStore, IdentityResolver, ProfileCache, ProfileSource,
+    ScopedMac, UnitOfWorkFn, UserStore, WorkflowStore,
 };
 use fluent_uri::Uri;
 
@@ -50,9 +50,11 @@ pub struct Runtime {
     /// Account, membership and invitation reads; every account write lives on
     /// the [`UnitOfWork`](domain::ports::UnitOfWork).
     pub accounts: Arc<dyn AccountStore>,
-    /// The canonical commission reads, including the `is_participant` predicate
-    /// every commission act authorizes through.
+    /// The canonical commission reads, including the standing every commission
+    /// act outside the Den's write gate authorizes through.
     pub commissions: Arc<dyn CommissionStore>,
+    /// The whole-row commission reads, kept apart so their callers stay countable.
+    pub commission_rows: Arc<dyn CommissionRows>,
     /// The ordered, participant-only changelog read. The append is a
     /// [`UnitOfWork`](domain::ports::UnitOfWork) view, so entries commit
     /// atomically with the writes they record.
@@ -172,6 +174,7 @@ impl Runtime {
         ));
 
         let identity_resolver = Arc::new(adapter_atproto::AtprotoIdentityResolver::new()?);
+        let commission_store = Arc::new(adapter_pg::PgCommissionStore::new(pool.clone()));
         let runtime = Runtime {
             config,
             auth: Arc::new(adapter_atproto::AtprotoAuthenticator::new(
@@ -192,7 +195,8 @@ impl Runtime {
             profile_lookups: application::user::ProfileLookups::default(),
             did_minter,
             accounts: Arc::new(adapter_pg::PgAccountStore::new(pool.clone())),
-            commissions: Arc::new(adapter_pg::PgCommissionStore::new(pool.clone())),
+            commissions: commission_store.clone(),
+            commission_rows: commission_store,
             changelog: Arc::new(adapter_pg::PgChangelogStore::new(pool.clone())),
             workflows: Arc::new(adapter_pg::PgWorkflowStore::new(pool.clone())),
             columns: Arc::new(adapter_pg::PgColumnStore::new(pool.clone())),

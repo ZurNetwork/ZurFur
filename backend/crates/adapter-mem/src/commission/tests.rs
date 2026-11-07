@@ -33,6 +33,15 @@ async fn seed(backend: &MemBackend, created: &CommissionSeed) {
     backend.seed_bound_commission(created).await.unwrap();
 }
 
+/// Whether `user` holds a participant row on `id`: the unit's participation read, on a unit
+/// that keeps nothing.
+async fn participates(backend: &MemBackend, id: &CommissionId, user: &UserId) -> bool {
+    let mut unit = backend.database().begin().await.unwrap();
+    let participates = unit.commissions().is_participant(id, user).await.unwrap();
+    unit.rollback().await.unwrap();
+    participates
+}
+
 /// Creates `created` on `uow` the way the den's write gate does: its owner recognized,
 /// its nodes written, then the port's create under a capability minted for its id.
 async fn create_in(uow: &mut dyn UnitOfWork, created: &CommissionSeed) {
@@ -85,10 +94,11 @@ async fn uow_create_commission_is_visible_after_commit() {
         .expect("commission present");
     let summary = backend
         .commission_store()
-        .find_summary(&id)
+        .find_summary(&id, &owner)
         .await
         .unwrap()
-        .expect("its summary present");
+        .expect("its summary present")
+        .summary;
     assert_eq!(found.id, id);
     assert_eq!(summary.title.as_str(), "A ref sheet");
     assert_eq!(found.owner_id, owner, "the creating User owns it");
@@ -365,11 +375,11 @@ async fn grants_stage_lift_nothing_and_roll_back() {
 
     // A key is only a view: it makes its holder no Participant (D8).
     assert!(
-        !store.is_participant(&id, &grantee).await.unwrap(),
+        !participates(&backend, &id, &grantee).await,
         "a key confers no in-commission authority",
     );
     assert!(
-        store.is_participant(&id, &owner).await.unwrap(),
+        participates(&backend, &id, &owner).await,
         "the owner still is"
     );
 
@@ -477,7 +487,7 @@ async fn placement_is_a_card_stages_lifts_nothing_and_rolls_back() {
     // Positioning makes nobody a Participant (D8).
     let member = user_id();
     assert!(
-        !store.is_participant(&id, &member).await.unwrap(),
+        !participates(&backend, &id, &member).await,
         "positioning confers no in-commission authority",
     );
 
@@ -1541,15 +1551,11 @@ async fn commission_store_answers_participant_and_channel_reads() {
     let id = created.id;
     seed(&backend, &created).await;
 
-    let store = backend.commission_store();
-    assert!(store.is_participant(&id, &owner).await.unwrap());
-    assert!(!store.is_participant(&id, &user_id()).await.unwrap());
-    assert!(
-        !store
-            .is_participant(&CommissionId::from(uuid::Uuid::now_v7()), &owner)
-            .await
-            .unwrap()
-    );
+    let store = backend.commission_rows();
+    assert!(participates(&backend, &id, &owner).await);
+    assert!(!participates(&backend, &id, &user_id()).await);
+    let unknown = CommissionId::from(uuid::Uuid::now_v7());
+    assert!(!participates(&backend, &unknown, &owner).await);
 
     let pointer = "@artist on Telegram".parse::<ChannelPointer>().unwrap();
     let mut uow = database.begin().await.unwrap();
@@ -2076,11 +2082,7 @@ async fn creating_a_commission_persists_its_owners_participant_row() {
         "the owner's membership row is born with the commission"
     );
     assert!(
-        backend
-            .commission_store()
-            .is_participant(&id, &owner)
-            .await
-            .unwrap(),
+        participates(&backend, &id, &owner).await,
         "the predicate reads the membership record"
     );
 }
@@ -2098,11 +2100,7 @@ async fn is_participant_reads_the_membership_record_not_the_owner_column() {
     seed(&backend, &created).await;
 
     assert!(
-        !backend
-            .commission_store()
-            .is_participant(&id, &seated)
-            .await
-            .unwrap(),
+        !participates(&backend, &id, &seated).await,
         "not a participant before any membership row exists"
     );
     backend
@@ -2111,11 +2109,7 @@ async fn is_participant_reads_the_membership_record_not_the_owner_column() {
         .expect("participants mutex poisoned")
         .insert((id, seated.clone()), Utc::now());
     assert!(
-        backend
-            .commission_store()
-            .is_participant(&id, &seated)
-            .await
-            .unwrap(),
+        participates(&backend, &id, &seated).await,
         "a membership row alone makes a participant (the ZMVP-79 seated arm's shape)"
     );
 }
@@ -2707,13 +2701,13 @@ async fn a_stored_title_is_loaded_without_a_recheck() {
         .unwrap();
     let found = backend
         .commission_store()
-        .find_summary(&created.id)
+        .find_summary(&created.id, &owner)
         .await
         .unwrap()
         .unwrap();
 
     assert_eq!(listing[0].title.as_str(), "   ");
-    assert_eq!(found.title.as_str(), "   ");
+    assert_eq!(found.summary.title.as_str(), "   ");
 }
 
 // The file list holds only this commission's entries, in key order; another
@@ -2863,8 +2857,8 @@ async fn delete_cascades_participants_files_and_grants() {
     let store = backend.commission_store();
 
     assert!(store.files(&doomed_id).await.unwrap().is_empty());
-    assert!(!store.is_participant(&doomed_id, &owner).await.unwrap());
-    assert!(!store.is_participant(&doomed_id, &member).await.unwrap());
+    assert!(!participates(&backend, &doomed_id, &owner).await);
+    assert!(!participates(&backend, &doomed_id, &member).await);
     assert!(store.list_participating(&member).await.unwrap().is_empty());
     assert!(
         store

@@ -1,4 +1,4 @@
-//! Use cases about [`Commission`]s.
+//! Use cases about [`Commission`](domain::elements::commission::Commission)s.
 //!
 //! [`Commissions::sweep_deadlines`] is the one act with no user behind it: the system
 //! recording a lapsed deadline. Its wall-clock timer and leader election live in `api`, so
@@ -7,7 +7,7 @@
 use crate::ports::WithPorts;
 use domain::{
     elements::{
-        commission::{Commission, CommissionId, CommissionRefusal, FileNameError, MarkupError},
+        commission::{CommissionId, CommissionRefusal, CommissionRole, FileNameError, MarkupError},
         user::UserId,
     },
     ports::{DidBelongsToAnotherActor, ElementNotFound, UnknownSurface, UnknownTab},
@@ -17,6 +17,7 @@ use crate::{
     common_error::{CommonError, NotFoundEntity},
     den::{DenError, DenNameError, act::HandlerRefusal, write::DenWriteError},
 };
+use den::{StandingFacts, Verdict, pool_verdict};
 pub(crate) mod act;
 pub mod archive;
 pub mod changelog;
@@ -182,36 +183,40 @@ impl From<anyhow::Error> for CommissionError {
         Self::CommonError(err.into())
     }
 }
-/// Resolve the commission for an act only its owner may perform. The owner
-/// passes; a non-owner Participant gets
-/// [`InsufficientPermissions`](CommissionError::InsufficientPermissions);
-/// everyone else gets [`NotAMember`](CommissionError::NotAMember), which the drivers render
-/// byte-identically to an absent commission.
-pub(crate) async fn require_owner(
+/// The standing facts `actor_id` holds on `commission_id` for an act that needs `needs`, from
+/// one pool statement: no commission or no role is [`NotAMember`](CommissionError::NotAMember),
+/// which the drivers render byte-identically to an absent commission, and a role below `needs`
+/// is [`InsufficientPermissions`](CommissionError::InsufficientPermissions).
+pub(crate) async fn require(
     ports: &crate::Ports,
     commission_id: &CommissionId,
     actor_id: &UserId,
-) -> CommissionResult<Commission> {
-    let commission = ports
-        .commissions
-        .find(commission_id)
-        .await?
-        .ok_or(CommonError::NotFound(NotFoundEntity::Commission))?;
-
-    if commission.is_owned_by(actor_id) {
-        return Ok(commission);
+    needs: CommissionRole,
+) -> CommissionResult<StandingFacts> {
+    let verdict = pool_verdict(ports, commission_id, actor_id, needs).await?;
+    match verdict {
+        Verdict::NotFound => Err(CommissionError::NotAMember),
+        Verdict::Forbidden => Err(CommissionError::InsufficientPermissions),
+        Verdict::Granted(facts) => Ok(facts),
     }
+}
 
-    // Ownership before membership: the owner must never be locked out of their
-    // own commission by a missing Participant row.
-    if ports
-        .commissions
-        .is_participant(&commission.id, actor_id)
-        .await?
-    {
-        return Err(CommissionError::InsufficientPermissions);
-    }
-    Err(CommissionError::NotAMember)
+/// [`require`] for an act whose every refusal of standing is the commission's not-found, a
+/// lower role's included, so the answer never tells whether the actor takes part.
+pub(crate) async fn require_or_not_found(
+    ports: &crate::Ports,
+    commission_id: &CommissionId,
+    actor_id: &UserId,
+    needs: CommissionRole,
+) -> CommissionResult<StandingFacts> {
+    require(ports, commission_id, actor_id, needs)
+        .await
+        .map_err(|refusal| match refusal {
+            CommissionError::NotAMember | CommissionError::InsufficientPermissions => {
+                CommonError::commission_not_found().into()
+            }
+            failure => failure,
+        })
 }
 
 impl From<DenWriteError> for CommissionError {

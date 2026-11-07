@@ -5,7 +5,9 @@ use adapter_mem::{
     fixture::{alice, bob, old_sketch, untitled, untitled_files, untitled_slots},
 };
 use domain::elements::commission::{CommissionTitle, FileKey, FileName};
-use test_support::recording::{CallLog, RecordingCommissionStore, RecordingFileStore};
+use test_support::recording::{
+    CallLog, RecordingCommissionRows, RecordingCommissionStore, RecordingFileStore,
+};
 use uuid::Uuid;
 
 use super::*;
@@ -227,15 +229,14 @@ async fn a_commission_that_is_not_the_viewer_s_reads_as_one_that_does_not_exist(
     let not_bobs = test_world::read(&ports, &bob, false, &commission_path(old_sketch()), &[]).await;
     let absent = test_world::read(&ports, &bob, false, &commission_path(nowhere), &[]).await;
     let context = test_world::context(&ports, &bob);
-    let bobs_node = node(&context, old_sketch())
-        .await
-        .expect("no store fails")
-        .expect("Old sketch exists");
+    let bobs_node = node(&context, old_sketch()).await.expect("no store fails");
 
     assert!(matches!(not_bobs, Err(DenError::NotFound)));
     assert!(matches!(absent, Err(DenError::NotFound)));
-    assert_eq!(bobs_node.lifts, Vec::new());
-    assert_eq!(bobs_node.level, Level::Private);
+    assert!(
+        bobs_node.is_none(),
+        "the arm reads a commission bob can't be shown as absent"
+    );
 }
 
 #[tokio::test]
@@ -251,6 +252,32 @@ async fn a_participant_holds_standing_at_the_commission() {
 
     assert_eq!(untitled_for_bob.lifts, vec![STANDING]);
     assert_eq!(untitled_for_bob.state, NodeState::Live);
+}
+
+// The owner holds standing on their commission from the commission row alone, with no
+// participant row behind it.
+#[tokio::test]
+async fn the_owner_holds_standing_without_a_participant_row() {
+    let World { ports, backend, .. } = test_world::world().await;
+    let alice = alice();
+    let title = "Owner only"
+        .parse::<CommissionTitle>()
+        .expect("a valid test title");
+    let seed = CommissionSeed::private(title, alice.clone());
+    backend
+        .seed_bound_commission(&seed)
+        .await
+        .expect("the commission seeds");
+    backend.remove_participant(seed.id, &alice);
+    let context = test_world::context(&ports, &alice);
+
+    let for_the_owner = node(&context, seed.id)
+        .await
+        .expect("no store fails")
+        .expect("the owner is shown it");
+
+    assert_eq!(for_the_owner.lifts, vec![STANDING]);
+    assert_eq!(for_the_owner.level, Level::Private);
 }
 
 #[tokio::test]
@@ -299,7 +326,7 @@ async fn mounts_in_the_viewer_s_own_commissions_include_archived_ones() {
     assert_eq!(someone_else_s, Vec::new());
 }
 
-/// The fixture world with its commission and file stores recording every read.
+/// The fixture world with its commission, whole-row and file stores recording every read.
 async fn recorded() -> (World, CallLog) {
     let World {
         runtime,
@@ -308,7 +335,9 @@ async fn recorded() -> (World, CallLog) {
     } = test_world::world().await;
     let log = CallLog::default();
     let commissions = RecordingCommissionStore::new(ports.commissions.clone(), log.clone());
+    let rows = RecordingCommissionRows::new(ports.commission_rows.clone(), log.clone());
     ports.commissions = Arc::new(commissions);
+    ports.commission_rows = Arc::new(rows);
     ports.files = Arc::new(RecordingFileStore::new(ports.files.clone(), log.clone()));
     let world = World {
         runtime,
@@ -331,7 +360,7 @@ async fn an_absent_commission_and_one_not_the_viewer_s_run_the_same_reads() {
     let for_both = log.events();
 
     let for_one_not_bobs = for_both[for_an_absent_commission.len()..].to_vec();
-    assert_eq!(for_an_absent_commission, ["find_summary", "is_participant"]);
+    assert_eq!(for_an_absent_commission, ["find_summary"]);
     assert_eq!(for_one_not_bobs, for_an_absent_commission);
 }
 

@@ -65,10 +65,11 @@ async fn a_seeded_commission_obeys_the_binding() {
     );
     let found = backend
         .commission_store()
-        .find_summary(&seed.id)
+        .find_summary(&seed.id, &owner)
         .await
         .expect("find")
-        .expect("the commission is stored");
+        .expect("the commission is stored")
+        .summary;
     assert_eq!(found.title.as_str(), "A seeded piece", "the node's name");
     assert_eq!(found.visibility, Level::Public, "the node's level");
 

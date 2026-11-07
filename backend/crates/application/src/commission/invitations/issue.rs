@@ -3,7 +3,9 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{CommissionId, SeatInvitation, SeatInvitationId, element::SeatId},
+        commission::{
+            CommissionId, CommissionRole, SeatInvitation, SeatInvitationId, element::SeatId,
+        },
         invitation::InvitationState,
         user::UserId,
     },
@@ -11,7 +13,7 @@ use domain::{
 
 use crate::{
     Ports,
-    commission::{CommissionError, CommissionResult, invitations::Invitations, require_owner},
+    commission::{CommissionError, CommissionResult, invitations::Invitations, require},
 };
 
 pub struct Command {
@@ -48,9 +50,9 @@ impl Invitations<'_> {
             commission_id,
             seat_id,
         } = cmd;
-        let commission = require_owner(ports, &commission_id, &actor_id).await?;
+        require(ports, &commission_id, &actor_id, CommissionRole::Owner).await?;
 
-        let seats = ports.commissions.seats(&commission.id).await?;
+        let seats = ports.commissions.seats(&commission_id).await?;
 
         // Two distinct answers, deliberately not folded into one: an absent
         // seat is `SeatNotFound`, an occupied one `SeatFilled`.
@@ -64,11 +66,11 @@ impl Invitations<'_> {
 
         if let Some(invitation) = ports
             .commissions
-            .find_pending_seat_invitation(&commission.id, &seat.id, &target_id)
+            .find_pending_seat_invitation(&commission_id, &seat.id, &target_id)
             .await?
         {
             return Ok(Output::PreExisting(InvitationOutput {
-                commission_id: commission.id,
+                commission_id,
                 invitation_id: invitation.id,
                 invitation_state: invitation.state,
                 invited_user_id: target_id,
@@ -79,7 +81,7 @@ impl Invitations<'_> {
         let uow = uow.open().await?;
         let target_user = uow.users().provision(target_id.did()).await?;
         let invitation = SeatInvitation::issue(
-            commission.id,
+            commission_id,
             seat.id,
             target_user.id.clone(),
             target_id.clone(),
@@ -97,14 +99,14 @@ impl Invitations<'_> {
 
         let output = match ports
             .commissions
-            .find_pending_seat_invitation(&commission.id, &seat.id, &target_user.id)
+            .find_pending_seat_invitation(&commission_id, &seat.id, &target_user.id)
             .await?
         {
             Some(stored) => {
                 let invitation = InvitationOutput {
                     invitation_id: stored.id,
                     invitation_state: stored.state,
-                    commission_id: commission.id,
+                    commission_id,
                     seat_id: seat.id,
                     invited_user_id: target_user.id,
                 };
@@ -117,7 +119,7 @@ impl Invitations<'_> {
             None => Output::Created(InvitationOutput {
                 invitation_id: minted,
                 invitation_state: InvitationState::Pending,
-                commission_id: commission.id,
+                commission_id,
                 seat_id: seat.id,
                 invited_user_id: target_user.id,
             }),

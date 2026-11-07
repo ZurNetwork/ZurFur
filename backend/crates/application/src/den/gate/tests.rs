@@ -214,7 +214,7 @@ fn made(written: &WriteResult) -> CommissionId {
 /// The commission `commission` as the store holds it, if it does.
 async fn stored(ports: &Ports, commission: CommissionId) -> Option<Commission> {
     ports
-        .commissions
+        .commission_rows
         .find(&commission)
         .await
         .expect("the store reads")

@@ -15,3 +15,16 @@ async fn standing_is_recorded() -> anyhow::Result<()> {
     assert_eq!(log.events(), ["standing"]);
     Ok(())
 }
+
+// The recording whole-row read logs `find` by name.
+#[tokio::test]
+async fn whole_row_reads_are_recorded() -> anyhow::Result<()> {
+    let backend = MemBackend::new();
+    let log = CallLog::default();
+    let rows = RecordingCommissionRows::new(backend.commission_rows(), log.clone());
+    let commission = CommissionId::from(uuid::Uuid::now_v7());
+
+    rows.find(&commission).await?;
+    assert_eq!(log.events(), ["find"]);
+    Ok(())
+}

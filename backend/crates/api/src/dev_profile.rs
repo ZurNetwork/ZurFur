@@ -113,6 +113,7 @@ async fn runtime(config: Config, den_mac: ScopedMac) -> anyhow::Result<AppState>
         profile_lookups: Default::default(),
         accounts: backend.account_store(),
         commissions: backend.commission_store(),
+        commission_rows: backend.commission_rows(),
         changelog: backend.changelog_store(),
         workflows: backend.workflow_store(),
         columns: backend.column_store(),

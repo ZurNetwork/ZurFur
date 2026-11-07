@@ -69,7 +69,7 @@ async fn a_stranger_s_absent_and_not_theirs_commission_are_one_refusal_with_the_
             matches!(not_theirs, Err(CommissionError::NotAMember)),
             "{label}: not theirs"
         );
-        assert_eq!(absent_reads, ["find_summary", "is_participant"], "{label}");
+        assert_eq!(absent_reads, ["find_summary"], "{label}");
         assert_eq!(not_theirs_reads, absent_reads, "{label}");
         assert_reads_none_of(&absent_reads, &NEVER_FOR_A_STRANGER, label);
     }
@@ -192,7 +192,7 @@ async fn a_stranger_downloading_from_a_listed_live_commission_is_refused_at_the_
         recorded_download(&world, &log, &stranger(), listed.id, listed.file).await;
 
     assert!(matches!(answer, Err(CommissionError::NotAMember)));
-    assert_eq!(reads, ["find_summary", "is_participant"]);
+    assert_eq!(reads, ["find_summary"]);
 }
 
 /// A file store whose name read fails; the rest delegate.

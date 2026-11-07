@@ -17,6 +17,7 @@ fn ports() -> Ports {
         users: runtime.users.clone(),
         accounts: runtime.accounts.clone(),
         commissions: runtime.commissions.clone(),
+        commission_rows: runtime.commission_rows.clone(),
         changelog: runtime.changelog.clone(),
         profile_source: runtime.profile_source.clone(),
         profile_cache: runtime.profile_cache.clone(),

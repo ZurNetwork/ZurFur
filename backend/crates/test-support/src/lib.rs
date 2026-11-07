@@ -25,6 +25,7 @@ pub mod recording;
 pub mod runtime;
 pub mod seeder;
 pub mod store_doubles;
+pub mod timing;
 
 pub use fixture::{ActingCredential, FixtureAccount};
 pub use pds::ThrowawayPds;

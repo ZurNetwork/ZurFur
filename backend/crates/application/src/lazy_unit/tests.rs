@@ -119,6 +119,7 @@ fn recording_ports() -> (Ports, CallLog) {
         users: runtime.users,
         accounts: runtime.accounts,
         commissions: runtime.commissions,
+        commission_rows: runtime.commission_rows,
         changelog: runtime.changelog,
         profile_source: runtime.profile_source,
         profile_cache: runtime.profile_cache,

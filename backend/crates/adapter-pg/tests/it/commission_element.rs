@@ -918,10 +918,7 @@ async fn the_migration_backfills_skeleton_tabs_for_pre_composition_commissions()
              User whose Seat was dropped must not keep the key to the closed door"
         );
         assert!(
-            !store
-                .is_participant(&id, &seated.id)
-                .await
-                .expect("is_participant"),
+            !seed::participates(&pool, &id, &seated.id).await,
             "and the closed-door gate agrees: the ex-seated User is no longer a Participant"
         );
     }

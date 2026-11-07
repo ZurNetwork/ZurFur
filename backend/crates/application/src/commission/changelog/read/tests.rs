@@ -56,7 +56,7 @@ async fn a_stranger_s_absent_and_not_theirs_commission_are_one_refusal_with_the_
             matches!(not_theirs, Err(CommissionError::NotAMember)),
             "{label}: not theirs"
         );
-        assert_eq!(absent_reads, ["find_summary", "is_participant"], "{label}");
+        assert_eq!(absent_reads, ["find_summary"], "{label}");
         assert_eq!(not_theirs_reads, absent_reads, "{label}");
         assert_reads_none_of(&absent_reads, &NEVER_FOR_A_STRANGER, label);
     }
@@ -77,7 +77,7 @@ async fn a_stranger_reads_no_changelog_of_a_public_or_listed_live_commission() {
             matches!(answer, Err(CommissionError::NotAMember)),
             "{label}"
         );
-        assert_eq!(reads, ["find_summary", "is_participant"], "{label}");
+        assert_eq!(reads, ["find_summary"], "{label}");
         assert_reads_none_of(&reads, &NEVER_FOR_A_STRANGER, label);
     }
 }

@@ -73,17 +73,18 @@ async fn create_answers_the_row_as_stored() {
         .expect("creates");
 
     let stored = ports
-        .commissions
+        .commission_rows
         .find(&created.id)
         .await
         .expect("the store reads")
         .expect("the commission exists");
     let summary = ports
         .commissions
-        .find_summary(&created.id)
+        .find_summary(&created.id, &owner)
         .await
         .expect("the store reads")
-        .expect("the commission exists");
+        .expect("the commission exists")
+        .summary;
     assert_eq!(created.title.as_str(), "Ref sheet");
     assert_eq!(created.title.as_str(), summary.title.as_str());
     assert_eq!(created.visibility, summary.visibility);
@@ -113,10 +114,10 @@ async fn a_create_for_an_unknown_user_is_a_store_failure() {
         ),
         "{created:?}"
     );
-    let owned = ports
+    let joined = ports
         .commissions
-        .list_owned_by(&unknown)
+        .list_participating(&unknown)
         .await
         .expect("the store reads");
-    assert!(owned.is_empty());
+    assert!(joined.is_empty(), "{joined:?}");
 }

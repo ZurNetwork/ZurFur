@@ -17,7 +17,7 @@ use domain::elements::{
     text::StoredText,
     user::UserId,
 };
-use domain::ports::{CommissionStore, Database, New, UnitOfWork, WriteCapability};
+use domain::ports::{CommissionRows, CommissionStore, Database, New, UnitOfWork, WriteCapability};
 use test_support::seeder::{self, CommissionSeeder, SlotSeeder};
 
 /// Creates commission `id` on `unit` through the port, under a capability minted here.
@@ -248,4 +248,18 @@ async fn stored(pool: &PgPool, id: CommissionId) -> Commission {
         .await
         .expect("find the seeded commission")
         .expect("the seeded commission is stored")
+}
+
+/// Whether `user` holds a participant row on `commission`: the unit's participation read, on
+/// a unit that keeps nothing.
+pub async fn participates(pool: &PgPool, commission: &CommissionId, user: &UserId) -> bool {
+    let database = PgDatabase::new(pool.clone());
+    let mut unit = database.begin().await.expect("begin");
+    let participates = unit
+        .commissions()
+        .is_participant(commission, user)
+        .await
+        .expect("the unit's participation read");
+    unit.rollback().await.expect("roll the read back");
+    participates
 }
