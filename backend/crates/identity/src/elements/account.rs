@@ -7,12 +7,14 @@
 
 mod entity;
 mod errors;
+mod fact;
 mod id;
 mod rows;
 mod value;
 
 pub use entity::Account;
-pub use errors::AccountNameError;
+pub use errors::{AccountNameError, UnknownAccountFactKind};
+pub use fact::{AccountFactKind, AccountFacts};
 pub use id::AccountId;
 pub use rows::{AccountMembership, AccountProfile, ListingScope};
 pub use value::{ACCOUNT_NAME_MAX_LEN, AccountName};

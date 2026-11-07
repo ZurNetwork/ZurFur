@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::elements::account::{Account, AccountId, AccountMembership, ListingScope};
+use crate::elements::account::{Account, AccountFacts, AccountId, AccountMembership, ListingScope};
 use crate::elements::handle::Handle;
 use crate::elements::invitation::{Invitation, InvitationId};
 use crate::elements::role::Role;
@@ -133,6 +133,8 @@ pub trait AccountWrites: Send {
     /// Accept a pending invitation: in one transaction flip it to Accepted and seat
     /// the invited User with `parent = inviter` and their `listed_on_profile`
     /// choice. The guard is atomic with the seat — a lost race seats no member.
+    /// Records the Account's member fact in the same unit, at the flip's instant;
+    /// an Account that already holds it keeps its first time.
     async fn accept_invitation(
         &mut self,
         invitation: Invitation,
@@ -153,14 +155,18 @@ pub trait AccountWrites: Send {
     /// Soft-delete an account: stamp `deleted_at`, removing nothing. The handle
     /// stays reserved and the `did:plc` stays live, but reads treat the account as
     /// absent; memberships and invitations are kept so reactivation restores it
-    /// intact. Idempotent.
+    /// intact. The caller holds the row from
+    /// [`find_for_update`](AccountReads::find_for_update) and has read the
+    /// [`facts`](AccountReads::facts) in the same unit. Idempotent.
     async fn soft_delete(&mut self, account: &AccountId) -> anyhow::Result<()>;
 
     /// Hard-delete an empty account: remove its invitation, membership and account
     /// rows in one unit of work, freeing the handle. Its boards cascade away; the
     /// commissions on them survive (User-owned) and the custody keys are left in
-    /// place. Tombstoning the DID is a separate retryable step. Idempotent.
-    ///
+    /// place. Tombstoning the DID is a separate retryable step. The caller holds the
+    /// row from [`find_for_update`](AccountReads::find_for_update) and has read the
+    /// [`facts`](AccountReads::facts) in the same unit. Fails, ending the unit, on an
+    /// absent or deactivated Account and on one holding a fact.
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()>;
 }
 
@@ -173,6 +179,14 @@ pub trait AccountReads: Send {
 
     /// [`find`](Self::find), with the row locked (`FOR NO KEY UPDATE`) until commit.
     async fn find_for_update(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>>;
+
+    /// [`find`](Self::find), with the row locked `FOR SHARE` until commit: other
+    /// writers of the Account's members and invitations proceed, while its update or
+    /// delete waits. `None` for an absent or deactivated Account.
+    async fn find_for_share(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>>;
+
+    /// The facts Account `id` has reached, read on the unit's own connection.
+    async fn facts(&mut self, id: &AccountId) -> anyhow::Result<AccountFacts>;
 
     /// `user`'s role in `account`, or `None`; as [`AccountStore::role_of`].
     async fn role_of(&mut self, user: &UserId, account: &AccountId)
