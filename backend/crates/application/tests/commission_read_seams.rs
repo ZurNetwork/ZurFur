@@ -1,7 +1,7 @@
 //! The whole-row commission read (field, trait and aliases) is named only where listed, one
 //! read each in `get` and `clear_channel`; every commissions route naming a commission id has
-//! its row in test-support's call table and no more; and test-support reaches adapter-pg's raw
-//! commission queries only in the den world's two seeders. Scans read token by token.
+//! its row in test-support's call table, and no such route or `CommissionPath` sits outside the
+//! commissions routes; test-support reaches raw commission queries only in two seeders.
 
 mod seams;
 
@@ -14,7 +14,7 @@ use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use quote::ToTokens;
 use seams::{
     Scope, crates, fixture_tree, ident_at, identifiers, levels, path_separator_at, punct_at,
-    relative_to_crates, scopes, with_aliases, workspace_production, workspace_sources,
+    relative_to_crates, scopes, walk, with_aliases, workspace_production, workspace_sources,
 };
 use syn::{Expr, Item, ItemFn, Lit, Stmt};
 use test_support::pg_app::{CommissionCall, absent_commission, every_commission_call};
@@ -580,6 +580,206 @@ fn a_router_shape_the_scan_cannot_read_is_refused() {
         let routes = router_routes(&source);
 
         assert!(routes.is_err(), "{to}: {routes:?}");
+    }
+}
+
+// Commission routes outside the commissions router.
+
+/// The extractor that reads a commission id from a route's path.
+const COMMISSION_PATH: &str = "CommissionPath";
+
+/// The crate that mounts the routes, under the crates folder.
+const API_SRC: &str = "api/src";
+
+/// The files that may name the extractor or a route path naming a commission id: every file
+/// of the commissions routes' folder, and the extractor's own file.
+const COMMISSION_ROUTES_FOLDER: &str = "api/src/routes/commissions/";
+const EXTRACT_FILE: &str = "api/src/extract.rs";
+
+/// The segment a commission id's placeholder follows in a route path.
+const COMMISSIONS_SEGMENT: &str = "commissions";
+
+/// How a placeholder naming a commission starts, as in `{commission_id}`.
+const COMMISSION_PLACEHOLDER: &str = "commission";
+
+/// The name inside the placeholder `segment` (`{name}` or `{*name}`), or `None`.
+fn placeholder_name(segment: &str) -> Option<&str> {
+    let inner = segment.strip_prefix('{')?.strip_suffix('}')?;
+    Some(inner.strip_prefix('*').unwrap_or(inner))
+}
+
+/// Whether `path` is a route path naming a commission id: a `{commission…}` placeholder, or
+/// any placeholder right after a `commissions` segment.
+fn names_a_commission(path: &str) -> bool {
+    let segments: Vec<&str> = path.split('/').collect();
+    let commission_placeholder = segments.iter().any(|segment| {
+        placeholder_name(segment).is_some_and(|name| name.starts_with(COMMISSION_PLACEHOLDER))
+    });
+    let after_commissions = segments
+        .windows(2)
+        .any(|pair| pair[0] == COMMISSIONS_SEGMENT && placeholder_name(pair[1]).is_some());
+    path.starts_with('/') && (commission_placeholder || after_commissions)
+}
+
+/// The value of each string literal in `tokens`, at any depth, but a `doc = "…"` attribute's.
+fn string_literals(tokens: TokenStream) -> Vec<String> {
+    levels(tokens)
+        .iter()
+        .flat_map(|level| {
+            level
+                .iter()
+                .enumerate()
+                .filter_map(|(at, tree)| {
+                    let TokenTree::Literal(literal) = tree else {
+                        return None;
+                    };
+                    let doc = at.checked_sub(2).is_some_and(|name_at| {
+                        ident_at(level, name_at).as_deref() == Some("doc")
+                            && punct_at(level, at - 1, '=')
+                    });
+                    let parsed = syn::parse_str::<syn::LitStr>(&literal.to_string()).ok();
+                    parsed.filter(|_| !doc).map(|string| string.value())
+                })
+                .collect::<Vec<String>>()
+        })
+        .collect()
+}
+
+/// The extractor's name, and every name `sources` bind to it, through any chain.
+fn commission_path_names(sources: &[String]) -> BTreeSet<String> {
+    with_aliases(&[COMMISSION_PATH], sources)
+}
+
+/// Each naming in `source`, by scope, of the extractor (any of `names`) or of a route path
+/// naming a commission id.
+fn commission_route_namings(file: &str, source: &str, names: &BTreeSet<String>) -> Vec<Naming> {
+    scopes(&parsed(file, source))
+        .into_iter()
+        .flat_map(|Scope { context, tokens }| {
+            let extractor: Vec<String> = identifiers(tokens.clone())
+                .into_iter()
+                .filter(|ident| names.contains(ident))
+                .collect();
+            let routes: Vec<String> = string_literals(tokens)
+                .into_iter()
+                .filter(|literal| names_a_commission(literal))
+                .collect();
+            extractor
+                .into_iter()
+                .chain(routes)
+                .map(move |name| (context.clone(), name))
+        })
+        .collect()
+}
+
+/// Each naming in `source`, the file at `file` under the crates folder, outside the files
+/// that may hold one.
+fn commission_route_findings(file: &str, source: &str, names: &BTreeSet<String>) -> Vec<String> {
+    let allowed = file == EXTRACT_FILE || file.starts_with(COMMISSION_ROUTES_FOLDER);
+    if allowed {
+        return Vec::new();
+    }
+    commission_route_namings(file, source, names)
+        .into_iter()
+        .map(|(scope, name)| format!("{file}: `{name}` in {scope}"))
+        .collect()
+}
+
+#[test]
+fn commission_path_and_commission_routes_sit_only_in_the_commissions_routes() {
+    let production = walk(&crates().join(API_SRC)).production;
+    let sources: Vec<String> = production.iter().map(|path| read(path)).collect();
+    let names = commission_path_names(&sources);
+
+    let offenders: Vec<String> = production
+        .iter()
+        .zip(&sources)
+        .flat_map(|(path, source)| {
+            commission_route_findings(&relative_to_crates(path), source, &names)
+        })
+        .collect();
+
+    assert_eq!(offenders, Vec::<String>::new());
+    let seen = [
+        EXTRACT_FILE,
+        ROUTER_FILE,
+        "api/src/routes/commissions/delete.rs",
+    ];
+    for file in seen {
+        let path = crates().join(file);
+        assert!(production.contains(&path), "{file} is not read");
+        let namings = commission_route_namings(file, &read(&path), &names);
+        assert!(!namings.is_empty(), "{file}: the scan saw no naming");
+    }
+}
+
+#[test]
+fn a_commission_path_or_commission_route_in_another_router_is_refused() {
+    let alias = "pub use crate::extract::CommissionPath as Held;".to_owned();
+    let names = commission_path_names(std::slice::from_ref(&alias));
+    let refused = [
+        (
+            "api/src/routes/accounts.rs",
+            "async fn peek(CommissionPath(id): CommissionPath) {}",
+        ),
+        (
+            "api/src/routes/den/router.rs",
+            "pub fn den_router() -> Router<AppState> { Router::new().route(\"/x/{commission_id}\", get(peek)) }",
+        ),
+        (
+            "api/src/routes/accounts.rs",
+            "pub fn accounts_router() -> Router<AppState> { Router::new().route(\"/commissions/{id}/peek\", get(peek)) }",
+        ),
+        (
+            "api/src/routes/den/router.rs",
+            "fn mount() -> Router<AppState> { Router::new().route(r\"/x/{*commission}\", get(peek)) }",
+        ),
+        (
+            "api/src/routes/health.rs",
+            "macro_rules! mount { () => { Router::new().route(\"/w/{commission}\", get(x)) }; }",
+        ),
+        ("api/src/lib.rs", "use crate::extract::CommissionPath;"),
+        (
+            "api/src/routes/session.rs",
+            "async fn peek(Held(id): Held) {}",
+        ),
+        ("api/src/routes/session.rs", alias.as_str()),
+    ];
+
+    for (file, source) in refused {
+        let found = commission_route_findings(file, source, &names);
+
+        assert!(!found.is_empty(), "{file}: {source}");
+    }
+}
+
+#[test]
+fn the_commissions_routes_own_namings_and_other_routes_are_kept() {
+    let names = commission_path_names(&[]);
+    let kept = [
+        (
+            "api/src/routes/commissions/peek.rs",
+            "async fn peek(CommissionPath(id): CommissionPath) {}\nfn mount() -> Router<AppState> { Router::new().route(\"/commissions/{id}/peek\", get(peek)) }",
+        ),
+        (EXTRACT_FILE, "pub struct CommissionPath(pub CommissionId);"),
+        (
+            "api/src/routes/accounts.rs",
+            "pub fn accounts_router() -> Router<AppState> { Router::new().route(\"/accounts/{id}\", delete(x)).route(\"/accounts/{id}/commissions\", get(y)) }",
+        ),
+        (
+            "api/src/routes/accounts.rs",
+            "/// Unlike `/commissions/{id}` and `CommissionPath`, reads an account.\nfn x() {}",
+        ),
+        (
+            "api/src/routes/accounts.rs",
+            "fn word() -> &'static str { \"commission/{id}\" }",
+        ),
+    ];
+
+    for (file, source) in kept {
+        let found = commission_route_findings(file, source, &names);
+
+        assert_eq!(found, Vec::<String>::new(), "{file}: {source}");
     }
 }
 
