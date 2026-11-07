@@ -358,6 +358,9 @@ async fn accept_invitation(
 /// - `204 No Content`
 /// - `404` — not a member
 /// - `409` — the sole Owner can't leave while still Owner (transfer or delete first)
+///
+/// A leave that loses its race with a transfer to the leaver answers `409`; with a
+/// revoke of the leaver, `404`.
 async fn leave_account(
     State(state): State<AppState>,
     Path(account_id): Path<AccountId>,
@@ -400,6 +403,9 @@ struct GrantRoleResponse {
 /// - `401` — not signed in · `403` — not allowed to grant that role
 /// - `404` — no such account, or not a member
 /// - `422` — malformed body or an unknown role discriminant
+///
+/// A grant whose actor lost standing meanwhile, or whose target became the Owner, answers
+/// `403`; one whose target left meanwhile, `404`.
 async fn grant_role(
     State(state): State<AppState>,
     Path(account_id): Path<AccountId>,
@@ -456,6 +462,9 @@ struct RevokeRoleResponse {
 /// - `401` — not signed in · `403` — not allowed to revoke that member
 /// - `404` — no such account, or not a member
 /// - `422` — malformed body
+///
+/// A revoke whose actor lost standing meanwhile, or whose target became the Owner, answers
+/// `403`; one whose target left meanwhile, `404`.
 async fn revoke_role(
     State(state): State<AppState>,
     Path(account_id): Path<AccountId>,
@@ -668,6 +677,9 @@ struct TransferOwnershipResponse {
 /// - `401` — not signed in · `403` — not the account's current Owner
 /// - `404` — no such account, or `new_owner` is not a member
 /// - `422` — malformed body, or transferring to oneself
+///
+/// A transfer by an Owner who is no longer Owner answers `403`; one whose heir left
+/// meanwhile, `404`.
 async fn transfer_ownership(
     State(state): State<AppState>,
     Path(account_id): Path<AccountId>,
