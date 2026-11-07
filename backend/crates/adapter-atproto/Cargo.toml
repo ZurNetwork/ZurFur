@@ -27,6 +27,7 @@ http = "1"
 chrono = { workspace = true }
 # Randomness for the floor stub minter and for secp256k1 key generation.
 rand = { workspace = true }
+rand_core = { workspace = true }
 # --- ZMVP-49 real did:plc minter ---
 # secp256k1 keygen + atproto-canonical ECDSA-SHA256 signing + did:key formatting.
 atrium-crypto = { workspace = true }

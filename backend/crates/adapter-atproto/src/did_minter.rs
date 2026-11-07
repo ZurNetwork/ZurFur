@@ -8,7 +8,6 @@
 use async_trait::async_trait;
 use atrium_crypto::keypair::{Did as _, Export as _, Secp256k1Keypair};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use chacha20poly1305::aead::OsRng;
 use domain::{
     elements::{
         account_keys::{AccountKeys, SecretKey},
@@ -19,6 +18,7 @@ use domain::{
     ports::{DidMinter, KeyStore, PlcOperationLog},
 };
 use rand::RngExt as _;
+use rand_core::OsRng;
 use std::sync::Arc;
 
 use crate::plc::{PlcOperation, TombstoneOperation};
