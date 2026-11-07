@@ -10,6 +10,8 @@
 //! Filter as usual: `cargo test -p adapter-pg --test it account::`.
 
 mod account;
+mod account_fact_migration;
+mod account_times;
 mod actor_identity;
 mod actor_projection;
 mod bug_report;
