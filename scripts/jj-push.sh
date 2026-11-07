@@ -38,6 +38,10 @@ set -eu
 
 # Run from the workspace root, where the Cargo workspace lives. Prefer jj's own
 # answer; fall back to git (colocated repo) so the script also works pre-jj.
+# The papers check is this script's own sibling, found before the cd: run from
+# another workspace (zaf's push action runs the project root's copy from a
+# slice), the check that runs is the one beside this script, not the slice's.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(jj workspace root 2>/dev/null || git rev-parse --show-toplevel)
 cd "$ROOT"
 
@@ -209,7 +213,7 @@ fi
 # right before the push, so heads resolve to the targets that get pushed even
 # when another workspace moved a bookmark while cargo ran.
 echo "jj-push: private-papers-check --unpushed"
-sh scripts/private-papers-check.sh --unpushed "$heads" || {
+sh "$SCRIPT_DIR/private-papers-check.sh" --unpushed "$heads" || {
     status=$?
     echo ""
     if [ "$status" = 1 ]; then

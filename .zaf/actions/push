@@ -127,7 +127,8 @@ if [ -n "$published" ]; then
 fi
 
 # The papers check first from the root's copy, over every commit the push could send that origin
-# lacks: jj-push.sh runs the slice's own copy again, but the slice could have edited that one.
+# lacks, refused as its own failure; the root's jj-push.sh runs the same copy again before it
+# pushes.
 status=0
 sh "$papers" --unpushed "@- | $bookmark" >&2 || status=$?
 case $status in
