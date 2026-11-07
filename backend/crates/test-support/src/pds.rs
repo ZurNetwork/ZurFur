@@ -58,7 +58,7 @@ impl ThrowawayPds {
         // is not guaranteed to be one; an invalid key crashes the PDS boot).
         // Same vetted primitive the did:plc minter uses.
         use atrium_crypto::keypair::Export as _;
-        let rotation_key = random_rotation_key();
+        let rotation_key = atrium_crypto::keypair::Secp256k1Keypair::create(&mut rand_core::OsRng);
         let rotation_key_hex = data_encoding::HEXLOWER.encode(&rotation_key.export());
 
         let image_ref = crate::pds_image();
@@ -187,18 +187,6 @@ async fn wait_for_health(client: &reqwest::Client, endpoint: &str) -> anyhow::Re
             );
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-}
-
-/// A secp256k1 keypair from OS randomness, redrawn until the bytes are a valid scalar.
-fn random_rotation_key() -> atrium_crypto::keypair::Secp256k1Keypair {
-    loop {
-        let mut bytes = [0u8; 32];
-        let filled = rand::rngs::SysRng.try_fill_bytes(&mut bytes);
-        filled.expect("the OS random source is available");
-        if let Ok(key) = atrium_crypto::keypair::Secp256k1Keypair::import(&bytes) {
-            return key;
-        }
     }
 }
 

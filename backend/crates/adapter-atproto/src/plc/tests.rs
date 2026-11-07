@@ -252,7 +252,7 @@ fn signing_is_deterministic() {
     use atrium_crypto::keypair::{Did as _, Secp256k1Keypair};
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
-    let key = Secp256k1Keypair::create(&mut k256::elliptic_curve::rand_core::OsRng);
+    let key = Secp256k1Keypair::create(&mut rand_core::OsRng);
     let build = || {
         PlcOperation::update_handle(
             vec!["did:key:cold".to_string(), key.did()],
