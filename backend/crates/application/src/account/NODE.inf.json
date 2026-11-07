@@ -24,7 +24,7 @@
     },
     {
       "name": "delete.rs",
-      "role": "Owner-gated delete in one unit: locks the Account row (find_for_update), re-reads the actor's role there and refuses a former Owner, reads the Account's facts there, then deletes soft when it holds one and hard when it holds none; tombstones the did:plc after a hard delete commits, a failure logged at warn with the error by Display and no DID",
+      "role": "Owner-gated delete in one unit: locks the Account row (find_for_update), re-reads the actor's role there and refuses a former Owner, reads the Account's facts there, then deletes soft when it holds one and hard when it holds none; tombstones the did:plc after a hard delete commits, a failure logged at warn without its cause (the minter's error text may name the DID), the cause at debug",
       "node": false
     },
     {

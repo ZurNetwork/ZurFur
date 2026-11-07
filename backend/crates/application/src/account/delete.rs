@@ -30,7 +30,7 @@ pub struct Output {
 
 impl<'a> Accounts<'a> {
     /// Deletes the account, then, once that delete has committed, tombstones the DID of a
-    /// hard-deleted one. A tombstone failure is logged and the delete stands.
+    /// hard-deleted one. A tombstone failure is logged, its cause at debug only, and the delete stands.
     #[use_case]
     pub async fn delete(&self, #[ports] ports: &Ports, cmd: Command) -> AccountResult<Output> {
         let account_id = cmd.account_id.clone();
@@ -39,9 +39,9 @@ impl<'a> Accounts<'a> {
             && let Err(err) = ports.did_minter.tombstone(account_id.did()).await
         {
             tracing::warn!(
-                error = %err,
                 "did:plc tombstone failed after hard delete; the PLC recovery window still applies"
-            )
+            );
+            tracing::debug!(error = %err, "the did:plc tombstone's failure");
         };
         Ok(removed)
     }

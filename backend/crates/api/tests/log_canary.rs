@@ -58,6 +58,9 @@ fn canary_root() -> composition::RootSecret {
     test_support::custody::root_of(root_bytes())
 }
 
+/// How the directory's refusal of a tombstone begins, before the DID it names.
+const TOMBSTONE_REFUSAL: &str = "PLC directory rejected";
+
 /// The Account the visit founds, so the Den lists something.
 const ACCOUNT_HANDLE: &str = "canarystudio.zurfur.app";
 
@@ -110,7 +113,8 @@ impl Authenticator for CanaryAuthenticator {
     }
 }
 
-/// The live minter, except that the directory refuses every tombstone, in words naming no DID.
+/// The live minter, except that the directory refuses every tombstone in its own words, which
+/// name the DID.
 struct RefusingTombstone(Arc<dyn DidMinter>);
 
 #[async_trait]
@@ -123,8 +127,9 @@ impl DidMinter for RefusingTombstone {
         self.0.mint_handleless().await
     }
 
-    async fn tombstone(&self, _did: &Did) -> anyhow::Result<()> {
-        anyhow::bail!("the directory refused the tombstone")
+    async fn tombstone(&self, did: &Did) -> anyhow::Result<()> {
+        let did = AsRef::<str>::as_ref(did);
+        anyhow::bail!("{TOMBSTONE_REFUSAL} {did}: 400 Bad Request")
     }
 
     async fn update_handle(&self, did: &Did, handle: &Handle) -> anyhow::Result<()> {
@@ -356,7 +361,7 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
     if let Some(dump) = std::env::var_os("LOG_CANARY_DUMP") {
         std::fs::write(dump, &text).expect("the dump file is writable");
     }
-    let controls: [(&str, &[&str]); 11] = [
+    let controls: [(&str, &[&str]); 12] = [
         (
             "the callback's finish",
             &["request finished", "route=\"/signin-callback\""],
@@ -396,10 +401,14 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         ("a store span's close", &["adapter_pg::", "close time.busy"]),
         (
             "the refused tombstone's warning",
+            &["WARN", "did:plc tombstone failed after hard delete"],
+        ),
+        (
+            "the refused tombstone's cause",
             &[
-                "WARN",
-                "did:plc tombstone failed after hard delete",
-                "the directory refused the tombstone",
+                "DEBUG",
+                "the did:plc tombstone's failure",
+                TOMBSTONE_REFUSAL,
             ],
         ),
         (
@@ -410,6 +419,15 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
     for (control, parts) in controls {
         assert!(some_line_has(&text, parts), "no line for {control}");
     }
+    let refusal_at_warn: Vec<&str> = text
+        .lines()
+        .filter(|line| level_of(line) == Some("WARN"))
+        .filter(|line| line.contains(TOMBSTONE_REFUSAL))
+        .collect();
+    assert!(
+        refusal_at_warn.is_empty(),
+        "a warn line carries the tombstone's cause: {refusal_at_warn:#?}"
+    );
     let secrets = [
         ("the OAuth code", CODE),
         ("the OAuth state", STATE),
