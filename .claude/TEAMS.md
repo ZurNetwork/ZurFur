@@ -76,12 +76,8 @@
      gemini · `agy -p {prompt} --add-dir {dir} --model gemini-4-argon --effort high --print-timeout 60m` (check the model with `agy models`).
      Its own tool's permissions apply, not Claude Code's. A role with no runner, or —, runs on Claude.
      The glue lane can't take a runner: it pushes, opens and merges PRs, and removes workspaces. -->
-<!-- Zurfur's top-level QA runs on gemini, and it may read the slice plans and release documents (the Engineer, 2026-10-20, R-219).
-     Its trial is in <docs>/runner-trials.md. -->
-
-| Runner | Command | Notes |
-|---|---|---|
-| gemini | `agy -p {prompt} --add-dir {dir} --model gemini-4-argon --effort high --print-timeout 60m` | trial passed 2026-10-20 |
+<!-- Zurfur's top-level QA runs on Claude Opus and may read the slice plans and release documents (R-219). Gemini is dropped
+     (the Engineer, 2026-11-07, R-673), so no runner is defined. -->
 
 | Role | Runner |
 |---|---|
@@ -90,7 +86,7 @@
 | programmer | — |
 | security reviewer | — |
 | release reviewer | — |
-| top-level QA | gemini |
+| top-level QA | — (Claude Opus, R-673) |
 | architect | — |
 | document author | — |
 
