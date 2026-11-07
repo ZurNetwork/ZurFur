@@ -1,0 +1,108 @@
+#!/bin/sh
+# zaf description: commit a slice's work in its jj workspace as `[release-<version>] <message>` ending with the Co-Authored-By line, move the slice's bookmark onto the commit and hand back the commit id
+# zaf 1: refused: the arguments are not <slice> <message>, ZAF_VERSION is unset or not a version, nothing to commit, the slice has no jj workspace, or the slice name leaves the workspaces directory or is not a task branch or is the base
+# zaf 2: a backend failed (jj is missing or refused)
+# zaf mode: 750
+# zaf group: team
+slice=$1
+message=$2
+
+if [ -z "$ZAF_ROOT" ] || [ "$#" -ne 2 ]; then
+    echo "usage: commit <slice> <message>, with ZAF_ROOT and ZAF_VERSION set" >&2
+    exit 1
+fi
+
+# A slice name is a relative path of plain parts, below the workspaces directory, written in
+# the characters `push` accepts.
+case "/$slice/" in
+    *//* | */./* | */../*)
+        echo "slice name $slice is not a relative path inside the workspaces directory" >&2
+        exit 1
+        ;;
+esac
+case $slice in
+    "" | /* | -* | *[!A-Za-z0-9._/+-]*)
+        echo "slice name $slice is not a relative path inside the workspaces directory" >&2
+        exit 1
+        ;;
+esac
+# A slice is a task branch as the manifest's task pattern writes it,
+# feature/release-<version>-<epic>-<task> with bare numbers for the epic and the task, and never
+# the base it merges into.
+task_branch() {
+    case $1 in
+        feature/release-?*-?*-?*) ;;
+        *) return 1 ;;
+    esac
+    branch_rest=${1#feature/release-}
+    branch_task=${branch_rest##*-}
+    branch_rest=${branch_rest%-*}
+    branch_epic=${branch_rest##*-}
+    branch_version=${branch_rest%-*}
+    case $branch_task in "" | *[!0-9]*) return 1 ;; esac
+    case $branch_epic in "" | *[!0-9]*) return 1 ;; esac
+    case $branch_version in "" | *[!A-Za-z0-9.-]*) return 1 ;; esac
+}
+if ! task_branch "$slice"; then
+    echo "slice name $slice is not a task branch, feature/release-<version>-<epic>-<task>" >&2
+    exit 1
+fi
+if [ -n "$ZAF_BASE" ] && [ "$slice" = "$ZAF_BASE" ]; then
+    echo "slice name $slice is the base, not a task branch" >&2
+    exit 1
+fi
+
+# The release the commit belongs to, as the branch names write it (0-3).
+case $ZAF_VERSION in
+    "" | *[!A-Za-z0-9.-]*)
+        echo "ZAF_VERSION '$ZAF_VERSION' is not a version; the message's [release-<version>] needs one" >&2
+        exit 1
+        ;;
+esac
+if [ -z "$message" ]; then
+    echo "a commit needs a message" >&2
+    exit 1
+fi
+
+dir=$ZAF_ROOT/.zaf/workspaces/$slice
+
+# Any jj workspace at the slice's path is the slice's: `workspace-open` hands back one it finds.
+if [ ! -d "$dir/.jj" ]; then
+    echo "slice $slice is not open" >&2
+    exit 1
+fi
+
+cd "$dir" || exit 2
+
+# The message as Zurfur writes it: the first line carries the release, and the last line is the
+# co-author. A message that has either already keeps it once.
+prefix="[release-$ZAF_VERSION] "
+trailer="Co-Authored-By: Claude <noreply@anthropic.com>"
+first=$(printf '%s\n' "$message" | head -n 1)
+rest=$(printf '%s\n' "$message" | tail -n +2)
+case $first in
+    "$prefix"*) ;;
+    *) first=$prefix$first ;;
+esac
+if [ -n "$rest" ]; then
+    message=$(printf '%s\n%s' "$first" "$rest")
+else
+    message=$first
+fi
+if ! printf '%s\n' "$message" | grep -qxF "$trailer"; then
+    message=$(printf '%s\n\n%s' "$message" "$trailer")
+fi
+
+# jj snapshots the working copy first, so a file just written counts as work.
+empty=$(jj --no-pager --color=never log --no-graph -r @ -T empty) || exit 2
+if [ "$empty" = "true" ]; then
+    echo "nothing to commit for $first" >&2
+    exit 1
+fi
+
+jj --no-pager --color=never commit -m "$message" || exit 2
+# The work is the commit under the new empty working copy; the bookmark follows it.
+jj --no-pager --color=never bookmark set "$slice" -r @- || exit 2
+
+jj --no-pager --color=never log --no-graph -r @- -T 'commit_id ++ "\n"' || exit 2
+exit 0

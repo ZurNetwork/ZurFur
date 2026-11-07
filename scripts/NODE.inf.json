@@ -169,6 +169,11 @@
       "name": "workspace-init.sh",
       "role": "gives a secondary jj workspace (or a git worktree) its own dev-loop ports, DB and compose project through a managed .env block; refuses the primary checkout (just workspace-init; tested by workspace-init.test.sh)",
       "node": false
+    },
+    {
+      "name": "zaf-tests.sh",
+      "role": "the tests dispatcher behind .zaf.toml's gate tests template: one name in, one run out; a *.spec.ts name (relative to frontend/ui) runs under Vitest, a *.stories.svelte name runs in the stories and stories-light-still projects, any other name is a cargo test filter over the workspace; exits with the run's own status, and 2 with no name or more than one; works from any directory (tested by zaf-tests.test.sh)",
+      "node": false
     }
   ],
   "notes": [

@@ -364,17 +364,18 @@ hooks-test:
 # dev-profile pins, pr-wait, tools-check, the nodes install check, the nodes fmt
 # hook, den-fill, the dev logs, the private-papers check, the cargo-config
 # check, the node-tree guard, the nodes 0.7 node-text edits, the `jj push`
-# gate's argument guard, workspace-init, the npm advisory scan, CI's npm-lock
-# driver and its pins, the gallery's screenshot script and its image pins (the
-# design-index check's own tests run under `design-index-check-test`). CI runs
-# it in the `hooks` job, which has no jj and no nodes: the jj fixtures and the
-# node-text edits' tests skip themselves there. The screenshot script's tests
-# always run against a stub runtime, never a real one.
+# gate's argument guard, workspace-init, the zaf step actions and tests
+# dispatcher, the npm advisory scan, CI's npm-lock driver and its pins, the
+# gallery's screenshot script and its image pins (the design-index check's own
+# tests run under `design-index-check-test`). CI runs it in the `hooks` job,
+# which has no jj and no nodes: the jj fixtures and the node-text edits' tests
+# skip themselves there. The screenshot script's tests always run against a stub
+# runtime, never a real one.
 scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/nodes-install.test.sh scripts/nodes-fmt-hook.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/cargo-config-check.test.sh scripts/nodes-tree-check.test.sh scripts/nodes-0-7-edits.test.sh scripts/jj-push.test.sh scripts/workspace-init.test.sh scripts/build-id.test.sh scripts/npm-advisories.test.sh scripts/npm-lock-ci.test.sh scripts/npm-lock-pins.test.sh scripts/gallery-shots.test.sh scripts/gallery-image-pins.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/nodes-install.test.sh scripts/nodes-fmt-hook.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/cargo-config-check.test.sh scripts/nodes-tree-check.test.sh scripts/nodes-0-7-edits.test.sh scripts/jj-push.test.sh scripts/workspace-init.test.sh scripts/build-id.test.sh scripts/npm-advisories.test.sh scripts/npm-lock-ci.test.sh scripts/npm-lock-pins.test.sh scripts/gallery-shots.test.sh scripts/gallery-image-pins.test.sh scripts/zaf-tests.test.sh scripts/zaf-actions.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done

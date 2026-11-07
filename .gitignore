@@ -31,3 +31,5 @@ WORKSHEET.md
 
 # Team working papers are private too; scripts/private-papers-check.sh fails if any is tracked.
 /.teams/
+
+# .zaf/ is tracked under its own .zaf/.gitignore, an allow-list written by zaf setup.
