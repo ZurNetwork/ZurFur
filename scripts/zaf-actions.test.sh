@@ -1,8 +1,9 @@
 #!/bin/sh
 # Tests for the zaf step actions in .zaf/actions: `push`'s ancestry check
 # (a rewritten pushed commit is refused; a forward commit and a base merge
-# push), and the task-branch check of `commit`, `push` and `pr-open` (main and
-# the integration branch are refused before anything runs). The push fixtures
+# push), and the task-branch check of `commit`, `push`, `pr-open`,
+# `workspace-open`, `workspace-drop` and `merge-base` (main and the integration
+# branch are refused before anything runs). The push fixtures
 # use a scratch jj repo and a local bare origin, never the real one, and a
 # copy of `push` whose build slot is a stub, so a gate that already holds a
 # slot never waits on another. Run directly, or via `just scripts-test`.
@@ -57,6 +58,9 @@ for branch in main feature/release-0.3; do
     expect "commit refuses $branch" 1 "is not a task branch" commit "$branch" message
     expect "pr-open refuses $branch" 1 "is not a task branch" pr-open "$branch" main title body
 done
+expect "workspace-open refuses main" 1 "is not a task branch" workspace-open main feature/release-0.3
+expect "workspace-drop refuses the integration branch" 1 "is not a task branch" workspace-drop feature/release-0.3
+expect "merge-base refuses main" 2 "is not a task branch" merge-base main feature/release-0.3
 expect "pr-open refuses its own base" 1 "is the base" pr-open feature/release-0-3-1 feature/release-0-3-1 title body
 expect "pr-open reaches only the stub gh" 2 "gh stub: pr list" pr-open feature/release-0-3-1-2 feature/release-0-3-1 title body
 export ZAF_BASE=feature/release-0-3-1
