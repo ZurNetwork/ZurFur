@@ -322,7 +322,7 @@ scripts-test:
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
-    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/nodes-install.test.sh scripts/nodes-fmt-hook.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/nodes-tree-check.test.sh scripts/nodes-0-7-edits.test.sh scripts/jj-push.test.sh scripts/workspace-init.test.sh scripts/build-id.test.sh; do
+    for t in scripts/ci-paths.test.sh scripts/ci-changes.test.sh scripts/gate-light.test.sh scripts/dev-profile-pins.test.sh scripts/pr-wait.test.sh scripts/tools-check.test.sh scripts/nodes-install.test.sh scripts/nodes-fmt-hook.test.sh scripts/den-fill.test.sh scripts/dev-log.test.sh scripts/compose-logs.test.sh scripts/logs.test.sh scripts/private-papers-check.test.sh scripts/nodes-tree-check.test.sh scripts/nodes-0-7-edits.test.sh scripts/jj-push.test.sh scripts/workspace-init.test.sh scripts/build-id.test.sh scripts/zaf-tests.test.sh; do
         echo "--- $t ---"
         sh "$t" || status=1
     done
