@@ -84,10 +84,7 @@ pub(super) async fn add_element(
 
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "ARC-4 moves this into a use case"
-            )]
+            #[expect(clippy::disallowed_methods, reason = "no use case owns this write yet")]
             let mut commissions = uow.commissions();
             commissions.add_element(&element).await
         })
@@ -113,10 +110,7 @@ pub(super) async fn remove_element(
 
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "ARC-4 moves this into a use case"
-            )]
+            #[expect(clippy::disallowed_methods, reason = "no use case owns this write yet")]
             let mut commissions = uow.commissions();
             commissions.remove_element(&commission_id, &element).await
         })

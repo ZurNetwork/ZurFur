@@ -19,11 +19,11 @@ use sqlx::migrate::MigrateError;
 use uuid::Uuid;
 
 use crate::commission_fill::{
-    FILL_VERSION, LEVEL_TOKENS, commission_node, just_before_den_1, ledger_records, node_id_of,
-    refusal, through_den_1,
+    FILL_VERSION, LEVEL_TOKENS, commission_node, just_before_the_node_table, ledger_records,
+    node_id_of, refusal, through_the_node_table,
 };
 use crate::migration_steps::{bare_pool, run_migrations_through, try_run_migrations_through};
-use crate::node_backfill::{DEN_1_VERSION, archive, seed_commission};
+use crate::node_backfill::{NODE_TABLE_VERSION, archive, seed_commission};
 
 /// The commission column drop's migration, as sqlx numbers it.
 const DROP_VERSION: i64 = 20261022165210;
@@ -264,10 +264,10 @@ async fn assert_stopped_naming(pool: &PgPool, stopped: &MigrateError, named: Uui
 
 #[tokio::test]
 async fn after_the_drop_the_columns_are_gone_and_node_id_is_not_null() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let made_before = seed_commission(&pool, "Made before the node table", "private").await;
     let renamed = seed_commission(&pool, "The old title", "public").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
     let made_in_the_window = seed_commission(&pool, "Made in the window", "private").await;
     let archived = seed_commission(&pool, "An archived commission", "public").await;
     archive(&pool, archived).await;
@@ -330,9 +330,9 @@ async fn after_the_drop_the_columns_are_gone_and_node_id_is_not_null() {
 
 #[tokio::test]
 async fn a_title_renamed_before_the_fill_passes_the_drop() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let renamed = seed_commission(&pool, "The old title", "private").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
     set_title_apart(&pool, renamed, "The new title").await;
 
     run_migrations_through(&pool, DROP_VERSION).await;
@@ -346,7 +346,7 @@ async fn a_title_renamed_before_the_fill_passes_the_drop() {
 
 #[tokio::test]
 async fn a_node_renamed_after_the_fill_passes_the_drop() {
-    let (pool, _container) = through_den_1().await;
+    let (pool, _container) = through_the_node_table().await;
     let commission = seed_commission(&pool, "Before", "private").await;
     run_migrations_through(&pool, FILL_VERSION).await;
     rename_node(&pool, commission, "After").await;
@@ -374,7 +374,7 @@ async fn a_database_with_no_commissions_drops() {
 
 #[tokio::test]
 async fn a_title_that_differs_from_its_node_stops_the_drop() {
-    let (pool, _container) = through_den_1().await;
+    let (pool, _container) = through_the_node_table().await;
     seed_commission(&pool, "A kept title", "private").await;
     let differing = seed_commission(&pool, "A seeded title", "private").await;
     run_migrations_through(&pool, FILL_VERSION).await;
@@ -389,7 +389,7 @@ async fn a_title_that_differs_from_its_node_stops_the_drop() {
 
 #[tokio::test]
 async fn a_level_that_differs_stops_the_drop() {
-    let (pool, _container) = through_den_1().await;
+    let (pool, _container) = through_the_node_table().await;
     seed_commission(&pool, "A kept level", "private").await;
     let differing = seed_commission(&pool, "A widened commission", "private").await;
     run_migrations_through(&pool, FILL_VERSION).await;
@@ -409,7 +409,7 @@ async fn a_level_that_differs_stops_the_drop() {
 
 #[tokio::test]
 async fn a_commission_without_a_node_stops_the_drop() {
-    let (pool, _container) = through_den_1().await;
+    let (pool, _container) = through_the_node_table().await;
     seed_commission(&pool, "A bound commission", "private").await;
     run_migrations_through(&pool, FILL_VERSION).await;
     let node_less = plant_node_less(&pool, "A node-less commission").await;
@@ -428,7 +428,7 @@ async fn a_commission_without_a_node_stops_the_drop() {
 
 #[tokio::test]
 async fn a_commission_whose_node_was_deleted_by_hand_stops_the_drop() {
-    let (pool, _container) = through_den_1().await;
+    let (pool, _container) = through_the_node_table().await;
     seed_commission(&pool, "A kept commission", "private").await;
     let dangling = seed_commission(&pool, "A commission whose node goes", "private").await;
     run_migrations_through(&pool, FILL_VERSION).await;
@@ -448,7 +448,7 @@ async fn a_commission_whose_node_was_deleted_by_hand_stops_the_drop() {
 
 #[tokio::test]
 async fn a_commission_bound_to_a_node_that_is_not_its_own_stops_the_drop() {
-    let (pool, _container) = through_den_1().await;
+    let (pool, _container) = through_the_node_table().await;
     seed_commission(&pool, "A commission", "private").await;
     let foreign = seed_commission(&pool, "A commission", "private").await;
     run_migrations_through(&pool, FILL_VERSION).await;
@@ -463,7 +463,7 @@ async fn a_commission_bound_to_a_node_that_is_not_its_own_stops_the_drop() {
 
 #[tokio::test]
 async fn a_level_edit_committed_while_the_drop_waits_stops_the_drop() {
-    let (pool, _container) = through_den_1().await;
+    let (pool, _container) = through_the_node_table().await;
     let edited = seed_commission(&pool, "A commission edited mid-drop", "private").await;
     run_migrations_through(&pool, FILL_VERSION).await;
     let mut editor = pool.begin().await.expect("begin the editor");
@@ -494,7 +494,7 @@ async fn a_level_edit_committed_while_the_drop_waits_stops_the_drop() {
 
 #[tokio::test]
 async fn a_title_rename_committed_while_the_drop_waits_stops_the_drop() {
-    let (pool, _container) = through_den_1().await;
+    let (pool, _container) = through_the_node_table().await;
     let edited = seed_commission(&pool, "A commission renamed mid-drop", "private").await;
     run_migrations_through(&pool, FILL_VERSION).await;
     let mut editor = pool.begin().await.expect("begin the editor");
@@ -527,27 +527,27 @@ async fn a_title_rename_committed_while_the_drop_waits_stops_the_drop() {
 #[tokio::test]
 async fn the_refusal_names_the_id_only_and_title_still_exists() {
     let title_apart = {
-        let (pool, container) = through_den_1().await;
+        let (pool, container) = through_the_node_table().await;
         let commission = seed_commission(&pool, CANARY_TITLE, "private").await;
         run_migrations_through(&pool, FILL_VERSION).await;
         set_title_apart(&pool, commission, CANARY_APART).await;
         (pool, container)
     };
     let level_apart = {
-        let (pool, container) = through_den_1().await;
+        let (pool, container) = through_the_node_table().await;
         let commission = seed_commission(&pool, CANARY_TITLE, "private").await;
         run_migrations_through(&pool, FILL_VERSION).await;
         widen_node_to_listed(&pool, commission).await;
         (pool, container)
     };
     let node_less = {
-        let (pool, container) = through_den_1().await;
+        let (pool, container) = through_the_node_table().await;
         run_migrations_through(&pool, FILL_VERSION).await;
         plant_node_less(&pool, CANARY_TITLE).await;
         (pool, container)
     };
     let node_deleted = {
-        let (pool, container) = through_den_1().await;
+        let (pool, container) = through_the_node_table().await;
         let commission = seed_commission(&pool, CANARY_TITLE, "private").await;
         run_migrations_through(&pool, FILL_VERSION).await;
         plant_deleted_node(&pool, commission).await;

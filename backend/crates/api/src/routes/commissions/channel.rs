@@ -56,19 +56,13 @@ pub(super) async fn link_channel(
     .into();
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "ARC-4 moves this into a use case"
-            )]
+            #[expect(clippy::disallowed_methods, reason = "no use case owns this write yet")]
             let changed = uow
                 .commissions()
                 .set_linked_channel(&commission_id, Some(&pointer))
                 .await?;
             if changed {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "ARC-4 moves this into a use case"
-                )]
+                #[expect(clippy::disallowed_methods, reason = "no use case owns this write yet")]
                 uow.changelog().append(&entry).await?;
             }
             Ok(())
@@ -107,19 +101,13 @@ pub(super) async fn clear_channel(
     .into();
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "ARC-4 moves this into a use case"
-            )]
+            #[expect(clippy::disallowed_methods, reason = "no use case owns this write yet")]
             let changed = uow
                 .commissions()
                 .set_linked_channel(&commission_id, None)
                 .await?;
             if changed {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "ARC-4 moves this into a use case"
-                )]
+                #[expect(clippy::disallowed_methods, reason = "no use case owns this write yet")]
                 uow.changelog().append(&entry).await?;
             }
             Ok(())

@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::migration_steps::{
     bare_pool, run_migrations_before, run_migrations_through, try_run_migrations_through,
 };
-use crate::node_backfill::{DEN_1_VERSION, seed_commission, seed_owner};
+use crate::node_backfill::{NODE_TABLE_VERSION, seed_commission, seed_owner};
 
 /// The dispute columns' migration, as sqlx numbers it.
 const DISPUTE_VERSION: i64 = 20261026075811;
@@ -40,9 +40,9 @@ const LOCK_WAIT_POLLS: u32 = 500;
 const LOCK_WAIT_INTERVAL: Duration = Duration::from_millis(20);
 
 /// A fresh database migrated up to just before the node table, with its owner.
-async fn just_before_den_1() -> (PgPool, impl Sized) {
+async fn just_before_the_node_table() -> (PgPool, impl Sized) {
     let (pool, container) = bare_pool().await;
-    run_migrations_before(&pool, DEN_1_VERSION).await;
+    run_migrations_before(&pool, NODE_TABLE_VERSION).await;
     seed_owner(&pool).await;
     (pool, container)
 }
@@ -182,7 +182,7 @@ async fn assert_refused_by_the_check(pool: &PgPool, commission: Uuid, statement:
 // migration stops naming its id alone, unrecorded, both columns absent.
 #[tokio::test]
 async fn a_disputed_row_without_its_step_stops_it_naming_the_id() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let disputed = seed_at(&pool, "active").await;
     run_migrations_before(&pool, DISPUTE_VERSION).await;
     set_lifecycle(&pool, disputed, "disputed").await;
@@ -198,7 +198,7 @@ async fn a_disputed_row_without_its_step_stops_it_naming_the_id() {
 // the step, the step left one of the other five; a whole dispute is kept, and so is its clear.
 #[tokio::test]
 async fn the_check_ties_the_step_to_disputed() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let commission = seed_at(&pool, "active").await;
     run_migrations_through(&pool, DISPUTE_VERSION).await;
 
@@ -246,7 +246,7 @@ async fn the_check_ties_the_step_to_disputed() {
 // and stops naming its id, not with PostgreSQL's own CHECK text.
 #[tokio::test]
 async fn a_dispute_committed_while_the_migration_waits_stops_it_naming_the_id() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let disputed = seed_at(&pool, "batched").await;
     run_migrations_before(&pool, DISPUTE_VERSION).await;
     let mut writer = pool.begin().await.expect("begin the writer");
@@ -282,7 +282,7 @@ async fn a_dispute_committed_while_the_migration_waits_stops_it_naming_the_id() 
 async fn a_seeded_run_stops_on_a_planted_dispute_then_runs_clean() {
     let db = test_support::pg::bare_db().await;
     let pool = adapter_pg::connect(db.url()).await.expect("pool connects");
-    run_migrations_before(&pool, DEN_1_VERSION).await;
+    run_migrations_before(&pool, NODE_TABLE_VERSION).await;
     seed_owner(&pool).await;
     let _draft = seed_at(&pool, "draft").await;
     let active = seed_at(&pool, "active").await;

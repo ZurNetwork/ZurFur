@@ -19,7 +19,7 @@ use crate::migration_steps::{run_migrations_through, try_run_migrations_through}
 use crate::node_backfill::seed_slot;
 use crate::slot_fill::{
     CANARY_TITLE, SEEDED_SLOT_TITLES, SLOT_FILL_VERSION, bound_commission, execute_alone,
-    rename_slot_node, seeded_through_den_1, slot_node, slot_node_id, slots_entry,
+    rename_slot_node, seeded_through_the_node_table, slot_node, slot_node_id, slots_entry,
     wait_until_a_lock_on_waits,
 };
 
@@ -41,7 +41,7 @@ const DEPENDENT_OBJECTS_STILL_EXIST: &str = "2BP01";
 /// A database seeded through the real path and migrated through the Slot node fill, so every
 /// Slot is bound to its own node. Answers the commission and every seeded Slot.
 async fn through_the_fill() -> (PgPool, impl Sized, Uuid, Vec<Uuid>) {
-    let (pool, container, commission, slots) = seeded_through_den_1().await;
+    let (pool, container, commission, slots) = seeded_through_the_node_table().await;
     run_migrations_through(&pool, SLOT_FILL_VERSION).await;
     (pool, container, commission, slots)
 }
