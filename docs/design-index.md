@@ -78,6 +78,8 @@
 - 2026102306 decided — Posting — a Pipeline of Stages and a Browser PostyBirb
 - 2026102501 decided — Tags as the Base of Search — Typed Tags, Aliases, Implications and Named Batches
 - 2026102601 decided — A Home Screen Web App — the Manifest First, the Service Worker with Notifications and a First-Load Budget
+- 2026110701 decided — Zurfur Dogfoods Its Own Surfaces — First-Party Plugins Equal Third-Party Ones, the Frame on Every Plugin and Public Calls Only
+- 2026110901 decided — The Discovery Queue — Artists with Commissions Open, a Small-Artist Curve and the Viewer's Own Sliders
 
 ## entities/
 - 786439 current — User

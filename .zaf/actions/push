@@ -1,0 +1,162 @@
+#!/bin/sh
+# zaf description: move a slice's bookmark forward to its workspace's latest commit and push it with the root's scripts/jj-push.sh (fmt, clippy and the private-papers check first, in a build slot), after the root's own copy of the private-papers check, overwriting nothing: origin's bookmark, as the last fetch saw it, must be an ancestor of what is pushed; never fetches; a slice with nothing new is quiet; hands back the pushed commit
+# zaf 1: refused: uncommitted work, a backward or sideways move of the bookmark, origin's bookmark not an ancestor of the slice (the push would rewrite a pushed commit), a remote with work the slice lacks, fmt, clippy, a hand-typed migration name or a private paper stopped the push, no workspace for the slice, or a slice name that is not a workspace path or a task branch, or is the base
+# zaf 2: a backend failed (jj, cargo or the build slot is missing or refused, or a papers check could not run)
+# zaf mode: 750
+# zaf group: team
+# zaf timeout: 60
+slice=$1
+
+if [ -z "$ZAF_ROOT" ] || [ "$#" -ne 1 ]; then
+    echo "usage: push <slice>, with ZAF_ROOT set" >&2
+    exit 1
+fi
+
+# A slice name is a relative path of plain parts, below the workspaces directory, and fit to
+# sit inside a revset string. jj-push.sh takes a plain name in `-b` as one exact bookmark, so the
+# name keeps to the characters it reads as plain.
+case "/$slice/" in
+    *//* | */./* | */../*)
+        echo "slice name $slice is not a relative path inside the workspaces directory" >&2
+        exit 1
+        ;;
+esac
+case $slice in
+    "" | /* | -* | *[!A-Za-z0-9._/+-]*)
+        echo "slice name $slice is not a relative path inside the workspaces directory" >&2
+        exit 1
+        ;;
+esac
+# A slice is a task branch as the manifest's task pattern writes it,
+# feature/release-<version>-<epic>-<task> with bare numbers for the epic and the task, and never
+# the base it merges into.
+task_branch() {
+    case $1 in
+        feature/release-?*-?*-?*) ;;
+        *) return 1 ;;
+    esac
+    branch_rest=${1#feature/release-}
+    branch_task=${branch_rest##*-}
+    branch_rest=${branch_rest%-*}
+    branch_epic=${branch_rest##*-}
+    branch_version=${branch_rest%-*}
+    case $branch_task in "" | *[!0-9]*) return 1 ;; esac
+    case $branch_epic in "" | *[!0-9]*) return 1 ;; esac
+    case $branch_version in "" | *[!A-Za-z0-9.-]*) return 1 ;; esac
+}
+if ! task_branch "$slice"; then
+    echo "slice name $slice is not a task branch, feature/release-<version>-<epic>-<task>" >&2
+    exit 1
+fi
+if [ -n "$ZAF_BASE" ] && [ "$slice" = "$ZAF_BASE" ]; then
+    echo "slice name $slice is the base, not a task branch" >&2
+    exit 1
+fi
+
+dir=$ZAF_ROOT/.zaf/workspaces/$slice
+if [ ! -d "$dir/.jj" ]; then
+    echo "no workspace for slice $slice" >&2
+    exit 1
+fi
+cd "$dir" || exit 2
+
+# Two build slots on this machine; the push's fmt and clippy take one like any gate.
+slot=/home/zuri/.cache/zurfur-locks/build-slot.sh
+if [ ! -x "$slot" ]; then
+    echo "the build slot $slot is missing" >&2
+    exit 2
+fi
+# The root's copy of jj-push.sh, like the papers check below: run from the slice's workspace, it
+# finds the slice through `jj workspace root` and pushes it.
+jj_push=$ZAF_ROOT/scripts/jj-push.sh
+if [ ! -f "$jj_push" ]; then
+    echo "the root has no $jj_push to push with" >&2
+    exit 2
+fi
+# The root's copy of the papers check: no commit in the slice can edit it, though a programmer
+# with edit rights on the root could.
+papers=$ZAF_ROOT/scripts/private-papers-check.sh
+if [ ! -f "$papers" ]; then
+    echo "the root has no $papers to check the slice with" >&2
+    exit 2
+fi
+
+# jj snapshots the workspace's working copy on its first command, so what follows sees what the
+# programmer left on disk.
+jj_run() {
+    jj --no-pager --color=never "$@"
+}
+
+bookmark="bookmarks(exact:\"$slice\")"
+
+empty=$(jj_run log --no-graph -r @ -T empty) || exit 2
+if [ "$empty" != "true" ]; then
+    echo "uncommitted work in $slice; commit first" >&2
+    exit 1
+fi
+
+# A bookmark that is not an ancestor of the workspace's latest commit would move backwards or
+# sideways, which is a refusal and never an overwrite.
+behind=$(jj_run log --no-graph -r "$bookmark ~ ::@-" -T 'commit_id ++ "\n"') || exit 2
+if [ -n "$behind" ]; then
+    echo "the bookmark $slice is not behind the latest commit; moving it would go backwards or sideways" >&2
+    exit 1
+fi
+
+# origin's bookmark must be an ancestor of the latest commit too, so the push only adds commits:
+# a base merge descends from the pushed head and passes, and a first push has no remote bookmark.
+# A pushed commit rewritten in the slice is refused here, before jj-push.sh, whose lease would let
+# it through. Nothing here fetches: jj-push.sh's lease is to the last fetch, so a remote that moved
+# since is refused there, and this check reads origin as that same fetch saw it.
+rewritten=$(jj_run log --no-graph -r "remote_bookmarks(exact:\"$slice\", exact:\"origin\") ~ ::@-" -T 'commit_id ++ "\n"') || exit 2
+if [ -n "$rewritten" ]; then
+    echo "origin's $slice, as the last fetch saw it, has commits the slice lacks, or the slice rewrote a pushed commit; nothing was pushed: fetch and check again before retrying" >&2
+    exit 1
+fi
+
+# A programmer may have committed by hand, leaving the bookmark behind: settle it on the latest
+# commit. `bookmark set` moves forward or stays, and refuses a backward move on its own.
+jj_run bookmark set "$slice" -r @- || exit 2
+head=$(jj_run log --no-graph -r @- -T 'commit_id') || exit 2
+
+# Already on origin at this commit: nothing new.
+published=$(jj_run log --no-graph -r "$bookmark & remote_bookmarks(exact:\"$slice\", exact:\"origin\")" -T 'commit_id ++ "\n"') || exit 2
+if [ -n "$published" ]; then
+    echo "$head"
+    exit 0
+fi
+
+# The papers check first from the root's copy, over every commit the push could send that origin
+# lacks, refused as its own failure; the root's jj-push.sh runs the same copy again before it
+# pushes.
+status=0
+sh "$papers" --unpushed "@- | $bookmark" >&2 || status=$?
+case $status in
+    0) ;;
+    1)
+        echo "the private-papers check refused $slice; nothing was pushed" >&2
+        exit 1
+        ;;
+    *) exit 2 ;;
+esac
+
+# The only sanctioned push: the root's jj-push.sh, as `jj push` runs it, with one plain
+# bookmark. It pushes to origin with a lease to the last fetch, so a remote whose bookmark moved
+# past what jj last saw refuses it; the ancestry check above keeps it from moving one sideways.
+status=0
+pushed=$(CARGO_BUILD_JOBS=8 nice -n 19 "$slot" sh "$jj_push" -b "$slice" 2>&1) || status=$?
+printf '%s\n' "$pushed" >&2
+if [ "$status" -ne 0 ]; then
+    case $pushed in
+        *"unexpectedly moved on the remote"*)
+            echo "the remote has work $slice lacks" >&2
+            exit 1
+            ;;
+        *"formatting failed"* | *"clippy failed"* | *"migration timestamp looks hand-typed"* | *"add or change private working papers"*)
+            echo "jj-push.sh refused $slice; nothing was pushed" >&2
+            exit 1
+            ;;
+    esac
+    exit 2
+fi
+echo "$head"
