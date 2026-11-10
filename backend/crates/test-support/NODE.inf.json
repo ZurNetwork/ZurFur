@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/test-support",
-  "charted": "2026-10-17",
+  "charted": "2026-10-26",
   "short": "Shared test rig: throwaway PDS, stub PLC, Postgres harness, the PostgreSQL app setup",
   "is": "The shared test rig: a hermetic throwaway PDS with an in-process stub PLC directory, a one-container/template-clone Postgres harness, the app served on PostgreSQL behind an in-process sign-in (`pg_app`) with the den world seeded on it (`pg_app::den_world`), and the cross-adapter PublicRecords conformance suite.",
   "type": "code",
@@ -12,7 +12,8 @@
     "Zero requests to the public atproto network — minting lands at the local stub only.",
     "`DOCKER_HOST` is honored for the container socket; every rig needs a Tokio runtime (`#[tokio::test]`).",
     "The default PDS image literal must equal `.env.example`'s `ZURFUR_PDS_IMAGE`.",
-    "Container reuse is an escape hatch, not the default."
+    "Container reuse is an escape hatch, not the default.",
+    "A test-only crate: every workspace crate takes it as a dev-dependency, never a normal one (application/tests/write_gate_seams.rs holds it). That is why the driver scans pass it by, though it depends on composition."
   ],
   "entry_points": [
     "src/lib.rs (the usage recipe is in notes)",
@@ -21,12 +22,27 @@
   "fs": [
     {
       "name": "Cargo.toml",
-      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers, base64 for pg_app's dev-profile root key, application for pg_app::den_world's Workflows (made through the create use case), reqwest multipart for its uploads, strum for pg_app::ProfileCacheState",
+      "role": "testcontainers + postgres module, axum for the PLC stub, adapter-pg for migrations, atrium-crypto, reqwest 0.13 + tower-sessions + http-cookies for http.rs, async-trait for the recording wrappers, application for pg_app::den_world's Workflows (made through the create use case), reqwest multipart for its uploads, strum for pg_app::ProfileCacheState and node_contract's NodeType::VARIANTS, adapter-hkdf + zeroize for custody's test custodian and test root, data-encoding for its hex fixtures, hmac + sha2-0-11 for custody's canary (RFC 5869 apart from adapter-hkdf), adapter-atproto + jacquard-oauth + jacquard-common + fluent-uri + smol_str for custody's sign-in round trip through the auth store, tracing for log_capture's keeper dispatcher",
+      "node": false
+    },
+    {
+      "name": "src/account_deletion_contract.rs",
+      "role": "the shared account-deletion suite: one pub async fn per case over (&Runtime, &dyn CommissionSeeder), driving the account use cases (found, offer, accept, decline, revoke, leave, transfer, delete) as a driver would: an Account with a member, one whose member left and one handed over delete soft; an empty one, one with a board card and one with a declined and a revoked offer delete hard, the handle founding again; accept records the member fact once; a deactivated Account never deletes hard (a second delete answers not found, the store's hard delete refuses a deactivated row); its helpers (recognized, founded, offer, try_accept, accept, seat, delete, deleted, is_live, is_deactivated_for) and re-exports (Runtime, DeleteOutcome, AccountError, AccountEntity) serve adapter-pg's race tests; account_deletion_contract_tests!(setup) writes one #[tokio::test] per case",
+      "node": false
+    },
+    {
+      "name": "src/commission_standing_contract.rs",
+      "role": "the shared commission-standing suite: one pub async fn per case over (&dyn Database, &dyn CommissionStore, &dyn ParticipantRows, &dyn CommissionSeeder), seeding its commissions (Listed and Public too) through seeder.rs, checking the pool's standing and a unit's standing_for_update alike, and that the locked read answers the commission's own node; ParticipantRows is each adapter's own write of the participant rows no port writes; commission_standing_contract_tests!(setup) writes one #[tokio::test] per case; the pool's find_summary by the shown rule (a literal table: owner, Participant and stranger at each level, live and archived, and an absent id), the owner without a participant row included",
       "node": false
     },
     {
       "name": "src/contract.rs",
       "role": "the generic PublicRecords conformance suite (mem + atproto)",
+      "node": false
+    },
+    {
+      "name": "src/custody.rs",
+      "role": "custody fixtures: the test root TEST_ROOT [0x5e; 32], test_root() -> RootSecret (what every test runtime connects with) and root_of(bytes) for a test that plants its own; the three 0.1 legacy rows (alice, bob, alice starting 0x01) with LEGACY_ROOT [9; 32], legacy_keys and hex_bytes; test_custodian() → Arc<dyn KeyCustodian>, an HkdfKeyCustodian holding every purpose over TEST_ROOT, and test_custody() → TestCustody, its scoped handles (custodian_of(root) and custody_of(root) for a planted root); LyingCustodian and lying_did_custody(), whose open answers other bytes than were sealed; the log canary's helpers, computed by RFC 5869 over HMAC-SHA256 apart from adapter-hkdf's code: prk_of, purpose_key_of and key_id_of a planted root, printed_forms (each form named: lower- and uppercase hex, standard and URL-safe base64 padded and unpadded, the {:?}, {:x?} and {:X?} byte lists, and every 8-byte window as lower- and uppercase hex, so a partial print shows), named_printings and derived_printings (the PRK and every purpose key, every form each, each printing named); SIGNIN_CANARY_DID, SIGNIN_CANARY_SECRETS and signin_secrets_round_trip(pool, sealer), a sign-in session and an auth request sealed and opened through AtprotoAuthStore; envelope_key_id, the key id a stored envelope's header names; the 0.1 store (src/custody/legacy_store.rs): CUSTODY_ENVELOPE, before_the_envelope() -> (PgPool, TestDb) (a bare database migrated to just before it), seed_legacy and seed_alice_and_bob (0.1 rows naming only did, wrapped_keys and created_at), legacy_genesis_record (the identity-only genesis op a 0.1 founding logged, over legacy_keys' did:keys, its CID and signature stand-ins) and StoreSnapshot / store_snapshot (the ledger's rows, the custody columns and rows, as text); tests in src/custody/tests.rs (RFC 5869's test case 1, every printed form of a short input and the two windows of nine bytes, the golden keys and key ids, the key ids the custodian writes, each door subject building to its golden encoding, an unknown subject name panicking with the name, the golden inputs among their subjects' parts)",
       "node": false
     },
     {
@@ -36,7 +52,7 @@
     },
     {
       "name": "src/den.rs",
-      "role": "the den route suites' readers, shared by the in-memory and PostgreSQL setups: get, ok_json, cache_control, entry_names, PRIVATE_NO_STORE and Answer (status, every header but date, body bytes)",
+      "role": "the den route suites' readers, shared by the in-memory and PostgreSQL setups: get, patch_title (PATCH with a title body), ok_json, cache_control, entry_names, PRIVATE_NO_STORE and Answer (status, every header but date, body bytes)",
       "node": false
     },
     {
@@ -60,13 +76,18 @@
       "node": false
     },
     {
+      "name": "src/invitation_validity_contract.rs",
+      "role": "the shared invitation-validity suite: one pub async fn per case over &Runtime, driving the account use cases and reading the offers back from the store: a demotion to Manager or to Member revokes every pending offer the Admin issued, a transfer revokes the old Owner's Admin offers and keeps their Manager and Member offers, a promotion and a re-grant of the same role revoke nothing, and the revoke touches only that issuer's pending offers in that Account (another issuer's, another Account's, an accepted and a revoked row keep state and updated_at); try_grant, try_leave and try_offer answer what the use case answered, for adapter-pg's race tests; invitation_validity_contract_tests!(setup) writes one #[tokio::test] per case",
+      "node": false
+    },
+    {
       "name": "src/lib.rs",
       "role": "crate docs + usage recipe; pins the ZURFUR_PDS_IMAGE literal",
       "node": false
     },
     {
       "name": "src/log_capture.rs",
-      "role": "CapturedLog — a tracing-subscriber writer a driver's log test reads its own subscriber's output back from",
+      "role": "CapturedLog — a tracing-subscriber writer a driver's log test reads its own subscriber's output back from; set_default and with_default, the one way a test installs its capture for its thread (tracing's own, with a never-dropped keeper dispatcher forced alive first; application's and api's clippy.toml ban the direct installs)",
       "node": false
     },
     {
@@ -80,13 +101,18 @@
       "node": false
     },
     {
+      "name": "src/node_contract.rs",
+      "role": "the shared node conformance suite: one pub async fn per case over (&dyn Database, &dyn NodeStore, Seeders: the adapter's CommissionSeeder and SlotSeeder), building 0.2's tree (a commission node, its six entries, Slots under slots), and node_contract_tests!(setup), which writes one #[tokio::test] per case; write_tree binds each tree's commission (its segment a commission id), and every committed commission node is bound; committed Slots are written in a second unit, each node keyed by a fresh element id and bound to its Slot through the SlotSeeder, so a slot node no Slot points at lives only inside an uncommitted unit (the bytewise children order and one segment under two parents are read there) and is refused at commit (a_slot_node_without_its_slot_is_refused_at_commit); a case deleting a commission node deletes its commission in the same unit; a refusal ends the unit",
+      "node": false
+    },
+    {
       "name": "src/pds.rs",
       "role": "ThrowawayPds::boot — container lifecycle, teardown on drop",
       "node": false
     },
     {
       "name": "src/pg.rs",
-      "role": "shared Postgres harness: one container per process, migrated template, TEMPLATE clone per test; TestDb::psql_command, the command line that runs psql inside the container on one clone",
+      "role": "shared Postgres harness: one container per process, migrated template, TEMPLATE clone per test; TestDb::psql_command, the command line that runs psql inside the container on one clone; allow_any_commission_token drops the commission table's word and time constraints in one test's database, so a test can plant a word or time no reader knows",
       "node": false
     },
     {
@@ -96,7 +122,7 @@
     },
     {
       "name": "src/pg_app/den_world.rs",
-      "role": "den_world(app) -> DenWorld, and den_world_recording(app, &StatementLog) through the statement proxy: alice, bob and a stranger signed in (profiles cached through GET /me); alice's Account \"Supreme Arts\" (Workflow \"Queue\") and bob's \"Night Shift\" (\"Backlog\"); \"Untitled\" and the archived \"Old sketch\", a file and a slot each, all through routes or use cases; bob a Participant of \"Untitled\" and set_visibility / store_unparsable_visibility as test-only writes; set_profile_cache(ProfileCacheState::{Warm, Cold}) fixes the profile cache's state for all three users; absent_* ids no seed writes",
+      "role": "den_world(app) -> DenWorld, and den_world_recording(app, &StatementLog) through the statement proxy: alice, bob and a stranger signed in (profiles cached through GET /me); alice's Account \"Supreme Arts\" (Workflow \"Queue\") and bob's \"Night Shift\" (\"Backlog\"); \"Untitled\" and the archived \"Old sketch\", a file and a slot each, all through routes or use cases; bob a Participant of \"Untitled\" and test-only writes: set_visibility (the commission node's level), store_unparsable_level (drops node_level_known in the world's own database, then writes a level no parser reads onto the node), store_legacy_title (the node's name and the created entry's payload); set_lifecycle_step (the commission row's undisputed step; the dispute CHECK refuses Disputed, which only PUT …/dispute enters); add_backlog_column adds a column to bob's \"Backlog\" through the add use case; set_profile_cache(ProfileCacheState::{Warm, Cold}) fixes the profile cache's state for all three users; absent_* ids no seed writes; other_absent_commission; plant_infinite_time (a commission row's created_at, deadline, archived_at or disputed_at set to ±infinity: CommissionTime, Infinity) and store_unparsable_lifecycle, each dropping the commission's word and time constraints in the world's own database first; seed_stranger_board (the stranger's Account, Workflow and first column: StrangerBoard), add_stranger_column, take_stranger_card_off",
       "node": false
     },
     {
@@ -111,12 +137,12 @@
     },
     {
       "name": "src/pg_app/pairs.rs",
-      "role": "the pairs of not-found causes on the den world, shared by the route, read and statement suites and the timing run: MissPair (absent, not_yours, home), stranger_targets (Untitled Private live; Old sketch Private, Public and Listed archived); the den routes' den_stranger_pairs (the commission, its changelog, its file), den_account_pair, den_character_pair (bob's user DID stands in: no Character on PostgreSQL yet) and den_participant_pairs (a file key, a slot, a Workflow); commission's commission_read_stranger_pairs, commission_read_live_pairs (with each pair's problem code), public_live_download_pair and download_participant_pair",
+      "role": "the pairs of not-found causes on the den world, shared by the route, read and statement suites and the timing run: MissPair (absent, not_yours, home), stranger_targets (Untitled Private live; Old sketch Private, Public and Listed archived); the den routes' den_stranger_pairs (the commission, its changelog, its file), den_account_pair, den_character_pair (bob's user DID stands in: no Character on PostgreSQL yet) and den_participant_pairs (a file key, a slot, a Workflow); commission's commission_read_stranger_pairs, commission_read_live_pairs (with each pair's problem code), public_live_download_pair and download_participant_pair; the rename's rename_stranger_pair (PATCH …/title with RENAME_TITLE: a made-up id against alice's Old sketch, which bob takes no part in); CommissionCall (a CallKind: read, placement or call; a method; its router route template; a path tail, `{file}` standing where the route names a file key; a CallBody: none, JSON or the multipart upload, each one its own parsing accepts; path, path_on, send, pair on a target and absent_pair on two made-up ids) and every_commission_call(column): the 31 routes of the commissions router that name an id (three reads — read_call, changelog_read_call, download_call —, the card's placement_call, rename_call, the eleven in new_write_calls and fifteen others)",
       "node": false
     },
     {
       "name": "src/pg_app/served.rs",
-      "role": "serve + serve_recording (the app's database reached through the statement proxy) + PgServed (base_url, live Runtime, the PDS, psql_command onto its database) + SignedIn + the dev-profile Config (example root key, PLC submission off); sessions through http-cookies' session_layer over PgSessionStore; served through http-stack's stack (serve_wrapped adds outer layers, PgServed carries the Detach); PgServed::sign_in / sign_in_with_cookie hand back a client sending Origin: base_url on every request (DenWorld's too); pg_runtime: the same live wiring served nowhere, for use-case tests on PostgreSQL; serve_configured changes the dev Config before connecting (the log canary plants its root key)",
+      "role": "serve + serve_recording (the app's database reached through the statement proxy) + PgServed (base_url, live Runtime, the PDS, psql_command onto its database) + SignedIn + the dev-profile Config (no root; PLC submission off; dev_config), every custody purpose derived through Custody::derive from test_root(); sessions through http-cookies' session_layer over PgSessionStore; served through http-stack's stack (serve_wrapped adds outer layers, PgServed carries the Detach); PgServed::sign_in / sign_in_with_cookie hand back a client sending Origin: base_url on every request (DenWorld's too); pg_runtime: the same live wiring served nowhere, for use-case tests on PostgreSQL, and pg_runtime_recording, the same through the statement proxy into a StatementLog; serve_configured(app, root: RootSecret, configure) connects over the given root and changes the dev Config before connecting (the log canary plants its root, bug_reports its build id); serve_over(db, app, root) serves over a TestDb the test brought to a schema itself, migrating nothing (the custody upgrade's served steps); dev_config(public_url, database_url) is that dev Config, public",
       "node": false
     },
     {
@@ -131,17 +157,47 @@
     },
     {
       "name": "src/recording.rs",
-      "role": "CallLog + recording wrappers over Database/UnitOfWork, DidMinter, FileStore, CommissionStore, ChangelogStore (entries) and WorkflowStore (its find logged as find_workflow) — tests read the order of begin/commit/rollback, external calls and store reads; SubjectLog + recording wrappers over the identity reads (AccountStore, UserStore, CharacterStore, ProfileCache, ProfileSource) — tests read which reads ran and whose data each asked for",
+      "role": "CallLog + recording wrappers over Database/UnitOfWork (nodes() delegates unrecorded), DidMinter, FileStore, CommissionStore (standing logged as standing, the sweep's scan as lapsed_deadlines), ChangelogStore (entries) and WorkflowStore (its find logged as find_workflow) — tests read the order of begin/commit/rollback, external calls and store reads; SubjectLog + recording wrappers over the identity reads (AccountStore, UserStore, CharacterStore, ProfileCache, ProfileSource) — tests read which reads ran and whose data each asked for; RecordingCommissionRows over CommissionRows (find)",
+      "node": false
+    },
+    {
+      "name": "src/recording/tests.rs",
+      "role": "pins the recording commission store logging standing",
       "node": false
     },
     {
       "name": "src/runtime.rs",
-      "role": "the in-memory Runtime every fast suite boots: mem(did) -> MemRuntimeBuilder (profile, public_url, max_upload_bytes, build_id setters) -> MemRuntime { runtime, backend }",
+      "role": "the in-memory Runtime every fast suite boots: mem(did) -> MemRuntimeBuilder (profile, public_url, max_upload_bytes, build_id setters) -> MemRuntime { runtime, backend }; den_mac is test_custody()'s",
+      "node": false
+    },
+    {
+      "name": "src/seeder.rs",
+      "role": "CommissionSeeder (each adapter's test code mints the capability and calls the port's create; this crate never mints) and SlotSeeder (the port's declare of a Slot bound to a given node, on a committed commission, under an Owner's capability the adapter's test code mints) and the gate's shapes over it: made_up_owner, bind (a commission at a commission node, its id the segment), commission_node, entry_nodes, write_commission, seed_commission",
       "node": false
     },
     {
       "name": "src/store_doubles.rs",
-      "role": "scripted wrappers over AccountStore and UserStore: real answers until a shared script makes a listing list a membership the store wouldn't, a read fail, a role read answer a stale role (as a read taken before a concurrent change would), or a user row read as gone; tests seed first, then script",
+      "role": "scripted wrappers over AccountStore and UserStore: real answers until a shared script makes a listing list a membership the store wouldn't, a read fail, a role read answer a stale role (as a read taken before a concurrent change would), or a user row read as gone; and the standing double: StandingScript scripts the pool's standing (ScriptedStanding over a CommissionStore) and a unit's standing_for_update, a LockedStanding with its node (ScriptedStandingDatabase over a Database), apart per commission and viewer, so they can disagree; and the sweep's: a change run once after the pool's lapsed_deadlines answers (after_scan, before any of the sweep's units), the scan failing once (fail_scan), and a unit's lock_for_system failing once for one commission (fail_system_lock); tests seed first, then script",
+      "node": false
+    },
+    {
+      "name": "src/store_doubles/tests.rs",
+      "role": "pins, over a commission seeded through MemBackend::seed_bound_commission, the standing double answering the pool's and the unit's scripts apart, and reading through unscripted",
+      "node": false
+    },
+    {
+      "name": "src/timing.rs",
+      "role": "paired-difference statistics for the timing runs: Iteration (both causes timed together), Micros, Interval, PairedSummary (the median of the signed differences and its seeded bootstrap 95% CI: 10,000 resamples with replacement, BOOTSTRAP_SEED, the 2.5th and 97.5th percentiles)",
+      "node": false
+    },
+    {
+      "name": "src/timing/tests.rs",
+      "role": "pins a constant series' zero-width interval, a known shift recovered, a negative median, the same seed's same interval and the median's parity",
+      "node": false
+    },
+    {
+      "name": "tests/log_capture_interest.rs",
+      "role": "a capture installed through log_capture::set_default sees an event whose callsite a subscriber-less thread reached first; alone in its binary so no other dispatcher masks it",
       "node": false
     },
     {
@@ -161,6 +217,7 @@
     "See also: ZMVP-106 — determinism capstone that reuses `contract::fixed_created_at()` (src/contract.rs).",
     "See also: ZMVP-199 ruling 8 / Engineer ruling 2026-08-25 — one shared `MemRuntime` fixture instead of a copy per test file (src/runtime.rs).",
     "See also: uow 28ca4f — origin of the `default_image_matches_env_example` drift guard (src/lib.rs).",
-    "src/pg_app.rs — the PostgreSQL test setup. Only the sign-in and profile ports are swapped (both onto `InProcessPds`); every other port is composition's live wiring, so the DID minter is the real one with the example root key and PLC submission off (minting stays in PostgreSQL). The setup touches the app only through the sign-in routes, so a change to the sign-in seam is fixed here alone. A test that needs another port changed (a recording or silent profile source) swaps it inside the `app` closure, which receives the Runtime."
+    "src/pg_app.rs — the PostgreSQL test setup. Only the sign-in and profile ports are swapped (both onto `InProcessPds`); every other port is composition's live wiring, so the DID minter is the real one over the test root (`custody::TEST_ROOT`, every purpose) and PLC submission off (minting stays in PostgreSQL). The setup touches the app only through the sign-in routes, so a change to the sign-in seam is fixed here alone. A test that needs another port changed (a recording or silent profile source) swaps it inside the `app` closure, which receives the Runtime.",
+    "src/log_capture.rs — why the keeper: tracing-core caches one process-wide Interest per callsite. While a single dispatcher is alive, a callsite's first registration asks only the registering thread's default; on a parallel test's thread with no subscriber that is the no-op dispatch, which answers never, and the callsite stays never until the next Dispatch::new rebuilds every interest. So a lone scoped capture missed events whose callsite another test reached first (den::write's log test lost its \"use case finished\" line in CI). The keeper is a second dispatcher that enables nothing and answers every callsite sometimes, created before the capture and never dropped; with two live dispatchers registration asks each of them, so a capture's interest is never cached as never. A `.try_init()` global capture is every thread's default and doesn't share the cause."
   ]
 }

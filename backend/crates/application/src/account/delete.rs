@@ -4,7 +4,7 @@ use domain::elements::{account::AccountId, role::Role, user::UserId};
 
 use crate::{
     Ports,
-    account::{AccountError, AccountResult, Accounts, facts, require_live_account},
+    account::{AccountEntity, AccountError, AccountResult, Accounts, require_live_account},
 };
 
 pub struct Command {
@@ -30,7 +30,7 @@ pub struct Output {
 
 impl<'a> Accounts<'a> {
     /// Deletes the account, then, once that delete has committed, tombstones the DID of a
-    /// hard-deleted one. A tombstone failure is logged and the delete stands.
+    /// hard-deleted one. A tombstone failure is logged, its cause at debug only, and the delete stands.
     #[use_case]
     pub async fn delete(&self, #[ports] ports: &Ports, cmd: Command) -> AccountResult<Output> {
         let account_id = cmd.account_id.clone();
@@ -39,16 +39,16 @@ impl<'a> Accounts<'a> {
             && let Err(err) = ports.did_minter.tombstone(account_id.did()).await
         {
             tracing::warn!(
-                error = ?err,
-                did = %AsRef::<str>::as_ref(&account_id),
                 "did:plc tombstone failed after hard delete; the PLC recovery window still applies"
-            )
+            );
+            tracing::debug!(error = %err, "the did:plc tombstone's failure");
         };
         Ok(removed)
     }
 
-    /// Removes the account in one unit: soft when it bears facts, hard otherwise. The
-    /// unit commits when this returns `Ok`.
+    /// Removes the account in one unit: it locks the Account row, re-reads the actor's
+    /// role and the Account's facts there, then deletes soft when it holds a fact and hard
+    /// otherwise. The unit commits when this returns `Ok`.
     #[use_case]
     async fn remove(
         &self,
@@ -64,28 +64,31 @@ impl<'a> Accounts<'a> {
         // Existence before standing: otherwise a delete aimed at an account
         // that is not there answers `403`.
         require_live_account(ports, &account_id).await?;
-
-        ports
-            .accounts
-            .role_of(&actor_id, &account_id)
-            .await?
-            .filter(|role| matches!(role, Role::Owner))
-            .ok_or(AccountError::IncorrectRole)?;
-        // FIXME: Add facts in the correct way here
-        let existing_facts = facts::exist::Query {
-            account_id: account_id.clone(),
-        };
-
-        let has_facts = self.facts().exist(existing_facts).await?.has_facts;
+        require_owner(ports.accounts.role_of(&actor_id, &account_id).await?)?;
 
         let uow = uow.open().await?;
-        let outcome = if has_facts {
-            uow.accounts().soft_delete(&account_id).await?;
-            DeleteOutcome::Soft
-        } else {
+        uow.accounts()
+            .find_for_update(&account_id)
+            .await?
+            .ok_or(AccountError::NotFound(AccountEntity::Account))?;
+        // The pool's answer may predate a hand-over that committed while the lock waited.
+        require_owner(uow.accounts().role_of(&actor_id, &account_id).await?)?;
+        let facts = uow.accounts().facts(&account_id).await?;
+
+        let outcome = if facts.is_empty() {
             uow.accounts().hard_delete(&account_id).await?;
             DeleteOutcome::Hard
+        } else {
+            uow.accounts().soft_delete(&account_id).await?;
+            DeleteOutcome::Soft
         };
         Ok(Output { outcome })
     }
+}
+
+/// Refuses with [`IncorrectRole`](AccountError::IncorrectRole) unless `role` is Owner.
+fn require_owner(role: Option<Role>) -> AccountResult<()> {
+    role.filter(|role| matches!(role, Role::Owner))
+        .map(|_| ())
+        .ok_or(AccountError::IncorrectRole)
 }

@@ -1,18 +1,21 @@
 //! `PATCH /commissions/{id}/title`: the owner renames a commission, end to end over HTTP on
 //! the in-memory runtime. Every title the name rule refuses names `#/title` with its own
-//! code and fixed detail; the path's id wins over the body's; and the route sits behind the
-//! cross-site guard. The rename's log is checked in `commission_rename_log.rs`.
+//! code and fixed detail, for every caller and before anyone's standing; the path's id wins
+//! over the body's; and the route sits behind the cross-site guard. The rename's log is checked in `commission_rename_log.rs`.
 
-use adapter_mem::MemBackend;
+use adapter_mem::{CommissionSeed, MemBackend};
 use chrono::Utc;
 use domain::elements::{
-    commission::{Commission, CommissionId, CommissionTitle},
+    commission::{CommissionId, CommissionTitle},
     did::Did,
     profile::Profile,
 };
 use reqwest::header::ORIGIN;
 use serde_json::{Value, json};
-use test_support::http::{bare_client, client, serve, sign_in};
+use test_support::{
+    den::Answer,
+    http::{bare_client, client, serve, sign_in},
+};
 
 mod common;
 
@@ -84,7 +87,7 @@ async fn rename(
 /// The title `backend` stores for `id`.
 async fn stored_title(backend: &MemBackend, id: CommissionId) -> String {
     let stored = backend
-        .find_commission(id)
+        .commission_summary(id)
         .await
         .expect("find the commission")
         .expect("the commission is stored");
@@ -100,12 +103,12 @@ async fn seed_foreign_commission(backend: &MemBackend) -> CommissionId {
     let title = "Not yours"
         .parse::<CommissionTitle>()
         .expect("a valid title");
-    let commission = Commission::create(title, owner.id, Utc::now(), None);
+    let seed = CommissionSeed::private(title, owner.id);
     backend
-        .create_commission(&commission)
+        .seed_bound_commission(&seed)
         .await
         .expect("seed the foreign commission");
-    commission.id
+    seed.id
 }
 
 /// A title the name rule refuses, the code it answers and that code's fixed detail.
@@ -207,41 +210,101 @@ async fn a_rename_to_the_same_title_answers_200() {
     assert_eq!(stored_title(&backend, id).await, FIRST_TITLE);
 }
 
+/// The problem every refused title answers, its one field error naming `refused`'s code.
+fn field_error_at_title(refused: &RefusedTitle) -> Value {
+    json!({
+        "type": "urn:zurfur:error:invalid-request",
+        "code": "invalid_request",
+        "title": "Invalid request",
+        "detail": "Some fields need changing; each one says why.",
+        "status": 422,
+        "errors": [
+            {
+                "pointer": "#/title",
+                "code": refused.code,
+                "detail": refused.detail,
+            }
+        ],
+    })
+}
+
+/// Seeds a commission owned by someone else, with the artist a Participant of it, and returns
+/// its id.
+async fn seed_participant_s_commission(backend: &MemBackend) -> CommissionId {
+    let artist = backend
+        .find_by_did(&Did::from(ARTIST.to_owned()))
+        .await
+        .expect("find the artist")
+        .expect("signing in recognizes the artist");
+    let foreign = seed_foreign_commission(backend).await;
+    backend.seed_participant(foreign, artist.id, Utc::now());
+    foreign
+}
+
+// The title is checked before anyone's standing: the owner and a Participant who isn't the
+// owner get the same field error.
 #[tokio::test]
 async fn a_refused_title_gets_a_field_error_at_title() {
     let (base, backend) = world().await;
     let session = as_artist(&base).await;
-    let id = id_of(&create(&session, &base).await);
+    let owned = id_of(&create(&session, &base).await);
+    let participating = seed_participant_s_commission(&backend).await;
+    let a_kept_title = json!({ "title": "Mine now" });
+    let forbidden = rename(&session, &base, participating, &a_kept_title).await;
+    common::assert_problem(forbidden, 403, "forbidden").await;
+    let callers = [
+        ("the owner", owned, FIRST_TITLE),
+        (
+            "a Participant who isn't the owner",
+            participating,
+            "Not yours",
+        ),
+    ];
+
+    for (caller, id, title_before) in callers {
+        for refused in refused_titles() {
+            let request = json!({ "title": refused.title });
+
+            let response = rename(&session, &base, id, &request).await;
+
+            let label = format!("{caller}, {}", refused.label);
+            assert_eq!(response.status(), 422, "{label}");
+            let body: Value = response.json().await.expect("a JSON body");
+            let expected = field_error_at_title(&refused);
+            assert_eq!(body, expected, "{label}");
+            assert_eq!(
+                stored_title(&backend, id).await,
+                title_before,
+                "{label}: a refused rename changes nothing"
+            );
+        }
+    }
+}
+
+// Someone outside a commission and an id that names nothing both learn only that the title
+// is refused, byte for byte the same.
+#[tokio::test]
+async fn a_refused_title_answers_alike_for_a_stranger_and_a_made_up_id() {
+    let (base, backend) = world().await;
+    let session = as_artist(&base).await;
+    let foreign = seed_foreign_commission(&backend).await;
+    let made_up = uuid::Uuid::now_v7();
 
     for refused in refused_titles() {
         let request = json!({ "title": refused.title });
 
-        let response = rename(&session, &base, id, &request).await;
+        let not_yours = rename(&session, &base, foreign, &request).await;
+        let absent = rename(&session, &base, made_up, &request).await;
 
-        assert_eq!(response.status(), 422, "{}", refused.label);
-        let body: Value = response.json().await.expect("a JSON body");
-        let expected = json!({
-            "type": "urn:zurfur:error:invalid-request",
-            "code": "invalid_request",
-            "title": "Invalid request",
-            "detail": "Some fields need changing; each one says why.",
-            "status": 422,
-            "errors": [
-                {
-                    "pointer": "#/title",
-                    "code": refused.code,
-                    "detail": refused.detail,
-                }
-            ],
-        });
+        let not_yours = Answer::read(not_yours).await;
+        let absent = Answer::read(absent).await;
+        assert_eq!(not_yours, absent, "{}", refused.label);
+        assert_eq!(absent.status, 422, "{}", refused.label);
+        let body: Value = serde_json::from_slice(&absent.body).expect("a JSON body");
+        let expected = field_error_at_title(&refused);
         assert_eq!(body, expected, "{}", refused.label);
-        assert_eq!(
-            stored_title(&backend, id).await,
-            FIRST_TITLE,
-            "{}: a refused rename changes nothing",
-            refused.label
-        );
     }
+    assert_eq!(stored_title(&backend, foreign).await, "Not yours");
 }
 
 #[tokio::test]

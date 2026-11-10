@@ -1,38 +1,35 @@
-//! Use cases about [`Commission`]s.
+//! Use cases about [`Commission`](domain::elements::commission::Commission)s.
 //!
-//! [`sweep_deadlines`] is the one act with no actor — the system recording a
-//! lapsed deadline. Its wall-clock timer and leader election live in `api`, so
+//! [`Commissions::sweep_deadlines`] is the one act with no user behind it: the system
+//! recording a lapsed deadline. Its wall-clock timer and leader election live in `api`, so
 //! the policy stays deterministic at an injected instant.
 
 use crate::ports::WithPorts;
 use domain::{
-    datetime::DateTimeUtc,
     elements::{
-        commission::{
-            ChangelogEntryKind, Commission, CommissionId, CommissionTitle, CommissionTitleError,
-            FileNameError, MarkupError, NewChangelogEntry,
-        },
+        commission::{CommissionId, CommissionRefusal, CommissionRole, FileNameError, MarkupError},
         user::UserId,
     },
-    ports::{
-        Database, DidBelongsToAnotherActor, ElementNotFound, UnitOfWork, UnknownSurface, UnknownTab,
-    },
+    ports::{DidBelongsToAnotherActor, ElementNotFound, UnknownSurface, UnknownTab},
 };
-use serde_json::json;
 
 use crate::{
     common_error::{CommonError, NotFoundEntity},
-    den::{DenError, DenName, DenNameError},
-    transaction,
+    den::{DenError, DenNameError, act::HandlerRefusal, write::DenWriteError},
 };
+use den::{StandingFacts, Verdict, pool_verdict};
+pub(crate) mod act;
 pub mod archive;
 pub mod changelog;
 pub mod create;
 pub mod deadline;
 pub mod delete;
 pub(crate) mod den;
+pub mod dispute;
 pub mod files;
+pub mod get;
 pub mod invitations;
+pub mod lifecycle;
 pub mod markup;
 pub mod maturity;
 pub mod notes;
@@ -40,10 +37,12 @@ pub mod rename;
 pub mod seats;
 pub mod slots;
 pub mod status;
+pub mod sweep;
 pub mod unarchive;
 mod values;
 pub mod view;
 
+pub use sweep::SweepResult;
 pub use values::CommissionValues;
 
 /// Commission use cases, with the ports already bound. A namespace, not a
@@ -133,6 +132,15 @@ pub enum CommissionError {
     /// The commission stands Late — the system's word, not a participant's.
     #[error("Commission is late")]
     CommissionLate,
+    /// The lifecycle move goes where no move may go: into Draft or Disputed.
+    #[error("Lifecycle move refused")]
+    LifecycleMoveRefused,
+    /// The commission is Disputed, which holds what the act would change.
+    #[error("Commission is disputed")]
+    CommissionDisputed,
+    /// A dispute's clear on a commission that isn't Disputed.
+    #[error("Commission is not disputed")]
+    CommissionNotDisputed,
     /// The annotation failed [`Markup`](domain::elements::commission::Markup)'s
     /// numeric gate.
     #[error("Invalid markup")]
@@ -142,6 +150,23 @@ pub enum CommissionError {
     /// A title, file name or slot title the Den's name rule refuses.
     #[error("Invalid name")]
     InvalidName(#[source] DenNameError),
+}
+
+impl From<CommissionRefusal> for CommissionError {
+    /// A commission rule's refusal as a commission answer, each by its own variant; nothing
+    /// owed is the system's skip, which no user act reaches, so reaching one is a store failure.
+    fn from(refusal: CommissionRefusal) -> Self {
+        match refusal {
+            CommissionRefusal::NoDeadline => Self::NoDeadline,
+            CommissionRefusal::CommissionLate => Self::CommissionLate,
+            CommissionRefusal::LifecycleMoveRefused => Self::LifecycleMoveRefused,
+            CommissionRefusal::CommissionDisputed => Self::CommissionDisputed,
+            CommissionRefusal::CommissionNotDisputed => Self::CommissionNotDisputed,
+            CommissionRefusal::NothingOwed => {
+                CommonError::Infrastructure(anyhow::Error::new(refusal)).into()
+            }
+        }
+    }
 }
 
 impl From<anyhow::Error> for CommissionError {
@@ -158,69 +183,59 @@ impl From<anyhow::Error> for CommissionError {
         Self::CommonError(err.into())
     }
 }
-/// The closed door: resolve the commission for an actor who must be a
-/// Participant of it. Anyone else is answered
-/// [`NotAMember`](CommissionError::NotAMember), which the drivers render
-/// byte-identically to an absent commission — never `403`.
-pub(crate) async fn require_participant(
+/// The standing facts `actor_id` holds on `commission_id` for an act that needs `needs`, from
+/// one pool statement: no commission or no role is [`NotAMember`](CommissionError::NotAMember),
+/// which the drivers render byte-identically to an absent commission, and a role below `needs`
+/// is [`InsufficientPermissions`](CommissionError::InsufficientPermissions).
+pub(crate) async fn require(
     ports: &crate::Ports,
     commission_id: &CommissionId,
     actor_id: &UserId,
-) -> CommissionResult<Commission> {
-    let commission = ports
-        .commissions
-        .find(commission_id)
-        .await?
-        .ok_or(CommonError::NotFound(NotFoundEntity::Commission))?;
-
-    if !ports
-        .commissions
-        .is_participant(&commission.id, actor_id)
-        .await?
-    {
-        return Err(CommissionError::NotAMember);
+    needs: CommissionRole,
+) -> CommissionResult<StandingFacts> {
+    let verdict = pool_verdict(ports, commission_id, actor_id, needs).await?;
+    match verdict {
+        Verdict::NotFound => Err(CommissionError::NotAMember),
+        Verdict::Forbidden => Err(CommissionError::InsufficientPermissions),
+        Verdict::Granted(facts) => Ok(facts),
     }
-    Ok(commission)
 }
 
-/// Resolve the commission for an act only its owner may perform. The owner
-/// passes; a non-owner Participant gets
-/// [`InsufficientPermissions`](CommissionError::InsufficientPermissions);
-/// everyone else gets the same closed door as [`require_participant`].
-pub(crate) async fn require_owner(
+/// [`require`] for an act whose every refusal of standing is the commission's not-found, a
+/// lower role's included, so the answer never tells whether the actor takes part.
+pub(crate) async fn require_or_not_found(
     ports: &crate::Ports,
     commission_id: &CommissionId,
     actor_id: &UserId,
-) -> CommissionResult<Commission> {
-    let commission = ports
-        .commissions
-        .find(commission_id)
-        .await?
-        .ok_or(CommonError::NotFound(NotFoundEntity::Commission))?;
-
-    if commission.is_owned_by(actor_id) {
-        return Ok(commission);
-    }
-
-    // Ownership before membership: the owner must never be locked out of their
-    // own commission by a missing Participant row.
-    if ports
-        .commissions
-        .is_participant(&commission.id, actor_id)
-        .await?
-    {
-        return Err(CommissionError::InsufficientPermissions);
-    }
-    Err(CommissionError::NotAMember)
+    needs: CommissionRole,
+) -> CommissionResult<StandingFacts> {
+    require(ports, commission_id, actor_id, needs)
+        .await
+        .map_err(|refusal| match refusal {
+            CommissionError::NotAMember | CommissionError::InsufficientPermissions => {
+                CommonError::commission_not_found().into()
+            }
+            failure => failure,
+        })
 }
 
-/// The title as the Den's name rule keeps it: refused where the rule refuses, and stored
-/// without the characters the rule strips.
-pub(crate) fn den_title(title: &CommissionTitle) -> CommissionResult<CommissionTitle> {
-    let name = DenName::try_from(title.as_str()).map_err(CommissionError::InvalidName)?;
-    name.as_ref()
-        .parse()
-        .map_err(|CommissionTitleError::Empty| CommissionError::InvalidName(DenNameError::Empty))
+impl From<DenWriteError> for CommissionError {
+    /// The Den's write refusal as a commission answer: its one not-found is the commission's,
+    /// a role below the act's need is forbidden, an act's own rule's refusal is that rule's
+    /// answer, a handler's refusal of a tab or a surface the tab's or the surface's answer, and
+    /// any other refusal or a store failure is the store's, its cause kept on `source()`.
+    fn from(refusal: DenWriteError) -> Self {
+        match refusal {
+            DenWriteError::NotFound => CommonError::commission_not_found().into(),
+            DenWriteError::Forbidden => Self::InsufficientPermissions,
+            DenWriteError::Precondition(rule) => Self::from(rule),
+            DenWriteError::Handler(HandlerRefusal::UnknownTab) => Self::TabNotFound,
+            DenWriteError::Handler(HandlerRefusal::UnknownSurface) => Self::UnknownSurface,
+            failure @ (DenWriteError::Refused(_) | DenWriteError::Store(_)) => {
+                CommonError::Infrastructure(anyhow::Error::new(failure)).into()
+            }
+        }
+    }
 }
 
 /// Den's refusal as a commission answer: its one not-found becomes `not_found`, and a store
@@ -231,47 +246,6 @@ pub(crate) fn den_refusal(refusal: DenError, not_found: CommissionError) -> Comm
         DenError::NotFound => not_found,
         DenError::Store(cause) => CommonError::Infrastructure(cause).into(),
     }
-}
-
-/// How many commissions one [`sweep_deadlines`] pass newly recorded as Late.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SweepResult {
-    pub marked_late: usize,
-}
-
-/// Run one deadline sweep as of the injected `now`: scan the lapsed deadlines
-/// and append a system `Late` changelog entry for each, the whole pass in one
-/// unit of work. A commission already Late is never re-marked; one without a
-/// deadline is never returned by the scan.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the sweep is a system job, not a use-case method"
-)]
-pub async fn sweep_deadlines(
-    database: &dyn Database,
-    now: DateTimeUtc,
-) -> Result<SweepResult, CommissionError> {
-    let marked_late = transaction(database, async move |uow: &mut dyn UnitOfWork| {
-        let lapsed = uow.commissions().lapsed_deadlines(now).await?;
-        for lapse in &lapsed {
-            // Log-only: `Late` is derived on lookup and never persisted.
-            let entry = NewChangelogEntry::system(
-                lapse.id,
-                ChangelogEntryKind::Late,
-                json!({
-                    "deadline": lapse.deadline,
-                    "from": lapse.status.map(<&'static str>::from),
-                }),
-                now,
-            );
-            uow.changelog().append(&entry).await?;
-        }
-        Ok(lapsed.len())
-    })
-    .await
-    .map_err(CommonError::Infrastructure)?;
-
-    Ok(SweepResult { marked_late })
 }
 
 #[cfg(test)]

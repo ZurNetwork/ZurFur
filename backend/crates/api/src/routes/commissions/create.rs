@@ -11,11 +11,11 @@ use axum::{
 };
 use chrono::Utc;
 use domain::elements::{
-    commission::{CommissionTitle, CommissionTitleError},
+    commission::CommissionTitle,
     maturity::{Maturity, MaturityRating},
 };
 
-use super::{from_wire_timestamp, title_refused, title_write_problem, wire_timestamp};
+use super::{from_wire_timestamp, title_refused, wire_timestamp};
 use crate::generated::{CreateCommissionRequest, CreateCommissionResponse};
 use crate::{
     AppState,
@@ -62,16 +62,19 @@ impl From<CommissionValues> for CreateCommissionResponse {
 /// `201 Created` carrying the created resource on success; `422
 /// invalid_request` for a malformed body; `422 invalid_request` with a field
 /// error at `#/title` for a blank or missing title (a missing title decodes as
-/// empty, so it takes the same path) or one the name rule refuses; `422
-/// unknown_maturity_rating` for an out-of-vocabulary `maturity.rating`.
+/// empty, so it takes the same path) or one the name rule refuses, before any
+/// use case runs; `422 unknown_maturity_rating` for an out-of-vocabulary
+/// `maturity.rating`.
 pub(super) async fn create_commission(
     State(state): State<AppState>,
     CallingUser(actor_id): CallingUser,
     body: Result<Json<CreateCommissionRequest>, JsonRejection>,
 ) -> Result<Response, Problem> {
     let Json(body) = body.map_err(|_| Problem::invalid_request("Malformed request body."))?;
-    let title = CommissionTitle::try_from(body.title)
-        .map_err(|CommissionTitleError::Empty| title_refused(FieldCode::NameEmpty))?;
+    let title = body
+        .title
+        .parse::<CommissionTitle>()
+        .map_err(|rule| title_refused(FieldCode::from(rule)))?;
     let maturity = body
         .maturity
         .map(|input| {
@@ -108,7 +111,7 @@ pub(super) async fn create_commission(
         .commissions()
         .create(command, Utc::now())
         .await
-        .map_err(title_write_problem)?;
+        .map_err(Problem::from)?;
 
     let body = CreateCommissionResponse::from(created);
     let response = (StatusCode::CREATED, Json(body)).into_response();

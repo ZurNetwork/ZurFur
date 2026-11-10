@@ -7,7 +7,7 @@ use domain::{
 
 use crate::{
     Ports,
-    account::{AccountError, AccountResult, invitation::Invitations},
+    account::{AccountError, AccountResult, invitation::Invitations, lock_account_row},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +44,7 @@ impl Invitations<'_> {
             ))
         })?;
         let uow = uow.open().await?;
+        lock_account_row(uow, &account_id).await?;
         uow.accounts().revoke_invitation(&invitation.id).await?;
         Ok(Output)
     }

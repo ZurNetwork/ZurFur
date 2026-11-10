@@ -4,7 +4,10 @@ use domain::elements::{account::AccountId, role::Role, user::UserId};
 
 use crate::{
     Ports,
-    account::{AccountError, AccountResult, Accounts, require_live_account},
+    account::{
+        AccountError, AccountResult, Accounts, ActorLock, lock_actor_and_target, lock_live_account,
+        refused_after_a_race, require_live_account,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +57,29 @@ impl Accounts<'_> {
             .ok_or(AccountError::NotAMember)?;
 
         let uow = uow.open().await?;
+        lock_live_account(uow, &account_id).await?;
+        // Decided again on the locked rows, the actor's standing first as above; the
+        // actor's row is locked for update, since the transfer demotes them.
+        let (actor_now, heir_now) = lock_actor_and_target(
+            &mut *uow.accounts(),
+            &account_id,
+            &actor_id,
+            ActorLock::Update,
+            &target_id,
+        )
+        .await?;
+        if actor_now != Some(Role::Owner) {
+            return Err(refused_after_a_race(
+                "transfer_ownership",
+                AccountError::IncorrectRole,
+            ));
+        }
+        if heir_now.is_none() {
+            return Err(refused_after_a_race(
+                "transfer_ownership",
+                AccountError::NotAMember,
+            ));
+        }
         uow.accounts()
             .transfer_ownership(&actor_id, &target_id, &account_id)
             .await?;

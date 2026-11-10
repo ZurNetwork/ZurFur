@@ -311,6 +311,231 @@ pub struct RenameCommissionResponse {
     #[prost(message, optional, tag = "10")]
     pub created_at: ::core::option::Option<crate::wire_time::WireTimestamp>,
 }
+/// `GET /api/v1/commissions/{id}` — read one commission.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetCommissionRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+}
+/// `GET .../{id}` succeeds `200` with the commission as anyone who may open it sees it.
+/// It carries only what every such viewer may see: never the owner and never the linked
+/// channel. Field numbers match the other commission answers where they carry the same fact.
+/// Number 9 and the name `linked_channel`, the linked channel's in those answers, are
+/// reserved here: this answer never carries the linked channel, and no other field may take
+/// either.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetCommissionResponse {
+    /// Opaque commission id (R6).
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// The commission's title as the Den shows it: `Unnamed` for a title stored before
+    /// today's name rule that the rule now refuses.
+    #[prost(string, tag = "2")]
+    pub title: ::prost::alloc::string::String,
+    /// Lifecycle step. Vocabulary (R8): `draft` | `batched` | `active` |
+    /// `completed` | `cancelled` | `disputed`.
+    #[prost(string, tag = "3")]
+    pub lifecycle: ::prost::alloc::string::String,
+    /// Who may see it. Vocabulary (R8): `private` | `listed` | `public`.
+    #[prost(string, tag = "4")]
+    pub visibility: ::prost::alloc::string::String,
+    /// The agreed deadline, if set. Absent = no deadline, nothing more (R4).
+    #[prost(message, optional, tag = "5")]
+    pub deadline: ::core::option::Option<crate::wire_time::WireTimestamp>,
+    /// The maturity posture, if rated.
+    #[prost(message, optional, tag = "6")]
+    pub maturity: ::core::option::Option<Maturity>,
+    /// Direction axis of the two-dimensional status, if set (R8 vocabulary).
+    #[prost(string, optional, tag = "7")]
+    pub direction_status: ::core::option::Option<::prost::alloc::string::String>,
+    /// Deadline axis of the two-dimensional status, if any, at the time of the request
+    /// (R8 vocabulary): `late` once the deadline has passed on a step that isn't
+    /// `completed` or `cancelled`, else `delayed` when a Participant raised it. While
+    /// `disputed`, the clock stands at the dispute's start: `late` only when it was late
+    /// then. Absent with no deadline.
+    #[prost(string, optional, tag = "8")]
+    pub deadline_status: ::core::option::Option<::prost::alloc::string::String>,
+    /// When the commission was created.
+    #[prost(message, optional, tag = "10")]
+    pub created_at: ::core::option::Option<crate::wire_time::WireTimestamp>,
+    /// Whether the commission is archived.
+    #[prost(bool, tag = "11")]
+    pub archived: bool,
+    /// What the viewer may do to it now, by each call's act word, in this order when present:
+    /// `rename` (the owner only), `move_lifecycle`, `raise_dispute`, `clear_dispute`,
+    /// `set_direction_status`,
+    /// `clear_direction_status`, `set_deadline`, `clear_deadline`, `set_delayed`,
+    /// `clear_delayed`, `set_maturity` (the owner only), `declare_slots` (the owner only). Empty
+    /// for a viewer who holds no role on it. An act is listed when
+    /// its call would succeed for some value it takes; a listed call may still answer `204`
+    /// with nothing changed.
+    #[prost(string, repeated, tag = "12")]
+    pub acts: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// The steps `move_lifecycle` would really move it to now, in the vocabulary of
+    /// `lifecycle`; never the step it holds. Empty for a viewer who holds no role on it.
+    #[prost(string, repeated, tag = "13")]
+    pub lifecycle_targets: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+/// `PUT /api/v1/commissions/{id}/lifecycle` — a Participant moves the lifecycle step.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct MoveCommissionLifecycleRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// The step to move to, in the vocabulary of `GetCommissionResponse.lifecycle`. A token
+    /// outside it → 422 with a field error at `#/to`.
+    #[prost(string, tag = "2")]
+    pub to: ::prost::alloc::string::String,
+}
+/// `PUT .../lifecycle` succeeds `204`; there is no body.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct MoveCommissionLifecycleResponse {}
+/// `PUT /api/v1/commissions/{id}/dispute` — a Participant raises a dispute. There is no body.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RaiseCommissionDisputeRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+}
+/// `PUT .../dispute` succeeds `204`; there is no body.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RaiseCommissionDisputeResponse {}
+/// `DELETE /api/v1/commissions/{id}/dispute` — a Participant clears the dispute, returning
+/// the commission to the step it left. It takes no step.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClearCommissionDisputeRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+}
+/// `DELETE .../dispute` succeeds `204`; there is no body.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClearCommissionDisputeResponse {}
+/// `PUT /api/v1/commissions/{id}/status/direction` — a Participant sets the direction status.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetCommissionDirectionStatusRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// The status to set (R8): `waiting_for_input` | `waiting_for_approval` |
+    /// `changes_requested`. A set replaces the one held.
+    #[prost(string, tag = "2")]
+    pub status: ::prost::alloc::string::String,
+}
+/// `PUT .../status/direction` succeeds `204`; there is no body.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetCommissionDirectionStatusResponse {}
+/// `DELETE /api/v1/commissions/{id}/status/direction` — a Participant clears the direction
+/// status.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClearCommissionDirectionStatusRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+}
+/// `DELETE .../status/direction` succeeds `204`; there is no body.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClearCommissionDirectionStatusResponse {}
+/// `PUT /api/v1/commissions/{id}/deadline` — a Participant sets or moves the deadline.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetCommissionDeadlineRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// The new deadline. Required.
+    #[prost(message, optional, tag = "2")]
+    pub deadline: ::core::option::Option<crate::wire_time::WireTimestamp>,
+}
+/// `PUT .../deadline` succeeds `204`; there is no body.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetCommissionDeadlineResponse {}
+/// `DELETE /api/v1/commissions/{id}/deadline` — a Participant clears the deadline.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClearCommissionDeadlineRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+}
+/// `DELETE .../deadline` succeeds `204`; there is no body.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClearCommissionDeadlineResponse {}
+/// `PUT /api/v1/commissions/{id}/status/deadline` — a Participant raises the Delayed flag.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetCommissionDeadlineStatusRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// Only `delayed`. `late` is the system's word, derived from the deadline, and refused.
+    #[prost(string, tag = "2")]
+    pub status: ::prost::alloc::string::String,
+}
+/// `PUT .../status/deadline` succeeds `204`; there is no body.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetCommissionDeadlineStatusResponse {}
+/// `DELETE /api/v1/commissions/{id}/status/deadline` — a Participant takes the Delayed flag
+/// down.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClearCommissionDeadlineStatusRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+}
+/// `DELETE .../status/deadline` succeeds `204`; there is no body.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClearCommissionDeadlineStatusResponse {}
+/// `PUT /api/v1/commissions/{id}/maturity` — the owner rates the commission.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetCommissionMaturityRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// The rating, in the vocabulary of `Maturity.rating`. A token outside it → 422
+    /// `unknown_maturity_rating` with a field error at `#/rating`.
+    #[prost(string, tag = "2")]
+    pub rating: ::prost::alloc::string::String,
+    /// The orthogonal Graphic flag; absent means not graphic.
+    #[prost(bool, tag = "3")]
+    pub graphic: bool,
+}
+/// `PUT .../maturity` succeeds `204`; there is no body.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetCommissionMaturityResponse {}
+/// `POST /api/v1/commissions/{id}/slots` — the owner declares Slots. The HTTP body is the
+/// `slots` array itself.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DeclareCommissionSlotsRequest {
+    /// Opaque commission id, from the path.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// The Slots to declare, in order: at least one and at most 32. The body is this array.
+    #[prost(message, repeated, tag = "2")]
+    pub slots: ::prost::alloc::vec::Vec<DeclareCommissionSlot>,
+}
+/// One Slot of a declare.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeclareCommissionSlot {
+    /// Opaque id of the commission's tab its carrying element sits in.
+    #[prost(string, tag = "1")]
+    pub tab: ::prost::alloc::string::String,
+    /// The surface within that tab.
+    #[prost(string, tag = "2")]
+    pub surface: ::prost::alloc::string::String,
+    /// Required; a title the name rule refuses → 422 with a field error at `#/<i>/title`, `<i>`
+    /// the Slot's place in the array, from 0.
+    #[prost(string, tag = "3")]
+    pub title: ::prost::alloc::string::String,
+    /// Optional freeform notes; trimmed, and blank stored as absent.
+    #[prost(string, optional, tag = "4")]
+    pub notes: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// `POST .../slots` succeeds `201` with each declared Slot's id, in request order.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeclareCommissionSlotsResponse {
+    /// Opaque Slot ids (R6).
+    #[prost(string, repeated, tag = "1")]
+    pub ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
 /// `GET /api/v1/den`: the viewer's own root; the session is the argument.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetDenRootRequest {

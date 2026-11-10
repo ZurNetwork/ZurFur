@@ -15,17 +15,20 @@ mod file_store;
 mod fixed_sign_in;
 pub mod fixture;
 mod identity_resolver;
+mod node;
 mod public_records;
 mod workflow;
 pub use actor_identity::{MemActorIdentityStore, MemActorIdentityWrites, StoredActorIdentity};
 pub use bug_report::{MemBugReportStore, MemBugReportWrites};
 pub use character::{MemCharacterStore, MemCharacterWrites};
 pub use commission::{
-    MemChangelogStore, MemChangelogWrites, MemCommissionStore, MemCommissionWrites,
+    CommissionSeed, MemChangelogStore, MemChangelogWrites, MemCommissionStore, MemCommissionWrites,
+    SlotSeed,
 };
 pub use file_store::MemFileStore;
 pub use fixed_sign_in::FixedSignIn;
 pub use identity_resolver::MemIdentityResolver;
+pub use node::{MemNodeStore, MemNodeWrites};
 pub use public_records::MemPublicRecords;
 pub use workflow::{MemColumnStore, MemColumnWrites, MemWorkflowStore, MemWorkflowWrites};
 use workflow::{StoredColumn, StoredWorkflow};
@@ -47,7 +50,10 @@ use async_trait::async_trait;
 use chrono::Utc;
 use domain::datetime::DateTimeUtc;
 use domain::elements::{
-    account::{Account, AccountId, AccountMembership, AccountName, ListingScope},
+    account::{
+        Account, AccountFactKind, AccountFacts, AccountId, AccountMembership, AccountName,
+        ListingScope,
+    },
     account_keys::AccountKeys,
     actor_identity::{ActorIdentityId, ActorKind, ActorState},
     bug_report::NewBugReport,
@@ -59,6 +65,7 @@ use domain::elements::{
     did::Did,
     handle::{AtHandle, Handle},
     invitation::{Invitation, InvitationId, InvitationState},
+    node::{NodeId, NodeRow},
     plc_operation::PlcOperationRecord,
     profile::Profile,
     role::{Role, RoleAlias},
@@ -66,14 +73,15 @@ use domain::elements::{
     user_account::UserAccount,
     workflow::{ColumnId, WorkflowId},
 };
-use domain::ports::DidBelongsToAnotherActor;
 use domain::ports::character::{CharacterStore, CharacterWrites};
+use domain::ports::{AccountDeactivated, DidBelongsToAnotherActor};
 use domain::ports::{
     AccountReads, AccountRepo, AccountStore, AccountWrites, ActorIdentityStore,
     ActorIdentityWrites, Authenticator, BrowserBinding, BugReportStore, BugReportWrites,
-    ChangelogStore, ChangelogWrites, ColumnStore, ColumnWrites, CommissionRepo, CommissionStore,
-    Database, DidMinter, FileStore, HandleTaken, KeyStore, PlcOperationLog, ProfileCache,
-    ProfileSource, SigninStarted, UnitOfWork, UserStore, UserWrites, WorkflowStore, WorkflowWrites,
+    ChangelogStore, ChangelogWrites, ColumnStore, ColumnWrites, CommissionRepo, CommissionRows,
+    CommissionStore, Database, DidMinter, FileStore, HandleTaken, KeyStore, NodeRepo, NodeStore,
+    PlcOperationLog, ProfileCache, ProfileSource, SigninStarted, UnitOfWork, UserStore, UserWrites,
+    WorkflowStore, WorkflowWrites,
 };
 
 /// The shared in-memory private store: every map behind its own `Arc<Mutex<…>>`,
@@ -93,6 +101,9 @@ pub struct MemBackend {
     /// [`StoredInvitation`] parts keyed by [`InvitationId`]; at most one pending
     /// offer per (account, user), enforced by scanning before insert.
     invitations: Arc<Mutex<HashMap<InvitationId, StoredInvitation>>>,
+    /// When each Account first reached each fact; an entry is only ever inserted.
+    /// Staged.
+    account_facts: Arc<Mutex<HashMap<(AccountId, AccountFactKind), DateTimeUtc>>>,
     /// Cached profiles keyed by DID; entries never expire here.
     profiles: Arc<Mutex<HashMap<Did, Profile>>>,
     /// Append-only handle-change audit log, backing the change rate limit and
@@ -158,6 +169,9 @@ pub struct MemBackend {
     /// The rate limit's lock, the fake of pg's reporter row lock: one for every
     /// reporter, held by a unit from its locked count until it ends. Shared, NOT staged.
     pub(crate) bug_report_filing: Arc<tokio::sync::Mutex<()>>,
+    /// The Den's nodes keyed by [`NodeId`]. Staged, so a node and its subtree
+    /// commit or vanish with the rest of the unit.
+    pub(crate) nodes: Arc<Mutex<HashMap<NodeId, NodeRow>>>,
 }
 
 impl MemBackend {
@@ -179,6 +193,11 @@ impl MemBackend {
     /// The [`CommissionStore`] read port over this backend's shared state —
     /// the canonical commission read port's fake.
     pub fn commission_store(&self) -> Arc<dyn CommissionStore> {
+        Arc::new(MemCommissionStore(self.clone()))
+    }
+
+    /// The [`CommissionRows`] whole-row read port over this backend's shared state.
+    pub fn commission_rows(&self) -> Arc<dyn CommissionRows> {
         Arc::new(MemCommissionStore(self.clone()))
     }
 
@@ -205,6 +224,11 @@ impl MemBackend {
     /// The [`BugReportStore`] read port over this backend's shared state.
     pub fn bug_report_store(&self) -> Arc<dyn BugReportStore> {
         Arc::new(MemBugReportStore(self.clone()))
+    }
+
+    /// The [`NodeStore`] read port over this backend's shared state.
+    pub fn node_store(&self) -> Arc<dyn NodeStore> {
+        Arc::new(MemNodeStore(self.clone()))
     }
 
     /// The [`ProfileCache`] read port over this backend's shared state.
@@ -255,6 +279,12 @@ impl MemBackend {
                 self.invitations
                     .lock()
                     .expect("MemBackend invitations mutex poisoned")
+                    .clone(),
+            )),
+            account_facts: Arc::new(Mutex::new(
+                self.account_facts
+                    .lock()
+                    .expect("MemBackend account_facts mutex poisoned")
                     .clone(),
             )),
             // Shared, not copied: the profile cache is a Unit-of-Work exemption.
@@ -370,6 +400,12 @@ impl MemBackend {
                     .expect("MemBackend bug_reports mutex poisoned")
                     .clone(),
             )),
+            nodes: Arc::new(Mutex::new(
+                self.nodes
+                    .lock()
+                    .expect("MemBackend nodes mutex poisoned")
+                    .clone(),
+            )),
         }
     }
 
@@ -386,6 +422,20 @@ impl MemBackend {
     /// snapshot (a grant whose unit opened before a leave committed seats the
     /// leaver again); this fake runs in dev and tests only.
     fn merge(&self, base: &MemBackend, staged: &MemBackend) {
+        merge_map(
+            &mut self
+                .account_facts
+                .lock()
+                .expect("MemBackend account_facts mutex poisoned"),
+            &base
+                .account_facts
+                .lock()
+                .expect("MemBackend account_facts mutex poisoned"),
+            &staged
+                .account_facts
+                .lock()
+                .expect("MemBackend account_facts mutex poisoned"),
+        );
         merge_map(
             &mut self.users.lock().expect("MemBackend users mutex poisoned"),
             &base.users.lock().expect("MemBackend users mutex poisoned"),
@@ -661,6 +711,14 @@ impl MemBackend {
                 .lock()
                 .expect("MemBackend bug_reports mutex poisoned"),
         );
+        merge_map(
+            &mut self.nodes.lock().expect("MemBackend nodes mutex poisoned"),
+            &base.nodes.lock().expect("MemBackend nodes mutex poisoned"),
+            &staged
+                .nodes
+                .lock()
+                .expect("MemBackend nodes mutex poisoned"),
+        );
     }
 
     // --- Seed/inspection helpers for tests: they write straight to the shared
@@ -682,8 +740,8 @@ impl MemBackend {
     }
 
     /// Seed a soft-deleted account holding `handle` (test-only) by inserting a
-    /// tombstoned row directly — there is no soft-delete write path yet.
-    /// A tombstone is invisible to `find` but still reserves its handle.
+    /// deactivated row directly, with no member. It is invisible to `find`, but still
+    /// reserves its handle and resolves by it.
     pub fn seed_soft_deleted_account(&self, did: &Did, handle: &Handle) {
         let now = Utc::now();
         self.accounts
@@ -1213,8 +1271,8 @@ impl AccountStore for MemAccountStore {
             .map(|stored| rebuild_invitation(*id, stored)))
     }
 
-    /// Scan for the live account whose handle matches, returning its DID. A
-    /// soft-deleted account resolves to `None`; handle equality is exact.
+    /// Scan for the account, live or deactivated, whose handle matches, returning its
+    /// DID; handle equality is exact.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn find_did_by_handle(&self, handle: &Handle) -> anyhow::Result<Option<Did>> {
         let accounts = self
@@ -1222,9 +1280,9 @@ impl AccountStore for MemAccountStore {
             .accounts
             .lock()
             .expect("MemBackend accounts mutex poisoned");
-        Ok(accounts.iter().find_map(|(id, stored)| {
-            (stored.deleted_at.is_none() && &stored.handle == handle).then(|| id.did().clone())
-        }))
+        Ok(accounts
+            .iter()
+            .find_map(|(id, stored)| (&stored.handle == handle).then(|| id.did().clone())))
     }
 
     /// Count this account's recorded handle changes at or after `since`.
@@ -1352,8 +1410,31 @@ impl AccountStore for MemAccountStore {
 pub struct MemAccountWrites(MemBackend);
 
 impl MemAccountWrites {
+    /// Revokes the pending offers `issuer` made in `account` at roles `issuer_role` can't
+    /// offer; the in-memory twin of pg's statement run after a role change.
+    fn revoke_outranked_offers(&self, issuer: &UserId, account: &AccountId, issuer_role: &Role) {
+        let grantable = issuer_role.grantable_roles();
+        let mut invitations = self
+            .0
+            .invitations
+            .lock()
+            .expect("MemBackend invitations mutex poisoned");
+        for invitation in invitations.values_mut() {
+            let outranked = !grantable.contains(&invitation.role);
+            if &invitation.account == account
+                && &invitation.inviter == issuer
+                && matches!(invitation.state, InvitationState::Pending)
+                && outranked
+            {
+                invitation.state = InvitationState::Revoked;
+                invitation.updated_at = Utc::now();
+            }
+        }
+    }
+
     /// A member departing: refuses the Owner before touching anything, else removes the
     /// membership and revokes their pending issued invitations (no role tree to re-home).
+    /// Passes on a deactivated Account, as the PostgreSQL store lets a departure through.
     /// Overlapping units still merge last-writer-wins, so a departure whose unit opened
     /// before a transfer committed can still remove the new Owner, in dev and tests only.
     fn settle_member_departure(&self, user: &UserId, account: &AccountId) -> anyhow::Result<()> {
@@ -1546,6 +1627,7 @@ impl AccountWrites for MemAccountWrites {
         account: &AccountId,
         role: &Role,
     ) -> anyhow::Result<()> {
+        self.0.ensure_live(account)?;
         if matches!(role, Role::Owner) {
             anyhow::bail!(
                 "grant_role: ownership moves only by transfer; account {} user {}",
@@ -1570,6 +1652,9 @@ impl AccountWrites for MemAccountWrites {
             );
         };
         stored.role = role.clone();
+        drop(memberships);
+
+        self.revoke_outranked_offers(user, account, role);
         Ok(())
     }
 
@@ -1590,6 +1675,7 @@ impl AccountWrites for MemAccountWrites {
     /// Returns the offer that now stands — the fresh one, or the pending one on file.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn create_invitation(&mut self, invitation: &Invitation) -> anyhow::Result<Invitation> {
+        self.0.ensure_live(&invitation.account)?;
         let issuer_seat = (invitation.account.clone(), invitation.inviter.clone());
         let issuer_is_member = self
             .0
@@ -1636,7 +1722,8 @@ impl AccountWrites for MemAccountWrites {
     }
 
     /// Flip a pending invitation to revoked and stamp `updated_at`. A non-pending
-    /// or absent invitation is a no-op, not an error.
+    /// or absent invitation is a no-op, not an error. Passes on a deactivated Account,
+    /// as the PostgreSQL store lets a decline through.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn revoke_invitation(&mut self, id: &InvitationId) -> anyhow::Result<()> {
         let mut invitations = self
@@ -1664,6 +1751,8 @@ impl AccountWrites for MemAccountWrites {
         invitation: Invitation,
         listed_on_profile: bool,
     ) -> anyhow::Result<UserAccount> {
+        self.0.ensure_live(&invitation.account)?;
+        let now = Utc::now();
         {
             // Matching no pending offer means it was accepted or revoked since,
             // so seat no member.
@@ -1675,7 +1764,7 @@ impl AccountWrites for MemAccountWrites {
             match invitations.get_mut(&invitation.id) {
                 Some(stored) if stored.state == InvitationState::Pending => {
                     stored.state = InvitationState::Accepted;
-                    stored.updated_at = Utc::now();
+                    stored.updated_at = now;
                 }
                 _ => {
                     return Err(anyhow::anyhow!(
@@ -1702,6 +1791,14 @@ impl AccountWrites for MemAccountWrites {
             .entry((invitation.account.clone(), invitation.invited_user.clone()))
             .or_insert(seated);
 
+        // The first time wins: a later accept leaves the recorded instant alone.
+        self.0
+            .account_facts
+            .lock()
+            .expect("MemBackend account_facts mutex poisoned")
+            .entry((invitation.account.clone(), AccountFactKind::Member))
+            .or_insert(now);
+
         Ok(UserAccount {
             account_id: invitation.account.clone(),
             user_id: invitation.invited_user.clone(),
@@ -1720,6 +1817,7 @@ impl AccountWrites for MemAccountWrites {
         new_owner: &UserId,
         account: &AccountId,
     ) -> anyhow::Result<()> {
+        self.0.ensure_live(account)?;
         let mut memberships = self
             .0
             .memberships
@@ -1757,6 +1855,10 @@ impl AccountWrites for MemAccountWrites {
         if let Some(incoming) = memberships.get_mut(&incoming_seat) {
             incoming.role = Role::Owner;
         }
+        drop(memberships);
+
+        // The outgoing Owner is an Admin now: their pending Admin offers are void.
+        self.revoke_outranked_offers(old_owner, account, &Role::Admin);
         Ok(())
     }
 
@@ -1784,14 +1886,35 @@ impl AccountWrites for MemAccountWrites {
     /// invitation and handle-change row, and sever its boards, columns and cards.
     /// The commissions those cards pointed at are untouched (they are User-owned),
     /// and so are view grants, which are no longer an account rail. Custody keys
-    /// are not modeled here; removing an absent account is a no-op.
+    /// are not modeled here. Errs, removing nothing, on a deactivated Account and on
+    /// one holding a fact, as the PostgreSQL store does. On an absent Account it removes
+    /// that Account's leftover rows and succeeds, where the PostgreSQL store errs.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn hard_delete(&mut self, account: &AccountId) -> anyhow::Result<()> {
-        self.0
-            .accounts
+        let holds_a_fact = self
+            .0
+            .account_facts
             .lock()
-            .expect("MemBackend accounts mutex poisoned")
-            .remove(account);
+            .expect("MemBackend account_facts mutex poisoned")
+            .keys()
+            .any(|(fact_account, _)| fact_account == account);
+        if holds_a_fact {
+            anyhow::bail!("the account holds a fact; it is never hard-deleted");
+        }
+        {
+            let mut accounts = self
+                .0
+                .accounts
+                .lock()
+                .expect("MemBackend accounts mutex poisoned");
+            let deactivated = accounts
+                .get(account)
+                .is_some_and(|stored| stored.deleted_at.is_some());
+            if deactivated {
+                anyhow::bail!("no live account was hard-deleted; the account is deactivated");
+            }
+            accounts.remove(account);
+        }
 
         self.0
             .memberships
@@ -1855,8 +1978,48 @@ impl AccountReads for MemAccountWrites {
         MemAccountStore(self.0.clone()).find(id).await
     }
 
+    /// `find`: no lock to take in process.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn find_for_share(&mut self, id: &AccountId) -> anyhow::Result<Option<Account>> {
+        MemAccountStore(self.0.clone()).find(id).await
+    }
+
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn facts(&mut self, id: &AccountId) -> anyhow::Result<AccountFacts> {
+        let facts = self
+            .0
+            .account_facts
+            .lock()
+            .expect("MemBackend account_facts mutex poisoned")
+            .keys()
+            .filter(|(account, _)| account == id)
+            .map(|(_, kind)| *kind)
+            .collect();
+        Ok(facts)
+    }
+
     #[tracing::instrument(level = "debug", skip_all)]
     async fn role_of(
+        &mut self,
+        user: &UserId,
+        account: &AccountId,
+    ) -> anyhow::Result<Option<Role>> {
+        MemAccountStore(self.0.clone()).role_of(user, account).await
+    }
+
+    /// `role_of`: no lock to take in process.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn role_of_for_share(
+        &mut self,
+        user: &UserId,
+        account: &AccountId,
+    ) -> anyhow::Result<Option<Role>> {
+        MemAccountStore(self.0.clone()).role_of(user, account).await
+    }
+
+    /// `role_of`: no lock to take in process.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn role_of_for_update(
         &mut self,
         user: &UserId,
         account: &AccountId,
@@ -1874,16 +2037,40 @@ pub struct MemDatabase(MemBackend);
 impl Database for MemDatabase {
     #[tracing::instrument(level = "debug", skip_all)]
     async fn begin(&self) -> anyhow::Result<Box<dyn UnitOfWork>> {
+        Ok(Box::new(self.0.unit()))
+    }
+}
+
+impl MemBackend {
+    /// Refuses with [`AccountDeactivated`] a write into a deactivated Account, as the
+    /// PostgreSQL store does inside the writing statement. An absent Account passes.
+    pub(crate) fn ensure_live(&self, account: &AccountId) -> anyhow::Result<()> {
+        let deactivated = self
+            .accounts
+            .lock()
+            .expect("MemBackend accounts mutex poisoned")
+            .get(account)
+            .is_some_and(|stored| stored.deleted_at.is_some());
+        if deactivated {
+            return Err(anyhow::Error::new(AccountDeactivated));
+        }
+        Ok(())
+    }
+
+    /// A unit of work over this store, as [`MemDatabase::begin`] opens one, unboxed for
+    /// the crate's own seeders.
+    pub(crate) fn unit(&self) -> MemUnitOfWork {
         // `staged` is what the write views mutate; `base` is an independent copy
         // taken at the same instant, never touched, that `commit` diffs against.
-        let staged = self.0.stage();
+        let staged = self.stage();
         let base = staged.stage();
-        Ok(Box::new(MemUnitOfWork {
-            shared: self.0.clone(),
+        MemUnitOfWork {
+            shared: self.clone(),
             base,
             staged,
             bug_report_filing: None,
-        }))
+            node_spent: false,
+        }
     }
 }
 
@@ -1904,6 +2091,9 @@ pub struct MemUnitOfWork {
     /// The bug-report filing lock once this unit has taken it; released when the
     /// unit is dropped, after `commit` has merged.
     bug_report_filing: Option<tokio::sync::OwnedMutexGuard<()>>,
+    /// Set once a node call or a commission create is refused: every later node call
+    /// fails, and commit returns an error and keeps nothing, as a failed PostgreSQL unit does.
+    node_spent: bool,
 }
 
 #[async_trait]
@@ -1914,9 +2104,12 @@ impl UnitOfWork for MemUnitOfWork {
         Box::new(MemAccountWrites(self.staged.clone()))
     }
 
-    /// The commission repo over this unit's staged snapshot.
+    /// The commission repo over this unit's staged snapshot; a refused create spends the unit.
     fn commissions(&mut self) -> Box<dyn CommissionRepo + '_> {
-        Box::new(MemCommissionWrites(self.staged.clone()))
+        Box::new(MemCommissionWrites(
+            self.staged.clone(),
+            &mut self.node_spent,
+        ))
     }
 
     /// The changelog append surface over this unit's staged snapshot, so an entry
@@ -1961,8 +2154,24 @@ impl UnitOfWork for MemUnitOfWork {
         })
     }
 
+    /// The node repo over this unit's staged snapshot; a refused node call spends the unit.
+    fn nodes(&mut self) -> Box<dyn NodeRepo + '_> {
+        Box::new(MemNodeWrites {
+            staged: self.staged.clone(),
+            spent: &mut self.node_spent,
+        })
+    }
+
+    /// Merges the staged writes onto the shared store; a spent unit, or one whose staged
+    /// state fails the commission binding checks, merges nothing and returns an error.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
+        // A spent or refused unit's `base`/`staged` are dropped unmerged, rolling back.
+        anyhow::ensure!(
+            !self.node_spent,
+            "a refused call ended this unit of work; nothing was kept"
+        );
+        self.staged.check_bindings()?;
         // Without this call `base`/`staged` are simply dropped, rolling back.
         self.shared.merge(&self.base, &self.staged);
         Ok(())

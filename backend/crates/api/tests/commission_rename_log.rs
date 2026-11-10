@@ -1,5 +1,5 @@
 //! `PATCH /commissions/{id}/title` logs no title, DID or handle at info or above, accepted or
-//! refused.
+//! refused, and neither does `GET /commissions/{id}`, nor its use case at any level.
 //!
 //! Its own test binary: the capturing subscriber is this binary's global one, so no other
 //! test's thread can leave a callsite's interest cached without it.
@@ -53,8 +53,18 @@ async fn rename(session: &reqwest::Client, base: &str, id: &str, body: &Value) -
     response.status().as_u16()
 }
 
+/// `GET /commissions/{id}` as `session`.
+async fn read(session: &reqwest::Client, base: &str, id: &str) -> u16 {
+    let response = session
+        .get(format!("{base}/commissions/{id}"))
+        .send()
+        .await
+        .expect("GET /commissions/{id}");
+    response.status().as_u16()
+}
+
 #[tokio::test]
-async fn a_rename_logs_no_title_and_no_identity_at_info_or_above() {
+async fn a_rename_and_a_read_log_no_title_and_no_identity_at_info_or_above() {
     let log = CapturedLog::default();
     api::logging::subscriber(&api::Environment::DEV, EnvFilter::new("trace"), log.clone())
         .try_init()
@@ -84,14 +94,29 @@ async fn a_rename_logs_no_title_and_no_identity_at_info_or_above() {
 
     let accepted = rename(&session, &base, id, &accepted_title).await;
     let refused = rename(&session, &base, id, &refused_title).await;
+    let read = read(&session, &base, id).await;
 
     assert_eq!(accepted, 200);
     assert_eq!(refused, 422);
+    assert_eq!(read, 200);
     let text = without_colors(&log.text());
     assert!(
         text.lines()
             .any(|line| line.contains("application::commission::rename")),
         "the capture saw no rename: {text}"
+    );
+    let read_lines: Vec<&str> = text
+        .lines()
+        .filter(|line| line.contains("application::commission::get"))
+        .collect();
+    assert!(!read_lines.is_empty(), "the capture saw no read: {text}");
+    let named_by_the_read: Vec<&&str> = read_lines
+        .iter()
+        .filter(|line| line.contains(TITLE_MARK) || line.contains(ARTIST))
+        .collect();
+    assert!(
+        named_by_the_read.is_empty(),
+        "the read's use case names a title or DID: {named_by_the_read:#?}"
     );
     let title_at_info: Vec<&str> = text
         .lines()

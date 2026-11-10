@@ -1,5 +1,7 @@
+use domain::elements::level::Level;
+
 use crate::den::{
-    DenName, DenSegment, DenThing, DenType, NameOrdinal, NodeKind, NodeLevel, PageToken, SoftDelete,
+    DenName, DenSegment, DenThing, DenType, NameOrdinal, NodeKind, PageToken, SoftDelete,
 };
 
 /// One node as the Den shows it to its viewer.
@@ -28,7 +30,7 @@ pub enum DenAccess {
         /// Whether it holds entries or content; a mount shows its target's.
         kind: NodeKind,
         /// Its own level; a mount shows its target's.
-        own_level: NodeLevel,
+        own_level: Level,
         /// Whether this view doesn't show its content yet, fixed by its type.
         content_not_shown: bool,
         /// Its soft-deleted state; `None` when live.

@@ -1,5 +1,5 @@
 //! The commissions route group: the commission JSON API, split per area
-//! (create, rename, changelog, notes, channel, delete, archive, maturity,
+//! (create, read, rename, lifecycle, dispute, changelog, notes, channel, delete, archive, maturity,
 //! elements, slots, seats, invitations, status, deadline, files, markup,
 //! positioning). Mounted under the first-party-`Origin` (CSRF) layer.
 
@@ -13,7 +13,7 @@ use axum::{
     routing::{MethodRouter, delete, get, patch, post, put},
 };
 use domain::elements::{
-    commission::{Commission, CommissionId},
+    commission::{CommissionId, CommissionRole},
     user::UserId,
 };
 
@@ -76,6 +76,9 @@ impl From<CommissionError> for Problem {
             CommissionError::UnknownSurface => Problem::unknown_surface(),
             CommissionError::NoDeadline => Problem::no_deadline(),
             CommissionError::CommissionLate => Problem::commission_late(),
+            CommissionError::LifecycleMoveRefused => Problem::lifecycle_move_refused(),
+            CommissionError::CommissionDisputed => Problem::commission_disputed(),
+            CommissionError::CommissionNotDisputed => Problem::commission_not_disputed(),
             CommissionError::IncorrectContent => {
                 Problem::invalid_request("The submitted content is empty.")
             }
@@ -93,15 +96,6 @@ fn title_refused(code: FieldCode) -> Problem {
         code,
     };
     Problem::invalid_fields(title_refusal, [])
-}
-
-/// A create's or a rename's refusal as the wire problem: a title the name rule refuses
-/// names `#/title`; any other error maps as every commission error does.
-fn title_write_problem(err: CommissionError) -> Problem {
-    match err {
-        CommissionError::InvalidName(rule) => title_refused(FieldCode::from(rule)),
-        other => Problem::from(other),
-    }
 }
 
 /// Domain time → the contract's wire timestamp type.
@@ -123,9 +117,12 @@ mod channel;
 mod create;
 mod deadline;
 mod delete;
+mod dispute;
 mod elements;
 mod files;
+mod get;
 mod invitations;
+mod lifecycle;
 mod markup;
 mod maturity;
 mod notes;
@@ -149,9 +146,17 @@ pub(crate) fn commissions_router(max_upload_bytes: usize) -> Router<AppState> {
         .route("/commissions", post(create::create_commission))
         .route(
             "/commissions/{id}",
-            axum::routing::delete(delete::delete_commission),
+            get(get::get_commission).delete(delete::delete_commission),
         )
         .route("/commissions/{id}/title", patch(rename::rename_commission))
+        .route(
+            "/commissions/{id}/lifecycle",
+            put(lifecycle::move_lifecycle),
+        )
+        .route(
+            "/commissions/{id}/dispute",
+            put(dispute::raise_dispute).delete(dispute::clear_dispute),
+        )
         .route(
             "/commissions/{id}/changelog",
             get(changelog::read_changelog),
@@ -220,8 +225,8 @@ fn channel_methods() -> MethodRouter<AppState> {
     put(channel::link_channel).delete(channel::clear_channel)
 }
 
-/// Admits only the commission's owner, returning the resolved [`Commission`].
-/// `404` for a non-participant, `403` for a non-owner participant.
+/// Admits only the commission's owner, from one standing read: `404` for no commission or no
+/// role, `403` for a role below Owner. Reads no row.
 ///
 /// ⚠️ Driver-side authorization: use-case code should own this check instead;
 /// it survives here only for `channel`/`elements`, which have no use case yet.
@@ -229,22 +234,17 @@ async fn require_owner(
     state: &AppState,
     commission: &CommissionId,
     user: &UserId,
-) -> Result<Commission, Problem> {
-    let found = state
+) -> Result<(), Problem> {
+    let role = state
         .commissions
-        .find(commission)
+        .standing(commission, user)
         .await?
+        .and_then(|standing| standing.role)
         .ok_or_else(Problem::commission_not_found)?;
-    if found.owner_id == *user {
-        return Ok(found);
+    if role < CommissionRole::Owner {
+        return Err(Problem::forbidden());
     }
-    Err(
-        if state.commissions.is_participant(commission, user).await? {
-            Problem::forbidden()
-        } else {
-            Problem::commission_not_found()
-        },
-    )
+    Ok(())
 }
 
 #[cfg(test)]

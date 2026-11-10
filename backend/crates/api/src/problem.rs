@@ -1,8 +1,8 @@
 //! The RFC 9457 problem-document type served as `application/problem+json` for
 //! every JSON API error; success responses stay bare resources with the status
 //! line as outcome. Construct via the named registry below, never field-by-field.
-//! A `422` that refuses request fields names them in `errors`, built only by
-//! [`Problem::invalid_fields`].
+//! A `422` that refuses request fields names them in `errors`, built only in the
+//! field registry: [`Problem::invalid_fields`] and [`Problem::unknown_maturity_rating_at`].
 
 use axum::{
     Json,
@@ -315,6 +315,40 @@ impl Problem {
             "Commission is Late",
             409,
             "The commission is Late; extend or clear the deadline to resolve it.",
+        )
+    }
+
+    /// `409` — the lifecycle move goes where no move may go: into Draft, which only a new
+    /// commission holds, or into Disputed.
+    pub fn lifecycle_move_refused() -> Self {
+        Self::new(
+            "urn:zurfur:error:lifecycle-move-refused",
+            "lifecycle_move_refused",
+            "Lifecycle move refused",
+            409,
+            "A commission can't be moved back to Draft, or into Disputed, by a move.",
+        )
+    }
+
+    /// `409` — the commission is Disputed, which holds what the act would change.
+    pub fn commission_disputed() -> Self {
+        Self::new(
+            "urn:zurfur:error:commission-disputed",
+            "commission_disputed",
+            "Commission is disputed",
+            409,
+            "The commission is Disputed; it can't be changed this way until the dispute ends.",
+        )
+    }
+
+    /// `409` — a dispute's clear on a commission that isn't Disputed.
+    pub fn commission_not_disputed() -> Self {
+        Self::new(
+            "urn:zurfur:error:commission-not-disputed",
+            "commission_not_disputed",
+            "Commission is not disputed",
+            409,
+            "The commission isn't Disputed, so there is no dispute to clear.",
         )
     }
 

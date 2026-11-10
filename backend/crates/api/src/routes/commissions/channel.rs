@@ -9,7 +9,7 @@ use axum::{
 };
 use chrono::Utc;
 use domain::{
-    elements::commission::{ChangelogEntryKind, ChannelPointer, NewChangelogEntry},
+    elements::commission::{ChannelPointer, NewChangelogEntry, OpenKind},
     ports::UnitOfWork,
 };
 use serde::Deserialize;
@@ -46,20 +46,23 @@ pub(super) async fn link_channel(
     let pointer = ChannelPointer::try_from(body.channel)
         .map_err(|e| Problem::invalid_request(e.to_string()))?;
 
-    let entry = NewChangelogEntry::event(
+    let entry: NewChangelogEntry = NewChangelogEntry::event(
         commission_id,
-        ChangelogEntryKind::ChannelLinked,
+        OpenKind::ChannelLinked,
         actor_id,
         json!({ "channel": pointer.as_str() }),
         Utc::now(),
-    );
+    )
+    .into();
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
+            #[expect(clippy::disallowed_methods, reason = "no use case owns this write yet")]
             let changed = uow
                 .commissions()
                 .set_linked_channel(&commission_id, Some(&pointer))
                 .await?;
             if changed {
+                #[expect(clippy::disallowed_methods, reason = "no use case owns this write yet")]
                 uow.changelog().append(&entry).await?;
             }
             Ok(())
@@ -77,26 +80,34 @@ pub(super) async fn clear_channel(
     CommissionPath(commission_id): CommissionPath,
 ) -> Result<Response, Problem> {
     // TODO(engineer): unmigrated for the same reason as link_channel (no use case yet).
-    let found = require_owner(&state, &commission_id, &actor_id).await?;
+    require_owner(&state, &commission_id, &actor_id).await?;
+    let found = state
+        .commission_rows
+        .find(&commission_id)
+        .await?
+        .ok_or_else(Problem::commission_not_found)?;
 
     let Some(previous) = found.linked_channel else {
         return Ok(StatusCode::NO_CONTENT.into_response());
     };
 
-    let entry = NewChangelogEntry::event(
+    let entry: NewChangelogEntry = NewChangelogEntry::event(
         commission_id,
-        ChangelogEntryKind::ChannelUnlinked,
+        OpenKind::ChannelUnlinked,
         actor_id,
         json!({ "channel": previous.as_str() }),
         Utc::now(),
-    );
+    )
+    .into();
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
+            #[expect(clippy::disallowed_methods, reason = "no use case owns this write yet")]
             let changed = uow
                 .commissions()
                 .set_linked_channel(&commission_id, None)
                 .await?;
             if changed {
+                #[expect(clippy::disallowed_methods, reason = "no use case owns this write yet")]
                 uow.changelog().append(&entry).await?;
             }
             Ok(())

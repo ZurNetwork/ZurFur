@@ -234,15 +234,6 @@ async fn create_account(
     Ok(response)
 }
 
-// Fails to compile once the first account-fact table registers (assert below).
-const _: () = assert!(
-    adapter_pg::ACCOUNT_FACT_TABLES.is_empty(),
-    "an account-anchored fact store was registered: replace the constant-`false` body \
-     of application::account::facts::exist::run with a real query over it (an account \
-     bearing such a fact must be soft-deleted, never hard-deleted), then remove this \
-     guard and its sibling in adapter_pg::account"
-);
-
 /// Parses a body's `user` field — an actor DID — into a [`UserId`], rejecting a
 /// malformed value as `422 invalid_request`.
 fn parse_user_did(raw: &str) -> Result<UserId, Problem> {
@@ -252,7 +243,9 @@ fn parse_user_did(raw: &str) -> Result<UserId, Problem> {
 
 /// `DELETE /accounts/{id}` — the Owner deletes their account.
 ///
-/// - `200 { "outcome": "soft" | "hard" }`
+/// - `200 { "outcome": "soft" }` — the Account holds a fact (a member ever seated besides
+///   its founder): it is deactivated, its handle kept
+/// - `200 { "outcome": "hard" }` — it holds none: it is removed and its handle freed
 /// - `401` — not signed in
 /// - `403` — not this account's Owner
 /// - `404` — no such live account
@@ -268,7 +261,7 @@ async fn delete_account(
 
     let deleted = state.app().accounts().delete(cmd).await.map_err(|err| {
         if let AccountError::Infrastructure(cause) = &err {
-            tracing::error!(error = ?cause, "deleting the account failed in the store");
+            tracing::error!(error = %cause, "deleting the account failed in the store");
         }
         Problem::from(err)
     })?;
@@ -365,6 +358,9 @@ async fn accept_invitation(
 /// - `204 No Content`
 /// - `404` — not a member
 /// - `409` — the sole Owner can't leave while still Owner (transfer or delete first)
+///
+/// A leave that loses its race with a transfer to the leaver answers `409`; with a
+/// revoke of the leaver, `404`.
 async fn leave_account(
     State(state): State<AppState>,
     Path(account_id): Path<AccountId>,
@@ -407,6 +403,9 @@ struct GrantRoleResponse {
 /// - `401` — not signed in · `403` — not allowed to grant that role
 /// - `404` — no such account, or not a member
 /// - `422` — malformed body or an unknown role discriminant
+///
+/// A grant whose actor lost standing meanwhile, or whose target became the Owner, answers
+/// `403`; one whose target left meanwhile, `404`.
 async fn grant_role(
     State(state): State<AppState>,
     Path(account_id): Path<AccountId>,
@@ -463,6 +462,9 @@ struct RevokeRoleResponse {
 /// - `401` — not signed in · `403` — not allowed to revoke that member
 /// - `404` — no such account, or not a member
 /// - `422` — malformed body
+///
+/// A revoke whose actor lost standing meanwhile, or whose target became the Owner, answers
+/// `403`; one whose target left meanwhile, `404`.
 async fn revoke_role(
     State(state): State<AppState>,
     Path(account_id): Path<AccountId>,
@@ -580,10 +582,16 @@ struct RevokeInvitationResponse {
 }
 
 /// `DELETE /accounts/{id}/invitations` — revokes a pending invitation.
-/// Idempotent: unknown user or no pending offer is a `200` no-op.
 ///
 /// - `200 { "account", "user" }`
-/// - `401` — not signed in · `403` — not allowed to revoke that invitation
+/// - `401` — not signed in
+/// - `404 member_not_found` — the caller holds no role here that may revoke that offer
+/// - `404 no_pending_invitation` — no pending offer to that user
+/// - `404 account_not_found` — the Account is deactivated
+/// - `409` — that user is already a member
+/// - `422` — malformed body
+///
+/// A revoke whose actor lost standing meanwhile answers `404 member_not_found`.
 async fn revoke_invitation_to_account(
     State(state): State<AppState>,
     Path(account_id): Path<AccountId>,
@@ -675,6 +683,9 @@ struct TransferOwnershipResponse {
 /// - `401` — not signed in · `403` — not the account's current Owner
 /// - `404` — no such account, or `new_owner` is not a member
 /// - `422` — malformed body, or transferring to oneself
+///
+/// A transfer by an Owner who is no longer Owner answers `403`; one whose heir left
+/// meanwhile, `404`.
 async fn transfer_ownership(
     State(state): State<AppState>,
     Path(account_id): Path<AccountId>,

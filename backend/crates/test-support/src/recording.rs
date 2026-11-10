@@ -12,8 +12,9 @@ use domain::elements::{
     character::Character,
     commission::{
         ChangelogEntry, Commission, CommissionComposition, CommissionFile, CommissionId,
-        CommissionMarkup, CommissionSummary, ElementId, FileDownload, FileKey, FileName,
-        FileSummary, GrantLevel, Seat, SeatInvitation, Slot,
+        CommissionMarkup, CommissionStanding, CommissionSummary, ElementId, FileDownload, FileKey,
+        FileName, FileSummary, GrantLevel, LateKinds, LifecycleStep, Seat, SeatInvitation, Slot,
+        ViewedSummary,
     },
     did::Did,
     handle::Handle,
@@ -26,8 +27,8 @@ use domain::elements::{
 };
 use domain::ports::{
     AccountRepo, AccountStore, ActorIdentityWrites, ChangelogStore, ChangelogWrites,
-    CharacterStore, CharacterWrites, ColumnWrites, CommissionRepo, CommissionStore, Database,
-    DidMinter, FileStore, ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites,
+    CharacterStore, CharacterWrites, ColumnWrites, CommissionRepo, CommissionRows, CommissionStore,
+    Database, DidMinter, FileStore, ProfileCache, ProfileSource, UnitOfWork, UserStore, UserWrites,
     WorkflowStore, WorkflowWrites,
 };
 use tokio::io::AsyncRead;
@@ -132,6 +133,10 @@ impl UnitOfWork for RecordingUnit {
 
     fn bug_reports(&mut self) -> Box<dyn domain::ports::BugReportWrites + '_> {
         self.inner.bug_reports()
+    }
+
+    fn nodes(&mut self) -> Box<dyn domain::ports::NodeRepo + '_> {
+        self.inner.nodes()
     }
 
     async fn commit(self: Box<Self>) -> anyhow::Result<()> {
@@ -477,14 +482,22 @@ impl RecordingCommissionStore {
 
 #[async_trait]
 impl CommissionStore for RecordingCommissionStore {
-    async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
-        self.log.record("find");
-        self.inner.find(id).await
+    async fn find_summary(
+        &self,
+        id: &CommissionId,
+        viewer: &UserId,
+    ) -> anyhow::Result<Option<ViewedSummary>> {
+        self.log.record("find_summary");
+        self.inner.find_summary(id, viewer).await
     }
 
-    async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>> {
-        self.log.record("find_summary");
-        self.inner.find_summary(id).await
+    async fn standing(
+        &self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<Option<CommissionStanding>> {
+        self.log.record("standing");
+        self.inner.standing(commission, user).await
     }
 
     async fn current_column_of_workflow(
@@ -516,15 +529,6 @@ impl CommissionStore for RecordingCommissionStore {
     ) -> anyhow::Result<Option<GrantLevel>> {
         self.log.record("view_grant");
         self.inner.view_grant(commission_id, user_id).await
-    }
-
-    async fn is_participant(
-        &self,
-        commission: &CommissionId,
-        user: &UserId,
-    ) -> anyhow::Result<bool> {
-        self.log.record("is_participant");
-        self.inner.is_participant(commission, user).await
     }
 
     async fn seats(&self, commission: &CommissionId) -> anyhow::Result<Vec<Seat>> {
@@ -570,11 +574,6 @@ impl CommissionStore for RecordingCommissionStore {
             .await
     }
 
-    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
-        self.log.record("list_owned_by");
-        self.inner.list_owned_by(owner).await
-    }
-
     async fn list_participating(&self, user: &UserId) -> anyhow::Result<Vec<CommissionSummary>> {
         self.log.record("list_participating");
         self.inner.list_participating(user).await
@@ -588,6 +587,39 @@ impl CommissionStore for RecordingCommissionStore {
     async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>> {
         self.log.record("slots");
         self.inner.slots(commission).await
+    }
+
+    async fn lapsed_deadlines(
+        &self,
+        now: DateTimeUtc,
+        not_lapsing: &[LifecycleStep],
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<Vec<CommissionId>> {
+        self.log.record("lapsed_deadlines");
+        self.inner
+            .lapsed_deadlines(now, not_lapsing, late_kinds)
+            .await
+    }
+}
+
+/// A [`CommissionRows`] that logs each whole-row read by its method name before delegating.
+pub struct RecordingCommissionRows {
+    inner: Arc<dyn CommissionRows>,
+    log: CallLog,
+}
+
+impl RecordingCommissionRows {
+    /// Wraps `inner`, recording into `log`.
+    pub fn new(inner: Arc<dyn CommissionRows>, log: CallLog) -> Self {
+        Self { inner, log }
+    }
+}
+
+#[async_trait]
+impl CommissionRows for RecordingCommissionRows {
+    async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
+        self.log.record("find");
+        self.inner.find(id).await
     }
 }
 
@@ -651,3 +683,6 @@ impl WorkflowStore for RecordingWorkflowStore {
         self.inner.list_for_account(account).await
     }
 }
+
+#[cfg(test)]
+mod tests;

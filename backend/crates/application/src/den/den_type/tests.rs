@@ -5,7 +5,7 @@ use strum::VariantArray;
 use super::*;
 
 /// Every type with its kind and whether its content is shown, written out by hand.
-const FACTS: [(DenType, NodeKind, bool); 19] = [
+const FACTS: [(DenType, NodeKind, bool); 21] = [
     (DenType::TopLevel, NodeKind::Directory, false),
     (DenType::Posts, NodeKind::Directory, true),
     (DenType::User, NodeKind::Directory, false),
@@ -19,7 +19,9 @@ const FACTS: [(DenType, NodeKind, bool); 19] = [
     (DenType::Character, NodeKind::Directory, true),
     (DenType::Commission, NodeKind::Directory, false),
     (DenType::CommissionAttachments, NodeKind::Directory, false),
+    (DenType::CommissionBrief, NodeKind::File, true),
     (DenType::CommissionChangelog, NodeKind::File, true),
+    (DenType::CommissionParticipants, NodeKind::File, true),
     (DenType::CommissionProducts, NodeKind::Directory, false),
     (DenType::CommissionSlots, NodeKind::Directory, false),
     (DenType::Slot, NodeKind::Directory, true),
@@ -48,7 +50,9 @@ fn every_type_has_its_word() {
         "character",
         "commission",
         "commission.attachments",
+        "commission.brief",
         "commission.changelog",
+        "commission.participants",
         "commission.products",
         "commission.slots",
         "slot",
@@ -71,7 +75,7 @@ fn every_word_parses_back_to_its_type() {
 
 #[test]
 fn an_unknown_word_is_no_type() {
-    let parsed = DenType::from_str("commission.participants");
+    let parsed = DenType::from_str("not a den type");
 
     assert!(parsed.is_err());
 }

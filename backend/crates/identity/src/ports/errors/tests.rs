@@ -67,3 +67,10 @@ fn the_sign_in_refusals_have_terse_fixed_messages() {
     ];
     assert_eq!(messages, expected);
 }
+
+#[test]
+fn account_deactivated_names_no_account() {
+    let message = AccountDeactivated.to_string();
+
+    assert_eq!(message, "the account is deactivated");
+}

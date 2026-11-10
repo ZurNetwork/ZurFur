@@ -1,0 +1,5 @@
+error[E0277]: the trait bound `WriteCapability<u32, Creator>: From<u32>` is not satisfied
+ --> tests/ui/no_from.rs:6:20
+  |
+6 |     let _forged = <WriteCapability<u32, Creator> as From<u32>>::from(7_u32);
+  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `From<u32>` is not implemented for `WriteCapability<u32, Creator>`

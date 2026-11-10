@@ -33,7 +33,7 @@ pub(super) struct SetDirectionStatusBody {
 /// value. Returns `204 No Content`.
 pub(super) async fn set_direction_status(
     State(state): State<AppState>,
-    CallingUser(user_id): CallingUser,
+    CallingUser(actor_id): CallingUser,
     CommissionPath(commission_id): CommissionPath,
     body: Result<Json<SetDirectionStatusBody>, JsonRejection>,
 ) -> Result<Response, Problem> {
@@ -51,9 +51,9 @@ pub(super) async fn set_direction_status(
     })?;
 
     let command = direction::set::Command {
-        direction: Some(status),
+        actor_id,
         commission_id,
-        user_id,
+        to: status,
     };
 
     state
@@ -71,13 +71,12 @@ pub(super) async fn set_direction_status(
 /// idempotent. Returns `204 No Content`.
 pub(super) async fn clear_direction_status(
     State(state): State<AppState>,
-    CallingUser(user_id): CallingUser,
+    CallingUser(actor_id): CallingUser,
     CommissionPath(commission_id): CommissionPath,
 ) -> Result<Response, Problem> {
     let command = direction::clear::Command {
+        actor_id,
         commission_id,
-        direction: None,
-        user_id,
     };
 
     state

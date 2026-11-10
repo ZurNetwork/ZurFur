@@ -1,10 +1,12 @@
 //! Identity's arm of the Den for a Character's directory, `/character/<did>`.
 
-use domain::elements::character::{CharacterId, Presence};
+use domain::elements::{
+    character::{CharacterId, Presence},
+    level::Level,
+};
 
 use crate::den::{
-    DenContext, DenMount, DenType, Level, Node, NodeState, Place, STANDING, Segment, TopLevel,
-    names,
+    DenContext, DenMount, DenType, Node, NodeState, Place, STANDING, Segment, TopLevel, names,
 };
 
 /// The places in a Character's directory that this arm answers for.

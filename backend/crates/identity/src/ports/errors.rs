@@ -6,6 +6,12 @@
 #[error("account handle already taken")]
 pub struct HandleTaken;
 
+/// Error source of an account write refused because the Account is deactivated.
+/// Names no Account; routes answer it as an absent Account.
+#[derive(Debug, thiserror::Error)]
+#[error("the account is deactivated")]
+pub struct AccountDeactivated;
+
 /// Marker error: the supplied DID is already interned as a different actor kind.
 /// One DID = one actor; routes downcast this to a
 /// `409 did_belongs_to_another_actor`.

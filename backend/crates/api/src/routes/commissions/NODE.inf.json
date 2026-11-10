@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/api/src/routes/commissions",
-  "charted": "2026-10-17",
+  "charted": "2026-10-26",
   "short": "The commission JSON API, one file per act",
   "is": "The user-scoped commission API, one file per act, all behind a uniform closed-door 404 for non-participants — each act a thin driver over the matching `application::commission::*` use case.",
   "type": "code",
@@ -12,7 +12,8 @@
     "Existence is participant-only knowledge: non-participants and absent ids get the same 404, never a 403.",
     "A new act adds a file here rather than growing a hotspot.",
     "The handler shape (ZMVP-205): `CallingUser` in, then the `{id}` through `CommissionPath` (a malformed id answers the same 404 as an id that names nothing; a second path parameter keeps its own `Path` extraction, the id read there as `IgnoredAny`), then `state.app().commissions().<act>(command, now)`, with the error mapped through the shared `CommissionError → Problem` impl in `mod.rs` — no handler builds a ports struct or opens a transaction.",
-    "`channel.rs` and `elements.rs` are the two exceptions: no use case covers them, so they keep `require_owner` (the last driver-side authz) plus an inline unit of work until one exists."
+    "`channel.rs` and `elements.rs` are the two exceptions: no use case covers them, so they keep `require_owner` (the last driver-side authz) plus an inline unit of work until one exists.",
+    "The interim guard (until use cases own these writes): `channel.rs`'s and `elements.rs`'s six calls on a unit's `commissions()` and `changelog()` each carry `#[expect(clippy::disallowed_methods, reason = \"no use case owns this write yet\")]` on its own statement, under api/clippy.toml's ban; a new call fails clippy."
   ],
   "entry_points": [
     "mod.rs (router assembly + the CommissionError → Problem mapping)"
@@ -30,22 +31,27 @@
     },
     {
       "name": "channel.rs",
-      "role": "PUT/DELETE /{id}/channel linked-channel pointer — NOT migrated: no use case exists, so require_owner + an inline UnitOfWork stay (TODO(engineer)); link_channel keeps its #[deprecated]",
+      "role": "PUT/DELETE /{id}/channel linked-channel pointer — NOT migrated: no use case exists, so require_owner + an inline UnitOfWork stay (TODO(engineer)); link_channel keeps its #[deprecated]; the clear reads the row through commission_rows after the owner check",
       "node": false
     },
     {
       "name": "create.rs",
-      "role": "POST /commissions → commission::create, which answers the created row read back by id; rendered into CreateCommissionResponse; a blank title or one the name rule refuses → 422 with a field error at #/title",
+      "role": "POST /commissions → commission::create, the Den's write, which answers the created commission as the write left it; rendered into CreateCommissionResponse; the title is parsed with FromStr before any use case runs, so a blank title or one the name rule refuses → 422 with a field error at #/title",
       "node": false
     },
     {
       "name": "deadline.rs",
-      "role": "PUT/DELETE deadline + manual Delayed flag → commission::deadline::* and deadline::status::*",
+      "role": "PUT/DELETE deadline + manual Delayed flag → commission::deadline::* and deadline::status::* (a `late` token refused 422 here, before any use case); the deadline's DELETE keeps a raised Delayed flag stored, shown nowhere until a deadline is set again",
       "node": false
     },
     {
       "name": "delete.rs",
-      "role": "DELETE — fact-free hard delete → commission::delete",
+      "role": "DELETE → commission::delete: in Draft and fact-free 204; past Draft or fact-bearing → 409 commission_has_facts",
+      "node": false
+    },
+    {
+      "name": "dispute.rs",
+      "role": "PUT /{id}/dispute → commission::dispute::raise and DELETE /{id}/dispute → commission::dispute::clear, each answering 204 and taking no body (a raise's body is ignored); 409 commission_disputed for a second raise and commission_not_disputed for a clear when not Disputed",
       "node": false
     },
     {
@@ -59,8 +65,18 @@
       "node": false
     },
     {
+      "name": "get.rs",
+      "role": "GET /{id} → commission::get, the read: the fields every opener may see (never the owner, never the linked channel), the deadline status derived at the request's time and the viewer's acts and lifecycle targets, rendered into GetCommissionResponse by an impl From<get::Output>; a stranger the Den doesn't open it to gets a made-up id's 404",
+      "node": false
+    },
+    {
       "name": "invitations.rs",
       "role": "POST/DELETE seat invitations → commission::invitations::issue / revoke",
+      "node": false
+    },
+    {
+      "name": "lifecycle.rs",
+      "role": "PUT /{id}/lifecycle → commission::lifecycle::move_to, answering 204; the step is parsed before any use case runs, so a token outside the vocabulary (case included) or a missing one → 422 with a field error at #/to, code unknown_value, its detail fixed",
       "node": false
     },
     {
@@ -70,12 +86,12 @@
     },
     {
       "name": "maturity.rs",
-      "role": "PUT /{id}/maturity (replace-only) → commission::maturity::set",
+      "role": "PUT /{id}/maturity (replace-only; the body is the generated SetCommissionMaturityRequest, an unknown field a 422 invalid_request) → commission::maturity::set, through the Den's write: 204, Owner-only (a Participant 403, a stranger the made-up id's 404), a rating outside the vocabulary a 422 unknown_maturity_rating with a field error at #/rating before any standing, from the field registry, echoing nothing",
       "node": false
     },
     {
       "name": "mod.rs",
-      "role": "router assembly, body limits, the CommissionError→Problem mapping, title_write_problem (create's and rename's name-rule refusal as a field error at #/title; slots and files keep the plain mapping), and require_owner — the last driver-side gate, kept only for the unmigrated channel/elements acts",
+      "role": "router assembly, body limits, the CommissionError→Problem mapping (create, rename, the read, the lifecycle move and the dispute's raise and clear map through it too; CommissionNotDisputed → 409 commission_not_disputed), title_refused (a title the name rule refuses at parse, as a field error at #/title), and require_owner — one standing read, no row; the last driver-side gate, kept only for the unmigrated channel/elements acts",
       "node": false
     },
     {
@@ -90,7 +106,7 @@
     },
     {
       "name": "rename.rs",
-      "role": "PATCH /{id}/title → commission::rename, owner-only; the path's id wins over the body's; answers the renamed row read back by id, rendered into RenameCommissionResponse; a refused title → 422 with a field error at #/title",
+      "role": "PATCH /{id}/title → commission::rename, owner-only; the path's id wins over the body's; answers the commission as the write left it, read by the gate's lent view in the write's unit, rendered into RenameCommissionResponse; the title is parsed before anyone's standing is checked, so a refused title → 422 with a field error at #/title for anyone, a Participant who isn't the owner included",
       "node": false
     },
     {
@@ -100,7 +116,7 @@
     },
     {
       "name": "slots.rs",
-      "role": "POST /{id}/slots — all-or-nothing Slot batch → commission::slots::declare",
+      "role": "POST /{id}/slots — the owner's all-or-nothing Slot declare → commission::slots::declare: the body is the contract's DeclareCommissionSlot array, at most 32 (MAX_SLOTS_PER_DECLARE) and never empty, each refused title a field error at #/<i>/title, all before the use case; 201 with the contract's DeclareCommissionSlotsResponse",
       "node": false
     },
     {

@@ -37,7 +37,6 @@ fn env_wins_over_the_profile_file() {
                 public_url = "http://127.0.0.1:1111"
                 database_url = "postgres://from-file"
                 log_level = "info"
-                did_key_root_key = "ZmlsZQ=="
             "#,
         )?;
         // Jail restores what it mutates but inherits the process env —
@@ -159,6 +158,32 @@ fn a_missing_required_key_fails_the_load() {
     });
 }
 
+// The custody root never enters figment's value map: only a command holding a purpose
+// reads it, from the environment.
+#[test]
+#[allow(clippy::result_large_err)] // figment::Jail's closure signature
+fn config_load_never_holds_the_root() {
+    figment::Jail::expect_with(|jail| {
+        set_bootable_dev_env(jail);
+        jail.set_env(
+            crate::ROOT_KEY_ENV,
+            "q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=",
+        );
+        let profile_file = jail.directory().join("dev.toml");
+
+        let figment = layered(profile_file, None);
+
+        let root_value = figment.find_value("did_key_root_key");
+        assert!(
+            root_value.is_err(),
+            "the root is in figment: {root_value:?}"
+        );
+        let config = Config::load().expect("the config loads without the root");
+        assert!(matches!(config.env, Environment::DEV));
+        Ok(())
+    });
+}
+
 // ---- The build id --------------------------------------------------------
 
 /// Set every required key of a bootable dev configuration on a cleared `jail`.
@@ -245,7 +270,6 @@ fn config(env: Environment, public_url: &str, http_addr: &str, handle_domain: &s
         database_url: "postgres://x".to_owned(),
         log_level: "info".to_owned(),
         handle_domain: handle_domain.parse().expect("a valid handle domain"),
-        did_key_root_key: "ZmlsZQ==".to_owned(),
         plc_directory_endpoint: default_plc_directory_endpoint(),
         plc_directory_submit: false,
         deadline_sweep_interval_secs: default_deadline_sweep_interval_secs(),

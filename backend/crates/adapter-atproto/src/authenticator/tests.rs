@@ -7,6 +7,8 @@ use serde_json::json;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use domain::elements::custody::CustodySubject;
+
 use super::*;
 use crate::guarded_http::{GuardedHttp, Script, ScriptedLookup, Timeouts, TxtScript};
 use crate::resolver::log_recorder::{lines_at, record_events};
@@ -322,11 +324,11 @@ async fn world_with_fetch_timeout(authorize: &str, claimed: &str, fetch: Duratio
     let resolver = Arc::new(AtprotoIdentityResolver::scripted(http, dns));
 
     let (pool, db) = test_support::pg::fresh_pool().await;
-    let vault = || SecretVault::from_bytes(&[7u8; 32]).expect("32-byte test root key");
-    let store = AtprotoAuthStore::new(pool.clone(), vault());
+    let sealer = test_support::custody::test_custody().signin_secrets;
+    let store = AtprotoAuthStore::new(pool.clone(), sealer.clone());
     let redirect_uri =
         Uri::parse("http://127.0.0.1:3000/signin-callback".to_owned()).expect("a redirect URI");
-    let authenticator = AtprotoAuthenticator::new(redirect_uri, pool.clone(), vault(), resolver);
+    let authenticator = AtprotoAuthenticator::new(redirect_uri, pool.clone(), sealer, resolver);
     World {
         server,
         authenticator,
@@ -1917,5 +1919,40 @@ async fn each_browser_refusal_logs_its_own_class_at_info() {
                 "an info line carries a state: {line}"
             );
         }
+    }
+}
+
+/// The key id an envelope's version-1 header names.
+fn header_key_id(envelope: &[u8]) -> String {
+    let [_version, key_id_length, rest @ ..] = envelope else {
+        panic!("an envelope has a header");
+    };
+    let key_id = &rest[..usize::from(*key_id_length)];
+    String::from_utf8(key_id.to_vec()).expect("a key id is text")
+}
+
+#[tokio::test]
+async fn the_authenticators_debug_shows_no_key() {
+    let world = world(AUTHORIZE, HANDLE).await;
+    let sealer = test_support::custody::test_custody().signin_secrets;
+    let parts: [&[u8]; 1] = [b"a subject"];
+    let subject = CustodySubject::try_from(parts.as_slice()).expect("one short part encodes");
+    let envelope = sealer
+        .seal(&subject, b"a secret")
+        .await
+        .expect("the sign-in key seals");
+    let key_id = header_key_id(envelope.as_ref());
+
+    let shown = format!("{:?}", world.authenticator);
+
+    assert!(
+        shown.contains("ScopedSealer { purpose: SigninSecrets }"),
+        "the sealer shows its purpose: {shown}"
+    );
+    for hidden in [key_id.as_str(), "hkdf", "94, 94", "5e5e"] {
+        assert!(
+            !shown.contains(hidden),
+            "the Debug shows {hidden:?}: {shown}"
+        );
     }
 }

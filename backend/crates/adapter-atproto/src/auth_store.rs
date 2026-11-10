@@ -1,16 +1,19 @@
 //! Postgres persistence for jacquard's OAuth state — see [`AtprotoAuthStore`].
 //!
-//! Every `data` blob is sealed at rest ([`SecretVault`]) before it is written
-//! and opened on read; the rows never hold secrets in the clear. A session
-//! granting more than `atproto` is never written: it is held in memory for the
-//! sign-in that got it, to revoke.
+//! Every `data` blob is sealed at rest under the sign-in-secrets key before it
+//! is written and opened on read, bound to its row's key; the rows never hold
+//! secrets in the clear. A session granting more than `atproto` is never
+//! written: it is held in memory for the sign-in that got it, to revoke.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crate::oauth_scope::grants_identity_only;
 use crate::queries::auth_store as sql;
-use crate::secret_vault::SecretVault;
+use domain::elements::custody::{
+    CustodyError, CustodySubject, ForSigninSecrets, PartsError, SealedEnvelope,
+};
+use domain::ports::ScopedSealer;
 use jacquard_common::{bos::BosStr, session::SessionStoreError, types::did::Did};
 use jacquard_oauth::{
     authstore::ClientAuthStore,
@@ -19,6 +22,12 @@ use jacquard_oauth::{
 use serde::{Serialize, de::DeserializeOwned};
 use sqlx::PgPool;
 use zeroize::Zeroizing;
+
+/// The first part of every session blob's subject, naming its table.
+const SESSION_SUBJECT: &[u8] = b"client_session";
+
+/// The first part of every auth-request blob's subject, naming its table.
+const AUTH_REQUEST_SUBJECT: &[u8] = b"auth_request";
 
 /// What the store holds for a sign-in's browser binding.
 #[derive(Debug, PartialEq, Eq)]
@@ -50,7 +59,7 @@ impl From<Option<Option<Vec<u8>>>> for StoredBinding {
 #[derive(Clone, Debug)]
 pub struct AtprotoAuthStore {
     pool: PgPool,
-    vault: SecretVault,
+    sealer: ScopedSealer<ForSigninSecrets>,
     refused: RefusedGrants,
 }
 
@@ -97,12 +106,12 @@ impl std::fmt::Debug for RefusedGrants {
 pub(crate) struct GrantedScopeRefused;
 
 impl AtprotoAuthStore {
-    /// Wrap a connection `pool` and a [`SecretVault`] as an OAuth store; the
-    /// vault seals every stored blob at rest.
-    pub fn new(pool: PgPool, vault: SecretVault) -> Self {
+    /// Wrap a connection `pool` and a sign-in-secrets `sealer` as an OAuth
+    /// store; the sealer seals every stored blob at rest.
+    pub fn new(pool: PgPool, sealer: ScopedSealer<ForSigninSecrets>) -> Self {
         Self {
             pool,
-            vault,
+            sealer,
             refused: RefusedGrants::default(),
         }
     }
@@ -120,8 +129,8 @@ impl AtprotoAuthStore {
         browser_binding: &[u8],
     ) -> Result<(), SessionStoreError> {
         let state = AsRef::<str>::as_ref(&request.state);
-        let aad = Self::auth_request_aad(state);
-        let data = self.encode(&aad, request)?;
+        let subject = auth_request_subject(state)?;
+        let data = self.encode(&subject, request).await?;
         sql::save_bound_auth_request(&self.pool, state, &data, Some(browser_binding))
             .await
             .map_err(backend)?;
@@ -184,43 +193,58 @@ impl AtprotoAuthStore {
         Ok(())
     }
 
-    /// AEAD associated data binding a session blob to its `(account_did,
-    /// session_id)` key. Table-name prefix domain-separates it from an
-    /// auth-request AAD; the length-prefixed DID blocks a re-split into a
-    /// different pair. Not stored — supplied again on read.
-    fn session_aad(account_did: &str, session_id: &str) -> Vec<u8> {
-        let did = account_did.as_bytes();
-        let mut aad = Vec::with_capacity(64 + did.len() + session_id.len());
-        aad.extend_from_slice(b"atproto_oauth.client_session\0");
-        aad.extend_from_slice(&(did.len() as u64).to_le_bytes());
-        aad.extend_from_slice(did);
-        aad.extend_from_slice(session_id.as_bytes());
-        aad
-    }
-
-    /// AEAD associated data binding an auth-request blob to its `state` key;
-    /// the sole variable field, so no length prefix is needed. Not stored.
-    fn auth_request_aad(state: &str) -> Vec<u8> {
-        let mut aad = Vec::with_capacity(32 + state.len());
-        aad.extend_from_slice(b"atproto_oauth.auth_request\0");
-        aad.extend_from_slice(state.as_bytes());
-        aad
-    }
-
-    /// JSON-encode `value` and seal it under `aad`, so only ciphertext reaches
+    /// JSON-encode `value` and seal it to `subject`, so only an envelope reaches
     /// the column. The transient plaintext is zeroized once sealed.
-    fn encode<T: Serialize>(&self, aad: &[u8], value: &T) -> Result<Vec<u8>, SessionStoreError> {
+    async fn encode<T: Serialize>(
+        &self,
+        subject: &CustodySubject,
+        value: &T,
+    ) -> Result<Vec<u8>, SessionStoreError> {
         let plaintext = Zeroizing::new(serde_json::to_vec(value)?);
-        self.vault.seal(aad, &plaintext).map_err(seal_error)
+        let envelope = self
+            .sealer
+            .seal(subject, &plaintext)
+            .await
+            .map_err(custody_error)?;
+        Ok(envelope.as_ref().to_vec())
     }
 
-    /// Open a sealed blob under `aad` and JSON-decode it. Fails closed: a blob
-    /// that is not valid ciphertext under this vault and `aad` errors rather
-    /// than being read as plaintext.
-    fn decode<T: DeserializeOwned>(&self, aad: &[u8], data: &[u8]) -> Result<T, SessionStoreError> {
-        let plaintext = self.vault.open(aad, data).map_err(seal_error)?;
-        Ok(serde_json::from_slice(&plaintext)?)
+    /// Open a stored blob sealed to `subject` and JSON-decode it. Fails closed:
+    /// a blob that doesn't open under this key and `subject` is an error, never
+    /// plaintext and never "no session".
+    async fn decode<T: DeserializeOwned>(
+        &self,
+        subject: &CustodySubject,
+        data: Vec<u8>,
+    ) -> Result<T, SessionStoreError> {
+        let envelope = SealedEnvelope::from(data);
+        let opened = self
+            .sealer
+            .open(subject, &envelope)
+            .await
+            .map_err(custody_error)?;
+        serde_json::from_slice(opened.expose()).map_err(decode_error)
     }
+}
+
+/// The subject a session's blob is sealed to: its table, its DID and its
+/// session id.
+fn session_subject(
+    account_did: &str,
+    session_id: &str,
+) -> Result<CustodySubject, SessionStoreError> {
+    let parts = [
+        SESSION_SUBJECT,
+        account_did.as_bytes(),
+        session_id.as_bytes(),
+    ];
+    CustodySubject::try_from(parts.as_slice()).map_err(subject_error)
+}
+
+/// The subject an auth request's blob is sealed to: its table and its `state`.
+fn auth_request_subject(state: &str) -> Result<CustodySubject, SessionStoreError> {
+    let parts = [AUTH_REQUEST_SUBJECT, state.as_bytes()];
+    CustodySubject::try_from(parts.as_slice()).map_err(subject_error)
 }
 
 #[cfg(test)]
@@ -237,10 +261,29 @@ fn backend(e: sqlx::Error) -> SessionStoreError {
     SessionStoreError::Other(Box::new(e))
 }
 
-/// Map a seal/open failure into jacquard's [`SessionStoreError`] — an error,
-/// never a `None`, so an unreadable blob fails closed.
-fn seal_error(e: anyhow::Error) -> SessionStoreError {
-    SessionStoreError::Other(e.into())
+/// Map a seal/open failure into jacquard's [`SessionStoreError`]: an error,
+/// never a `None`, so an unreadable blob fails closed. Its text names the kind
+/// only.
+fn custody_error(error: CustodyError) -> SessionStoreError {
+    SessionStoreError::Other(Box::new(error))
+}
+
+/// Map a subject that can't be encoded into jacquard's [`SessionStoreError`].
+fn subject_error(error: PartsError) -> SessionStoreError {
+    SessionStoreError::Other(Box::new(error))
+}
+
+/// Why a stored sign-in blob that opened was refused: it doesn't decode as the
+/// type read. Carries nothing of the blob, not even the decoder's error.
+#[derive(Debug, thiserror::Error)]
+#[error("a stored sign-in blob doesn't decode")]
+struct UndecodableBlob;
+
+/// Map a blob that opened but doesn't decode into jacquard's
+/// [`SessionStoreError`], dropping the decoder's error, whose text quotes the
+/// value it rejected.
+fn decode_error(_error: serde_json::Error) -> SessionStoreError {
+    SessionStoreError::Other(Box::new(UndecodableBlob))
 }
 
 impl ClientAuthStore for AtprotoAuthStore {
@@ -252,8 +295,12 @@ impl ClientAuthStore for AtprotoAuthStore {
         let data = sql::get_session(&self.pool, did.as_ref(), session_id)
             .await
             .map_err(backend)?;
-        let aad = Self::session_aad(did.as_ref(), session_id);
-        data.map(|data| self.decode(&aad, &data)).transpose()
+        let Some(data) = data else {
+            return Ok(None);
+        };
+        let subject = session_subject(did.as_ref(), session_id)?;
+        let session = self.decode(&subject, data).await?;
+        Ok(Some(session))
     }
 
     /// Insert-or-replace the session keyed by (DID, session id), so a rotated
@@ -266,8 +313,8 @@ impl ClientAuthStore for AtprotoAuthStore {
         }
         let account_did = session.account_did.as_ref();
         let session_id = AsRef::<str>::as_ref(&session.session_id);
-        let aad = Self::session_aad(account_did, session_id);
-        let data = self.encode(&aad, &session)?;
+        let subject = session_subject(account_did, session_id)?;
+        let data = self.encode(&subject, &session).await?;
         sql::upsert_session(&self.pool, account_did, session_id, &data)
             .await
             .map_err(backend)?;
@@ -292,8 +339,12 @@ impl ClientAuthStore for AtprotoAuthStore {
         let data = sql::get_auth_req_info(&self.pool, state)
             .await
             .map_err(backend)?;
-        let aad = Self::auth_request_aad(state);
-        data.map(|data| self.decode(&aad, &data)).transpose()
+        let Some(data) = data else {
+            return Ok(None);
+        };
+        let subject = auth_request_subject(state)?;
+        let request = self.decode(&subject, data).await?;
+        Ok(Some(request))
     }
 
     async fn save_auth_req_info(
@@ -301,8 +352,8 @@ impl ClientAuthStore for AtprotoAuthStore {
         auth_req_info: &AuthRequestData,
     ) -> Result<(), SessionStoreError> {
         let state = AsRef::<str>::as_ref(&auth_req_info.state);
-        let aad = Self::auth_request_aad(state);
-        let data = self.encode(&aad, auth_req_info)?;
+        let subject = auth_request_subject(state)?;
+        let data = self.encode(&subject, auth_req_info).await?;
         sql::save_auth_req_info(&self.pool, state, &data)
             .await
             .map_err(backend)?;

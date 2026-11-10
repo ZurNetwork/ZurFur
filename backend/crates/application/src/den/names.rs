@@ -2,8 +2,14 @@
 
 use std::fmt::Display;
 
-use atta::{NodeName, Segment};
-use domain::elements::{did::Did, text::StoredText};
+use atta::{DisplayName, Segment};
+use domain::elements::{
+    commission::{CommissionId, ElementId, FileKey},
+    did::Did,
+    name::NodeName,
+    text::StoredText,
+    workflow::WorkflowId,
+};
 
 /// A user's folder of Account memberships.
 pub(crate) const ACCOUNTS: &str = "accounts";
@@ -21,6 +27,10 @@ pub(crate) const CHANGELOG: &str = "changelog";
 pub(crate) const PRODUCTS: &str = "products";
 /// A commission's folder of slots.
 pub(crate) const SLOTS: &str = "slots";
+/// A commission's participants file.
+pub(crate) const PARTICIPANTS: &str = "participants";
+/// A commission's brief file.
+pub(crate) const BRIEF: &str = "brief";
 /// A user's mount of their own posts.
 pub(crate) const POSTS: &str = "posts";
 /// The name a node shows when its stored text fails the name rule.
@@ -38,9 +48,20 @@ pub(crate) fn fixed_name(word: &'static str) -> Option<NodeName> {
     NodeName::try_from(word).ok()
 }
 
+/// A typed id backed by a UUID. A den trait rather than an `AsRef<Uuid>` bound because this
+/// crate doesn't depend on `uuid`; implemented only for the typed ids, so request text never
+/// becomes a key.
+pub(crate) trait UuidKey: Display {}
+
+impl UuidKey for CommissionId {}
+impl UuidKey for ElementId {}
+impl UuidKey for FileKey {}
+impl UuidKey for WorkflowId {}
+impl<T: UuidKey> UuidKey for &T {}
+
 /// The key of an entity keyed by a UUID-backed id: the id's text; `None` only if that text
 /// breaks the segment rule, which a test rules out for every UUID.
-pub(crate) fn id_segment(id: impl Display) -> Option<Segment> {
+pub(crate) fn id_segment(id: impl UuidKey) -> Option<Segment> {
     Segment::try_from(id.to_string()).ok()
 }
 
@@ -48,6 +69,16 @@ pub(crate) fn id_segment(id: impl Display) -> Option<Segment> {
 /// node therefore has no key and is absent.
 pub(crate) fn did_segment(did: &Did) -> Option<Segment> {
     Segment::try_from(did.as_ref()).ok()
+}
+
+/// The engine's display name for a name the Den's rule passed; the one place a name enters
+/// the engine. A free function, not `From`: both types are foreign to this crate.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the one construction of the engine's display name, from a name the rule passed"
+)]
+pub(crate) fn display_name(name: &NodeName) -> DisplayName {
+    DisplayName::host_checked(name.to_string())
 }
 
 /// The name for stored text: the text itself when it passes the name rule, else `Unnamed`.

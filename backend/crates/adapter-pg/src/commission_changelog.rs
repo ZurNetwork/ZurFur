@@ -32,12 +32,12 @@ impl ChangelogWrites for PgChangelogWrites<'_> {
     async fn append(&mut self, entry: &NewChangelogEntry) -> anyhow::Result<()> {
         sql::append(
             &mut *self.conn,
-            uuid::Uuid::from(entry.commission_id),
-            <&'static str>::from(entry.kind),
-            entry.actor_id.as_ref().map(|actor| actor.as_ref()),
-            &entry.payload,
-            entry.note.as_deref(),
-            entry.created_at,
+            uuid::Uuid::from(entry.commission_id()),
+            <&'static str>::from(entry.kind()),
+            entry.actor_id().map(|actor| actor.as_ref()),
+            entry.payload(),
+            entry.note_text(),
+            entry.created_at(),
         )
         .await?;
         Ok(())

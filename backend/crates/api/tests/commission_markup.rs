@@ -19,10 +19,11 @@
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
-use adapter_mem::MemBackend;
+use adapter_mem::{CommissionSeed, MemBackend};
+use application::commission::SweepResult;
 use chrono::Utc;
 use domain::elements::{
-    commission::{Commission, CommissionId, CommissionTitle, DeadlineStatus, DirectionStatus},
+    commission::{CommissionId, CommissionTitle, DeadlineStatus, DirectionStatus},
     did::Did,
     profile::Profile,
     user::User,
@@ -48,13 +49,12 @@ async fn create_commission_with(
         .await
         .expect("POST /commissions");
     assert_eq!(res.status(), 201);
-    let all = backend.all_commissions().await.expect("list commissions");
-    uuid::Uuid::from(
-        all.iter()
-            .find(|c| c.title.as_str() == title)
-            .expect("the just-created commission is persisted")
-            .id,
-    )
+    let created = backend
+        .commission_titled(&title)
+        .await
+        .expect("list commissions")
+        .expect("the just-created commission is persisted");
+    uuid::Uuid::from(created)
 }
 
 /// The single-commission convenience for tests that only make one.
@@ -125,18 +125,29 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         .provision(&Did::from("did:plc:someone-else".to_string()))
         .await
         .expect("provision foreign owner");
-    let commission = Commission::create(
-        "Not yours".parse::<CommissionTitle>().expect("title"),
-        owner.id,
-        Utc::now(),
-        None,
-    );
-    let id = uuid::Uuid::from(commission.id);
+    let title = "Not yours".parse::<CommissionTitle>().expect("title");
+    let seed = CommissionSeed::private(title, owner.id);
+    let id = uuid::Uuid::from(seed.id);
     backend
-        .create_commission(&commission)
+        .seed_bound_commission(&seed)
         .await
         .expect("seed foreign commission");
     id
+}
+
+/// One deadline sweep at `now` through the use case, over the served backend's stores.
+async fn sweep_at(backend: &MemBackend, now: chrono::DateTime<Utc>) -> SweepResult {
+    let sweeper = Did::from("did:plc:sweeper".to_owned());
+    let mut runtime = test_support::runtime::mem(&sweeper).build().runtime;
+    runtime.commissions = backend.commission_store();
+    runtime.changelog = backend.changelog_store();
+    runtime.database = backend.database();
+    runtime
+        .app()
+        .commissions()
+        .sweep_deadlines(now)
+        .await
+        .expect("sweep runs")
 }
 
 // AC1 — a Participant attaches a Markup (a circle, with a text comment) to a file
@@ -404,9 +415,7 @@ async fn adding_markup_changes_no_status() {
         json!({ "title": "Ref sheet", "deadline": past.to_rfc3339() }),
     )
     .await;
-    let swept = application::commission::sweep_deadlines(&*backend.database(), Utc::now())
-        .await
-        .expect("sweep runs");
+    let swept = sweep_at(&backend, Utc::now()).await;
     assert_eq!(swept.marked_late, 1, "the seeded commission is marked Late");
 
     // And a value on the direction axis, set explicitly (ZMVP-85 machinery).
@@ -430,7 +439,10 @@ async fn adding_markup_changes_no_status() {
         before.direction_status,
         Some(DirectionStatus::WaitingForInput)
     );
-    assert_eq!(before.deadline_status, Some(DeadlineStatus::Late));
+    assert_eq!(
+        before.deadline_status_at(Utc::now()),
+        Some(DeadlineStatus::Late)
+    );
     let log_before = read_changelog(&client, &base, id).await.len();
 
     let markup = json!({
@@ -457,7 +469,7 @@ async fn adding_markup_changes_no_status() {
         "markup never moves the direction axis"
     );
     assert_eq!(
-        after.deadline_status,
+        after.deadline_status_at(Utc::now()),
         Some(DeadlineStatus::Late),
         "markup never moves the deadline axis"
     );

@@ -3,16 +3,18 @@ use chrono::Utc;
 use composition::Runtime;
 use domain::elements::{
     account::AccountId,
-    commission::{CommissionId, ElementId, FileKey, SKELETON, Visibility},
+    commission::{CommissionId, ElementId, FileKey, LifecycleStep, SKELETON},
     did::Did,
+    level::Level,
     profile::Profile,
     user::UserId,
-    workflow::WorkflowId,
+    workflow::{ColumnId, WorkflowId},
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::{PgServed, StatementLog, serve, serve_recording};
+use crate::pg::allow_any_commission_token;
 
 mod identity;
 
@@ -21,8 +23,8 @@ pub use identity::{absent_account, stranger};
 /// The stranger's DID: a user who signs in and takes part in nothing.
 const STRANGER_DID: &str = "did:plc:s5trstrangerfixtureaaaaa";
 
-/// The visibility token no parser reads, for the row a stored token can't be parsed from.
-const UNPARSABLE_VISIBILITY: &str = "not-a-visibility";
+/// The level token no parser reads, for the node a stored token can't be parsed from.
+const UNPARSABLE_LEVEL: &str = "not-a-visibility";
 
 /// The lifecycle token no parser reads, for the row only the whole-commission read parses.
 const UNPARSABLE_LIFECYCLE: &str = "not-a-lifecycle";
@@ -36,6 +38,8 @@ pub const UNNAMED: &str = "Unnamed";
 
 /// A commission id no seed writes: a UUIDv7 from 2025, before any row's.
 const ABSENT_COMMISSION: Uuid = Uuid::from_u128(0x0193_0000_0000_7000_8000_0000_0000_0a01);
+/// A second commission id no seed writes, for the pairs of two made-up ids.
+const OTHER_ABSENT_COMMISSION: Uuid = Uuid::from_u128(0x0193_0000_0000_7000_8000_0000_0000_0a05);
 /// A file key no seed writes.
 const ABSENT_FILE: Uuid = Uuid::from_u128(0x0193_0000_0000_7000_8000_0000_0000_0a02);
 /// A slot id no seed writes.
@@ -52,6 +56,40 @@ pub enum ProfileCacheState {
     /// The cache empty: each root's name is looked up, and the lookup fills the cache.
     #[strum(serialize = "cold cache")]
     Cold,
+}
+
+/// A time on a commission's row that a test can set to infinity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::VariantArray)]
+#[strum(serialize_all = "snake_case")]
+pub enum CommissionTime {
+    /// When the commission was created.
+    Created,
+    /// Its deadline.
+    Deadline,
+    /// When it was archived.
+    Archived,
+    /// When its dispute was raised, which also puts it in the Disputed step.
+    Disputed,
+}
+
+/// Which infinity a time is set to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::VariantArray)]
+pub enum Infinity {
+    /// After every time.
+    #[strum(serialize = "infinity")]
+    Positive,
+    /// Before every time.
+    #[strum(serialize = "-infinity")]
+    Negative,
+}
+
+/// The board of the stranger's own: its Workflow and its first column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StrangerBoard {
+    /// The Workflow on the stranger's Account.
+    pub workflow: WorkflowId,
+    /// Its first column.
+    pub column: ColumnId,
 }
 
 /// A commission the world seeds: its id, the one file uploaded to it and its one slot.
@@ -94,7 +132,7 @@ pub struct DenWorld {
 
 /// Serves `app` on a fresh PostgreSQL database and seeds the [`DenWorld`] through the app's
 /// routes and use cases. Two writes no route makes yet are test-only: bob's participation in
-/// "Untitled", and any visibility other than Private ([`DenWorld::set_visibility`]).
+/// "Untitled", and any level other than Private ([`DenWorld::set_visibility`]).
 pub async fn den_world(app: impl FnOnce(Runtime) -> Router) -> DenWorld {
     let served = serve(app).await;
     seed(served).await
@@ -180,20 +218,39 @@ impl DenWorld {
         &self.served.base_url
     }
 
-    /// Sets `commission`'s stored visibility, a test-only update: no route sets it yet.
-    pub async fn set_visibility(&self, commission: CommissionId, visibility: Visibility) {
-        self.store_visibility(commission, &visibility.to_string())
-            .await;
+    /// Sets the level of `commission`'s node, a test-only update: no route sets it yet.
+    pub async fn set_visibility(&self, commission: CommissionId, visibility: Level) {
+        self.store_level(commission, &visibility.to_string()).await;
     }
 
-    /// Stores a visibility token no parser reads on `commission`'s row, a test-only update.
-    pub async fn store_unparsable_visibility(&self, commission: CommissionId) {
-        self.store_visibility(commission, UNPARSABLE_VISIBILITY)
-            .await;
+    /// Stores a level token no parser reads on `commission`'s node, a test-only update. The
+    /// node table refuses one, so this drops its `node_level_known` check in this world's own
+    /// database first.
+    pub async fn store_unparsable_level(&self, commission: CommissionId) {
+        sqlx::query("ALTER TABLE node DROP CONSTRAINT IF EXISTS node_level_known")
+            .execute(&self.served.runtime.pool)
+            .await
+            .expect("drop node_level_known in the world's database");
+        self.store_level(commission, UNPARSABLE_LEVEL).await;
     }
 
-    /// Stores a lifecycle token no parser reads on `commission`'s row, a test-only update.
+    /// Puts `commission` at the undisputed lifecycle `step`, a test-only update past the moves'
+    /// rules; the dispute CHECK refuses Disputed, which only the dispute's raise enters.
+    pub async fn set_lifecycle_step(&self, commission: CommissionId, step: LifecycleStep) {
+        let updated = sqlx::query("UPDATE commission SET lifecycle = $1 WHERE id = $2")
+            .bind(step.to_string())
+            .bind(Uuid::from(commission))
+            .execute(&self.served.runtime.pool)
+            .await
+            .expect("update the commission's lifecycle");
+        assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
+    }
+
+    /// Stores a lifecycle token no parser reads on `commission`'s row, a test-only update. The
+    /// commission table refuses one, so this drops its word and time checks in this world's own
+    /// database first.
     pub async fn store_unparsable_lifecycle(&self, commission: CommissionId) {
+        allow_any_commission_token(&self.served.runtime.pool).await;
         let updated = sqlx::query("UPDATE commission SET lifecycle = $1 WHERE id = $2")
             .bind(UNPARSABLE_LIFECYCLE)
             .bind(Uuid::from(commission))
@@ -203,8 +260,8 @@ impl DenWorld {
         assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
     }
 
-    /// Stores [`LEGACY_NAME`] as `commission`'s title, as a commission named before today's
-    /// rule holds it: on its row and in its created entry's payload. Test-only updates in one
+    /// Stores [`LEGACY_NAME`] as `commission`'s name, as a commission named before today's
+    /// rule holds it: on its node and in its created entry's payload. Test-only updates in one
     /// transaction, which alone switches the changelog's append-only trigger off.
     pub async fn store_legacy_title(&self, commission: CommissionId) {
         let mut tx = self
@@ -214,12 +271,14 @@ impl DenWorld {
             .begin()
             .await
             .expect("begin a transaction");
-        let titled = sqlx::query("UPDATE commission SET title = $1 WHERE id = $2")
-            .bind(LEGACY_NAME)
-            .bind(Uuid::from(commission))
-            .execute(&mut *tx)
-            .await
-            .expect("update the commission's title");
+        let titled = sqlx::query(
+            "UPDATE node SET name = $1 FROM commission c WHERE c.id = $2 AND node.id = c.node_id",
+        )
+        .bind(LEGACY_NAME)
+        .bind(Uuid::from(commission))
+        .execute(&mut *tx)
+        .await
+        .expect("update the commission node's name");
         sqlx::query(
             "ALTER TABLE commission_changelog DISABLE TRIGGER commission_changelog_append_only",
         )
@@ -243,7 +302,7 @@ impl DenWorld {
         .await
         .expect("switch the append-only trigger back on");
         tx.commit().await.expect("commit the legacy title");
-        assert_eq!(titled.rows_affected(), 1, "one commission row is updated");
+        assert_eq!(titled.rows_affected(), 1, "one node is updated");
         assert_eq!(recorded.rows_affected(), 1, "one created entry is updated");
     }
 
@@ -257,6 +316,80 @@ impl DenWorld {
             .await
             .expect("update the file's name");
         assert_eq!(renamed.rows_affected(), 1, "one blob is renamed");
+    }
+
+    /// Sets `time` on `commission`'s row to `infinity`, a test-only update. Planting
+    /// [`CommissionTime::Disputed`] also moves the commission into the Disputed step, from
+    /// Active, as the dispute CHECK requires. The commission table refuses an infinite time, so
+    /// this drops its word and time checks in this world's own database first.
+    pub async fn plant_infinite_time(
+        &self,
+        commission: CommissionId,
+        time: CommissionTime,
+        infinity: Infinity,
+    ) {
+        allow_any_commission_token(&self.served.runtime.pool).await;
+        let statement = match time {
+            CommissionTime::Created => {
+                "UPDATE commission SET created_at = $1::text::timestamptz WHERE id = $2"
+            }
+            CommissionTime::Deadline => {
+                "UPDATE commission SET deadline = $1::text::timestamptz WHERE id = $2"
+            }
+            CommissionTime::Archived => {
+                "UPDATE commission SET archived_at = $1::text::timestamptz WHERE id = $2"
+            }
+            CommissionTime::Disputed => {
+                "UPDATE commission SET lifecycle = 'disputed', disputed_from = 'active', \
+                 disputed_at = $1::text::timestamptz WHERE id = $2"
+            }
+        };
+        let planted = sqlx::query(statement)
+            .bind(infinity.to_string())
+            .bind(Uuid::from(commission))
+            .execute(&self.served.runtime.pool)
+            .await
+            .expect("plant the infinite time");
+        assert_eq!(planted.rows_affected(), 1, "one commission row is updated");
+    }
+
+    /// Founds an Account of the stranger's with a Workflow and one column on its board, as
+    /// the stranger: a board the stranger owns while holding no role on any commission. Once
+    /// per world: it founds the Account.
+    pub async fn seed_stranger_board(&self) -> StrangerBoard {
+        let account = found_account(
+            &self.served,
+            &self.stranger,
+            "Stranger House",
+            "stranger-house",
+        )
+        .await;
+        let workflow = create_workflow(&self.served, stranger(), &account, "Stranger Board").await;
+        let column = self.add_column(stranger(), workflow, "To do").await;
+        StrangerBoard { workflow, column }
+    }
+
+    /// Adds the column `name` to the stranger's `board`, for a card the first column holds
+    /// already: a column takes a commission once.
+    pub async fn add_stranger_column(&self, board: &StrangerBoard, name: &str) -> ColumnId {
+        self.add_column(stranger(), board.workflow, name).await
+    }
+
+    /// Takes `commission`'s card off the stranger's `board`, through the remove use case, so
+    /// it can be placed again.
+    pub async fn take_stranger_card_off(&self, board: &StrangerBoard, commission: CommissionId) {
+        let command = application::account::workflow::column::commission::remove::Command {
+            actor_id: stranger(),
+            commission_id: commission,
+            workflow_id: board.workflow,
+        };
+        let app = self.served.runtime.app();
+        let accounts = app.accounts();
+        accounts
+            .workflows()
+            .remove(command)
+            .await
+            .expect("the card comes off the board");
     }
 
     /// Makes bob a Participant of the archived "Old sketch" too, a test-only insert as for
@@ -310,21 +443,60 @@ impl DenWorld {
             .expect("empty the profile cache");
     }
 
-    /// Writes `token` as `commission`'s visibility.
-    async fn store_visibility(&self, commission: CommissionId, token: &str) {
-        let updated = sqlx::query("UPDATE commission SET visibility = $1 WHERE id = $2")
-            .bind(token)
-            .bind(Uuid::from(commission))
-            .execute(&self.served.runtime.pool)
+    /// Adds the column `name` to "Night Shift"'s Workflow "Backlog" as bob, through the add
+    /// use case, and answers its id.
+    pub async fn add_backlog_column(&self, name: &str) -> ColumnId {
+        self.add_column(adapter_mem::fixture::bob(), self.backlog, name)
             .await
-            .expect("update the commission's visibility");
-        assert_eq!(updated.rows_affected(), 1, "one commission row is updated");
+    }
+
+    /// Adds the column `name` to `workflow` as `actor`, through the add use case, and answers
+    /// its id.
+    async fn add_column(&self, actor: UserId, workflow: WorkflowId, name: &str) -> ColumnId {
+        let command = application::account::workflow::column::add::Command {
+            actor_id: actor,
+            workflow_id: workflow,
+            column_name: name.parse().expect("a valid column name"),
+            position: 0,
+        };
+        let app = self.served.runtime.app();
+        let accounts = app.accounts();
+        let added = accounts
+            .workflows()
+            .columns()
+            .add(command)
+            .await
+            .expect("the column is added");
+        added
+            .columns
+            .into_iter()
+            .find(|column| column.name.as_ref() == name)
+            .expect("the added column is on the board")
+            .id
+    }
+
+    /// Writes `token` as the level of the node `commission` points at.
+    async fn store_level(&self, commission: CommissionId, token: &str) {
+        let leveled = sqlx::query(
+            "UPDATE node SET level = $1 FROM commission c WHERE c.id = $2 AND node.id = c.node_id",
+        )
+        .bind(token)
+        .bind(Uuid::from(commission))
+        .execute(&self.served.runtime.pool)
+        .await
+        .expect("update the commission node's level");
+        assert_eq!(leveled.rows_affected(), 1, "one node is updated");
     }
 }
 
 /// A commission id no seed writes.
 pub fn absent_commission() -> CommissionId {
     CommissionId::from(ABSENT_COMMISSION)
+}
+
+/// A second commission id no seed writes.
+pub fn other_absent_commission() -> CommissionId {
+    CommissionId::from(OTHER_ABSENT_COMMISSION)
 }
 
 /// A file key no seed writes.

@@ -14,7 +14,7 @@ use adapter_mem::{
     },
 };
 use application::den::{
-    DenAccess, DenContent, DenError, DenListing, DenNode, NodeKind, NodeLevel, SoftDelete,
+    DenAccess, DenContent, DenError, DenListing, DenNode, NodeKind, SoftDelete,
     node::{self, NodeQuery},
     root::{self, RootQuery},
 };
@@ -25,6 +25,7 @@ use domain::{
         account::{Account, AccountId, AccountName},
         did::Did,
         handle::Handle,
+        level::Level,
         profile::Profile,
         role::Role,
         user::UserId,
@@ -159,7 +160,7 @@ fn path_of(node: &DenNode) -> Vec<String> {
 
 /// What an open node shows: its kind, its own level, whether its content is shown, and its
 /// soft-deleted word.
-fn open(node: &DenNode) -> (NodeKind, NodeLevel, bool, Option<SoftDelete>) {
+fn open(node: &DenNode) -> (NodeKind, Level, bool, Option<SoftDelete>) {
     let DenAccess::Open {
         kind,
         own_level,
@@ -174,8 +175,8 @@ fn open(node: &DenNode) -> (NodeKind, NodeLevel, bool, Option<SoftDelete>) {
 }
 
 /// An open, live, Private folder whose content is shown.
-const OPEN_PRIVATE_FOLDER: (NodeKind, NodeLevel, bool, Option<SoftDelete>) =
-    (NodeKind::Directory, NodeLevel::Private, false, None);
+const OPEN_PRIVATE_FOLDER: (NodeKind, Level, bool, Option<SoftDelete>) =
+    (NodeKind::Directory, Level::Private, false, None);
 
 #[tokio::test]
 async fn an_empty_path_is_not_found() {
@@ -249,7 +250,7 @@ async fn the_posts_mount_opens_public_and_empty_with_its_content_not_shown() {
         .expect("alice's posts");
     let below = read(&runtime, alice(), &["posts", "anything"], false).await;
 
-    let public_not_shown = (NodeKind::Directory, NodeLevel::Public, true, None);
+    let public_not_shown = (NodeKind::Directory, Level::Public, true, None);
     let entry = output
         .listing
         .entries
@@ -321,7 +322,7 @@ async fn supreme_arts_opens_to_its_characters_commissions_and_workflows() {
         .await
         .expect("Supreme Arts' workflows");
 
-    let content_not_shown = (NodeKind::Directory, NodeLevel::Private, true, None);
+    let content_not_shown = (NodeKind::Directory, Level::Private, true, None);
     assert_eq!(names(&folders), ["characters", "commissions", "workflows"]);
     assert_eq!(open(&characters.node), OPEN_PRIVATE_FOLDER);
     assert_eq!(listing(characters), DenListing::default());
@@ -345,7 +346,7 @@ async fn each_viewer_s_characters_mounts_the_characters_they_keep() {
             .expect("bob's characters"),
     );
 
-    let private_character = (NodeKind::Directory, NodeLevel::Private, true, None);
+    let private_character = (NodeKind::Directory, Level::Private, true, None);
     assert_eq!(names(&alice_s), ["Ember", "Kael-sona"]);
     assert_eq!(names(&bob_s), ["Abco"]);
     for entry in alice_s.entries.iter().chain(&bob_s.entries) {
@@ -415,7 +416,7 @@ async fn a_deactivated_account_is_listed_to_its_owner_only_when_asked_for() {
 
     let deactivated = (
         NodeKind::Directory,
-        NodeLevel::Private,
+        Level::Private,
         false,
         Some(SoftDelete::Deactivated),
     );
@@ -437,7 +438,7 @@ async fn a_deactivated_account_s_typed_path_opens_to_its_owner_marked() {
 
     let deactivated = (
         NodeKind::Directory,
-        NodeLevel::Private,
+        Level::Private,
         false,
         Some(SoftDelete::Deactivated),
     );
@@ -628,8 +629,8 @@ async fn the_den_reads_only_the_viewer_s_cached_profile_and_never_the_profile_so
 }
 
 /// An open, live, Private folder whose content isn't shown yet.
-const NOT_SHOWN_PRIVATE_FOLDER: (NodeKind, NodeLevel, bool, Option<SoftDelete>) =
-    (NodeKind::Directory, NodeLevel::Private, true, None);
+const NOT_SHOWN_PRIVATE_FOLDER: (NodeKind, Level, bool, Option<SoftDelete>) =
+    (NodeKind::Directory, Level::Private, true, None);
 
 #[tokio::test]
 async fn untitled_opens_from_alice_s_commissions_to_its_four_entries() {
@@ -705,7 +706,7 @@ async fn old_sketch_is_listed_in_alice_s_commissions_only_when_asked_for_marked_
     assert_eq!(names(&shown), ["Old sketch", "Untitled"]);
     let archived = (
         NodeKind::Directory,
-        NodeLevel::Private,
+        Level::Private,
         false,
         Some(SoftDelete::Archived),
     );
@@ -725,7 +726,7 @@ async fn old_sketch_s_typed_path_opens_marked_archived_without_asking_for_delete
     assert_eq!(output.node.name.to_string(), "Old sketch");
     let archived = (
         NodeKind::Directory,
-        NodeLevel::Private,
+        Level::Private,
         false,
         Some(SoftDelete::Archived),
     );

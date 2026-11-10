@@ -6,8 +6,8 @@ use std::{
 };
 
 use crate::{
-    Access, Admission, Entry, Found, Host, HostError, Kind, Level, Lift, Metadata, Mount, NodeName,
-    Reach, RealPath, Relationship, Scope, Segment, Type, View, Viewer,
+    Access, Admission, Checked, DisplayName, Entry, Found, Host, HostError, Kind, Level, Lift,
+    Metadata, Mount, Reach, RealPath, Relationship, Scope, Segment, Type, View, Viewer,
 };
 
 /// One call the fake host received.
@@ -60,6 +60,7 @@ pub struct FakeHost {
     refused: HashSet<(RealPath, Reach)>,
     failing: bool,
     calls: Mutex<Vec<Call>>,
+    applied: Vec<Checked<()>>,
 }
 
 /// A segment from test text.
@@ -101,7 +102,7 @@ impl FakeHost {
     pub fn node(mut self, at: &str, typ: &str, level: Level, lifts: &[Lift]) -> Self {
         let path = path(at);
         let (key, parent) = path.segments().split_last().expect("a node below the root");
-        let name = NodeName::try_from(format!("name of {key}")).expect("a valid test name");
+        let name = DisplayName::host_checked(format!("name of {key}"));
         let metadata = Metadata {
             key: key.clone(),
             parent: Some(parent.iter().cloned().collect()),
@@ -120,7 +121,7 @@ impl FakeHost {
 
     /// Changes the display name of the node at `at`.
     pub fn named(mut self, at: &str, name: &str) -> Self {
-        let name = NodeName::try_from(name).expect("a valid test name");
+        let name = DisplayName::host_checked(name.to_owned());
         self.found_mut(at).metadata.name = name;
         self
     }
@@ -185,6 +186,11 @@ impl FakeHost {
         self.calls.lock().expect("the call log").clone()
     }
 
+    /// Every act applied so far, in order.
+    pub fn applied(&self) -> &[Checked<()>] {
+        &self.applied
+    }
+
     /// Every admit call so far, as (path, access, reach).
     pub fn admits(&self) -> Vec<(RealPath, Access, Reach)> {
         let admit = |call: Call| match call {
@@ -220,6 +226,9 @@ impl FakeHost {
 
 #[async_trait::async_trait]
 impl Host for FakeHost {
+    type Act = ();
+    type Applied = ();
+
     async fn child(
         &self,
         _viewer: &Viewer,
@@ -296,6 +305,16 @@ impl Host for FakeHost {
         } else {
             Admission::Admit
         }
+    }
+
+    /// Records the checked act, or fails when the host is failing.
+    async fn apply(&mut self, _viewer: &Viewer, checked: Checked<()>) -> Result<(), HostError> {
+        if self.failing {
+            let failure: Box<dyn std::error::Error + Send + Sync> = "the fake store is down".into();
+            return Err(HostError::from(failure));
+        }
+        self.applied.push(checked);
+        Ok(())
     }
 }
 

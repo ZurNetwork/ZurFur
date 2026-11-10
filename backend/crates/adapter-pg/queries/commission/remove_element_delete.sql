@@ -1,6 +1,7 @@
 -- Remove one element. Scoped by commission_id as well as the unique
 -- id, so the statement is self-contained rather than leaning on id uniqueness
 -- alone. Elements are leaves — nothing is orphaned — but whatever
--- shares the element's identity (a Slot or Seat satellite, and a seat's pending
--- invitations) leaves with it via ON DELETE CASCADE.
+-- shares the element's identity (a Seat satellite and its pending invitations)
+-- leaves with it via ON DELETE CASCADE. A Slot's element never reaches this
+-- statement: the removal gate refuses it.
 DELETE FROM commission_element WHERE id = $1 AND commission_id = $2

@@ -11,7 +11,7 @@
 /// an account, and a user's effective view is the max of their own standing and
 /// their own key; membership confers no view. Hard-deleted on revoke.
 ///
-/// Not the [`Visibility`](super::Visibility) aliases: a grant speaks the
+/// Not the commission's [`Level`](kernel::elements::level::Level) aliases: a grant speaks the
 /// underlying mode directly.
 #[derive(
     Debug,

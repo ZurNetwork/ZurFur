@@ -8,7 +8,8 @@ use domain::elements::{
 use crate::{
     Ports,
     account::{
-        AccountEntity, AccountError, AccountResult, require_live_account, workflow::column::Columns,
+        AccountEntity, AccountError, AccountResult, lock_live_account, require_live_account,
+        workflow::column::Columns,
     },
 };
 
@@ -45,7 +46,8 @@ impl Columns<'_> {
             .await?
             .ok_or(AccountError::NotFound(AccountEntity::Workflow))?;
 
-        require_live_account(ports, &workflow.account_id).await?;
+        let account_id = workflow.account_id.clone();
+        require_live_account(ports, &account_id).await?;
 
         ports
             .accounts
@@ -66,6 +68,7 @@ impl Columns<'_> {
             })?;
 
         let uow = uow.open().await?;
+        lock_live_account(uow, &account_id).await?;
         uow.columns().rename(column).await?;
 
         Ok(Output)

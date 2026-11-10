@@ -1,37 +1,56 @@
-//! Commission ports: the canonical [`CommissionStore`] read surface and the
-//! [`CommissionWrites`] write view. Commissions are entirely Index-side —
+//! Commission ports: the canonical [`CommissionStore`] read surface, the
+//! [`CommissionRows`] whole-row read and the [`CommissionWrites`] write view. Commissions are entirely Index-side —
 //! nothing on these surfaces ever touches atproto.
 
 use async_trait::async_trait;
 
 use crate::elements::{
     commission::{
-        ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
-        CommissionMarkup, CommissionSummary, CommissionTitle, DeadlineStatus, DirectionStatus,
-        ElementId, FileKey, FileSummary, GrantLevel, LapsedDeadline, NewCommission, NewElement,
-        NewSeat, NewSlot, Seat, SeatInvitation, SeatInvitationId, Slot, TabId, TabRow,
+        AsOwner, AsParticipant, ChannelPointer, Commission, CommissionBirth, CommissionComposition,
+        CommissionFile, CommissionId, CommissionMarkup, CommissionStanding, CommissionSummary,
+        DeadlineChange, DelayedChange, DirectionChange, Dispute, DisputeClear, ElementId, FileKey,
+        FileSummary, GrantLevel, LateKinds, LifecycleMove, LifecycleStep, LockedNode,
+        LockedStanding, MaturitySet, NewCommission, NewElement, NewSeat, NewSlot, Seat,
+        SeatInvitation, SeatInvitationId, Slot, SlotBirth, TabId, TabRow, ViewedSummary,
     },
     workflow::{Column, ColumnId, WorkflowId},
 };
 use identity::elements::user::UserId;
-use kernel::{datetime::DateTimeUtc, elements::maturity::Maturity};
+use kernel::{
+    datetime::DateTimeUtc,
+    ports::{Creator, New, WriteCapability},
+};
 
 pub use super::errors::{ElementNotFound, UnknownSurface, UnknownTab};
 
 /// The **read** surface of Zurfur's record of commissions — pool-backed and
 /// non-transactional. The one canonical commission read port: later work extends
-/// it rather than growing siblings. Authorization is always the caller's, settled
-/// before any of these is reached.
+/// it rather than growing siblings, except the whole-row read, which lives on
+/// [`CommissionRows`] so its callers can be held to a list. Authority is decided
+/// from [`find_summary`](Self::find_summary), [`standing`](Self::standing) and, for a
+/// placement, [`view_grant`](Self::view_grant); the rest run after the caller has settled
+/// it, except [`lapsed_deadlines`](Self::lapsed_deadlines), the sweep's viewer-less scan.
 #[async_trait]
 pub trait CommissionStore: Send + Sync {
-    /// The commission `id` names, or `None`. An archived commission is still
-    /// found — filtering it out is a listing projection's job.
-    async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
+    /// The [`ViewedSummary`] of the commission `id` names, as `viewer` reads it, or `None`.
+    /// An absent id, a commission with no node and one `viewer` can't be shown (its standing
+    /// isn't [`is_shown`](CommissionStanding::is_shown)) all answer the same `None`, from
+    /// one statement. An archived commission is still found when it is shown.
+    async fn find_summary(
+        &self,
+        id: &CommissionId,
+        viewer: &UserId,
+    ) -> anyhow::Result<Option<ViewedSummary>>;
 
-    /// The [`CommissionSummary`] of the commission `id` names, or `None`: its stored title,
-    /// its own visibility and its archive time, and nothing else of the row. An archived
-    /// commission is still found.
-    async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>>;
+    /// The [`CommissionStanding`] `user` holds on `commission`, or `None` when no
+    /// commission has that id. An absent id and a stranger take the same one-row
+    /// read, and the read carries no name and no whole row. The level is the
+    /// commission's node's, Private when it has none. An archived commission is still found.
+    async fn standing(
+        &self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<Option<CommissionStanding>>;
 
     async fn current_column_of_workflow(
         &self,
@@ -54,17 +73,6 @@ pub trait CommissionStore: Send + Sync {
         commission_id: &CommissionId,
         user_id: &UserId,
     ) -> anyhow::Result<Option<GrantLevel>>;
-
-    /// Whether `user` is a Participant of `commission` — the one authorization
-    /// predicate every "a Participant does X" endpoint consumes. Reads the
-    /// persisted `commission_participant` record, whose owner row is a permanent,
-    /// irremovable floor. An unknown commission answers `false`, so callers
-    /// collapse absent and hidden into one uniform 404.
-    async fn is_participant(
-        &self,
-        commission: &CommissionId,
-        user: &UserId,
-    ) -> anyhow::Result<bool>;
 
     /// The commission's declared [`Seat`]s, keyed by their carrying elements' ids,
     /// in declaration order; empty for an unknown commission. Raw and Total-tier
@@ -111,15 +119,11 @@ pub trait CommissionStore: Send + Sync {
         user: &UserId,
     ) -> anyhow::Result<Option<SeatInvitation>>;
 
-    /// The commissions `owner` owns — owner-POV only, not the participant
-    /// projection. Archived commissions are excluded; ordered by
-    /// [`CommissionId`], unpaginated.
-    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>>;
-
-    /// The commissions `user` is a Participant of, read from the same
-    /// participant record as [`is_participant`](Self::is_participant). Archived
-    /// commissions are included; hiding them is the caller's. Ordered by
-    /// [`CommissionId`]; empty for a user who takes part in none.
+    /// The commissions `user` is a Participant of, read from the
+    /// `commission_participant` record, each named and
+    /// levelled by its node; one with no node is left out. Archived commissions are
+    /// included; hiding them is the caller's. Ordered by [`CommissionId`]; empty for a
+    /// user who takes part in none.
     async fn list_participating(&self, user: &UserId) -> anyhow::Result<Vec<CommissionSummary>>;
 
     /// Every file entry of `commission` as a [`FileSummary`] (key and upload
@@ -131,19 +135,78 @@ pub trait CommissionStore: Send + Sync {
     /// Every Slot declared on `commission`, in declaration order. Empty for a
     /// commission with no Slots, and for an unknown one.
     async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>>;
+
+    /// The ids of the commissions the deadline sweep may owe a `late` entry as of `now`:
+    /// deadline strictly before `now`, step not in `not_lapsing`, and no entry of `late_kinds`'
+    /// mark recorded since the last of its re-arming kinds. Ordered by deadline, then id. Only a
+    /// scan: each one is re-read under its own lock before anything is written.
+    async fn lapsed_deadlines(
+        &self,
+        now: DateTimeUtc,
+        not_lapsing: &[LifecycleStep],
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<Vec<CommissionId>>;
+}
+
+/// The **whole-row** read of Zurfur's record of commissions — pool-backed and
+/// non-transactional. Kept apart from [`CommissionStore`] and reached through a field of its
+/// own, so the callers that may read a whole row stay countable. Authorization is the
+/// caller's, settled before it is reached.
+#[async_trait]
+pub trait CommissionRows: Send + Sync {
+    /// The commission `id` names, or `None`. An archived commission is still
+    /// found — filtering it out is a listing projection's job.
+    async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
 }
 
 /// The **write** surface of Zurfur's record of commissions — reachable only on an
-/// open `UnitOfWork` (`uow.commissions()`). Authority
-/// and the commission's own existence are always the caller's checks, settled
-/// before any of these is reached.
+/// open `UnitOfWork` (`uow.commissions()`). A create's authority is the den's write
+/// gate's create [`WriteCapability`], which [`create`](Self::create) takes; a lifecycle move's,
+/// a dispute's raise and clear, a direction status's, a deadline's and a Delayed flag's is a
+/// Participant's, and a rating's the Owner's, which their writes take; a Slot declare's is the
+/// Owner's, which [`declare_slot`](Self::declare_slot) takes. Every other method's authority,
+/// and the commission's own existence, are the caller's checks, settled before it is reached.
 #[async_trait]
 pub trait CommissionWrites: Send {
-    /// Persist a freshly created [`NewCommission`], together with its skeleton
-    /// tab rows and its owner's participant row. The title is a checked
-    /// [`CommissionTitle`](crate::elements::commission::CommissionTitle) by type. Both are minted inside the
-    /// implementation, so a tabless or owner-less commission is unrepresentable.
-    async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()>;
+    /// Persist a new commission under the id `capability` was issued for, at `birth`'s
+    /// node, owner and time, with what `commission` chose, in the starting state
+    /// [`CommissionStart::default`](crate::elements::commission::CommissionStart::default)
+    /// names. Its skeleton tab rows and its owner's participant row are written with it, so a
+    /// tabless or owner-less one can't exist.
+    async fn create(
+        &mut self,
+        capability: &WriteCapability<New<CommissionId>, Creator>,
+        birth: &CommissionBirth,
+        commission: &NewCommission,
+    ) -> anyhow::Result<()>;
+
+    /// Move the commission `capability` was issued for from `change`'s held step to its new
+    /// one, by compare-and-set: the row changes only while it still holds the held step.
+    /// Answers `true` only when exactly one row changed.
+    async fn set_lifecycle(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &LifecycleMove,
+    ) -> anyhow::Result<bool>;
+
+    /// Put the commission `capability` was issued for into Disputed from `dispute`'s held step,
+    /// storing that step and when the dispute began, by compare-and-set: the row changes only
+    /// while it still holds the held step. Answers `true` only when exactly one row changed.
+    async fn set_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        dispute: &Dispute,
+    ) -> anyhow::Result<bool>;
+
+    /// Return the commission `capability` was issued for from Disputed to the step its dispute
+    /// left, which must be `clear`'s, and forget the dispute, by compare-and-set: the row
+    /// changes only while it is still Disputed from that step. Answers `true` only when exactly
+    /// one row changed.
+    async fn clear_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        clear: &DisputeClear,
+    ) -> anyhow::Result<bool>;
 
     /// Declare a [`NewSeat`] into a declared surface, as one element plus one
     /// satellite row sharing the seat's id. Refuses an absent/foreign tab with
@@ -171,10 +234,11 @@ pub trait CommissionWrites: Send {
     /// [`UnknownTab`] or [`UnknownSurface`].
     async fn add_element(&mut self, element: &NewElement) -> anyhow::Result<()>;
 
-    /// Remove `element` from the commission's composition — one row, plus the
-    /// satellites and pending invitations that cascade off its identity — and
+    /// Remove `element` from the commission's composition — one row, plus a Seat
+    /// and its pending invitations that cascade off its identity — and
     /// renumber the remaining `(tab, surface, band)` group in the same
-    /// transaction. Refuses with [`ElementNotFound`].
+    /// transaction. Refuses with [`ElementNotFound`], for an element that carries
+    /// a Slot too: this write never removes a Slot.
     async fn remove_element(
         &mut self,
         commission: &CommissionId,
@@ -194,12 +258,18 @@ pub trait CommissionWrites: Send {
     /// is bookkeeping, not a [`Fact`](crate::elements::commission::Fact).
     async fn add_markup(&mut self, markup: &CommissionMarkup) -> anyhow::Result<()>;
 
-    /// Declare Slots on the commission, as a batch in one write: each [`NewSlot`]
-    /// becomes an ordinary element in the named surface plus a satellite row keyed
-    /// by that element's id. All-or-nothing — the first refusal aborts the write.
-    /// Same gates as [`add_element`](Self::add_element). Nothing here fills a
-    /// Slot; no occupant is representable.
-    async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()>;
+    /// Declare one Slot on the commission `capability` was issued for, at `birth`'s node, element,
+    /// declarer and time: an ordinary element in `slot`'s surface, behind the same tab and
+    /// surface gates as [`add_element`](Self::add_element), plus its satellite row, bound to
+    /// `birth`'s node only when that node is a `slot` node under this commission's `slots` entry
+    /// whose segment is the element's id; any other node stores nothing, and the declare errs.
+    /// Nothing here fills a Slot; no occupant is representable.
+    async fn declare_slot(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        birth: &SlotBirth,
+        slot: &NewSlot,
+    ) -> anyhow::Result<()>;
 
     /// Whether the commission bears any [`Fact`](crate::elements::commission::Fact)
     /// — the single predicate deciding hard-delete legality. A read on the write
@@ -226,20 +296,15 @@ pub trait CommissionWrites: Send {
         archived_at: Option<DateTimeUtc>,
     ) -> anyhow::Result<bool>;
 
-    /// Replace the commission's title. Returns whether the stored title actually
-    /// changed, so the caller keys its `renamed` append on a real change in this
-    /// same unit. A no-op on an absent commission, answering `false`.
-    async fn set_title(
+    /// Rate the commission `capability` was issued for, from `change`'s held rating (none while
+    /// unrated) to its new one, by compare-and-set: the row changes only while it still holds
+    /// the held rating and Graphic flag. Replace-only: the change always carries a rating.
+    /// Answers `true` only when exactly one row changed.
+    async fn set_maturity(
         &mut self,
-        id: &CommissionId,
-        title: &CommissionTitle,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        change: &MaturitySet,
     ) -> anyhow::Result<bool>;
-
-    /// Set or replace the commission's maturity posture. Replace-only by
-    /// signature: taking a [`Maturity`] rather than an `Option` means no call site
-    /// can clear a rating back to unrated. A no-op write on an absent commission.
-    ///
-    async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()>;
 
     /// Set (`Some`) or clear (`None`) the commission's external linked-channel
     /// pointer. Returns whether the stored value actually changed, so the caller
@@ -272,58 +337,79 @@ pub trait CommissionWrites: Send {
         to_user: &UserId,
     ) -> anyhow::Result<bool>;
 
-    /// Set (`Some`) or clear (`None`) the commission's direction-axis Status — one
-    /// nullable cell, so a set replaces whatever is held and axis exclusivity
-    /// holds by construction. This is the column's only writer; no system sweep
-    /// may reach for it. Returns `true` iff the stored value changed.
+    /// Set or clear the direction status of the commission `capability` was issued for, from
+    /// `change`'s held status to its new one, by compare-and-set: the row changes only while it
+    /// still holds the held status. Answers `true` only when exactly one row changed.
     async fn set_direction_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DirectionStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DirectionChange,
     ) -> anyhow::Result<bool>;
 
-    /// Set (`Some`) or clear (`None`) the commission's deadline. The caller
-    /// appends the matching changelog entry and owns the axis recompute via
-    /// [`set_deadline_status`](Self::set_deadline_status). Returns `true` iff the
-    /// stored value changed.
+    /// Set or clear the deadline of the commission `capability` was issued for, from
+    /// `change`'s held deadline to its new one, by compare-and-set: the row changes only while
+    /// it still holds the held deadline. Answers `true` only when exactly one row changed.
     async fn set_deadline(
         &mut self,
-        id: &CommissionId,
-        deadline: Option<DateTimeUtc>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DeadlineChange,
     ) -> anyhow::Result<bool>;
 
-    /// Set (`Some`) or clear (`None`) the commission's deadline-axis Status — one
-    /// nullable cell, replaced on each set. Two writers only: the deadline-status
-    /// endpoint and the deadline sweeper's [`Late`](DeadlineStatus::Late) mark.
-    /// The caller must never leave a value on a commission without a deadline.
-    /// Returns `true` iff the stored value changed.
+    /// Raise or take down the Delayed flag of the commission `capability` was issued for, from
+    /// `change`'s held flag to its new one, by compare-and-set: the row changes only while it
+    /// still holds the held flag. Answers `true` only when exactly one row changed.
     async fn set_deadline_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DeadlineStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DelayedChange,
     ) -> anyhow::Result<bool>;
-
-    /// The commissions the deadline sweeper must mark Late as of `now`: deadline
-    /// strictly before `now`, not already [`Late`](DeadlineStatus::Late),
-    /// lifecycle not terminal. Ordered by deadline. A read on the write view so
-    /// the sweeper scans and marks in one unit, with no gap between.
-    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>>;
 }
 
-/// The **read** side of a commission unit of work — the same lookups as
-/// [`CommissionStore`], on the unit's own connection so they see its uncommitted
-/// writes and can hold row locks until commit.
+/// The **read** side of a commission unit of work — lookups like those of
+/// [`CommissionRows`] and [`CommissionStore`], on the unit's own connection so they
+/// see its uncommitted writes and can hold row locks until commit.
 #[async_trait]
 pub trait CommissionReads: Send {
-    /// The commission `id` names, or `None`; as [`CommissionStore::find`].
+    /// The commission `id` names, or `None`; as [`CommissionRows::find`].
     async fn find(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
 
     /// [`find`](Self::find), with the row locked (`FOR NO KEY UPDATE`) for the
     /// rest of the unit; child-row inserts by others are not blocked.
     async fn find_for_update(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>>;
 
-    /// Whether `user` is a Participant of `commission`; as
-    /// [`CommissionStore::is_participant`].
+    /// [`CommissionStore::standing`], with the commission row locked
+    /// (`FOR NO KEY UPDATE`) for the rest of the unit, beside the node the commission
+    /// points at; `None` when it is absent or has no node.
+    /// Every change to someone's standing (evict, leave, role change, Admin grant
+    /// or revoke, transfer) locks the commission row first, so this answer holds
+    /// until the unit ends.
+    async fn standing_for_update(
+        &mut self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<Option<LockedStanding>>;
+
+    /// The node `commission` points at and that node's level, with the commission row locked
+    /// (`FOR NO KEY UPDATE`) for the rest of the unit; `None` when it is absent or has no node.
+    /// Reads no viewer: it is the system's own act's lock, which no user's standing grants.
+    async fn lock_for_system(
+        &mut self,
+        commission: &CommissionId,
+    ) -> anyhow::Result<Option<LockedNode>>;
+
+    /// Whether `commission` is still owed a `late` entry: no entry of `late_kinds`' mark
+    /// recorded since the last of its re-arming kinds. [`CommissionStore::lapsed_deadlines`]'s
+    /// anti-join, for one commission.
+    async fn late_owed(
+        &mut self,
+        commission: &CommissionId,
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<bool>;
+
+    /// Whether `user` is a Participant of `commission`, read from the persisted
+    /// `commission_participant` record on the unit's connection, so a caller that locked the
+    /// commission first reads an answer that holds until the unit ends. An unknown commission
+    /// answers `false`.
     async fn is_participant(
         &mut self,
         commission: &CommissionId,

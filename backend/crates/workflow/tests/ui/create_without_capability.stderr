@@ -1,0 +1,15 @@
+error[E0061]: this method takes 3 arguments but 2 arguments were supplied
+  --> tests/ui/create_without_capability.rs:18:25
+   |
+18 |     let _write = writes.create(&birth, &chosen);
+   |                         ^^^^^^ ------ argument #1 of type `&WriteCapability<New<CommissionId>, Creator>` is missing
+   |
+note: method defined here
+  --> src/ports/commission.rs
+   |
+   |     async fn create(
+   |              ^^^^^^
+help: provide the argument
+   |
+18 |     let _write = writes.create(/* &WriteCapability<New<CommissionId>, Creator> */, &birth, &chosen);
+   |                                +++++++++++++++++++++++++++++++++++++++++++++++++++

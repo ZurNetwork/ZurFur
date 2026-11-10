@@ -65,7 +65,13 @@ struct Exited {
 /// Runs the binary under `vars` and waits for it to exit.
 async fn run_to_exit(vars: &[(&str, &str)]) -> Exited {
     let scratch = tempfile::tempdir().expect("a scratch directory");
-    let running = server_command(&scratch, vars).output();
+    let command = server_command(&scratch, vars);
+    exit_of(command).await
+}
+
+/// Runs `command` and waits for it to exit.
+async fn exit_of(mut command: Command) -> Exited {
+    let running = command.output();
     let output = tokio::time::timeout(BOOT_TIMEOUT, running)
         .await
         .expect("the server exits in time")
@@ -193,6 +199,7 @@ mod with_the_feature {
     use domain::elements::profile::Profile;
     use reqwest::StatusCode;
     use reqwest::header::{CONTENT_TYPE, COOKIE, LOCATION, SET_COOKIE};
+    use test_support::custody::test_root;
     use test_support::http::client;
     use test_support::pg_app::{self, PgServed};
     use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader};
@@ -209,7 +216,6 @@ mod with_the_feature {
             database_url: UNREACHABLE_DATABASE_URL.to_string(),
             log_level: "info".to_string(),
             handle_domain: "zurfur.app".parse().expect("a valid handle domain"),
-            did_key_root_key: EXAMPLE_ROOT_KEY_BASE64.to_string(),
             plc_directory_endpoint: "https://plc.directory".to_string(),
             plc_directory_submit: false,
             deadline_sweep_interval_secs: 60,
@@ -224,7 +230,7 @@ mod with_the_feature {
             .await
             .expect("bind ephemeral port");
         let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
-        let app = api::dev_profile::app(config(Environment::DEV, &base_url))
+        let app = api::dev_profile::app(config(Environment::DEV, &base_url), test_root())
             .await
             .expect("the dev profile starts in dev");
         tokio::spawn(async move {
@@ -329,7 +335,7 @@ mod with_the_feature {
     #[tokio::test]
     async fn every_environment_but_dev_is_refused_before_anything_starts() {
         for env in [Environment::STG, Environment::PROD] {
-            let refused = api::dev_profile::app(config(env, "http://127.0.0.1:8180"))
+            let refused = api::dev_profile::app(config(env, "http://127.0.0.1:8180"), test_root())
                 .await
                 .expect_err("only dev starts");
 
@@ -443,6 +449,31 @@ mod with_the_feature {
             me_status(&pg.base_url, &dev_cookie).await,
             StatusCode::UNAUTHORIZED,
             "the PostgreSQL stack does not accept the dev profile's session"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_binary_refuses_to_start_without_the_root_naming_the_variable_only() {
+        let scratch = tempfile::tempdir().expect("a scratch directory");
+        let mut command = server_command(&scratch, &[("ZURFUR_ENV", "dev")]);
+        command.env_remove(composition::ROOT_KEY_ENV);
+
+        let exited = exit_of(command).await;
+
+        assert!(!exited.success, "no root, no server");
+        assert!(
+            exited.stderr.contains("ZURFUR_DID_KEY_ROOT_KEY is not set"),
+            "the refusal names the variable: {}",
+            exited.stderr
+        );
+        let everything = format!("{}{}", exited.stdout, exited.stderr);
+        assert!(
+            !everything.contains("dev profile:"),
+            "refused before the profile started: {everything}"
+        );
+        assert!(
+            !everything.contains("starting HTTP server"),
+            "nothing was served"
         );
     }
 

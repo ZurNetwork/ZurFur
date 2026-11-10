@@ -15,3 +15,6 @@ tokio = { workspace = true }
 # before describing every statement against the real schema.
 adapter-pg = { path = "../adapter-pg" }
 testcontainers-modules = { version = "0.15", features = ["postgres"] }
+
+[lints]
+workspace = true

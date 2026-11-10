@@ -15,7 +15,9 @@ use test_support::{
         self, DenWorld, MissPair, SignedIn, UNNAMED, absent_commission, den_participant_pairs,
         den_stranger_pairs, den_stranger_targets,
     },
-    recording::{CallLog, RecordingCommissionStore, RecordingWorkflowStore},
+    recording::{
+        CallLog, RecordingCommissionRows, RecordingCommissionStore, RecordingWorkflowStore,
+    },
 };
 use tokio::{io::AsyncWriteExt as _, process::Command};
 
@@ -279,7 +281,7 @@ async fn a_stranger_gets_the_one_404_for_an_absent_commission_and_one_not_theirs
     let expected = the_one_404(&world).await;
 
     for (target, visibility) in den_stranger_targets(&world) {
-        world.set_visibility(target.id, visibility.clone()).await;
+        world.set_visibility(target.id, visibility).await;
         let commission_path = format!("/den/commissions/{}", target.id);
         let commission = ok_json(get(&world.alice, world.base_url(), &commission_path).await).await;
         assert_eq!(
@@ -329,15 +331,18 @@ async fn a_pair_s_two_causes_make_the_same_reads_and_never_read_the_row_by_key()
     let world = pg_app::den_world(move |mut runtime| {
         let commissions =
             RecordingCommissionStore::new(Arc::clone(&runtime.commissions), recorder.clone());
+        let rows =
+            RecordingCommissionRows::new(Arc::clone(&runtime.commission_rows), recorder.clone());
         let workflows = RecordingWorkflowStore::new(Arc::clone(&runtime.workflows), recorder);
         runtime.commissions = Arc::new(commissions);
+        runtime.commission_rows = Arc::new(rows);
         runtime.workflows = Arc::new(workflows);
         api::app(runtime)
     })
     .await;
 
     for (target, visibility) in den_stranger_targets(&world) {
-        world.set_visibility(target.id, visibility.clone()).await;
+        world.set_visibility(target.id, visibility).await;
         for pair in den_stranger_pairs(&target) {
             let reads = reads_of_each_cause(&log, &world.stranger, &world, &pair).await;
 
@@ -402,7 +407,7 @@ async fn a_row_whose_visibility_no_parser_reads_is_the_same_404() {
     let world = pg_app::den_world(api::app).await;
     let expected = the_one_404(&world).await;
 
-    world.store_unparsable_visibility(world.old_sketch.id).await;
+    world.store_unparsable_level(world.old_sketch.id).await;
 
     for pair in den_stranger_pairs(&world.old_sketch) {
         assert_pair_is_the_one_404(&world.stranger, &world, &pair, &expected).await;
@@ -415,7 +420,7 @@ async fn a_row_whose_visibility_no_parser_reads_is_the_same_404() {
 #[tokio::test]
 async fn with_old_sketch_s_visibility_unreadable_alice_s_commissions_list_it_at_private() {
     let world = pg_app::den_world(api::app).await;
-    world.store_unparsable_visibility(world.old_sketch.id).await;
+    world.store_unparsable_level(world.old_sketch.id).await;
 
     let everything = ok_json(
         get(
@@ -438,7 +443,7 @@ async fn with_old_sketch_s_visibility_unreadable_alice_s_commissions_list_it_at_
 #[tokio::test]
 async fn with_old_sketch_s_visibility_unreadable_its_typed_path_opens_archived_at_private() {
     let world = pg_app::den_world(api::app).await;
-    world.store_unparsable_visibility(world.old_sketch.id).await;
+    world.store_unparsable_level(world.old_sketch.id).await;
     let path = format!("/den/commissions/{}", world.old_sketch.id);
 
     let old_sketch = ok_json(get(&world.alice, world.base_url(), &path).await).await;

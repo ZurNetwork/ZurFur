@@ -10,6 +10,7 @@ impl From<&Runtime> for Ports {
             users: state.users.clone(),
             accounts: state.accounts.clone(),
             commissions: state.commissions.clone(),
+            commission_rows: state.commission_rows.clone(),
             changelog: state.changelog.clone(),
             profile_source: state.profile_source.clone(),
             profile_cache: state.profile_cache.clone(),

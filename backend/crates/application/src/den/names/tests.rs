@@ -1,7 +1,7 @@
 use super::*;
 
 /// Every fixed word the Den names a node with.
-const WORDS: [&str; 10] = [
+const WORDS: [&str; 12] = [
     ACCOUNTS,
     CHARACTERS,
     COMMISSIONS,
@@ -10,6 +10,8 @@ const WORDS: [&str; 10] = [
     CHANGELOG,
     PRODUCTS,
     SLOTS,
+    PARTICIPANTS,
+    BRIEF,
     POSTS,
     UNNAMED,
 ];

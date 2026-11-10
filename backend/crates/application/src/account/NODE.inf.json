@@ -1,8 +1,8 @@
 {
   "path": "backend/crates/application/src/account",
-  "charted": "2026-10-17",
+  "charted": "2026-10-22",
   "short": "Account use cases",
-  "is": "Account use cases — founding, renaming, deleting an Account and the membership lifecycle (invitations, roles, leaving, ownership transfer, listing), one Command/Query + Output + `#[use_case]` method file per action; the module root `../account.rs` holds the `Accounts` namespace, `AccountError`, `AccountResult`.",
+  "is": "Account use cases — founding, renaming, deleting an Account and the membership lifecycle (invitations, roles, leaving, ownership transfer, listing), one Command/Query + Output + `#[use_case]` method file per action; the module root `../account.rs` holds the `Accounts` namespace, `AccountError`, `AccountResult`; `../account.rs` also holds the in-unit lock helper `lock_actor_and_target` (both members' rows in ascending DID order) and `refused_after_a_race`, the one warning a race refusal logs, naming no DID.",
   "type": "code",
   "tags": [
     "category:source"
@@ -19,12 +19,12 @@
     },
     {
       "name": "create.rs",
-      "role": "found an Account — its name checked by the rule for a name safe to show, Atta's ShowableName (the Den's name rule without its / clause, so \"AC/DC Studio\" is founded): a refused name answers InvalidName before any handle check or mint, an accepted one is stored as the rule keeps it; handle uniqueness + quarantine checks, mints a DID, seats the founder as Owner",
+      "role": "found an Account — its name checked by the rule for a name safe to show, kernel's ShowableName (the Den's name rule without its / clause, so \"AC/DC Studio\" is founded): a refused name answers InvalidName before any handle check or mint, an accepted one is stored as the rule keeps it; handle uniqueness + quarantine checks, mints a DID, seats the founder as Owner",
       "node": false
     },
     {
       "name": "delete.rs",
-      "role": "Owner-gated soft-delete (has facts) or hard-delete (none); retries the did:plc tombstone on hard delete",
+      "role": "Owner-gated delete in one unit: locks the Account row (find_for_update), re-reads the actor's role there and refuses a former Owner, reads the Account's facts there, then deletes soft when it holds one and hard when it holds none; tombstones the did:plc after a hard delete commits, a failure logged at warn without its cause (the minter's error text may name the DID), the cause at debug",
       "node": false
     },
     {
@@ -33,18 +33,13 @@
       "node": false
     },
     {
-      "name": "facts.rs + facts/exist.rs",
-      "role": "has-facts probe feeding delete's soft-vs-hard branch; stub, always false",
-      "node": false
-    },
-    {
       "name": "invitation.rs + invitation/{issue,accept,decline,revoke}.rs",
-      "role": "the pending account-membership invitation lifecycle",
+      "role": "the pending account-membership invitation lifecycle; issue and revoke re-read their actor's role with the row locked FOR SHARE inside the unit (issue before provisioning the invitee), so a demotion waits for the offer and its revoke sees it",
       "node": false
     },
     {
       "name": "leave.rs",
-      "role": "a member leaves; blocked for the Owner",
+      "role": "a member leaves; blocked for the Owner, decided again on the leaver's row locked for update inside the unit, so a leave losing to a transfer answers OwnerCannotLeave",
       "node": false
     },
     {
@@ -54,17 +49,17 @@
     },
     {
       "name": "role.rs + role/{grant,revoke}.rs",
-      "role": "grant (change an existing member's role; never seats) or revoke a member's Role",
+      "role": "grant (change an existing member's role; never seats) or revoke a member's Role; each decides again inside its unit on both members' rows locked through lock_actor_and_target, the actor's standing before the target's membership",
       "node": false
     },
     {
       "name": "served_name.rs + served_name/tests.rs",
-      "role": "ServedName, an Account's name as every Account output serves it (the list, founding, a handle change): the stored name as Atta's ShowableName keeps it, else the Account's handle; built only From<&Account>, so a stored name never leaves as-is while the row keeps its text",
+      "role": "ServedName, an Account's name as every Account output serves it (the list, founding, a handle change): the stored name as kernel's ShowableName keeps it, else the Account's handle; built only From<&Account>, so a stored name never leaves as-is while the row keeps its text",
       "node": false
     },
     {
       "name": "transfer_ownership.rs",
-      "role": "reassign the Owner role to another member",
+      "role": "reassign the Owner role to another member; decides again inside its unit with both rows locked (the actor's for update), so a transfer whose heir left answers NotAMember",
       "node": false
     },
     {
@@ -76,7 +71,6 @@
   "notes": [
     "`require_live_account` (in `../account.rs`) is the shared liveness gate: existence is settled BEFORE standing, because `role_of` reads the membership table with no tombstone predicate. An unknown id and a soft-deleted account get the same answer. (DD 23003138)",
     "Ordering rule, uniform across `invitation/issue`, `invitation/revoke`, `role/grant`, `role/revoke` and `workflow/column/commission/set_in_column`: the actor's own standing is settled before the target is looked up, and before any `provision` (in `invitation/issue`, a WRITE keyed to a caller-named DID). The refusals below the actor's check are distinguishable on the wire, so probing first leaks membership and actor class. Revoke's bar is any role, so a member can still tell 404 from 403 (parked). A grant never provisions and never seats: it changes an existing member's role, a target with no membership is `NotAMember`, and a newcomer joins only by accepting an invitation.",
-    "Two rails put a commission card on a board: PULL (the commission is publicly visible) or PUSH (the actor's OWN standing or OWN view grant). View keys are per-User, so membership of the owning account lifts nothing. Failure is the commission not-found, never `IncorrectRole`. (DD 29130754)",
-    "`account/facts/exist.rs` is a stub that always answers false and injects nothing; like every `#[use_case]` it is wrapped for logging (its `use_case{name}` span, start and outcome). It feeds `delete`'s soft-vs-hard branch, and `delete` carries the open `FIXME` for it."
+    "Two rails put a commission card on a board: PULL (the commission is shown to the actor, `CommissionStanding::is_shown`: a role, or live at Listed or Public) or PUSH (the actor's OWN standing or OWN view grant). View keys are per-User, so membership of the owning account lifts nothing. Failure is the commission not-found, never `IncorrectRole`. `set_in_column` reads one `standing` (the commission node's level and the actor's role): the Owner, or a Public or Listed level, is placed at once; any other card reads the actor's view grant too, also for an absent commission, so a made-up id and a stranger's commission run the same statements, and a role or a grant passes. (DD 29130754)"
   ]
 }

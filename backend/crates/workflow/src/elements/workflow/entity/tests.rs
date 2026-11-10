@@ -8,13 +8,13 @@ fn account() -> AccountId {
 
 fn empty_workflow() -> Workflow {
     let name = "Board".parse().expect("a valid name");
-    Workflow::new(name, account(), Visibility::Private)
+    Workflow::new(name, account(), Level::Private)
 }
 
 /// A column for `workflow`, ready to `insert`, which assigns its key.
 fn column(workflow: &Workflow, name: &str) -> Column {
     let name = name.parse().expect("a valid name");
-    workflow.new_column(name, Visibility::Private)
+    workflow.new_column(name, Level::Private)
 }
 
 fn names(workflow: &Workflow) -> Vec<&str> {
@@ -49,7 +49,7 @@ fn insert_gives_each_column_its_own_id_and_settings() {
 
     let first = workflow.push(column(&workflow, "Open")).expect("room");
     assert_eq!(first.workflow_id, workflow_id);
-    assert_eq!(first.visibility, Visibility::Private);
+    assert_eq!(first.visibility, Level::Private);
     let first_id = first.id;
 
     let second_id = workflow.push(column(&workflow, "Done")).expect("room").id;
@@ -64,13 +64,13 @@ fn insert_keeps_the_columns_id_and_own_visibility() {
     let mut workflow = empty_workflow();
     let workflow_id = workflow.id;
     let name = "Showcase".parse().expect("a valid name");
-    let column = workflow.new_column(name, Visibility::Public);
+    let column = workflow.new_column(name, Level::Public);
     let id = column.id;
 
     let placed = workflow.push(column).expect("room");
 
     assert_eq!(placed.id, id);
-    assert_eq!(placed.visibility, Visibility::Public);
+    assert_eq!(placed.visibility, Level::Public);
     assert_eq!(placed.workflow_id, workflow_id);
 }
 
@@ -122,7 +122,7 @@ fn loaded_accepts_sorted_rows_and_refuses_out_of_order_keys() {
         built.id,
         name(),
         built.account_id.clone(),
-        Visibility::Private,
+        Level::Private,
         rows.clone(),
     )
     .expect("sorted rows load");
@@ -134,7 +134,7 @@ fn loaded_accepts_sorted_rows_and_refuses_out_of_order_keys() {
         built.id,
         name(),
         built.account_id.clone(),
-        Visibility::Private,
+        Level::Private,
         shuffled,
     );
     assert_eq!(refused.err(), Some(WorkflowError::KeysOutOfOrder));
@@ -153,7 +153,7 @@ fn loaded_refuses_a_duplicate_column_name_and_a_full_board() {
         built.id,
         built.name.clone(),
         built.account_id.clone(),
-        Visibility::Private,
+        Level::Private,
         twice,
     );
     assert_eq!(refused.err(), Some(WorkflowError::DuplicateColumnName));
@@ -171,7 +171,7 @@ fn loaded_refuses_a_duplicate_column_name_and_a_full_board() {
         built.id,
         built.name.clone(),
         built.account_id.clone(),
-        Visibility::Private,
+        Level::Private,
         rows,
     );
     assert_eq!(refused.err(), Some(WorkflowError::TooManyColumns));
@@ -186,7 +186,7 @@ fn column_loaded_refuses_a_card_listed_twice() {
         template.id,
         template.workflow_id,
         template.name.clone(),
-        Visibility::Private,
+        Level::Private,
         template.position.clone(),
         vec![a, commission(), a],
     );

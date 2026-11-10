@@ -4,7 +4,7 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            ChangelogEntryKind, CommissionId, NewChangelogEntry, NewSeat, SeatKind, SeatLink,
+            CommissionId, CommissionRole, NewChangelogEntry, NewSeat, OpenKind, SeatKind, SeatLink,
             SeatPrompt, SurfaceAddress, element::SeatId,
         },
         user::UserId,
@@ -14,7 +14,7 @@ use serde_json::json;
 
 use crate::{
     Ports,
-    commission::{CommissionResult, require_owner, seats::Seats},
+    commission::{CommissionResult, require, seats::Seats},
 };
 
 pub struct Command {
@@ -46,10 +46,10 @@ impl Seats<'_> {
             link,
             surface_address,
         } = cmd;
-        let commission = require_owner(ports, &commission_id, &actor_id).await?;
+        require(ports, &commission_id, &actor_id, CommissionRole::Owner).await?;
 
         let seat = NewSeat::contributed_at(
-            commission.id,
+            commission_id,
             surface_address,
             seat_kind,
             prompt,
@@ -59,18 +59,23 @@ impl Seats<'_> {
         );
         let seat_id = seat.id;
 
-        let entry = NewChangelogEntry::event(
-            commission.id,
-            ChangelogEntryKind::SeatDeclared,
+        let entry: NewChangelogEntry = NewChangelogEntry::event(
+            commission_id,
+            OpenKind::SeatDeclared,
             actor_id,
             json!({
                 "kind": seat.kind.as_str(),
                 "seat": seat_id.to_string()
             }),
             now,
-        );
+        )
+        .into();
 
         let uow = uow.open().await?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the ungated seat-declare site, held until its slice routes it through the den's write gate"
+        )]
         uow.commissions().declare_seat(&seat).await?;
         uow.changelog().append(&entry).await?;
         Ok(Output { seat_id })

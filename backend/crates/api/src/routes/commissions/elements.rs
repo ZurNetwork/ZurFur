@@ -84,7 +84,9 @@ pub(super) async fn add_element(
 
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
-            uow.commissions().add_element(&element).await
+            #[expect(clippy::disallowed_methods, reason = "no use case owns this write yet")]
+            let mut commissions = uow.commissions();
+            commissions.add_element(&element).await
         })
         .await
         .map_err(to_problem)?;
@@ -95,8 +97,8 @@ pub(super) async fn add_element(
 
 /// Removes an element from the commission's composition, as its owner.
 /// Owner-only; `404 commission_not_found` for a non-participant, `404
-/// element_not_found` for an element not in this commission. Returns `204
-/// No Content`.
+/// element_not_found` for an element not in this commission or one that
+/// carries a Slot. Returns `204 No Content`.
 pub(super) async fn remove_element(
     State(state): State<AppState>,
     Path((_, element)): Path<(IgnoredAny, ElementId)>,
@@ -108,9 +110,9 @@ pub(super) async fn remove_element(
 
     state
         .transaction(async move |uow: &mut dyn UnitOfWork| {
-            uow.commissions()
-                .remove_element(&commission_id, &element)
-                .await
+            #[expect(clippy::disallowed_methods, reason = "no use case owns this write yet")]
+            let mut commissions = uow.commissions();
+            commissions.remove_element(&commission_id, &element).await
         })
         .await
         .map_err(to_problem)?;

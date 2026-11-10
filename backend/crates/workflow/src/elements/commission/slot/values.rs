@@ -1,64 +1,35 @@
-use std::str::FromStr;
+use std::fmt;
 
-use kernel::elements::text::StoredText;
-use kernel::string_builder::{StringBuilder, StringBuilderViolation};
+use kernel::elements::name::NodeName;
 
-/// A Slot's title — the one required facet of a declared Slot: trimmed, and
-/// non-empty. No length cap yet.
+/// A Slot's title: its node's display name, so it parses by the same rule and refuses with the
+/// same [`NodeNameError`](kernel::elements::name::NodeNameError).
 ///
 /// ```
 /// use workflow::elements::commission::SlotTitle;
 ///
 /// let title = "  The knight  ".parse::<SlotTitle>().unwrap();
-/// assert_eq!(title.as_str(), "The knight"); // trimmed
+/// assert_eq!(title.as_ref(), "The knight"); // stripped
 ///
-/// assert!("   ".parse::<SlotTitle>().is_err()); // empty after trim
+/// assert!("   ".parse::<SlotTitle>().is_err()); // empty once stripped
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SlotTitle(String);
+#[derive(
+    Clone,
+    PartialEq,
+    Eq,
+    derive_more::FromStr,
+    derive_more::Display,
+    derive_more::AsRef,
+    derive_more::From,
+    derive_more::Into,
+)]
+#[as_ref(str)]
+pub struct SlotTitle(NodeName);
 
-/// Parses a Slot title: trimmed, then non-empty or [`SlotTitleError::Empty`].
-impl FromStr for SlotTitle {
-    type Err = super::SlotTitleError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        StringBuilder::new(s)
-            .trimmed()
-            .non_empty()
-            .build()
-            .map(Self)
-            .map_err(|violation| match violation {
-                StringBuilderViolation::Empty => super::SlotTitleError::Empty,
-                StringBuilderViolation::TooLong { .. }
-                | StringBuilderViolation::ControlCharacter => {
-                    // Unreachable: this chain only applies trimmed().non_empty().
-                    debug_assert!(
-                        false,
-                        "SlotTitle's FromStr chain only applies trimmed().non_empty()"
-                    );
-                    super::SlotTitleError::Empty
-                }
-            })
-    }
-}
-
-impl AsRef<str> for SlotTitle {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
-
-impl SlotTitle {
-    /// The validated, trimmed title as a string slice.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<SlotTitle> for StoredText {
-    /// The checked title, as the store keeps it.
-    fn from(title: SlotTitle) -> Self {
-        StoredText::from(title.0)
+impl fmt::Debug for SlotTitle {
+    /// Its type alone; never the title.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SlotTitle(..)")
     }
 }
 

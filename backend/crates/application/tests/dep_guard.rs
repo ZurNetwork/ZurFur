@@ -14,6 +14,7 @@ const FORBIDDEN_IN_APPLICATION: &[&str] = &[
     "adapter-pg",
     "adapter-atproto",
     "adapter-mem",
+    "adapter-hkdf",
     "composition",
     "axum",
     "axum-core",

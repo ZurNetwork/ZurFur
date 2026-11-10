@@ -1,7 +1,9 @@
 //! The log canary: a whole signed-in visit on PostgreSQL, under the dev subscriber at `trace`
-//! with `log` records bridged, writes no token, cookie, session id or key at any level, and no
-//! DID or handle at info or above. The visit founds an Account, files bug reports, creates two
-//! commissions with one title, opens the Den and one twin, and renames it. Alone in its binary:
+//! with `log` records bridged, writes no token, cookie, session id or key at any level (the
+//! planted root's PRK and purpose keys as hex, base64 and a byte list included), and no DID,
+//! handle or key id of the planted root at info or above. The visit founds an Account, files bug reports, creates two
+//! commissions with one title, opens the Den and one twin, renames it, and deletes the Account,
+//! whose tombstone the directory refuses. Alone in its binary:
 //! it installs the global subscriber. The visitor's own thread stays out of the capture (this
 //! crate's node says why).
 
@@ -10,9 +12,15 @@ use std::sync::Arc;
 
 use api::{AppState, Environment};
 use async_trait::async_trait;
-use domain::elements::{did::Did, handle::AtHandle, profile::Profile};
-use domain::ports::{Authenticator, BrowserBinding, BrowserMismatch, SigninStarted};
-use test_support::{http::client, log_capture::CapturedLog, pg_app};
+use domain::elements::{
+    custody::Purpose,
+    did::Did,
+    handle::{AtHandle, Handle},
+    profile::Profile,
+};
+use domain::ports::{Authenticator, BrowserBinding, BrowserMismatch, DidMinter, SigninStarted};
+use strum::VariantArray as _;
+use test_support::{custody, http::client, log_capture::CapturedLog, pg_app};
 use tracing_subscriber::{
     EnvFilter, filter::filter_fn, layer::SubscriberExt as _, util::SubscriberInitExt as _,
 };
@@ -33,9 +41,25 @@ const ISS: &str = "https://canaryissuer.example/x3k9";
 const ISS_IN_A_QUERY: &str = "https%3A%2F%2Fcanaryissuer.example%2Fx3k9";
 const BINDING: &str = "canarybinding2e6d9f4a7c";
 
-/// The planted root key, and how the config carries it.
+/// The planted root key, and its base64 as the environment would carry it.
 const ROOT_KEY: &str = "canary-root-key-7f3a9c1e5b2d8046";
 const ROOT_KEY_BASE64: &str = "Y2FuYXJ5LXJvb3Qta2V5LTdmM2E5YzFlNWIyZDgwNDY=";
+
+/// [`ROOT_KEY`]'s bytes.
+fn root_bytes() -> [u8; 32] {
+    ROOT_KEY
+        .as_bytes()
+        .try_into()
+        .expect("the planted root is 32 bytes")
+}
+
+/// [`ROOT_KEY`] as the custody root the app is connected with.
+fn canary_root() -> composition::RootSecret {
+    test_support::custody::root_of(root_bytes())
+}
+
+/// How the directory's refusal of a tombstone begins, before the DID it names.
+const TOMBSTONE_REFUSAL: &str = "PLC directory rejected";
 
 /// The Account the visit founds, so the Den lists something.
 const ACCOUNT_HANDLE: &str = "canarystudio.zurfur.app";
@@ -86,6 +110,30 @@ impl Authenticator for CanaryAuthenticator {
             return Err(BrowserMismatch.into());
         }
         Ok(Did::from(USER_DID.to_owned()))
+    }
+}
+
+/// The live minter, except that the directory refuses every tombstone in its own words, which
+/// name the DID.
+struct RefusingTombstone(Arc<dyn DidMinter>);
+
+#[async_trait]
+impl DidMinter for RefusingTombstone {
+    async fn mint(&self, handle: &Handle) -> anyhow::Result<Did> {
+        self.0.mint(handle).await
+    }
+
+    async fn mint_handleless(&self) -> anyhow::Result<Did> {
+        self.0.mint_handleless().await
+    }
+
+    async fn tombstone(&self, did: &Did) -> anyhow::Result<()> {
+        let did = AsRef::<str>::as_ref(did);
+        anyhow::bail!("{TOMBSTONE_REFUSAL} {did}: 400 Bad Request")
+    }
+
+    async fn update_handle(&self, did: &Did, handle: &Handle) -> anyhow::Result<()> {
+        self.0.update_handle(did, handle).await
     }
 }
 
@@ -157,13 +205,16 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         .expect("the canary's subscriber is this binary's only one");
     let served = pg_app::serve_configured(
         |runtime| {
+            let did_minter = Arc::new(RefusingTombstone(Arc::clone(&runtime.did_minter)));
             let state = AppState {
                 auth: Arc::new(CanaryAuthenticator),
+                did_minter,
                 ..runtime
             };
             api::app(state)
         },
-        |config| config.did_key_root_key = ROOT_KEY_BASE64.to_owned(),
+        canary_root(),
+        |_config| {},
     )
     .await;
     let profile = Profile::new(Did::from(USER_DID.to_owned()), USER_HANDLE);
@@ -207,6 +258,12 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         .send()
         .await
         .expect("POST /accounts");
+    let founded_status = founded.status();
+    let founded_account: serde_json::Value = founded.json().await.expect("a JSON account");
+    let account_id = founded_account["id"]
+        .as_str()
+        .expect("the account's id")
+        .to_owned();
     let report = serde_json::json!({
         "description": REPORT_DESCRIPTION,
         "page": REPORT_PAGE,
@@ -259,6 +316,13 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         .send()
         .await
         .expect("PATCH /commissions/{id}/title");
+    let deleted = browser
+        .delete(format!("{base}/accounts/{account_id}"))
+        .send()
+        .await
+        .expect("DELETE /accounts/{id}");
+    let deleted_status = deleted.status();
+    let deletion: serde_json::Value = deleted.json().await.expect("a JSON outcome");
     let signed_out = browser
         .post(format!("{base}/logout"))
         .send()
@@ -268,7 +332,7 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
     assert_eq!(started.status(), 303);
     assert_eq!(callback.status(), 303);
     assert_eq!(me.status(), 200);
-    assert_eq!(founded.status(), 201);
+    assert_eq!(founded_status, 201);
     assert_eq!(filed.status(), 201);
     assert_eq!(refused.status(), 422);
     assert_eq!(root.status(), 200);
@@ -288,6 +352,8 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         "the Den numbers the newer twin: {twin_node}"
     );
     assert_eq!(renamed.status(), 200);
+    assert_eq!(deleted_status, 200);
+    assert_eq!(deletion["outcome"], "hard", "an empty Account deletes hard");
     assert_eq!(signed_out.status(), 303);
 
     let text = without_colors(&log.text());
@@ -295,7 +361,7 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
     if let Some(dump) = std::env::var_os("LOG_CANARY_DUMP") {
         std::fs::write(dump, &text).expect("the dump file is writable");
     }
-    let controls: [(&str, &[&str]); 10] = [
+    let controls: [(&str, &[&str]); 12] = [
         (
             "the callback's finish",
             &["request finished", "route=\"/signin-callback\""],
@@ -334,6 +400,18 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         ),
         ("a store span's close", &["adapter_pg::", "close time.busy"]),
         (
+            "the refused tombstone's warning",
+            &["WARN", "did:plc tombstone failed after hard delete"],
+        ),
+        (
+            "the refused tombstone's cause",
+            &[
+                "DEBUG",
+                "the did:plc tombstone's failure",
+                TOMBSTONE_REFUSAL,
+            ],
+        ),
+        (
             "the den check's answer",
             &["den check answered", "answer=\"opens\""],
         ),
@@ -341,6 +419,15 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
     for (control, parts) in controls {
         assert!(some_line_has(&text, parts), "no line for {control}");
     }
+    let refusal_at_warn: Vec<&str> = text
+        .lines()
+        .filter(|line| level_of(line) == Some("WARN"))
+        .filter(|line| line.contains(TOMBSTONE_REFUSAL))
+        .collect();
+    assert!(
+        refusal_at_warn.is_empty(),
+        "a warn line carries the tombstone's cause: {refusal_at_warn:#?}"
+    );
     let secrets = [
         ("the OAuth code", CODE),
         ("the OAuth state", STATE),
@@ -360,6 +447,27 @@ async fn a_whole_visit_logs_no_secret_at_any_level_and_no_identity_at_info() {
         let leaks: Vec<&str> = text.lines().filter(|line| line.contains(value)).collect();
         assert!(leaks.is_empty(), "the log carries {secret}: {leaks:#?}");
     }
+    let root = root_bytes();
+    let derived = custody::derived_printings(&root)
+        .into_iter()
+        .chain(custody::named_printings("the root key", &root));
+    for (secret, value) in derived {
+        let leaks: Vec<&str> = text.lines().filter(|line| line.contains(&value)).collect();
+        assert!(leaks.is_empty(), "the log carries {secret}: {leaks:#?}");
+    }
+    let key_ids: Vec<String> = Purpose::VARIANTS
+        .iter()
+        .map(|purpose| custody::key_id_of(&root, *purpose))
+        .collect();
+    let key_id_at_info: Vec<&str> = text
+        .lines()
+        .filter(|line| matches!(level_of(line), Some("INFO" | "WARN" | "ERROR")))
+        .filter(|line| key_ids.iter().any(|key_id| line.contains(key_id.as_str())))
+        .collect();
+    assert!(
+        key_id_at_info.is_empty(),
+        "an info-or-above line names a key id: {key_id_at_info:#?}"
+    );
     let identity_at_info: Vec<&str> = text
         .lines()
         .filter(|line| matches!(level_of(line), Some("INFO" | "WARN" | "ERROR")))

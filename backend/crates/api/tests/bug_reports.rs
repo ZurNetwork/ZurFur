@@ -10,6 +10,7 @@ use domain::elements::{
 };
 use serde_json::{Value, json};
 use sqlx::Connection as _;
+use test_support::custody::test_root;
 use test_support::http::{Served, client, serve, sign_in};
 use test_support::pg_app::{self, PgServed};
 use test_support::runtime::{MemRuntimeBuilder, mem};
@@ -64,7 +65,8 @@ async fn signed_in(builder: MemRuntimeBuilder) -> (Served, reqwest::Client) {
 /// reporter.
 async fn signed_in_on_postgres(build_id: &str) -> (PgServed, reqwest::Client) {
     let build_id = BuildId::try_from(build_id).expect("a build id");
-    let served = pg_app::serve_configured(api::app, |config| config.build_id = build_id).await;
+    let served =
+        pg_app::serve_configured(api::app, test_root(), |config| config.build_id = build_id).await;
     let browser = served.sign_in(reporter_profile()).await;
     (served, browser)
 }

@@ -4,7 +4,7 @@ use domain::elements::user::UserId;
 use super::*;
 use crate::{
     Ports,
-    den::{DenAccess, DenContent, DenError, DenListing, NodeKind, NodeLevel},
+    den::{DenAccess, DenContent, DenError, DenListing, NodeKind},
     test_world::{self, World, path, segment},
 };
 
@@ -58,7 +58,7 @@ async fn the_stub_opens_named_posts_public_with_its_content_not_shown_and_an_emp
 
     let expected_access = DenAccess::Open {
         kind: NodeKind::Directory,
-        own_level: NodeLevel::Public,
+        own_level: Level::Public,
         content_not_shown: true,
         soft_delete: None,
         thing: None,

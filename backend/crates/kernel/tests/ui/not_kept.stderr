@@ -1,0 +1,11 @@
+error[E0507]: cannot move out of `*capability` which is behind a shared reference
+  --> tests/ui/not_kept.rs:11:24
+   |
+11 |     keeper.kept = Some(*capability);
+   |                        ^^^^^^^^^^^ move occurs because `*capability` has type `WriteCapability<u32, Creator>`, which does not implement the `Copy` trait
+
+error[E0507]: cannot move out of `*capability` which is behind a shared reference
+  --> tests/ui/not_kept.rs:15:5
+   |
+15 |     *capability
+   |     ^^^^^^^^^^^ move occurs because `*capability` has type `WriteCapability<u32, Creator>`, which does not implement the `Copy` trait

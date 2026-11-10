@@ -9,3 +9,4 @@
 mod domain_crates_point_one_way;
 mod elements_do_not_import_ports;
 mod facade_paths;
+mod no_actor_port_takes_a_node_id;

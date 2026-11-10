@@ -1,20 +1,14 @@
 use std::str::FromStr;
 
-use atta::{NodeName, NodeNameError, ShowableNameError};
+use domain::elements::name::{NodeName, NodeNameError, ShowableNameError};
 
 /// A node's display name: text the Den's name rule accepts. Parsed from user-typed text on
-/// every write that names a node, and answered for every node a read shows.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, derive_more::AsRef)]
+/// every write that names a node, and re-checked for every node a read shows.
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, derive_more::AsRef, derive_more::From,
+)]
 #[as_ref(str)]
 pub struct DenName(NodeName);
-
-impl DenName {
-    /// Wraps a name the engine answered with; inherent, because a public `From` would put
-    /// the engine's type in this crate's API.
-    pub(crate) fn new(name: NodeName) -> Self {
-        Self(name)
-    }
-}
 
 /// Why a piece of text is not a [`DenName`]. Carries no part of the text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -39,7 +33,7 @@ pub enum DenNameError {
     Reserved,
 }
 
-/// The engine's refusal, named in this crate's own terms.
+/// The name rule's refusal, named in this crate's own terms.
 fn refusal(error: NodeNameError) -> DenNameError {
     match error {
         NodeNameError::Empty => DenNameError::Empty,
@@ -51,7 +45,7 @@ fn refusal(error: NodeNameError) -> DenNameError {
     }
 }
 
-/// The engine's refusal of a name safe to show, named in this crate's own terms: a name that
+/// The refusal of a name safe to show, named in this crate's own terms: a name that
 /// may hold a `/` refuses for the same reasons a node's name does, but the `/`.
 pub(crate) fn showable_refusal(error: ShowableNameError) -> DenNameError {
     refusal(NodeNameError::from(error))

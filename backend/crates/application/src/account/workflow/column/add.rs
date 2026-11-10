@@ -11,7 +11,8 @@ use domain::elements::{
 use crate::{
     Ports,
     account::{
-        AccountEntity, AccountError, AccountResult, require_live_account, workflow::column::Columns,
+        AccountEntity, AccountError, AccountResult, lock_live_account, require_live_account,
+        workflow::column::Columns,
     },
 };
 
@@ -69,7 +70,7 @@ impl Columns<'_> {
             return Err(AccountError::IncorrectNumberOfColumns);
         }
 
-        let new_column = workflow.new_column(column_name, workflow.visibility.clone());
+        let new_column = workflow.new_column(column_name, workflow.visibility);
         workflow
             .insert(usize::from(position), new_column)
             .map_err(|e| match e {
@@ -81,6 +82,7 @@ impl Columns<'_> {
             })?;
 
         let uow = uow.open().await?;
+        lock_live_account(uow, &workflow.account_id).await?;
         uow.workflows().set_indexes(&workflow).await?;
 
         let columns = workflow.iter().cloned().collect();

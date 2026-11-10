@@ -3,12 +3,16 @@
 
 use domain::elements::{
     account::AccountId,
-    commission::{CommissionId, CommissionSummary, ElementId, FileKey, Visibility},
+    commission::{
+        CommissionId, CommissionRole, CommissionStanding, ElementId, FileKey, ViewedSummary,
+    },
+    level::Level,
     user::UserId,
 };
 
+use crate::Ports;
 use crate::den::{
-    DenContext, DenMount, DenType, Level, Node, NodeState, Place, STANDING, Segment, TopLevel,
+    DenContext, DenMount, DenType, Node, NodeState, Place, STANDING, Segment, TopLevel,
     names::{self, ATTACHMENTS, CHANGELOG, COMMISSIONS, PRODUCTS, SLOTS},
 };
 
@@ -83,20 +87,12 @@ impl CommissionPlace {
     }
 }
 
-/// A commission's own level: its stored visibility, one of the Den's three levels.
-fn level_of(visibility: &Visibility) -> Level {
-    match visibility {
-        Visibility::Private => Level::Private,
-        Visibility::Listed => Level::Listed,
-        Visibility::Public => Level::Public,
-    }
-}
-
-/// The node for a commission's summary: its visibility as its level, standing for a
-/// Participant, archived or live, and its title through the name rule.
-fn commission_node(commission: &CommissionSummary, participant: bool) -> Option<Node> {
+/// The node for a commission's summary: its node's level, standing for a viewer who holds a
+/// role, archived or live, and its node's name through the name rule.
+fn commission_node(viewed: &ViewedSummary) -> Option<Node> {
+    let commission = &viewed.summary;
     let name = names::stored_name(commission.title.as_str())?;
-    let lifts = if participant {
+    let lifts = if viewed.role.is_some() {
         vec![STANDING]
     } else {
         Vec::new()
@@ -109,7 +105,7 @@ fn commission_node(commission: &CommissionSummary, participant: bool) -> Option<
     let node = Node {
         place: Place::Commission(CommissionPlace::Commission(commission.id)),
         name,
-        level: level_of(&commission.visibility),
+        level: commission.visibility,
         lifts,
         state,
     };
@@ -150,7 +146,7 @@ async fn attachments(
     only: Option<&Segment>,
 ) -> anyhow::Result<Vec<Node>> {
     let files = context.ports.commissions.files(&commission).await?;
-    let mut nodes = Vec::new();
+    let mut children = Vec::new();
     for file in files {
         let place = CommissionPlace::File(commission, file.id);
         if only.is_some_and(|key| names::id_segment(file.id).as_ref() != Some(key)) {
@@ -158,9 +154,9 @@ async fn attachments(
         }
         let stored = context.ports.files.filename(file.id).await?;
         let name = stored.map_or(names::Name::Fixed(names::UNNAMED), names::Name::Stored);
-        nodes.extend(entry(place, name));
+        children.extend(entry(place, name));
     }
-    Ok(nodes)
+    Ok(children)
 }
 
 /// The commission's slots, from its own slot list, each named by its title.
@@ -170,7 +166,7 @@ async fn slots(
     only: Option<&Segment>,
 ) -> anyhow::Result<Vec<Node>> {
     let slots = context.ports.commissions.slots(&commission).await?;
-    let nodes = slots
+    let children = slots
         .into_iter()
         .filter(|slot| {
             only.is_none_or(|key| names::id_segment(slot.element_id).as_ref() == Some(key))
@@ -180,20 +176,22 @@ async fn slots(
             entry(place, names::Name::Stored(slot.title))
         })
         .collect();
-    Ok(nodes)
+    Ok(children)
 }
 
-/// The commission at `/commission/<commission>`, for the session's viewer. Always reads the
-/// commission's summary and then the viewer's participation, both, so an absent commission
-/// and one that isn't the viewer's run the same statements.
+/// The commission at `/commission/<commission>`, for the session's viewer, from one read of
+/// its summary as the viewer sees it: an absent commission and one the viewer can't be shown
+/// run the same statement and answer the same `None`. Any role, the owner's included, lifts it.
 pub(crate) async fn node(
     context: &DenContext<'_>,
     commission: CommissionId,
 ) -> anyhow::Result<Option<Node>> {
-    let store = &context.ports.commissions;
-    let found = store.find_summary(&commission).await?;
-    let participant = store.is_participant(&commission, context.viewer).await?;
-    let node = found.and_then(|found| commission_node(&found, participant));
+    let found = context
+        .ports
+        .commissions
+        .find_summary(&commission, context.viewer)
+        .await?;
+    let node = found.as_ref().and_then(commission_node);
     Ok(node)
 }
 
@@ -205,7 +203,7 @@ pub(crate) async fn child(
     key: &Segment,
 ) -> anyhow::Result<Option<Node>> {
     let only = Some(key);
-    let nodes = match place {
+    let candidates = match place {
         CommissionPlace::Commission(commission) => fixed_entries(*commission),
         CommissionPlace::Attachments(commission) => attachments(context, *commission, only).await?,
         CommissionPlace::Slots(commission) => slots(context, *commission, only).await?,
@@ -216,7 +214,7 @@ pub(crate) async fn child(
         | CommissionPlace::Slot(..)
         | CommissionPlace::File(..) => Vec::new(),
     };
-    let found = nodes
+    let found = candidates
         .into_iter()
         .find(|node| node.place.key().as_ref() == Some(key));
     Ok(found)
@@ -275,6 +273,63 @@ pub(crate) async fn mounts(
         | CommissionPlace::Slot(..)
         | CommissionPlace::File(..) => Ok(Vec::new()),
     }
+}
+
+/// What a write's standing on a commission answers: the one not-found, a role below the act's
+/// need, or leave to act with the facts the write needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Verdict {
+    /// No such commission, or the actor holds no standing on it, whatever its level.
+    NotFound,
+    /// The actor's role is below what the act needs.
+    Forbidden,
+    /// The actor may act.
+    Granted(StandingFacts),
+}
+
+/// The facts a granted standing hands the write: the actor's role, the commission's own level
+/// and whether it is archived. No id: the write already names its commission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StandingFacts {
+    /// The actor's role, at or above what the act needs.
+    pub(crate) role: CommissionRole,
+    /// The commission's own level.
+    pub(crate) level: Level,
+    /// Whether it is archived; archived refuses nothing yet.
+    pub(crate) archived: bool,
+}
+
+/// The verdict on one standing for an act that needs `needs`: no commission or no role is the
+/// one not-found, a lower role is forbidden, and at or above is granted. The pool's read and the
+/// locked read both answer through it.
+pub(crate) fn verdict(standing: Option<CommissionStanding>, needs: CommissionRole) -> Verdict {
+    let Some(standing) = standing else {
+        return Verdict::NotFound;
+    };
+    let Some(role) = standing.role else {
+        return Verdict::NotFound;
+    };
+    if role < needs {
+        return Verdict::Forbidden;
+    }
+    let facts = StandingFacts {
+        role,
+        level: standing.level,
+        archived: standing.archived,
+    };
+    Verdict::Granted(facts)
+}
+
+/// The verdict on `actor`'s standing on `commission` from the pool, for an act that needs
+/// `needs`: one statement, the same for a stranger and an id nothing is stored under.
+pub(crate) async fn pool_verdict(
+    ports: &Ports,
+    commission: &CommissionId,
+    actor: &UserId,
+    needs: CommissionRole,
+) -> anyhow::Result<Verdict> {
+    let standing = ports.commissions.standing(commission, actor).await?;
+    Ok(verdict(standing, needs))
 }
 
 #[cfg(test)]

@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+  --> tests/ui/create_as_owner.rs:22:32
+   |
+22 |     let _write = writes.create(&capability, &birth, &chosen);
+   |                         ------ ^^^^^^^^^^^ expected `Creator`, found `AsOwner`
+   |                         |
+   |                         arguments to this method are incorrect
+   |
+   = note: expected reference `&WriteCapability<New<CommissionId>, Creator>`
+              found reference `&WriteCapability<New<CommissionId>, AsOwner>`
+note: method defined here
+  --> src/ports/commission.rs
+   |
+   |     async fn create(
+   |              ^^^^^^

@@ -1,4 +1,4 @@
-//! [`CommissionStore`] (reads, pool-backed) and [`CommissionWrites`] (writes,
+//! [`CommissionStore`] and [`CommissionRows`] (reads, pool-backed) and [`CommissionWrites`] (writes,
 //! reachable only via an open [`UnitOfWork`](domain::ports::UnitOfWork)) over
 //! the `commission` table.
 //!
@@ -8,24 +8,29 @@ use domain::{
     datetime::DateTimeUtc,
     elements::{
         commission::{
-            Band, ChannelPointer, Commission, CommissionComposition, CommissionFile, CommissionId,
-            CommissionMarkup, CommissionSummary, CommissionTitle, DeadlineStatus, DirectionStatus,
-            ElementId, ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel,
-            LapsedDeadline, LifecycleStep, Markup, MarkupKey, NewCommission, NewElement, NewSeat,
-            NewSlot, Seat, SeatInvitation, SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot,
-            SurfaceAddress, SurfaceName, TabId, TabName, TabRow, Visibility, VisibilityMode,
-            declared_tabs, declares_surface, derive_deadline_status,
+            AsOwner, AsParticipant, Band, ChannelPointer, Commission, CommissionBirth,
+            CommissionComposition, CommissionFile, CommissionId, CommissionMarkup, CommissionRole,
+            CommissionStanding, CommissionStart, CommissionSummary, DeadlineChange, DeadlineStatus,
+            DelayedChange, DirectionChange, DirectionStatus, Dispute, DisputeClear, ElementId,
+            ElementPayload, ElementRow, ElementType, FileKey, FileSummary, GrantLevel, LateKinds,
+            LifecycleMove, LifecycleStep, LockedNode, LockedStanding, Markup, MarkupKey,
+            MaturitySet, NewCommission, NewElement, NewSeat, NewSlot, Seat, SeatInvitation,
+            SeatInvitationId, SeatKind, SeatLink, SeatPrompt, Slot, SlotBirth, StoredDispute,
+            SurfaceAddress, SurfaceName, TabId, TabName, TabRow, ViewedSummary, VisibilityMode,
+            declared_tabs, declares_surface,
         },
         did::Did,
         invitation::InvitationState,
+        level::Level,
         maturity::{Maturity, MaturityRating},
+        node::NodeId,
         text::StoredText,
         user::UserId,
         workflow::{Column, ColumnId, WorkflowId},
     },
     ports::{
-        ColumnStore, CommissionReads, CommissionStore, CommissionWrites, ElementNotFound,
-        UnknownSurface, UnknownTab,
+        ColumnStore, CommissionReads, CommissionRows, CommissionStore, CommissionWrites, Creator,
+        ElementNotFound, New, UnknownSurface, UnknownTab, WriteCapability,
     },
 };
 use sqlx::{PgConnection, PgPool};
@@ -70,6 +75,8 @@ const _: () = assert!(
 pub struct PgCommissionWrites<'a> {
     /// The open transaction; there is deliberately no pool here.
     pub(crate) conn: &'a mut PgConnection,
+    /// The unit's failure memory: set by a refused create, read by its commit.
+    pub(crate) failed: &'a mut bool,
 }
 
 impl PgCommissionWrites<'_> {
@@ -155,30 +162,59 @@ impl PgCommissionWrites<'_> {
 
 #[async_trait::async_trait]
 impl CommissionWrites for PgCommissionWrites<'_> {
-    /// Inserts the commission row, one `commission_tab` row per
-    /// [`declared_tabs`], and the owner's `commission_participant` row, all in one
-    /// transaction. Every tab is minted [`VisibilityMode::Total`].
+    /// Inserts the commission row bound to `birth`'s node at [`CommissionStart`]'s lifecycle
+    /// step, one `commission_tab` row per [`declared_tabs`], and the owner's
+    /// `commission_participant` row, all in one transaction. Unless that node is the
+    /// commission's own, or if the start sets a field the insert leaves NULL, the create errs
+    /// and ends the unit. Every tab is minted [`VisibilityMode::Total`].
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn create(&mut self, commission: &NewCommission) -> anyhow::Result<()> {
-        sql::create_commission(
+    async fn create(
+        &mut self,
+        capability: &WriteCapability<New<CommissionId>, Creator>,
+        birth: &CommissionBirth,
+        commission: &NewCommission,
+    ) -> anyhow::Result<()> {
+        // No `..`: a field the start gains fails to compile here until it is stored.
+        let CommissionStart {
+            lifecycle_step,
+            dispute: None,
+            direction_status: None,
+            delayed_flag: None,
+            linked_channel: None,
+            archived_at: None,
+        } = CommissionStart::default()
+        else {
+            // The insert leaves these at NULL, so a start that sets one is refused, not dropped.
+            *self.failed = true;
+            anyhow::bail!(
+                "the starting state sets a dispute, a status, a linked channel or an archive \
+                 time, which the insert can't store: no commission was stored"
+            );
+        };
+        let id = *capability.thing().as_ref();
+        let inserted = sql::create_commission(
             &mut *self.conn,
-            uuid::Uuid::from(commission.id),
-            commission.title.as_str(),
-            commission.owner_id.as_ref(),
-            <&'static str>::from(&commission.lifecycle_step),
-            <&'static str>::from(&commission.visibility),
-            commission.deadline,
+            uuid::Uuid::from(id),
+            uuid::Uuid::from(birth.node),
+            birth.owner_id.as_ref(),
+            <&'static str>::from(&lifecycle_step),
+            commission.deadline.map(DateTimeUtc::from),
             commission.maturity.map(|m| <&'static str>::from(m.rating)),
             commission.maturity.map(|m| m.graphic),
-            commission.created_at,
+            birth.created_at,
         )
         .await?;
+        if inserted != 1 {
+            // No statement failed, so the transaction lives on: the latch ends the unit.
+            *self.failed = true;
+            anyhow::bail!("the node is not the commission's own: no commission was stored");
+        }
 
         for tab in declared_tabs() {
             sql::create_tab(
                 &mut *self.conn,
                 uuid::Uuid::from(TabId::mint()),
-                uuid::Uuid::from(commission.id),
+                uuid::Uuid::from(id),
                 tab.as_ref(),
                 <&'static str>::from(VisibilityMode::default()),
             )
@@ -187,12 +223,67 @@ impl CommissionWrites for PgCommissionWrites<'_> {
 
         sql::add_participant(
             &mut *self.conn,
-            uuid::Uuid::from(commission.id),
-            commission.owner_id.as_ref(),
-            commission.created_at,
+            uuid::Uuid::from(id),
+            birth.owner_id.as_ref(),
+            birth.created_at,
         )
         .await?;
         Ok(())
+    }
+
+    /// Moves `commission.lifecycle` to `change`'s new step only while the row still holds its
+    /// held step; `true` only when exactly one row changed.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn set_lifecycle(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &LifecycleMove,
+    ) -> anyhow::Result<bool> {
+        let affected = sql::set_lifecycle(
+            &mut *self.conn,
+            uuid::Uuid::from(*capability.thing()),
+            <&'static str>::from(change.after()),
+            <&'static str>::from(change.before()),
+        )
+        .await?;
+        Ok(affected == 1)
+    }
+
+    /// Puts `commission.lifecycle` at Disputed, storing the step it left and when the dispute
+    /// began, only while the row still holds that step; `true` only when exactly one row
+    /// changed.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn set_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        dispute: &Dispute,
+    ) -> anyhow::Result<bool> {
+        let affected = sql::set_dispute(
+            &mut *self.conn,
+            uuid::Uuid::from(*capability.thing()),
+            <&'static str>::from(dispute.before()),
+            dispute.began(),
+        )
+        .await?;
+        Ok(affected == 1)
+    }
+
+    /// Returns `commission.lifecycle` to the step the row's dispute left and empties both
+    /// dispute columns, only while the row is Disputed from `clear`'s step; `true` only when
+    /// exactly one row changed.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn clear_dispute(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        clear: &DisputeClear,
+    ) -> anyhow::Result<bool> {
+        let affected = sql::clear_dispute(
+            &mut *self.conn,
+            uuid::Uuid::from(*capability.thing()),
+            <&'static str>::from(clear.after()),
+        )
+        .await?;
+        Ok(affected == 1)
     }
 
     /// Contributes one element into a declared surface behind
@@ -204,7 +295,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     }
 
     /// Removes one element scoped to `commission_id` ([`ElementNotFound`] if
-    /// absent/foreign), taking the same tab lock `require_tab`
+    /// absent, foreign or carrying a Slot), taking the same tab lock `require_tab`
     /// uses on add before deleting and renumbering the vacated group.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn remove_element(
@@ -281,30 +372,40 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(())
     }
 
-    /// Declares a batch of Slots: per Slot, an ordinary element (typed
-    /// [`ElementType::slot`]) via `insert_element` plus its
-    /// `commission_slot` satellite, all in one transaction.
+    /// Declares one Slot on the capability's commission: its carrying element (typed
+    /// [`ElementType::slot`]) via `insert_element`, then its `commission_slot` satellite bound
+    /// to `birth`'s node, which inserts only when that node is the Slot's own under this
+    /// commission's `slots` entry. Any other count than one row errs and ends the unit.
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn declare_slots(&mut self, slots: &[NewSlot]) -> anyhow::Result<()> {
-        for slot in slots {
-            let carrier = NewElement::carrying(
-                slot.id,
-                slot.commission_id,
-                slot.address.clone(),
-                ElementType::slot(),
-                slot.created_by.clone(),
-                slot.created_at,
-            );
-            self.insert_element(&carrier).await?;
+    async fn declare_slot(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        birth: &SlotBirth,
+        slot: &NewSlot,
+    ) -> anyhow::Result<()> {
+        let commission = *capability.thing();
+        let carrier = NewElement::carrying(
+            birth.element,
+            commission,
+            slot.address.clone(),
+            ElementType::slot(),
+            birth.created_by.clone(),
+            birth.created_at,
+        );
+        self.insert_element(&carrier).await?;
 
-            sql::declare_slot_satellite(
-                &mut *self.conn,
-                uuid::Uuid::from(slot.id),
-                uuid::Uuid::from(slot.commission_id),
-                slot.title.as_str(),
-                slot.notes.as_deref(),
-            )
-            .await?;
+        let inserted = sql::declare_slot_satellite(
+            &mut *self.conn,
+            uuid::Uuid::from(birth.element),
+            uuid::Uuid::from(commission),
+            uuid::Uuid::from(birth.node),
+            slot.notes.as_deref(),
+        )
+        .await?;
+        if inserted != 1 {
+            // No statement failed, so the transaction lives on: the latch ends the unit.
+            *self.failed = true;
+            anyhow::bail!("the node is not the slot's own: no slot was stored");
         }
         Ok(())
     }
@@ -391,18 +492,27 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(affected > 0)
     }
 
-    /// Writes `maturity` and `graphic` together; the schema's both-or-neither
-    /// CHECK makes a half-set pair unrepresentable.
+    /// Writes `commission.maturity` and `graphic` together by compare-and-set, matching the held
+    /// pair (both NULL while unrated); the schema's both-or-neither CHECK makes a half-set pair
+    /// unrepresentable. `true` only when exactly one row changed.
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn set_maturity(&mut self, id: &CommissionId, maturity: Maturity) -> anyhow::Result<()> {
-        sql::set_maturity(
+    async fn set_maturity(
+        &mut self,
+        capability: &WriteCapability<CommissionId, AsOwner>,
+        change: &MaturitySet,
+    ) -> anyhow::Result<bool> {
+        let given = change.after();
+        let held = change.before();
+        let affected = sql::set_maturity(
             &mut *self.conn,
-            uuid::Uuid::from(*id),
-            Some(<&'static str>::from(maturity.rating)),
-            Some(maturity.graphic),
+            uuid::Uuid::from(*capability.thing()),
+            Some(<&'static str>::from(given.rating)),
+            Some(given.graphic),
+            held.map(|held| <&'static str>::from(held.rating)),
+            held.map(|held| held.graphic),
         )
         .await?;
-        Ok(())
+        Ok(affected == 1)
     }
 
     /// Declares a seat: an ordinary element (typed [`ElementType::seat`]) via the
@@ -430,19 +540,6 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         )
         .await?;
         Ok(())
-    }
-
-    /// Replaces `commission.title` via a conditional `UPDATE` (`IS DISTINCT FROM`),
-    /// so the return value IS the changed answer.
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn set_title(
-        &mut self,
-        id: &CommissionId,
-        title: &CommissionTitle,
-    ) -> anyhow::Result<bool> {
-        let affected =
-            sql::set_title(&mut *self.conn, uuid::Uuid::from(*id), title.as_str()).await?;
-        Ok(affected > 0)
     }
 
     /// Repoints or clears `commission.linked_channel` via a conditional `UPDATE`
@@ -498,86 +595,68 @@ impl CommissionWrites for PgCommissionWrites<'_> {
         Ok(affected > 0)
     }
 
-    /// Repoints or clears `commission.direction_status`; an absent commission is a
-    /// no-op.
+    /// Moves `commission.direction_status` by compare-and-set; `true` only when exactly one row
+    /// changed.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_direction_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DirectionStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DirectionChange,
     ) -> anyhow::Result<bool> {
         let affected = sql::set_direction_status(
             &mut *self.conn,
-            uuid::Uuid::from(*id),
-            status.map(<&'static str>::from),
+            uuid::Uuid::from(*capability.thing()),
+            change.after().map(<&'static str>::from),
+            change.before().map(<&'static str>::from),
         )
         .await?;
-        Ok(affected > 0)
+        Ok(affected == 1)
     }
 
-    /// Repoints or clears `commission.deadline`; an absent commission is a no-op.
+    /// Moves `commission.deadline` by compare-and-set; `true` only when exactly one row
+    /// changed.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_deadline(
         &mut self,
-        id: &CommissionId,
-        deadline: Option<DateTimeUtc>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DeadlineChange,
     ) -> anyhow::Result<bool> {
-        let affected = sql::set_deadline(&mut *self.conn, uuid::Uuid::from(*id), deadline).await?;
-        Ok(affected > 0)
+        let affected = sql::set_deadline(
+            &mut *self.conn,
+            uuid::Uuid::from(*capability.thing()),
+            change.after(),
+            change.before(),
+        )
+        .await?;
+        Ok(affected == 1)
     }
 
-    /// Repoints or clears `commission.deadline_status` (the manual `Delayed` flag
-    /// only — `Late` is derived fresh at read, never persisted).
+    /// Moves `commission.deadline_status`, the stored Delayed flag, by compare-and-set against
+    /// the flag the row held; `true` only when exactly one row changed. Late is never stored.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn set_deadline_status(
         &mut self,
-        id: &CommissionId,
-        status: Option<DeadlineStatus>,
+        capability: &WriteCapability<CommissionId, AsParticipant>,
+        change: &DelayedChange,
     ) -> anyhow::Result<bool> {
         let affected = sql::set_deadline_status(
             &mut *self.conn,
-            uuid::Uuid::from(*id),
-            status.map(<&'static str>::from),
+            uuid::Uuid::from(*capability.thing()),
+            change.after().map(<&'static str>::from),
+            change.held().map(<&'static str>::from),
         )
         .await?;
-        Ok(affected > 0)
+        Ok(affected == 1)
     }
+}
 
-    /// The sweeper's candidate scan, on the open transaction: deadline strictly
-    /// before `now`, not already `late`, non-terminal lifecycle
-    /// ([`LifecycleStep::is_terminal`]).
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn lapsed_deadlines(&mut self, now: DateTimeUtc) -> anyhow::Result<Vec<LapsedDeadline>> {
-        let terminal: Vec<String> = {
-            use strum::VariantArray;
-            LifecycleStep::VARIANTS
-                .iter()
-                .filter(|step| step.is_terminal())
-                .map(|step| step.to_string())
-                .collect()
-        };
-        // Late is never persisted; dedup against the changelog's own last entry
-        // since the latest deadline change, so each fresh miss is its own event.
-        let rows = sql::lapsed_deadlines(&mut *self.conn, now, &terminal).await?;
-
-        rows.into_iter()
-            .map(|row| {
-                Ok(LapsedDeadline {
-                    id: CommissionId::from(row.id),
-                    deadline: row.deadline,
-                    status: row
-                        .deadline_status
-                        .as_deref()
-                        .map(|token| {
-                            DeadlineStatus::try_from(token).map_err(|_| {
-                                anyhow::anyhow!("unknown deadline_status token {token:?}")
-                            })
-                        })
-                        .transpose()?,
-                })
-            })
-            .collect()
-    }
+/// The stored tokens of the kinds that re-arm a Late, as the owed reads bind them.
+fn rearming_tokens(late_kinds: &LateKinds) -> Vec<String> {
+    late_kinds
+        .rearming()
+        .iter()
+        .map(ToString::to_string)
+        .collect()
 }
 
 /// Re-validates a stored `mode` token into [`VisibilityMode`]; the one gate
@@ -604,7 +683,7 @@ fn to_seat_invitation(row: sql::CommissionInvitationRow) -> anyhow::Result<SeatI
     })
 }
 
-/// The [`CommissionStore`] read surface: pool-backed, no transaction tax.
+/// The [`CommissionStore`] and [`CommissionRows`] read surfaces: pool-backed, no transaction tax.
 /// Writes live on [`PgCommissionWrites`] via [`UnitOfWork`](domain::ports::UnitOfWork).
 pub struct PgCommissionStore {
     pool: PgPool,
@@ -617,19 +696,19 @@ impl PgCommissionStore {
     }
 }
 
-/// Fields shared by the `find`, `find_for_update`, and `list_owned_by` rows, so
-/// [`to_commission`] rebuilds them through one body, re-validating every token
-/// (the title is carried as stored, never re-checked). Every field is a raw
-/// column value — nothing here is trusted.
+/// Fields shared by the `find` and `find_for_update` rows, so
+/// [`to_commission`] rebuilds them through one body, re-validating every token.
+/// Every field is a raw column value — nothing here is trusted.
 struct CommissionFields {
-    /// The stored title, carried as [`StoredText`] and never re-checked.
-    title: String,
     /// The owning User's DID.
     owner_id: String,
     /// The stored [`LifecycleStep`] token.
     lifecycle: String,
-    /// The stored [`Visibility`] token.
-    visibility: String,
+    /// The stored token of the step a Disputed commission left, or `None` (both-or-neither
+    /// with `disputed_at`).
+    disputed_from: Option<String>,
+    /// When a Disputed commission's dispute began; see `disputed_from`.
+    disputed_at: Option<DateTimeUtc>,
     /// The nullable deadline.
     deadline: Option<DateTimeUtc>,
     /// The stored [`MaturityRating`] token, or `None` while unrated (both-or-neither with `graphic`).
@@ -652,10 +731,10 @@ impl From<sql::FindRow> for CommissionFields {
     /// From `queries/commission/find.sql`'s row (no `id` — the caller supplies it).
     fn from(row: sql::FindRow) -> Self {
         Self {
-            title: row.title,
             owner_id: row.owner_id,
             lifecycle: row.lifecycle,
-            visibility: row.visibility,
+            disputed_from: row.disputed_from,
+            disputed_at: row.disputed_at,
             deadline: row.deadline,
             maturity: row.maturity,
             graphic: row.graphic,
@@ -673,10 +752,10 @@ impl From<sql::FindForUpdateRow> for CommissionFields {
     /// [`FindRow`](sql::FindRow) under a locking read).
     fn from(row: sql::FindForUpdateRow) -> Self {
         Self {
-            title: row.title,
             owner_id: row.owner_id,
             lifecycle: row.lifecycle,
-            visibility: row.visibility,
+            disputed_from: row.disputed_from,
+            disputed_at: row.disputed_at,
             deadline: row.deadline,
             maturity: row.maturity,
             graphic: row.graphic,
@@ -689,35 +768,14 @@ impl From<sql::FindForUpdateRow> for CommissionFields {
     }
 }
 
-impl From<sql::CommissionRow> for CommissionFields {
-    /// From `queries/commission/list_owned_by.sql`'s row; the `id` column is
-    /// dropped here and lifted separately by the caller.
-    fn from(row: sql::CommissionRow) -> Self {
-        Self {
-            title: row.title,
-            owner_id: row.owner_id,
-            lifecycle: row.lifecycle,
-            visibility: row.visibility,
-            deadline: row.deadline,
-            maturity: row.maturity,
-            graphic: row.graphic,
-            direction_status: row.direction_status,
-            deadline_status: row.deadline_status,
-            linked_channel: row.linked_channel,
-            archived_at: row.archived_at,
-            created_at: row.created_at,
-        }
-    }
-}
-
-/// Reads a stored visibility token. A token outside the vocabulary counts as
-/// [`Visibility::Private`], so an unreadable row fails closed instead of failing the read,
+/// Reads a commission node's stored level token. A token outside the vocabulary counts as
+/// [`Level::Private`], so an unreadable row fails closed instead of failing the read,
 /// and logs one fixed warning that names nothing of the row.
 /// Not `From<&str>`: only stored rows read leniently; `TryFrom<&str>` stays the strict parse.
-fn stored_visibility(token: &str) -> Visibility {
-    Visibility::try_from(token).unwrap_or_else(|_| {
-        tracing::warn!("a stored commission visibility is outside the vocabulary; read as private");
-        Visibility::Private
+fn stored_level(token: &str) -> Level {
+    Level::try_from(token).unwrap_or_else(|_| {
+        tracing::warn!("a stored commission node level is outside the vocabulary; read as private");
+        Level::Private
     })
 }
 
@@ -727,10 +785,50 @@ fn archived_flag(archived: Option<bool>) -> bool {
     archived.unwrap_or(true)
 }
 
+/// Reads a standing row's columns leniently: the node's level through [`stored_level`]
+/// (an absent one as Private), an unknown owner match as not the owner, and the archive
+/// flag through [`archived_flag`]. Every unreadable column reads as the closed state.
+fn to_standing(
+    level: Option<&str>,
+    is_owner: Option<bool>,
+    is_participant: bool,
+    archived: Option<bool>,
+) -> CommissionStanding {
+    let owns = is_owner.unwrap_or(false);
+    CommissionStanding {
+        role: CommissionRole::held(owns, is_participant),
+        level: level.map_or(Level::Private, stored_level),
+        archived: archived_flag(archived),
+    }
+}
+
+/// Rebuilds a commission's dispute from its two columns, as the dispute CHECK holds them: both
+/// set exactly while it is Disputed, the step left one of the other five. Anything else is an
+/// `Err`, never a dispute guessed at.
+fn to_dispute(
+    lifecycle_step: &LifecycleStep,
+    disputed_from: Option<String>,
+    disputed_at: Option<DateTimeUtc>,
+) -> anyhow::Result<Option<StoredDispute>> {
+    let disputed = *lifecycle_step == LifecycleStep::Disputed;
+    match (disputed, disputed_from, disputed_at) {
+        (false, None, None) => Ok(None),
+        (true, Some(token), Some(began)) => {
+            let left = LifecycleStep::try_from(token.as_str())
+                .ok()
+                .filter(|left| *left != LifecycleStep::Disputed)
+                .ok_or_else(|| anyhow::anyhow!("unknown disputed_from token {token:?}"))?;
+            Ok(Some(StoredDispute { left, began }))
+        }
+        (disputed, from, began) => anyhow::bail!(
+            "a dispute that doesn't match its step (disputed {disputed}, from {from:?}, began {began:?})"
+        ),
+    }
+}
+
 /// Rebuilds the [`Commission`] from its persisted fields, re-validating each
 /// stored token through its domain gate; a value outside its vocabulary
-/// surfaces as an `Err`, never a panic or silent default. The one exception is
-/// the visibility, which [`stored_visibility`] reads as Private.
+/// surfaces as an `Err`, never a panic or silent default.
 fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<Commission> {
     let maturity = match (fields.maturity, fields.graphic) {
         (None, None) => None,
@@ -745,9 +843,10 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
     };
     let lifecycle_step = LifecycleStep::try_from(fields.lifecycle.as_str())
         .map_err(|_| anyhow::anyhow!("unknown lifecycle token {:?}", fields.lifecycle))?;
-    // The stored value is the manual `Delayed` flag only; derive the effective
-    // status fresh here from the deadline, matching the sweep's math.
-    let stored_deadline_status = fields
+    let dispute = to_dispute(&lifecycle_step, fields.disputed_from, fields.disputed_at)?;
+    // The stored value is the manual `Delayed` flag only; Late is derived by whoever asks,
+    // at the time they ask.
+    let delayed_flag = fields
         .deadline_status
         .as_deref()
         .map(|token| {
@@ -755,18 +854,11 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
                 .map_err(|_| anyhow::anyhow!("unknown deadline_status token {token:?}"))
         })
         .transpose()?;
-    let deadline_status = derive_deadline_status(
-        fields.deadline,
-        &lifecycle_step,
-        stored_deadline_status,
-        chrono::Utc::now(),
-    );
     let commission = Commission {
         id,
-        title: StoredText::from(fields.title),
         owner_id: UserId::from(Did::from(fields.owner_id)),
         lifecycle_step,
-        visibility: stored_visibility(&fields.visibility),
+        dispute,
         deadline: fields.deadline,
         maturity,
         direction_status: fields
@@ -777,7 +869,7 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
                     .map_err(|_| anyhow::anyhow!("unknown direction_status token {token:?}"))
             })
             .transpose()?,
-        deadline_status,
+        delayed_flag,
         linked_channel: fields
             .linked_channel
             .map(ChannelPointer::try_from)
@@ -792,7 +884,7 @@ fn to_commission(id: CommissionId, fields: CommissionFields) -> anyhow::Result<C
 /// connection so reads see its uncommitted writes. Vended by `uow.commissions()`.
 #[async_trait::async_trait]
 impl CommissionReads for PgCommissionWrites<'_> {
-    /// [`CommissionStore::find`] on the unit's connection.
+    /// [`CommissionRows::find`] on the unit's connection.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&mut self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
         let Some(row) = sql::find(&mut *self.conn, uuid::Uuid::from(*id)).await? else {
@@ -811,7 +903,75 @@ impl CommissionReads for PgCommissionWrites<'_> {
         to_commission(*id, row.into()).map(Some)
     }
 
-    /// [`CommissionStore::is_participant`] on the unit's connection.
+    /// Two statements on the unit's connection: a locking select of the probe inner-joined
+    /// to `commission` and its node (`FOR NO KEY UPDATE OF commission`), then the participant
+    /// probe. The probe runs after the lock is granted, so it reads a snapshot taken under
+    /// the lock and sees any standing change committed while the lock was awaited. An absent
+    /// id, or a commission with no node, answers `None` without the probe; else the standing
+    /// beside the node the select joined.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn standing_for_update(
+        &mut self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<Option<LockedStanding>> {
+        let id = uuid::Uuid::from(*commission);
+        let rows = sql::standing_for_update(&mut *self.conn, id, user.as_ref()).await?;
+        // The join is on the primary key: at most one row.
+        let Some(row) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+        let participates = sql::is_participant(&mut *self.conn, id, user.as_ref()).await?;
+        let standing = to_standing(Some(&row.level), row.is_owner, participates, row.archived);
+        let locked = LockedStanding {
+            standing,
+            node: NodeId::from(row.node_id),
+        };
+        Ok(Some(locked))
+    }
+
+    /// One locking select on the unit's connection: the commission inner-joined to its node,
+    /// `FOR NO KEY UPDATE OF commission`, reading no viewer. An absent id, or a commission
+    /// with no node, answers `None`; else the node and its level, read leniently.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn lock_for_system(
+        &mut self,
+        commission: &CommissionId,
+    ) -> anyhow::Result<Option<LockedNode>> {
+        let rows = sql::lock_for_system(&mut *self.conn, uuid::Uuid::from(*commission)).await?;
+        // The select is on the primary key: at most one row.
+        let Some(row) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+        let locked = LockedNode {
+            node: NodeId::from(row.node_id),
+            level: stored_level(&row.level),
+        };
+        Ok(Some(locked))
+    }
+
+    /// The sweep scan's anti-join for one commission, on the unit's connection after its lock.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn late_owed(
+        &mut self,
+        commission: &CommissionId,
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<bool> {
+        let mark = <&'static str>::from(late_kinds.mark());
+        let rearming = rearming_tokens(late_kinds);
+        let owed = sql::late_owed(
+            &mut *self.conn,
+            uuid::Uuid::from(*commission),
+            mark,
+            &rearming,
+        )
+        .await?;
+        // `NOT EXISTS` is never NULL; an unknown answer owes nothing.
+        Ok(owed.unwrap_or(false))
+    }
+
+    /// One `EXISTS` over the persisted `commission_participant` membership record, on the
+    /// unit's connection — never a computed owner-∪-seated union.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn is_participant(
         &mut self,
@@ -839,7 +999,7 @@ impl CommissionReads for PgCommissionWrites<'_> {
 }
 
 #[async_trait::async_trait]
-impl CommissionStore for PgCommissionStore {
+impl CommissionRows for PgCommissionStore {
     /// Rebuilds the [`Commission`] via `to_commission`; `None` if absent.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn find(&self, id: &CommissionId) -> anyhow::Result<Option<Commission>> {
@@ -848,19 +1008,76 @@ impl CommissionStore for PgCommissionStore {
         };
         to_commission(*id, row.into()).map(Some)
     }
+}
 
-    /// Reads only the title, the visibility and whether it is archived; the visibility
-    /// through [`stored_visibility`], the title as stored. `None` if absent.
+#[async_trait::async_trait]
+impl CommissionStore for PgCommissionStore {
+    /// One statement that always answers one row, runs the participant probe once and probes
+    /// the node index for an absent id too; a row it doesn't show reads as the absent id's.
+    /// The level through [`stored_level`], the role and archive through [`to_standing`], the
+    /// name as stored; then the shown rule again, so a row the statement shows but the rule
+    /// doesn't answers `None` too.
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn find_summary(&self, id: &CommissionId) -> anyhow::Result<Option<CommissionSummary>> {
-        let row = sql::find_summary(&self.pool, uuid::Uuid::from(*id)).await?;
-        let summary = row.map(|row| CommissionSummary {
+    async fn find_summary(
+        &self,
+        id: &CommissionId,
+        viewer: &UserId,
+    ) -> anyhow::Result<Option<ViewedSummary>> {
+        let rows = sql::find_summary(&self.pool, uuid::Uuid::from(*id), viewer.as_ref()).await?;
+        let [row] = <[sql::FindSummaryRow; 1]>::try_from(rows).map_err(|rows| {
+            anyhow::anyhow!("the summary probe answered {} rows, not one", rows.len())
+        })?;
+        if !row.found.unwrap_or(false) {
+            return Ok(None);
+        }
+        let (Some(name), Some(level)) = (row.name, row.level) else {
+            return Ok(None);
+        };
+        let standing = to_standing(
+            Some(level.as_str()),
+            row.is_owner,
+            row.is_participant.unwrap_or(false),
+            row.archived,
+        );
+        if !standing.is_shown() {
+            return Ok(None);
+        }
+        let summary = CommissionSummary {
             id: *id,
-            title: StoredText::from(row.title),
-            visibility: stored_visibility(&row.visibility),
-            archived: archived_flag(row.archived),
-        });
-        Ok(summary)
+            title: StoredText::from(name),
+            visibility: standing.level,
+            archived: standing.archived,
+        };
+        let viewed = ViewedSummary {
+            summary,
+            role: standing.role,
+        };
+        Ok(Some(viewed))
+    }
+
+    /// One statement that always answers one row: the probe left-joined to `commission` and
+    /// `node`, with the node index and participant probes run whether or not the commission
+    /// exists. `found` false answers `None`; every other column is read leniently.
+    #[tracing::instrument(level = "debug", skip_all)]
+    async fn standing(
+        &self,
+        commission: &CommissionId,
+        user: &UserId,
+    ) -> anyhow::Result<Option<CommissionStanding>> {
+        let rows = sql::standing(&self.pool, uuid::Uuid::from(*commission), user.as_ref()).await?;
+        let [row] = <[sql::StandingRow; 1]>::try_from(rows).map_err(|rows| {
+            anyhow::anyhow!("the standing probe answered {} rows, not one", rows.len())
+        })?;
+        if !row.found.unwrap_or(false) {
+            return Ok(None);
+        }
+        let standing = to_standing(
+            row.level.as_deref(),
+            row.is_owner,
+            row.is_participant,
+            row.archived,
+        );
+        Ok(Some(standing))
     }
 
     /// Which column of `workflow_id` currently holds this commission, if any.
@@ -983,18 +1200,6 @@ impl CommissionStore for PgCommissionStore {
         Ok(Some(composition))
     }
 
-    /// One `EXISTS` over the persisted `commission_participant` membership record
-    /// — never a computed owner-∪-seated union. Unaffected by placement or view
-    /// grants.
-    #[tracing::instrument(level = "debug", skip_all)]
-    async fn is_participant(
-        &self,
-        commission: &CommissionId,
-        user: &UserId,
-    ) -> anyhow::Result<bool> {
-        Ok(sql::is_participant(&self.pool, uuid::Uuid::from(*commission), user.as_ref()).await?)
-    }
-
     /// The file-entry link `key` names within `commission` — scoped by both id and
     /// commission_id, so a foreign key answers `None`. Bytes live behind
     /// [`FileStore`](domain::ports::FileStore).
@@ -1093,9 +1298,9 @@ impl CommissionStore for PgCommissionStore {
             .collect()
     }
 
-    /// One join from the participant record onto `commission`, seeking the
-    /// by-user index; archived rows included. Each visibility token is read
-    /// through [`stored_visibility`]; the title is carried as stored.
+    /// One join from the participant record onto `commission` and its node, seeking the
+    /// by-user index; archived rows included. Each node's level is read through
+    /// [`stored_level`]; its name is carried as stored.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn list_participating(&self, user: &UserId) -> anyhow::Result<Vec<CommissionSummary>> {
         let rows = sql::list_participating(&self.pool, user.as_ref()).await?;
@@ -1103,8 +1308,8 @@ impl CommissionStore for PgCommissionStore {
             .into_iter()
             .map(|row| CommissionSummary {
                 id: CommissionId::from(row.id),
-                title: StoredText::from(row.title),
-                visibility: stored_visibility(&row.visibility),
+                title: StoredText::from(row.name),
+                visibility: stored_level(&row.level),
                 archived: archived_flag(row.archived),
             })
             .collect();
@@ -1126,8 +1331,8 @@ impl CommissionStore for PgCommissionStore {
         Ok(files)
     }
 
-    /// The commission's Slot satellites in declaration order; titles carried as
-    /// stored.
+    /// The commission's Slot satellites in declaration order, each titled by its node's
+    /// name as stored.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn slots(&self, commission: &CommissionId) -> anyhow::Result<Vec<Slot>> {
         let rows = sql::slots(&self.pool, uuid::Uuid::from(*commission)).await?;
@@ -1143,18 +1348,21 @@ impl CommissionStore for PgCommissionStore {
         Ok(slots)
     }
 
-    /// Active commissions (`archived_at IS NULL`) owned by `owner`, ordered by
-    /// id, each rebuilt through `to_commission`: tokens re-validated, the title
-    /// carried as stored.
+    /// The sweep's scan on the pool: deadline strictly before `now`, step not in
+    /// `not_lapsing`, no Late mark since the last re-arming entry; ids ordered by deadline, then
+    /// id.
     #[tracing::instrument(level = "debug", skip_all)]
-    async fn list_owned_by(&self, owner: &UserId) -> anyhow::Result<Vec<Commission>> {
-        sql::list_owned_by(&self.pool, owner.as_ref())
-            .await?
-            .into_iter()
-            .map(|row| {
-                let id = CommissionId::from(row.id);
-                to_commission(id, row.into())
-            })
-            .collect()
+    async fn lapsed_deadlines(
+        &self,
+        now: DateTimeUtc,
+        not_lapsing: &[LifecycleStep],
+        late_kinds: &LateKinds,
+    ) -> anyhow::Result<Vec<CommissionId>> {
+        let steps: Vec<String> = not_lapsing.iter().map(ToString::to_string).collect();
+        let mark = <&'static str>::from(late_kinds.mark());
+        let rearming = rearming_tokens(late_kinds);
+        let ids = sql::lapsed_deadlines(&self.pool, now, &steps, mark, &rearming).await?;
+        let lapsed = ids.into_iter().map(CommissionId::from).collect();
+        Ok(lapsed)
     }
 }

@@ -20,15 +20,14 @@
 //!
 //! Requires a container runtime socket (DOCKER_HOST honored).
 
+use crate::seed;
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use chrono::Utc;
-use domain::elements::commission::NewCommission;
 use domain::{
     elements::{
         commission::{
-            Band, Commission, CommissionId, CommissionTitle, ElementId, ElementPayload,
-            ElementType, NewElement, SKELETON, SurfaceAddress, SurfaceName, TabId, VisibilityMode,
-            declared_tabs,
+            Band, Commission, CommissionId, ElementId, ElementPayload, ElementType, NewElement,
+            SKELETON, SurfaceAddress, SurfaceName, TabId, VisibilityMode, declared_tabs,
         },
         did::Did,
         user::User,
@@ -101,21 +100,8 @@ async fn seed_pre_rekey_user(pool: &PgPool, did: &str) -> (uuid::Uuid, User) {
 
 /// Create a commission (which mints its skeleton tabs) in one committed unit of
 /// work.
-async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> NewCommission {
-    let commission = Commission::create(
-        title.parse::<CommissionTitle>().expect("valid title"),
-        owner.id.clone(),
-        Utc::now(),
-        None,
-    );
-    let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .create(&commission)
-        .await
-        .expect("create commission");
-    uow.commit().await.expect("commit");
-    commission
+async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commission {
+    seed::seed_stored(pool, &owner.id, title).await
 }
 
 /// The one surface the placeholder skeleton declares.
@@ -200,8 +186,8 @@ async fn group_positions(
 
 // ZMVP-166 (pg) — creating a commission mints its skeleton tabs in the same unit
 // of work: the loaded composition holds exactly the declared tabs, every one
-// born Total, and no elements. Nothing derives a tab's mode from
-// `commission.visibility`: the commission is the formal root, gating OVER the
+// born Total, and no elements. Nothing derives a tab's mode from the
+// commission's level: the commission is the formal root, gating OVER the
 // composition rather than seeding it.
 #[tokio::test]
 async fn creating_a_commission_mints_its_skeleton_tabs() {
@@ -566,12 +552,14 @@ async fn a_satellite_claiming_another_commission_is_unrepresentable_at_the_datab
     .await;
     assert_satellite_desync_refused(seat, "commission_seat");
 
+    // A node id rides along, so the row's own node check passes and only the composite key
+    // is left to catch it.
     let slot = sqlx::query(
-        "INSERT INTO commission_slot (element_id, commission_id, title)
-         VALUES ($1, $2, 'Smuggled')",
+        "INSERT INTO commission_slot (element_id, commission_id, node_id) VALUES ($1, $2, $3)",
     )
     .bind(uuid::Uuid::from(element_id))
     .bind(uuid::Uuid::from(theirs.id))
+    .bind(uuid::Uuid::now_v7())
     .execute(&pool)
     .await;
     assert_satellite_desync_refused(slot, "commission_slot");
@@ -883,7 +871,9 @@ async fn the_migration_backfills_skeleton_tabs_for_pre_composition_commissions()
     }
 
     // The world catches up: the remaining migrations (including the backfill) run.
-    adapter_pg::migrate(&pool).await.expect("catch-up migrates");
+    adapter_pg::migrate_fresh(&pool)
+        .await
+        .expect("catch-up migrates");
 
     let store = PgCommissionStore::new(pool.clone());
     for (id, visibility) in seeded {
@@ -928,10 +918,7 @@ async fn the_migration_backfills_skeleton_tabs_for_pre_composition_commissions()
              User whose Seat was dropped must not keep the key to the closed door"
         );
         assert!(
-            !store
-                .is_participant(&id, &seated.id)
-                .await
-                .expect("is_participant"),
+            !seed::participates(&pool, &id, &seated.id).await,
             "and the closed-door gate agrees: the ex-seated User is no longer a Participant"
         );
     }

@@ -1,0 +1,11 @@
+error[E0599]: no associated function or constant named `default` found for struct `WriteCapability<T, R>` in the current scope
+ --> tests/ui/no_default.rs:6:52
+  |
+6 |     let _forged = WriteCapability::<u32, Creator>::default();
+  |                                                    ^^^^^^^ associated function or constant not found in `WriteCapability<u32, Creator>`
+  |
+note: if you're trying to build a new `WriteCapability<u32, Creator>`, consider using `WriteCapability::<T, R>::gate_issued` which returns `WriteCapability<_, _>`
+ --> src/ports/capability.rs
+  |
+  |     pub fn gate_issued(thing: T) -> Self {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -4,7 +4,10 @@ use domain::elements::{account::AccountId, user::UserId};
 
 use crate::{
     Ports,
-    account::{AccountError, AccountResult, invitation::Invitations},
+    account::{
+        AccountError, AccountResult, invitation::Invitations, lock_live_account,
+        refused_after_a_race,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +68,13 @@ impl Invitations<'_> {
         }
 
         let uow = uow.open().await?;
+        lock_live_account(uow, &account_id).await?;
+        // Decided again with the actor's row held shared: a demotion may have landed since.
+        uow.accounts()
+            .role_of_for_share(&actor_id, &account_id)
+            .await?
+            .filter(|r| r.can_grant(&invitation.role))
+            .ok_or_else(|| refused_after_a_race("revoke_invitation", AccountError::NotAMember))?;
         uow.accounts().revoke_invitation(&invitation.id).await?;
         Ok(Output)
     }

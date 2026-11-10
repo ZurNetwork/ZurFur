@@ -26,3 +26,6 @@ strum = { workspace = true }
 # Property tests for the Handle and AtHandle parsers and the bug-report values.
 proptest = { workspace = true }
 chrono = { workspace = true }
+
+[lints]
+workspace = true
