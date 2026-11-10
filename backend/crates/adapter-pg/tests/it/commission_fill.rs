@@ -16,7 +16,7 @@ use crate::migration_steps::{
     bare_pool, run_migrations_before, run_migrations_through, try_run_migrations_through,
 };
 use crate::node_backfill::{
-    DEN_1_VERSION, NodeRow, OWNER_DID, archive, every_node, seed_commission, seed_owner,
+    NODE_TABLE_VERSION, NodeRow, OWNER_DID, archive, every_node, seed_commission, seed_owner,
 };
 
 /// The commission node fill's migration, as sqlx numbers it.
@@ -36,17 +36,17 @@ const ENTRY_WORDS: [&str; 6] = [
 pub(crate) const LEVEL_TOKENS: [&str; 3] = ["private", "listed", "public"];
 
 /// A fresh database migrated up to just before the node table, with its owner.
-pub(crate) async fn just_before_den_1() -> (PgPool, impl Sized) {
+pub(crate) async fn just_before_the_node_table() -> (PgPool, impl Sized) {
     let (pool, container) = bare_pool().await;
-    run_migrations_before(&pool, DEN_1_VERSION).await;
+    run_migrations_before(&pool, NODE_TABLE_VERSION).await;
     seed_owner(&pool).await;
     (pool, container)
 }
 
 /// A fresh database migrated through the node table's migration, with its owner.
-pub(crate) async fn through_den_1() -> (PgPool, impl Sized) {
-    let (pool, container) = just_before_den_1().await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+pub(crate) async fn through_the_node_table() -> (PgPool, impl Sized) {
+    let (pool, container) = just_before_the_node_table().await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
     (pool, container)
 }
 
@@ -232,8 +232,8 @@ async fn phantom_node(pool: &PgPool) -> Uuid {
 // ─── The fill ──────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn a_commission_made_since_den_1_gets_its_node_and_six_entries() {
-    let (pool, _container) = through_den_1().await;
+async fn a_commission_made_since_the_node_table_gets_its_node_and_six_entries() {
+    let (pool, _container) = through_the_node_table().await;
     let made = seed_commission(&pool, "A commission made since", "private").await;
 
     run_migrations_through(&pool, FILL_VERSION).await;
@@ -243,7 +243,7 @@ async fn a_commission_made_since_den_1_gets_its_node_and_six_entries() {
 
 #[tokio::test]
 async fn an_archived_one_too() {
-    let (pool, _container) = through_den_1().await;
+    let (pool, _container) = through_the_node_table().await;
     let archived = seed_commission(&pool, "An archived commission", "public").await;
     archive(&pool, archived).await;
 
@@ -254,7 +254,7 @@ async fn an_archived_one_too() {
 
 #[tokio::test]
 async fn a_listed_window_commission_keeps_its_level_and_its_entries_are_private() {
-    let (pool, _container) = through_den_1().await;
+    let (pool, _container) = through_the_node_table().await;
     let listed = seed_commission(&pool, "A listed window commission", "listed").await;
 
     run_migrations_through(&pool, FILL_VERSION).await;
@@ -263,11 +263,11 @@ async fn a_listed_window_commission_keeps_its_level_and_its_entries_are_private(
 }
 
 #[tokio::test]
-async fn a_title_renamed_since_den_1_is_re_synced() {
-    let (pool, _container) = just_before_den_1().await;
+async fn a_title_renamed_since_the_node_table_is_re_synced() {
+    let (pool, _container) = just_before_the_node_table().await;
     let renamed = seed_commission(&pool, "The old title", "private").await;
     let kept = seed_commission(&pool, "A kept title", "public").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
     sqlx::query("UPDATE commission SET title = 'The new title' WHERE id = $1")
         .bind(renamed)
         .execute(&pool)
@@ -294,9 +294,9 @@ async fn a_title_renamed_since_den_1_is_re_synced() {
 
 #[tokio::test]
 async fn the_fill_changes_no_other_value() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let bound = seed_commission(&pool, "A bound commission", "listed").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
     let made = seed_commission(&pool, "A commission made since", "public").await;
     archive(&pool, made).await;
     let commissions_before = rows_without_node_id(&pool, "commission", "id").await;
@@ -338,7 +338,7 @@ async fn a_database_with_no_commissions_migrates() {
 
 #[tokio::test]
 async fn a_node_less_commission_insert_is_refused_after_the_fill() {
-    let (pool, _container) = through_den_1().await;
+    let (pool, _container) = through_the_node_table().await;
     run_migrations_through(&pool, FILL_VERSION).await;
 
     let inserted = sqlx::query(
@@ -359,7 +359,7 @@ async fn a_node_less_commission_insert_is_refused_after_the_fill() {
 
 #[tokio::test]
 async fn a_node_rename_reaches_the_title_and_a_widening_leaves_the_visibility() {
-    let (pool, _container) = through_den_1().await;
+    let (pool, _container) = through_the_node_table().await;
     let commission = seed_commission(&pool, "Before", "private").await;
     run_migrations_through(&pool, FILL_VERSION).await;
     let node = commission_node(&pool, commission).await.id;
@@ -387,9 +387,9 @@ async fn a_node_rename_reaches_the_title_and_a_widening_leaves_the_visibility() 
 
 #[tokio::test]
 async fn a_level_that_differs_stops_the_fill_naming_the_commission() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let differing = seed_commission(&pool, "A widened commission", "private").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
     let node_less = seed_commission(&pool, "A commission made since", "private").await;
     sqlx::query("UPDATE commission SET visibility = 'public' WHERE id = $1")
         .bind(differing)
@@ -414,7 +414,7 @@ async fn a_level_that_differs_stops_the_fill_naming_the_commission() {
 
 #[tokio::test]
 async fn a_phantom_commission_node_stops_the_fill_naming_the_node() {
-    let (pool, _container) = through_den_1().await;
+    let (pool, _container) = through_the_node_table().await;
     let node_less = seed_commission(&pool, "A commission made since", "private").await;
     let phantom = phantom_node(&pool).await;
 
@@ -427,7 +427,7 @@ async fn a_phantom_commission_node_stops_the_fill_naming_the_node() {
 
 #[tokio::test]
 async fn an_empty_title_stops_the_fill_naming_the_commission() {
-    let (pool, _container) = through_den_1().await;
+    let (pool, _container) = through_the_node_table().await;
     let node_less = seed_commission(&pool, "A titled commission", "private").await;
     let untitled = seed_commission(&pool, "", "private").await;
 
@@ -440,7 +440,7 @@ async fn an_empty_title_stops_the_fill_naming_the_commission() {
 
 #[tokio::test]
 async fn an_unreadable_visibility_stops_it() {
-    let (pool, _container) = through_den_1().await;
+    let (pool, _container) = through_the_node_table().await;
     let node_less = seed_commission(&pool, "A readable commission", "private").await;
     let unreadable = seed_commission(&pool, "An unreadable commission", "Private").await;
 
@@ -453,7 +453,7 @@ async fn an_unreadable_visibility_stops_it() {
 
 #[tokio::test]
 async fn a_commission_node_missing_an_entry_stops_it() {
-    let (pool, _container) = through_den_1().await;
+    let (pool, _container) = through_the_node_table().await;
     let node_less = seed_commission(&pool, "A commission made since", "private").await;
     let short = seed_commission(&pool, "A bound commission", "private").await;
     let node = bind_with_entries(&pool, short, &ENTRY_WORDS[..5]).await;
@@ -471,9 +471,9 @@ async fn the_refusals_name_neither_token_nor_title() {
     let unreadable_token = "secret-visibility-token";
 
     let differing = {
-        let (pool, container) = just_before_den_1().await;
+        let (pool, container) = just_before_the_node_table().await;
         let commission = seed_commission(&pool, title, "listed").await;
-        run_migrations_through(&pool, DEN_1_VERSION).await;
+        run_migrations_through(&pool, NODE_TABLE_VERSION).await;
         sqlx::query("UPDATE commission SET visibility = 'public' WHERE id = $1")
             .bind(commission)
             .execute(&pool)
@@ -482,21 +482,21 @@ async fn the_refusals_name_neither_token_nor_title() {
         (pool, container)
     };
     let unreadable = {
-        let (pool, container) = just_before_den_1().await;
-        run_migrations_through(&pool, DEN_1_VERSION).await;
+        let (pool, container) = just_before_the_node_table().await;
+        run_migrations_through(&pool, NODE_TABLE_VERSION).await;
         seed_commission(&pool, title, unreadable_token).await;
         (pool, container)
     };
     let phantom = {
-        let (pool, container) = just_before_den_1().await;
-        run_migrations_through(&pool, DEN_1_VERSION).await;
+        let (pool, container) = just_before_the_node_table().await;
+        run_migrations_through(&pool, NODE_TABLE_VERSION).await;
         seed_commission(&pool, title, "public").await;
         phantom_node(&pool).await;
         (pool, container)
     };
     let short = {
-        let (pool, container) = just_before_den_1().await;
-        run_migrations_through(&pool, DEN_1_VERSION).await;
+        let (pool, container) = just_before_the_node_table().await;
+        run_migrations_through(&pool, NODE_TABLE_VERSION).await;
         let commission = seed_commission(&pool, title, "private").await;
         bind_with_entries(&pool, commission, &ENTRY_WORDS[1..]).await;
         (pool, container)

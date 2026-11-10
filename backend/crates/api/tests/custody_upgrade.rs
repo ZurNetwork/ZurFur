@@ -255,10 +255,10 @@ async fn listed_handles(served: &PgServed, client: &reqwest::Client) -> Vec<Stri
 #[tokio::test]
 async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
     // 1. A 0.1 database: two Accounts, their 0.1 custody rows, in-flight sign-in rows.
-    let id_1_versions =
+    let custody_upgrade_versions =
         embedded_versions(|version| (CUSTODY_ENVELOPE..=SIGNIN_ROWS_DELETE).contains(&version));
     assert_eq!(
-        id_1_versions,
+        custody_upgrade_versions,
         [CUSTODY_ENVELOPE, SIGNIN_ROWS_DELETE],
         "the custody upgrade's two migrations"
     );
@@ -335,7 +335,7 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
 
     let latest = embedded_versions(|_| true).last().copied();
     let upgraded = MigrationReport {
-        applied: id_1_versions.len() + later_versions.len(),
+        applied: custody_upgrade_versions.len() + later_versions.len(),
         version: latest,
         rows_rewrapped: 2,
     };
@@ -555,7 +555,7 @@ async fn a_0_1_database_upgrades_serves_reruns_and_rolls_back() {
     .await
     .expect("roll back the dispute columns next");
     sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ANY($1)")
-        .bind(&id_1_versions)
+        .bind(&custody_upgrade_versions)
         .execute(&mut *rollback)
         .await
         .expect("forget the upgrade's migrations");

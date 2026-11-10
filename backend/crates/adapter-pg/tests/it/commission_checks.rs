@@ -22,7 +22,7 @@ use uuid::Uuid;
 use crate::migration_steps::{
     bare_pool, run_migrations_before, run_migrations_through, try_run_migrations_through,
 };
-use crate::node_backfill::{DEN_1_VERSION, seed_commission, seed_owner};
+use crate::node_backfill::{NODE_TABLE_VERSION, seed_commission, seed_owner};
 
 /// The checks' migration, as sqlx numbers it.
 const CHECKS_VERSION: i64 = 20261107164601;
@@ -192,7 +192,7 @@ impl Rule {
 /// id order.
 async fn just_before_the_checks() -> (PgPool, [Uuid; 2], impl Sized) {
     let (pool, container) = bare_pool().await;
-    run_migrations_before(&pool, DEN_1_VERSION).await;
+    run_migrations_before(&pool, NODE_TABLE_VERSION).await;
     seed_owner(&pool).await;
     let commissions = seed_two(&pool).await;
     run_migrations_before(&pool, CHECKS_VERSION).await;
@@ -375,7 +375,7 @@ async fn the_constraint_refuses(
 async fn stop_on_each_rule(value: fn(Rule) -> &'static str) -> Vec<(Rule, [Uuid; 2], String)> {
     let db = test_support::pg::bare_db().await;
     let mut pool = adapter_pg::connect(db.url()).await.expect("pool connects");
-    run_migrations_before(&pool, DEN_1_VERSION).await;
+    run_migrations_before(&pool, NODE_TABLE_VERSION).await;
     seed_owner(&pool).await;
     let commissions = seed_two(&pool).await;
     run_migrations_before(&pool, CHECKS_VERSION).await;
@@ -713,7 +713,7 @@ async fn the_refusals_name_ids_only() {
 async fn a_reader_and_a_writer_wait_while_the_checks_land() {
     let db = test_support::pg::bare_db().await;
     let pool = adapter_pg::connect(db.url()).await.expect("pool connects");
-    run_migrations_before(&pool, DEN_1_VERSION).await;
+    run_migrations_before(&pool, NODE_TABLE_VERSION).await;
     seed_owner(&pool).await;
     let [commission, _] = seed_two(&pool).await;
     run_migrations_before(&pool, CHECKS_VERSION).await;

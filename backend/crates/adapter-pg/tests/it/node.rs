@@ -14,7 +14,7 @@ use sqlx::postgres::PgQueryResult;
 use uuid::Uuid;
 
 use crate::migration_steps::{bare_pool, run_migrations_through};
-use crate::node_backfill::{DEN_1_VERSION, seed_commission, seed_owner};
+use crate::node_backfill::{NODE_TABLE_VERSION, seed_commission, seed_owner};
 
 /// The six fixed entries every commission node holds.
 const ENTRY_WORDS: [&str; 6] = [
@@ -35,9 +35,9 @@ async fn migrated() -> (PgPool, impl Sized) {
 
 /// A fresh database migrated only through the node table's migration, where a
 /// commission row may still lack a node, with the made-up owner seeded.
-async fn migrated_through_den_1() -> (PgPool, impl Sized) {
+async fn migrated_through_the_node_table() -> (PgPool, impl Sized) {
     let (pool, db) = bare_pool().await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
     seed_owner(&pool).await;
     (pool, db)
 }
@@ -490,7 +490,7 @@ async fn re_pointing_a_slot_is_refused() {
 
 #[tokio::test]
 async fn setting_a_node_id_from_null_is_allowed() {
-    let (pool, _container) = migrated_through_den_1().await;
+    let (pool, _container) = migrated_through_the_node_table().await;
     let commission = seed_commission(&pool, "A commission", "private").await;
 
     let bound = give_it_its_nodes(&pool, commission).await;
@@ -770,7 +770,7 @@ async fn a_commission_node_without_its_commission_is_refused_at_commit() {
 
 #[tokio::test]
 async fn a_commission_pointing_at_another_commission_s_node_is_refused_at_commit() {
-    let (pool, _container) = migrated_through_den_1().await;
+    let (pool, _container) = migrated_through_the_node_table().await;
     let pointing = seed_commission(&pool, "A pointing commission", "private").await;
     let other = seed_commission(&pool, "Another commission", "private").await;
     let mut tx = pool.begin().await.expect("begin");
@@ -789,7 +789,7 @@ async fn a_commission_pointing_at_another_commission_s_node_is_refused_at_commit
 
 #[tokio::test]
 async fn a_commission_pointing_at_a_non_commission_node_is_refused_at_commit() {
-    let (pool, _container) = migrated_through_den_1().await;
+    let (pool, _container) = migrated_through_the_node_table().await;
     let pointing = seed_commission(&pool, "A pointing commission", "private").await;
     let mut tx = pool.begin().await.expect("begin");
     let its_nodes = bare_commission_node(&mut tx, &pointing.to_string()).await;

@@ -483,7 +483,7 @@
     {
       "page": 55836674,
       "title": "The Application Layer — Use Cases, DTOs and Ports",
-      "governs": "D6/D7: `elements.rs`/`channel.rs`/`mod.rs::require_owner`: driver-side authz/transaction survives only where no use case exists yet; each of their unit calls carries its own #[expect] under api/clippy.toml's commissions()/changelog() ban until ARC-4 moves it into a use case"
+      "governs": "D6/D7: `elements.rs`/`channel.rs`/`mod.rs::require_owner`: driver-side authz/transaction survives only where no use case exists yet; each of their unit calls carries its own #[expect] under api/clippy.toml's commissions()/changelog() ban until a use case owns its write"
     },
     {
       "page": 65110018,

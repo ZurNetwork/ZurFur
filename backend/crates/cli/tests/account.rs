@@ -1,16 +1,19 @@
 //! `zurfur account create` / `delete` in process: the CLI calls the same `application::account::Accounts::{create,
 //! delete}` as `POST /accounts` / `DELETE /accounts/{id}`, and projects them
-//! with the same keys.
+//! with the same keys; a failure of either logs no DID above debug.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use cli::{BackendCommand, ExitClass, commands::account::AccountOp, identity};
 use composition::Runtime;
-use domain::elements::{account::AccountId, did::Did};
-use domain::ports::UnitOfWork;
+use domain::elements::{account::AccountId, did::Did, handle::Handle};
+use domain::ports::{Database, DidMinter, UnitOfWork};
+use test_support::log_capture::{self, CapturedLog};
 use test_support::recording::{CallLog, RecordingDidMinter};
 use test_support::runtime::DATABASE_URL;
+use tracing::subscriber::DefaultGuard;
 use uuid::Uuid;
 
 const DID: &str = "did:plc:cli-account";
@@ -259,4 +262,135 @@ async fn delete_without_an_identity_is_not_authenticated() {
     // unrecognized caller never learns whether the id names anything.
     assert_eq!(error.class(), ExitClass::Domain);
     assert_eq!(error.code(), "not_authenticated");
+}
+
+// --- the error log of a failed create or delete ----------------------------------
+
+/// The DID a refusing store names in its error, as the PLC directory's refusal names one.
+const REFUSED_DID: &str = "did:plc:cliaccountrefused7q2x";
+
+/// The text a refusal carries, naming [`REFUSED_DID`].
+fn refusal() -> anyhow::Error {
+    anyhow::anyhow!("PLC directory rejected {REFUSED_DID}: 400 Bad Request")
+}
+
+/// A [`DidMinter`] whose every call is refused with [`refusal`].
+struct RefusingMinter;
+
+#[async_trait]
+impl DidMinter for RefusingMinter {
+    async fn mint(&self, _handle: &Handle) -> anyhow::Result<Did> {
+        Err(refusal())
+    }
+
+    async fn mint_handleless(&self) -> anyhow::Result<Did> {
+        Err(refusal())
+    }
+
+    async fn tombstone(&self, _did: &Did) -> anyhow::Result<()> {
+        Err(refusal())
+    }
+
+    async fn update_handle(&self, _did: &Did, _handle: &Handle) -> anyhow::Result<()> {
+        Err(refusal())
+    }
+}
+
+/// A [`Database`] that can't open a unit of work, refusing with [`refusal`].
+struct RefusingDatabase;
+
+#[async_trait]
+impl Database for RefusingDatabase {
+    async fn begin(&self) -> anyhow::Result<Box<dyn UnitOfWork>> {
+        Err(refusal())
+    }
+}
+
+/// Captures this thread's log at `trace` until the guard drops.
+fn captured_log() -> (CapturedLog, DefaultGuard) {
+    let log = CapturedLog::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_writer(log.clone())
+        .with_ansi(false)
+        .finish();
+    let guard = log_capture::set_default(subscriber);
+    (log, guard)
+}
+
+/// The lines of `text` that name [`REFUSED_DID`] at info or above, or on a line with no
+/// level of its own, such as a multi-line cause's continuation.
+fn lines_naming_the_did_above_debug(text: &str) -> Vec<&str> {
+    text.lines()
+        .filter(|line| line.contains(REFUSED_DID))
+        .filter(|line| {
+            let level = line.split_whitespace().nth(1);
+            !matches!(level, Some("DEBUG" | "TRACE"))
+        })
+        .collect()
+}
+
+/// Whether a line of `text` holds every one of `parts`.
+fn some_line_has(text: &str, parts: &[&str]) -> bool {
+    text.lines()
+        .any(|line| parts.iter().all(|part| line.contains(part)))
+}
+
+// A refused founding logs a fixed line at error and its cause at debug only, so no line at
+// info or above names the DID the refusal carries.
+#[tokio::test]
+async fn a_failed_create_logs_no_did_above_debug() {
+    let mut runtime = mem_runtime();
+    let (_dir, path) = signed_in(&runtime).await;
+    runtime.did_minter = Arc::new(RefusingMinter);
+    let (log, guard) = captured_log();
+
+    let error = cli::dispatch(&runtime, &path, create("Acme Studio", "acme.zurfur.app"))
+        .await
+        .unwrap_err();
+    drop(guard);
+
+    assert_eq!(error.class(), ExitClass::Infra);
+    assert_eq!(error.code(), "internal_error");
+    let text = log.text();
+    assert!(
+        some_line_has(&text, &["ERROR", "founding the account failed"]),
+        "the failure is logged at error: {text}"
+    );
+    let leaked = lines_naming_the_did_above_debug(&text);
+    assert!(leaked.is_empty(), "a DID above debug: {leaked:#?}");
+    assert!(
+        some_line_has(&text, &["DEBUG", "the founding's failure", REFUSED_DID]),
+        "the cause is logged at debug: {text}"
+    );
+}
+
+// A store failure during a delete logs a fixed line at error and its cause at debug only, so
+// no line at info or above names the DID the failure carries.
+#[tokio::test]
+async fn a_failed_delete_logs_no_did_above_debug() {
+    let mut runtime = mem_runtime();
+    let (_dir, path) = signed_in(&runtime).await;
+    let account_id = founded_account(&runtime, &path, "acme.zurfur.app").await;
+    runtime.database = Arc::new(RefusingDatabase);
+    let (log, guard) = captured_log();
+
+    let error = cli::dispatch(&runtime, &path, delete(account_id))
+        .await
+        .unwrap_err();
+    drop(guard);
+
+    assert_eq!(error.class(), ExitClass::Infra);
+    assert_eq!(error.code(), "internal_error");
+    let text = log.text();
+    assert!(
+        some_line_has(&text, &["ERROR", "deleting the account failed"]),
+        "the failure is logged at error: {text}"
+    );
+    let leaked = lines_naming_the_did_above_debug(&text);
+    assert!(leaked.is_empty(), "a DID above debug: {leaked:#?}");
+    assert!(
+        some_line_has(&text, &["DEBUG", "the delete's failure", REFUSED_DID]),
+        "the cause is logged at debug: {text}"
+    );
 }

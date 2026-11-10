@@ -67,7 +67,7 @@ fn kinds_and_payloads(entries: &[Value], creator: &str) -> Vec<(String, String)>
         .collect()
 }
 
-/// Heron's probe as `client` on `base`, the signed-in `creator`: a create rated adult and
+/// Checks, as `client` on `base`, the signed-in `creator`, that a create rated adult and
 /// Graphic, then a rating to safe and not Graphic, records `created`, the create's rating and
 /// the later one, in that order, each with its literal payload.
 async fn the_create_s_rating_is_kept(client: &reqwest::Client, base: &str, creator: &str) {

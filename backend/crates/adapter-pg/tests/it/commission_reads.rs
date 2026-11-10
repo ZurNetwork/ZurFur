@@ -12,7 +12,7 @@
 
 use crate::migration_steps::{bare_pool, run_migrations_through};
 use crate::node_backfill::{
-    DEN_1_VERSION, OWNER_DID, seed_commission as seed_node_less, seed_owner,
+    NODE_TABLE_VERSION, OWNER_DID, seed_commission as seed_node_less, seed_owner,
 };
 use crate::seed;
 use adapter_pg::{PgCommissionStore, PgDatabase, PgFileStore, PgPool, PgWorkflowStore};
@@ -542,7 +542,7 @@ async fn every_hidden_commission_s_summary_row_is_an_absent_id_s_byte_for_byte()
     assert_ne!(shown_row, absent_row, "a Listed live commission is shown");
 
     let (den_pool, _den_container) = bare_pool().await;
-    run_migrations_through(&den_pool, DEN_1_VERSION).await;
+    run_migrations_through(&den_pool, NODE_TABLE_VERSION).await;
     seed_owner(&den_pool).await;
     let node_less = seed_node_less(&den_pool, "No node", "public").await;
     let den_absent_row = raw_summary_row(&den_pool, uuid::Uuid::now_v7(), viewer).await;
@@ -826,7 +826,7 @@ async fn the_summary_and_standing_read_the_node_s_name_and_level() {
 #[tokio::test]
 async fn a_node_less_commission_reads_as_absent_and_its_standing_as_private() {
     let (pool, _container) = bare_pool().await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
     seed_owner(&pool).await;
     let id = CommissionId::from(seed_node_less(&pool, "No node", "public").await);
     sqlx::query(

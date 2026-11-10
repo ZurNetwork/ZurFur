@@ -4483,9 +4483,9 @@ fn no_backend_method_or_trait_impl_carries_a_seeder_past_the_derived_list() {
     assert!(seeders.contains("append"), "{seeders:?}");
     let seeder_names: Vec<&str> = seeders.iter().map(String::as_str).collect();
     let forbidden = with_aliases(&seeder_names, &[]);
-    let herons_driver = "pub fn forge(backend: &adapter_mem::MemBackend, commission: CommissionId) {\n    backend.append(commission, ChangelogEntryKind::Late, serde_json::json!({}), chrono::Utc::now());\n}";
-    let found = driver_findings(API, "api/src/heron_plant.rs", herons_driver, &forbidden);
-    assert_eq!(found, ["api/src/heron_plant.rs: `append` in forge"]);
+    let review_driver = "pub fn forge(backend: &adapter_mem::MemBackend, commission: CommissionId) {\n    backend.append(commission, ChangelogEntryKind::Late, serde_json::json!({}), chrono::Utc::now());\n}";
+    let found = driver_findings(API, "api/src/review_plant.rs", review_driver, &forbidden);
+    assert_eq!(found, ["api/src/review_plant.rs: `append` in forge"]);
     let kept = [
         (
             "forge.rs",
@@ -5745,7 +5745,7 @@ const PORT_PRELUDE: &str = "use crate::elements::commission::{AsOwner, AsPartici
 
 /// A security review's plant on the write view: a look-alike capability by a longer path, and
 /// a create's capability beside a free id, each with a default body.
-const HERON_S_PORT_PLANT: &str = r"
+const REVIEW_PORT_PLANT: &str = r"
     /// Moves the commission's lifecycle step.
     async fn set_lifecycle(
         &mut self,
@@ -6044,14 +6044,14 @@ fn the_port_scan_names_each_planted_write() {
         source.contains(last_write),
         "the port file holds `{last_write}`"
     );
-    let heron_s_plant = format!("{last_write}{HERON_S_PORT_PLANT}");
-    let heron_planted = source.replacen(last_write, &heron_s_plant, 1);
-    let heron_file = syn::parse_file(&heron_planted).expect("the planted port parses");
+    let review_plant = format!("{last_write}{REVIEW_PORT_PLANT}");
+    let review_planted = source.replacen(last_write, &review_plant, 1);
+    let review_file = syn::parse_file(&review_planted).expect("the planted port parses");
 
-    let heron_findings = port_findings(&heron_file, &listed);
+    let review_findings = port_findings(&review_file, &listed);
 
     assert_eq!(
-        heron_findings,
+        review_findings,
         [
             "CommissionWrites::set_lifecycle takes no write capability and is on no list",
             "CommissionWrites::set_maturity_under takes no write capability and is on no list",
@@ -7699,12 +7699,12 @@ fn the_pg_pin_names_each_sql_text_door_outside_its_exemptions() {
             "    async fn retire_card(&mut self, commission: &CommissionId) -> anyhow::Result<bool> {{ {body} }}"
         )
     };
-    let herons_plant = "        let table = \"commission\";\n        let assembled = format!(\"UPDATE {table} SET archived_at = NULL WHERE id = $1\");\n        sqlx::query(sqlx::AssertSqlSafe(assembled))\n            .bind(uuid::Uuid::from(markup.commission_id))\n            .execute(&mut *self.conn)\n            .await?;";
+    let review_plant = "        let table = \"commission\";\n        let assembled = format!(\"UPDATE {table} SET archived_at = NULL WHERE id = $1\");\n        sqlx::query(sqlx::AssertSqlSafe(assembled))\n            .bind(uuid::Uuid::from(markup.commission_id))\n            .execute(&mut *self.conn)\n            .await?;";
     let refused = [
         (
             COMMISSION_FILE,
             markup,
-            herons_plant.to_owned(),
+            review_plant.to_owned(),
             "adapter-pg/src/commission.rs: `AssertSqlSafe` in PgCommissionWrites::add_markup",
         ),
         (
@@ -9184,13 +9184,13 @@ fn no_later_migration_defines_a_function_or_trigger_that_writes_a_commission_tab
         "CREATE FUNCTION archive_all() RETURNS void AS $$ DECLARE dash text := '--'; BEGIN EXECUTE 'UPD' || 'ATE commission'; END $$ LANGUAGE plpgsql;",
         "CREATE FUNCTION archive_all() RETURNS void AS $$ BEGIN PERFORM run_sql('UPD' || 'ATE commission SET archived_at = now()'); END $$ LANGUAGE plpgsql;",
         "CREATE TRIGGER rerun AFTER UPDATE ON node FOR EACH ROW EXECUTE FUNCTION run_sql();",
-        "CREATE VIEW heron_v AS SELECT id, node_id, archived_at FROM commission;",
-        "CREATE VIEW heron_v AS TABLE commission;",
+        "CREATE VIEW review_v AS SELECT id, node_id, archived_at FROM commission;",
+        "CREATE VIEW review_v AS TABLE commission;",
         "CREATE OR REPLACE TEMP VIEW open_slots AS SELECT * FROM ONLY public.\"commission_slot\";",
         "CREATE VIEW open_nodes AS SELECT * FROM node WHERE id IN (SELECT node_id FROM commission);",
         "CREATE VIEW cards AS SELECT node.id FROM node JOIN commission ON commission.node_id = node.id;",
-        "DO $$ BEGIN CREATE VIEW heron_v AS SELECT * FROM commission; END $$;",
-        "CREATE FUNCTION heron_escape_unarchive() RETURNS trigger AS E'BEGIN \\x55PDATE commission SET archived_at = NULL WHERE node_id = NEW.id; RETURN NEW; END' LANGUAGE plpgsql;",
+        "DO $$ BEGIN CREATE VIEW review_v AS SELECT * FROM commission; END $$;",
+        "CREATE FUNCTION review_escape_unarchive() RETURNS trigger AS E'BEGIN \\x55PDATE commission SET archived_at = NULL WHERE node_id = NEW.id; RETURN NEW; END' LANGUAGE plpgsql;",
         "CREATE FUNCTION archive_all() RETURNS void AS U&'\\0055PDATE commission SET archived_at = now()' LANGUAGE sql;",
         "CREATE PROCEDURE archive_all() LANGUAGE sql AS /* the /* nested */ body */ u&'!0055PDATE commission SET archived_at = now()' UESCAPE '!';",
         "CREATE FUNCTION archive_all() RETURNS void AS /* a /* b */ c */ e'\\x55PDATE commission SET archived_at = now()' LANGUAGE sql;",
@@ -9255,27 +9255,27 @@ fn no_later_migration_defines_a_function_or_trigger_that_writes_a_commission_tab
 
         assert_eq!(found, Vec::<String>::new(), "{sql}");
     }
-    let herons_plant = "-- A trigger on another table that un-archives a commission by dynamic SQL.\nCREATE FUNCTION heron_unarchive() RETURNS trigger AS $$\nBEGIN\n    EXECUTE format('UPDATE %I SET archived_at = NULL WHERE node_id = $1', 'commission') USING NEW.id;\n    RETURN NEW;\nEND\n$$ LANGUAGE plpgsql;\n\nCREATE TRIGGER heron_unarchive AFTER UPDATE ON node FOR EACH ROW EXECUTE FUNCTION heron_unarchive();\n\n-- The same, with the statement concatenated.\nCREATE FUNCTION heron_unarchive_two() RETURNS trigger AS $$\nBEGIN\n    EXECUTE 'UPDATE ' || 'commission' || ' SET archived_at = NULL WHERE node_id = $1' USING NEW.id;\n    RETURN NEW;\nEND\n$$ LANGUAGE plpgsql;\n";
-    let planted = [(later.to_owned(), herons_plant.to_owned())];
+    let review_plant = "-- A trigger on another table that un-archives a commission by dynamic SQL.\nCREATE FUNCTION review_unarchive() RETURNS trigger AS $$\nBEGIN\n    EXECUTE format('UPDATE %I SET archived_at = NULL WHERE node_id = $1', 'commission') USING NEW.id;\n    RETURN NEW;\nEND\n$$ LANGUAGE plpgsql;\n\nCREATE TRIGGER review_unarchive AFTER UPDATE ON node FOR EACH ROW EXECUTE FUNCTION review_unarchive();\n\n-- The same, with the statement concatenated.\nCREATE FUNCTION review_unarchive_two() RETURNS trigger AS $$\nBEGIN\n    EXECUTE 'UPDATE ' || 'commission' || ' SET archived_at = NULL WHERE node_id = $1' USING NEW.id;\n    RETURN NEW;\nEND\n$$ LANGUAGE plpgsql;\n";
+    let planted = [(later.to_owned(), review_plant.to_owned())];
     let found = migration_findings(&planted, &COMMISSION_WRITING_MIGRATIONS);
     let shown = "adapter-pg/migrations/20261023000000_later.sql";
     let expected = [
-        format!("{shown}: `heron_unarchive_two` runs dynamic SQL (EXECUTE)"),
-        format!("{shown}: `heron_unarchive` runs dynamic SQL (EXECUTE)"),
-        format!("{shown}: names `heron_unarchive`, which runs dynamic SQL"),
+        format!("{shown}: `review_unarchive_two` runs dynamic SQL (EXECUTE)"),
+        format!("{shown}: `review_unarchive` runs dynamic SQL (EXECUTE)"),
+        format!("{shown}: names `review_unarchive`, which runs dynamic SQL"),
     ];
     for finding in &expected {
         assert!(found.contains(finding), "{finding}: {found:?}");
     }
-    let herons_view = "-- A view over the commission table, written by a trigger on another table.\nCREATE VIEW heron_v AS SELECT id, node_id, archived_at FROM commission;\n\nCREATE FUNCTION heron_view_unarchive() RETURNS trigger AS $$\nBEGIN\n    UPDATE heron_v SET archived_at = NULL WHERE node_id = NEW.id;\n    RETURN NEW;\nEND\n$$ LANGUAGE plpgsql;\n\nCREATE TRIGGER heron_view_unarchive AFTER UPDATE ON node FOR EACH ROW EXECUTE FUNCTION heron_view_unarchive();\n";
-    let herons_escape = "-- A function body in an escape string, its statement's first letter escaped.\nCREATE FUNCTION heron_escape_unarchive() RETURNS trigger AS E'BEGIN \\x55PDATE commission SET archived_at = NULL WHERE node_id = NEW.id; RETURN NEW; END' LANGUAGE plpgsql;\n\nCREATE TRIGGER heron_escape_unarchive AFTER UPDATE ON node FOR EACH ROW EXECUTE FUNCTION heron_escape_unarchive();\n";
+    let review_view = "-- A view over the commission table, written by a trigger on another table.\nCREATE VIEW review_v AS SELECT id, node_id, archived_at FROM commission;\n\nCREATE FUNCTION review_view_unarchive() RETURNS trigger AS $$\nBEGIN\n    UPDATE review_v SET archived_at = NULL WHERE node_id = NEW.id;\n    RETURN NEW;\nEND\n$$ LANGUAGE plpgsql;\n\nCREATE TRIGGER review_view_unarchive AFTER UPDATE ON node FOR EACH ROW EXECUTE FUNCTION review_view_unarchive();\n";
+    let review_escape = "-- A function body in an escape string, its statement's first letter escaped.\nCREATE FUNCTION review_escape_unarchive() RETURNS trigger AS E'BEGIN \\x55PDATE commission SET archived_at = NULL WHERE node_id = NEW.id; RETURN NEW; END' LANGUAGE plpgsql;\n\nCREATE TRIGGER review_escape_unarchive AFTER UPDATE ON node FOR EACH ROW EXECUTE FUNCTION review_escape_unarchive();\n";
     let literal_plants = [
         (
-            herons_view,
+            review_view,
             format!("{shown}: defines a view over `commission`"),
         ),
         (
-            herons_escape,
+            review_escape,
             format!("{shown}: writes a body as {ESCAPE_STRING}"),
         ),
     ];
@@ -10355,7 +10355,7 @@ fn the_gated_constructors_are_named_only_in_the_rows_file_and_the_act_file() {
         assert_eq!(added, newly_gated, "{found_here:?}");
     }
     let child = "workflow/src/elements/commission/changelog/rows/system.rs";
-    let herons_child = r#"//! The system's entries, split out of the rows file.
+    let review_child = r#"//! The system's entries, split out of the rows file.
 
 use serde_json::Value;
 
@@ -10384,7 +10384,7 @@ impl NewChangelogEntry {
 "#;
     let fact = "workflow/src/elements/commission/fact.rs";
     let impls_refused = [
-        (child, herons_child),
+        (child, review_child),
         (
             child,
             "use super::NewChangelogEntry as Entry;\nimpl Entry {\n    pub fn forged() {}\n}",

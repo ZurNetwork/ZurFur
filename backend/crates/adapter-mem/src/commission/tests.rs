@@ -2508,7 +2508,7 @@ async fn declare_slot_refuses_bad_addresses_and_takes_the_batch_with_it() {
 }
 
 // ZMVP-77 (transactionality) — a dropped unit discards both halves of a
-// staged Slot, and removing its element cascades the satellite away.
+// staged Slot, and a committed one keeps both.
 #[tokio::test]
 async fn declare_slot_commits_and_rolls_back_with_the_unit() {
     let backend = MemBackend::new();
@@ -2532,32 +2532,45 @@ async fn declare_slot_commits_and_rolls_back_with_the_unit() {
 
     let kept_id = declare_committed(&backend, id, &address, "Kept").await;
     assert!(backend.find_slot(kept_id).await.unwrap().is_some());
-
-    remove_element(&database, id, kept_id).await.unwrap();
-    assert!(
-        backend.find_slot(kept_id).await.unwrap().is_none(),
-        "the satellite cascaded away with its element"
-    );
 }
 
-// Removing a Slot's element removes its node, so no slot node stands without its Slot.
+// Removing a Slot's element is refused as ElementNotFound, and its element, Slot and node stay.
 #[tokio::test]
-async fn removing_a_slot_s_element_removes_its_node() {
+async fn removing_a_slot_s_element_is_refused_and_keeps_its_slot_and_node() {
     let backend = MemBackend::new();
     let database = backend.database();
     let (id, address) = composed_commission(&backend, user_id()).await;
-    let element = declare_committed(&backend, id, &address, "Doomed").await;
-    let kept = declare_committed(&backend, id, &address, "Kept").await;
+    let element = declare_committed(&backend, id, &address, "Kept").await;
 
-    remove_element(&database, id, element).await.unwrap();
+    let err = remove_element(&database, id, element).await.unwrap_err();
 
+    assert!(
+        err.downcast_ref::<ElementNotFound>().is_some(),
+        "a Slot's element answers as an absent one, got: {err:?}"
+    );
+    let element_ids: Vec<ElementId> = backend
+        .elements_of(id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.id)
+        .collect();
+    assert_eq!(element_ids, [element], "the element stays");
+    assert!(
+        backend.find_slot(element).await.unwrap().is_some(),
+        "the Slot stays"
+    );
     let slot_segments: Vec<String> = backend
         .all_nodes()
         .into_iter()
         .filter(|node| node.node_type == NodeType::Slot)
         .map(|node| node.segment.as_ref().to_owned())
         .collect();
-    assert_eq!(slot_segments, [kept.to_string()]);
+    assert_eq!(
+        slot_segments,
+        [element.to_string()],
+        "the Slot's node stays"
+    );
 }
 
 // A slot node no Slot points at is refused at commit, and nothing of its unit is kept.

@@ -12,7 +12,7 @@ use crate::migration_steps::{
 };
 
 /// The node table's migration, as sqlx numbers it.
-pub const DEN_1_VERSION: i64 = 20261022052438;
+pub const NODE_TABLE_VERSION: i64 = 20261022052438;
 
 /// The made-up owner of every seeded commission.
 pub const OWNER_DID: &str = "did:plc:n0deownerfixtureaaaaaaaa";
@@ -151,9 +151,9 @@ async fn children(pool: &PgPool, parent: Uuid) -> Vec<NodeRow> {
 }
 
 /// A fresh database migrated up to just before the node table, with its owner.
-async fn just_before_den_1() -> (PgPool, impl Sized) {
+async fn just_before_the_node_table() -> (PgPool, impl Sized) {
     let (pool, container) = bare_pool().await;
-    run_migrations_before(&pool, DEN_1_VERSION).await;
+    run_migrations_before(&pool, NODE_TABLE_VERSION).await;
     seed_owner(&pool).await;
     (pool, container)
 }
@@ -188,13 +188,13 @@ async fn commission_has_node_id(pool: &PgPool) -> bool {
 
 #[tokio::test]
 async fn deleting_a_commission_removes_its_nodes() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let doomed = seed_commission(&pool, "A commission to delete", "public").await;
     seed_slot(&pool, doomed, "A first slot to delete").await;
     seed_slot(&pool, doomed, "A second slot to delete").await;
     let kept = seed_commission(&pool, "A commission that stays", "private").await;
     seed_slot(&pool, kept, "A slot that stays").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
 
     sqlx::query("DELETE FROM commission WHERE id = $1")
         .bind(doomed)
@@ -221,11 +221,11 @@ async fn deleting_a_commission_removes_its_nodes() {
 
 #[tokio::test]
 async fn removing_a_slot_s_element_removes_its_node() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let commission = seed_commission(&pool, "A commission", "private").await;
     let removed = seed_slot(&pool, commission, "A slot to remove").await;
     seed_slot(&pool, commission, "A slot that stays").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
 
     sqlx::query("DELETE FROM commission_element WHERE id = $1 AND commission_id = $2")
         .bind(removed)
@@ -253,8 +253,8 @@ async fn removing_a_slot_s_element_removes_its_node() {
 
 #[tokio::test]
 async fn hard_deleting_a_commission_without_a_node_succeeds() {
-    let (pool, _container) = just_before_den_1().await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    let (pool, _container) = just_before_the_node_table().await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
     let commission =
         seed_commission(&pool, "A commission made after the backfill", "private").await;
     seed_slot(&pool, commission, "A slot made after the backfill").await;
@@ -272,9 +272,9 @@ async fn hard_deleting_a_commission_without_a_node_succeeds() {
 
 #[tokio::test]
 async fn removing_the_element_of_a_slot_without_a_node_succeeds() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let commission = seed_commission(&pool, "A commission", "private").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
     let slot = seed_slot(&pool, commission, "A slot made after the backfill").await;
 
     let removed =
@@ -292,9 +292,9 @@ async fn removing_the_element_of_a_slot_without_a_node_succeeds() {
 
 #[tokio::test]
 async fn a_rename_on_today_s_path_after_the_backfill_commits() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let backfilled = seed_commission(&pool, "A backfilled commission", "private").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
     let unbound = seed_commission(&pool, "A commission made after the backfill", "private").await;
 
     for (commission, title) in [
@@ -314,13 +314,13 @@ async fn a_rename_on_today_s_path_after_the_backfill_commits() {
 
 #[tokio::test]
 async fn every_commission_gets_one_node_with_its_title_and_level() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let private = seed_commission(&pool, "A private commission", "private").await;
     let listed = seed_commission(&pool, "A listed commission", "listed").await;
     let public = seed_commission(&pool, "A public commission", "public").await;
     let archived = seed_commission(&pool, "An archived commission", "listed").await;
     archive(&pool, archived).await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
 
     let seeded = [
         (private, "A private commission", "private"),
@@ -350,11 +350,11 @@ async fn every_commission_gets_one_node_with_its_title_and_level() {
 
 #[tokio::test]
 async fn no_entry_or_slot_is_wider_than_private() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let commission = seed_commission(&pool, "A public commission", "public").await;
     seed_slot(&pool, commission, "A first slot").await;
     seed_slot(&pool, commission, "A second slot").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
 
     let levels: Vec<(String, String)> = sqlx::query_as(
         "SELECT type, level FROM node WHERE type <> 'commission' ORDER BY type COLLATE \"C\"",
@@ -378,10 +378,10 @@ async fn no_entry_or_slot_is_wider_than_private() {
 
 #[tokio::test]
 async fn each_commission_gets_its_six_entries_private() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let first = seed_commission(&pool, "A first commission", "public").await;
     let second = seed_commission(&pool, "A second commission", "listed").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
 
     for commission in [first, second] {
         let node = commission_node(&pool, commission).await;
@@ -425,12 +425,12 @@ async fn each_commission_gets_its_six_entries_private() {
 
 #[tokio::test]
 async fn each_slot_sits_under_its_own_commission_s_slots_entry() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let first = seed_commission(&pool, "A first commission", "private").await;
     let second = seed_commission(&pool, "A second commission", "private").await;
     let first_slot = seed_slot(&pool, first, "A slot of the first").await;
     let second_slot = seed_slot(&pool, second, "A slot of the second").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
 
     for (commission, slot) in [(first, first_slot), (second, second_slot)] {
         let commission_node = commission_node(&pool, commission).await;
@@ -451,12 +451,12 @@ async fn each_slot_sits_under_its_own_commission_s_slots_entry() {
 
 #[tokio::test]
 async fn the_commission_and_slot_rows_point_at_their_nodes() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let first = seed_commission(&pool, "A first commission", "private").await;
     let second = seed_commission(&pool, "A second commission", "public").await;
     seed_slot(&pool, first, "A first slot").await;
     seed_slot(&pool, second, "A second slot").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
 
     let pointing: Vec<(String, Option<String>)> = sqlx::query_as(
         "SELECT 'commission', n.type FROM commission c LEFT JOIN node n ON n.id = c.node_id
@@ -479,9 +479,9 @@ async fn the_commission_and_slot_rows_point_at_their_nodes() {
 
 #[tokio::test]
 async fn a_commission_s_segment_is_its_id_text() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let commission = seed_commission(&pool, "A commission", "private").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
 
     let node = commission_node(&pool, commission).await;
 
@@ -490,10 +490,10 @@ async fn a_commission_s_segment_is_its_id_text() {
 
 #[tokio::test]
 async fn a_slot_s_segment_is_its_element_id_text() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let commission = seed_commission(&pool, "A commission", "private").await;
     let slot = seed_slot(&pool, commission, "A slot").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
 
     let node = slot_node(&pool, slot).await;
 
@@ -502,12 +502,12 @@ async fn a_slot_s_segment_is_its_element_id_text() {
 
 #[tokio::test]
 async fn a_title_the_name_rule_refuses_is_copied_verbatim() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let commission_title = "A commission \u{202E}desrever";
     let slot_title = "  A slot\twith a tab  ";
     let commission = seed_commission(&pool, commission_title, "private").await;
     let slot = seed_slot(&pool, commission, slot_title).await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
 
     let commission_node = commission_node(&pool, commission).await;
     let slot_node = slot_node(&pool, slot).await;
@@ -529,7 +529,7 @@ async fn rows_without_node_id(pool: &PgPool, table: &'static str, key: &'static 
 
 #[tokio::test]
 async fn the_backfill_changes_no_existing_value() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let first = seed_commission(&pool, "A first commission", "public").await;
     let second = seed_commission(&pool, "A second commission", "listed").await;
     archive(&pool, second).await;
@@ -538,7 +538,7 @@ async fn the_backfill_changes_no_existing_value() {
     let commissions_before = rows_without_node_id(&pool, "commission", "id").await;
     let slots_before = rows_without_node_id(&pool, "commission_slot", "element_id").await;
 
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
 
     let commissions_after = rows_without_node_id(&pool, "commission", "id").await;
     let slots_after = rows_without_node_id(&pool, "commission_slot", "element_id").await;
@@ -548,22 +548,22 @@ async fn the_backfill_changes_no_existing_value() {
 
 #[tokio::test]
 async fn a_database_with_no_commissions_migrates() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
 
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
 
     assert!(every_node(&pool).await.is_empty());
 }
 
 #[tokio::test]
 async fn the_backfill_writes_these_types() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let first = seed_commission(&pool, "A first commission", "private").await;
     let second = seed_commission(&pool, "A second commission", "public").await;
     seed_slot(&pool, first, "A first slot").await;
     seed_slot(&pool, first, "A second slot").await;
     seed_slot(&pool, second, "A third slot").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
 
     let counts: Vec<(String, i64)> =
         sqlx::query_as("SELECT type, count(*) FROM node GROUP BY type ORDER BY type COLLATE \"C\"")
@@ -587,7 +587,7 @@ async fn the_backfill_writes_these_types() {
 /// Asserts the migration left nothing behind: no ledger row, no column.
 async fn assert_nothing_was_written(pool: &PgPool) {
     assert!(
-        !ledger_records(pool, DEN_1_VERSION).await,
+        !ledger_records(pool, NODE_TABLE_VERSION).await,
         "the ledger does not record the stopped migration"
     );
     assert!(
@@ -598,11 +598,11 @@ async fn assert_nothing_was_written(pool: &PgPool) {
 
 #[tokio::test]
 async fn an_unreadable_visibility_stops_the_migration_naming_the_commission() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     seed_commission(&pool, "A readable commission", "private").await;
     let unreadable = seed_commission(&pool, "An unreadable commission", "Private").await;
 
-    let stopped = try_run_migrations_through(&pool, DEN_1_VERSION)
+    let stopped = try_run_migrations_through(&pool, NODE_TABLE_VERSION)
         .await
         .expect_err("the migration stops");
 
@@ -620,11 +620,11 @@ async fn an_unreadable_visibility_stops_the_migration_naming_the_commission() {
 
 #[tokio::test]
 async fn an_empty_title_stops_the_migration_naming_the_commission() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     seed_commission(&pool, "A titled commission", "private").await;
     let untitled = seed_commission(&pool, "", "public").await;
 
-    let stopped = try_run_migrations_through(&pool, DEN_1_VERSION)
+    let stopped = try_run_migrations_through(&pool, NODE_TABLE_VERSION)
         .await
         .expect_err("the migration stops");
 
@@ -642,12 +642,12 @@ async fn an_empty_title_stops_the_migration_naming_the_commission() {
 
 #[tokio::test]
 async fn the_refusal_names_neither_the_token_nor_the_title() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let token = "secret-visibility-token";
     let title = "A distinctive commission title";
     seed_commission(&pool, title, token).await;
 
-    let stopped = try_run_migrations_through(&pool, DEN_1_VERSION)
+    let stopped = try_run_migrations_through(&pool, NODE_TABLE_VERSION)
         .await
         .expect_err("the migration stops");
 

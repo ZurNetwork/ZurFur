@@ -17,7 +17,7 @@ use crate::migration_steps::{
     bare_pool, run_migrations_before, run_migrations_through, try_run_migrations_through,
 };
 use crate::node_backfill::{
-    DEN_1_VERSION, NodeRow, OWNER_DID, every_node, seed_commission, seed_owner, seed_slot,
+    NODE_TABLE_VERSION, NodeRow, OWNER_DID, every_node, seed_commission, seed_owner, seed_slot,
 };
 
 /// The Slot node fill's migration, as sqlx numbers it.
@@ -26,7 +26,7 @@ pub(crate) const SLOT_FILL_VERSION: i64 = 20261026080502;
 /// A title no refusal may echo.
 pub(crate) const CANARY_TITLE: &str = "Canary slot title 7e3c";
 
-/// The title of each Slot `seeded_through_den_1` seeds, in the order it answers them: two made
+/// The title of each Slot `seeded_through_the_node_table` seeds, in the order it answers them: two made
 /// before the node table, then two declared since.
 pub(crate) const SEEDED_SLOT_TITLES: [&str; 4] = [
     CANARY_TITLE,
@@ -42,16 +42,16 @@ const LOCK_WAIT_POLLS: u32 = 500;
 const LOCK_WAIT_INTERVAL: Duration = Duration::from_millis(20);
 
 /// A fresh database migrated up to just before the node table, with its owner.
-async fn just_before_den_1() -> (PgPool, impl Sized) {
+async fn just_before_the_node_table() -> (PgPool, impl Sized) {
     let (pool, container) = bare_pool().await;
-    run_migrations_before(&pool, DEN_1_VERSION).await;
+    run_migrations_before(&pool, NODE_TABLE_VERSION).await;
     seed_owner(&pool).await;
     (pool, container)
 }
 
 /// A fresh database migrated up to just before the Slot fill, with its owner.
 async fn just_before_the_fill() -> (PgPool, impl Sized) {
-    let (pool, container) = just_before_den_1().await;
+    let (pool, container) = just_before_the_node_table().await;
     run_migrations_before(&pool, SLOT_FILL_VERSION).await;
     (pool, container)
 }
@@ -254,11 +254,11 @@ pub(crate) async fn wait_until_a_lock_on_waits(pool: &PgPool, table: &str) {
 // ─── The fill ──────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn a_slot_declared_since_den_1_gets_its_node() {
-    let (pool, _container) = just_before_den_1().await;
+async fn a_slot_declared_since_the_node_table_gets_its_node() {
+    let (pool, _container) = just_before_the_node_table().await;
     let commission = seed_commission(&pool, "A commission", "private").await;
     let old = seed_slot(&pool, commission, "A Slot from before").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
     let declared = seed_slot(&pool, commission, "A Slot declared since").await;
     run_migrations_before(&pool, SLOT_FILL_VERSION).await;
     let old_node = slot_node_id(&pool, old).await;
@@ -356,10 +356,10 @@ async fn a_phantom_slot_node_stops_it_naming_the_node() {
 
 #[tokio::test]
 async fn a_differing_name_stops_it_naming_the_slot() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let commission = seed_commission(&pool, "A commission", "private").await;
     let differing = seed_slot(&pool, commission, "A title").await;
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
     let node_less = seed_slot(&pool, commission, "A node-less Slot").await;
     run_migrations_before(&pool, SLOT_FILL_VERSION).await;
     rename_slot_node(&pool, differing, "Another name").await;
@@ -411,7 +411,7 @@ async fn the_refusals_name_ids_only() {
     let phantom_commission = bound_commission(&phantom_pool, CANARY_TITLE).await;
     seed_slot(&phantom_pool, phantom_commission, CANARY_TITLE).await;
     let phantom = phantom_slot_node(&phantom_pool, phantom_commission, CANARY_TITLE).await;
-    let (differing_pool, _differing_container) = just_before_den_1().await;
+    let (differing_pool, _differing_container) = just_before_the_node_table().await;
     let differing_commission = seed_commission(&differing_pool, CANARY_TITLE, "private").await;
     let differing = seed_slot(&differing_pool, differing_commission, CANARY_TITLE).await;
     run_migrations_before(&differing_pool, SLOT_FILL_VERSION).await;
@@ -491,7 +491,7 @@ async fn a_slot_node_committed_while_the_fill_waits_on_node_stops_it() {
 // the fill's check reads: the bound Slot's node's name now differs, and the fill stops naming it.
 #[tokio::test]
 async fn a_slot_title_committed_while_the_fill_waits_on_commission_slot_stops_it() {
-    let (pool, _container) = just_before_den_1().await;
+    let (pool, _container) = just_before_the_node_table().await;
     let commission = seed_commission(&pool, "A commission", "private").await;
     let bound = seed_slot(&pool, commission, "A title").await;
     run_migrations_before(&pool, SLOT_FILL_VERSION).await;
@@ -575,15 +575,15 @@ async fn a_commission_committed_while_the_fill_waits_on_commission_stops_it() {
 /// A database migrated through the node table, seeded with Slots made before it and Slots
 /// declared since on the old path, node-less, then migrated up to just before the fill.
 /// Answers the commission and every seeded Slot.
-pub(crate) async fn seeded_through_den_1() -> (PgPool, impl Sized, Uuid, Vec<Uuid>) {
-    let (pool, container) = just_before_den_1().await;
+pub(crate) async fn seeded_through_the_node_table() -> (PgPool, impl Sized, Uuid, Vec<Uuid>) {
+    let (pool, container) = just_before_the_node_table().await;
     let [first_before, second_before, first_since, second_since] = SEEDED_SLOT_TITLES;
     let commission = seed_commission(&pool, CANARY_TITLE, "private").await;
     let mut slots = vec![
         seed_slot(&pool, commission, first_before).await,
         seed_slot(&pool, commission, second_before).await,
     ];
-    run_migrations_through(&pool, DEN_1_VERSION).await;
+    run_migrations_through(&pool, NODE_TABLE_VERSION).await;
     slots.push(seed_slot(&pool, commission, first_since).await);
     slots.push(seed_slot(&pool, commission, second_since).await);
     run_migrations_before(&pool, SLOT_FILL_VERSION).await;
@@ -594,7 +594,7 @@ pub(crate) async fn seeded_through_den_1() -> (PgPool, impl Sized, Uuid, Vec<Uui
 // the migration naming its id alone, never the canary title.
 #[tokio::test]
 async fn a_seeded_database_runs_the_fill_through_the_real_path() {
-    let (clean, _clean_container, commission, slots) = seeded_through_den_1().await;
+    let (clean, _clean_container, commission, slots) = seeded_through_the_node_table().await;
 
     run_migrations_through(&clean, SLOT_FILL_VERSION).await;
 
@@ -608,9 +608,10 @@ async fn a_seeded_database_runs_the_fill_through_the_real_path() {
     assert_eq!(phantom_count(&clean).await, 0);
 
     let (phantom_db, _phantom_container, phantom_commission, phantom_slots) =
-        seeded_through_den_1().await;
+        seeded_through_the_node_table().await;
     let phantom = phantom_slot_node(&phantom_db, phantom_commission, CANARY_TITLE).await;
-    let (differing_db, _differing_container, _, differing_slots) = seeded_through_den_1().await;
+    let (differing_db, _differing_container, _, differing_slots) =
+        seeded_through_the_node_table().await;
     let differing = differing_slots[0];
     rename_slot_node(&differing_db, differing, "A renamed Slot").await;
 
