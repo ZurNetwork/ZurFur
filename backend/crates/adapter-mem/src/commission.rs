@@ -627,11 +627,11 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         insert_element(&self.0, element)
     }
 
-    /// Remove one element, its identity-sharing satellites and a seat's pending
-    /// offers, then renumber the remaining `(tab, surface, band)` group to
-    /// contiguous positions — all on the staging snapshot, so they commit
-    /// together. An absent id and a foreign element both refuse with
-    /// [`ElementNotFound`], indistinguishably. No element is protected.
+    /// Remove one element, a seat's satellite and its pending offers, then renumber
+    /// the remaining `(tab, surface, band)` group to contiguous positions — all on
+    /// the staging snapshot, so they commit together. An absent id, a foreign
+    /// element and one carrying a Slot all refuse with [`ElementNotFound`],
+    /// indistinguishably.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn remove_element(
         &mut self,
@@ -639,6 +639,16 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         element: &ElementId,
     ) -> anyhow::Result<()> {
         let (commission, element) = (*commission, *element);
+        // A Slot's element stays, with its Slot and node: this write never removes a Slot.
+        let carries_a_slot = self
+            .0
+            .slots
+            .lock()
+            .expect("MemBackend slots mutex poisoned")
+            .contains_key(&element);
+        if carries_a_slot {
+            return Err(ElementNotFound.into());
+        }
         // `tabs` before `elements`, the SAME order `insert_element` takes, so
         // the two maps are never acquired in opposite orders.
         let tabs = self.0.tabs.lock().expect("MemBackend tabs mutex poisoned");
@@ -679,20 +689,7 @@ impl CommissionWrites for MemCommissionWrites<'_> {
         }
         drop(elements);
 
-        // The identity-sharing satellites, a Slot's node, and a seat's pending offers.
-        let removed_slot = self
-            .0
-            .slots
-            .lock()
-            .expect("MemBackend slots mutex poisoned")
-            .remove(&element);
-        if let Some(slot) = removed_slot {
-            self.0
-                .nodes
-                .lock()
-                .expect("MemBackend nodes mutex poisoned")
-                .remove(&slot.node_id);
-        }
+        // A seat's satellite and its pending offers.
         let had_seat = self
             .0
             .seats

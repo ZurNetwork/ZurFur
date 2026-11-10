@@ -295,7 +295,7 @@ impl CommissionWrites for PgCommissionWrites<'_> {
     }
 
     /// Removes one element scoped to `commission_id` ([`ElementNotFound`] if
-    /// absent/foreign), taking the same tab lock `require_tab`
+    /// absent, foreign or carrying a Slot), taking the same tab lock `require_tab`
     /// uses on add before deleting and renumbering the vacated group.
     #[tracing::instrument(level = "debug", skip_all)]
     async fn remove_element(

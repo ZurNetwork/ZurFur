@@ -234,10 +234,11 @@ pub trait CommissionWrites: Send {
     /// [`UnknownTab`] or [`UnknownSurface`].
     async fn add_element(&mut self, element: &NewElement) -> anyhow::Result<()>;
 
-    /// Remove `element` from the commission's composition — one row, plus the
-    /// satellites and pending invitations that cascade off its identity — and
+    /// Remove `element` from the commission's composition — one row, plus a Seat
+    /// and its pending invitations that cascade off its identity — and
     /// renumber the remaining `(tab, surface, band)` group in the same
-    /// transaction. Refuses with [`ElementNotFound`].
+    /// transaction. Refuses with [`ElementNotFound`], for an element that carries
+    /// a Slot too: this write never removes a Slot.
     async fn remove_element(
         &mut self,
         commission: &CommissionId,

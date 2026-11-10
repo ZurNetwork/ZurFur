@@ -1962,8 +1962,9 @@ pub mod commission {
     /// Remove one element. Scoped by commission_id as well as the unique
     /// id, so the statement is self-contained rather than leaning on id uniqueness
     /// alone. Elements are leaves — nothing is orphaned — but whatever
-    /// shares the element's identity (a Slot or Seat satellite, and a seat's pending
-    /// invitations) leaves with it via ON DELETE CASCADE.
+    /// shares the element's identity (a Seat satellite and its pending invitations)
+    /// leaves with it via ON DELETE CASCADE. A Slot's element never reaches this
+    /// statement: the removal gate refuses it.
     pub async fn remove_element_delete(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,
@@ -1984,9 +1985,10 @@ pub mod commission {
     /// The removal gate: the target must exist in THIS commission — an
     /// absent element id and one belonging to another commission both match nothing,
     /// indistinguishably (ElementNotFound), so removal probes reveal nothing about
-    /// other commissions. Returns the ordering group the removal will have to
-    /// renumber — and, in `tab_id`, the row the caller must LOCK (require_tab.sql)
-    /// before it deletes anything.
+    /// other commissions. An element that carries a Slot matches nothing too, so this
+    /// removal never takes a Slot, or its node, with it. Returns the ordering group the
+    /// removal will have to renumber — and, in `tab_id`, the row the caller must LOCK
+    /// (require_tab.sql) before it deletes anything.
     ///
     /// Deliberately NOT `FOR UPDATE`: this reads an element to learn which TAB to
     /// lock, and the three columns it reads (tab_id, surface, band) are immutable for
@@ -1994,7 +1996,9 @@ pub mod commission {
     /// moves. So a lock-free read here cannot go stale in a way that matters, and
     /// taking the tab lock afterwards still serializes the delete + renumber against
     /// every concurrent append. If the element itself disappears in that window, the
-    /// DELETE affects zero rows and the removal re-refuses as ElementNotFound.
+    /// DELETE affects zero rows and the removal re-refuses as ElementNotFound. A Slot is
+    /// only ever declared with a new element, so an element this gate passes never
+    /// gains one before its DELETE.
     pub async fn remove_element_gate(
         conn: impl sqlx::PgExecutor<'_>,
         id: uuid::Uuid,

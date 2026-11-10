@@ -4,8 +4,9 @@
 //! carrying element's id, bound to its node, whose name is its title — the same satellite
 //! pattern the Seat table uses) in one transaction; the address gates match every other
 //! element write; the satellite insert binds only the Slot's own node under its own
-//! commission's `slots` entry; and the satellite cascades away with its commission (what the
-//! commission's "gone entirely" hard-delete relies on). Requires a container runtime socket
+//! commission's `slots` entry; the satellite cascades away with its commission (what the
+//! commission's "gone entirely" hard-delete relies on); and the element write never removes a
+//! Slot's element. Requires a container runtime socket
 //! (DOCKER_HOST honored).
 
 use crate::seed::{self, declare_committed, declare_in, owner_on, slot_node, slots_entry_in};
@@ -20,7 +21,7 @@ use domain::{
         did::Did,
         user::User,
     },
-    ports::{CommissionStore, Database, UnknownSurface, UnknownTab},
+    ports::{CommissionStore, Database, ElementNotFound, UnknownSurface, UnknownTab},
 };
 use serde_json::json;
 
@@ -369,6 +370,54 @@ async fn slots_cascade_away_with_their_commission() {
         .await
         .expect("count slot nodes");
     assert_eq!(slot_nodes, 0, "the Slot's node went with it");
+}
+
+// Removing a Slot's element through the element write is refused as ElementNotFound, and its
+// element, Slot and node all stay.
+#[tokio::test]
+async fn removing_a_slot_s_element_is_refused_and_keeps_its_slot_and_node() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:slot-kept").await;
+    let (commission, address) = composed_commission(&pool, &owner, "Kept").await;
+    let slot_id = declare_committed(
+        &pool,
+        commission.id,
+        &owner.id,
+        &address,
+        "The knight",
+        None,
+    )
+    .await;
+
+    let db = PgDatabase::new(pool.clone());
+    let mut uow = db.begin().await.expect("begin");
+    let removed = uow
+        .commissions()
+        .remove_element(&commission.id, &slot_id)
+        .await;
+    uow.rollback().await.expect("rollback");
+
+    let err = removed.expect_err("a Slot's element is not removed");
+    assert!(
+        err.downcast_ref::<ElementNotFound>().is_some(),
+        "a Slot's element answers as an absent one, got: {err:?}"
+    );
+    let composition = PgCommissionStore::new(pool.clone())
+        .load_composition(&commission.id)
+        .await
+        .expect("load")
+        .expect("composed");
+    let element_ids: Vec<ElementId> = composition
+        .elements
+        .iter()
+        .map(|element| element.id)
+        .collect();
+    assert_eq!(element_ids, [slot_id], "the element stays");
+    assert_eq!(
+        slot_row(&pool, slot_id).await,
+        Some(("The knight".to_string(), None)),
+        "the Slot and its node's name stay"
+    );
 }
 
 // The Slot list reads each Slot's title from its node: a rename of the node is the new title.
