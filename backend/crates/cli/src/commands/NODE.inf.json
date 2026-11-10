@@ -18,7 +18,7 @@
   "fs": [
     {
       "name": "account.rs",
-      "role": "account namespace — create/delete, thin CLI face over runtime.app().accounts().{create, delete}, delete gated by crate::confirm",
+      "role": "account namespace — create/delete, thin CLI face over runtime.app().accounts().{create, delete}, delete gated by crate::confirm; a store or directory failure logs a fixed line at error and its cause, which may name a DID, at debug only (tests/account.rs captures both)",
       "node": false
     },
     {

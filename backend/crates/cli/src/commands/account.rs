@@ -115,9 +115,11 @@ pub async fn run(
                 .await
                 .map_err(|err| match err {
                     AccountError::HandleTaken => CliError::domain("handle_taken", err),
-                    // The terse `Display` is what the user sees; the cause goes to stderr.
-                    AccountError::Infrastructure(_) => {
-                        tracing::error!(error = ?err, "founding the account failed");
+                    // The terse `Display` is what the user sees. The cause may name the new
+                    // Account's DID, so it goes to stderr at debug only.
+                    AccountError::Infrastructure(ref cause) => {
+                        tracing::error!("founding the account failed");
+                        tracing::debug!(error = %cause, "the founding's failure");
                         CliError::infra("internal_error", err)
                     }
                     // Unreachable from founding; mapped to keep the match exhaustive.
@@ -194,9 +196,11 @@ pub async fn run(
                         // Unreachable from delete; mapped to keep the match exhaustive.
                         AccountError::NotFound(_) => CliError::domain("not_found", err),
                         AccountError::IncorrectRole => CliError::domain("forbidden", err),
-                        // The terse `Display` is what the user sees; the cause goes to stderr.
-                        AccountError::Infrastructure(_) => {
-                            tracing::error!(error = ?err, "deleting the account failed");
+                        // The terse `Display` is what the user sees. The cause may name the
+                        // Account's DID, so it goes to stderr at debug only.
+                        AccountError::Infrastructure(ref cause) => {
+                            tracing::error!("deleting the account failed");
+                            tracing::debug!(error = %cause, "the delete's failure");
                             CliError::infra("internal_error", err)
                         }
                         // Unreachable from delete (no handle is claimed here).
