@@ -1,0 +1,112 @@
+# Zurfur's zaf manifest (Zuri's AI Framework, teams 2.0). Nothing secret here;
+# machine-private overrides go in .zaf/local.toml (git-ignored).
+
+[project]
+name = "zurfur"
+
+[requires]
+jj = "*"
+gh = "*"
+just = "*"
+yarn = "*"
+
+# Tickets live on the private design repo, beside the pages they cite.
+[board]
+kind = "github-issues"
+repo = "ZurNetwork/zurfur-design"
+
+[vcs]
+kind = "jj"
+
+[forge]
+kind = "github"
+repo = "ZurNetwork/ZurFur"
+
+# The design corpus is the private sibling checkout; `index` is relative to it (the corpus keeps
+# its own id → path index; this repo carries a pointer copy for readers).
+[design]
+kind = "git-sibling"
+repo = "ZurNetwork/zurfur-design"
+path = "../zurfur-design"
+index = "../zurfur/docs/design-index.md"
+
+[workspaces]
+path = ".zaf/workspaces"
+
+# Slice branches stay under feature/ so CI runs on their PRs (CLAUDE.md, "Branches and gates").
+[branches]
+integration = "feature/release-{version}"
+task = "feature/release-{version}-{epic}-{task}"
+
+[gate]
+full = "just gate"
+light = "just gate-light"
+tests = "sh scripts/zaf-tests.sh {name}"
+
+# The teams pack, installed from the ways marketplace on GitHub (ProgrammingCheetah/ways).
+[pack]
+tag = "2.0.0"
+
+[runners.claude]
+command = "claude -p {prompt} --model {model} --add-dir {root}"
+timeout_minutes = 180
+
+[roles.programmer]
+model = "sonnet"
+effort = "high"
+profile = "lean"
+turns = 60
+
+[roles.team]
+model = "opus"
+effort = "xhigh"
+profile = "build"
+turns = 200
+batch = 4
+
+# CodeQL (default setup) and CodeRabbit run on PRs into main only, so neither is a slice step.
+[check.pr]
+steps = ["ci"]
+
+# Merges and pushes go through the actions only: `slice-merge` merges a slice (pr-merge runs nested
+# inside it, where these denies do not reach), the Engineer's design session merges into main by
+# hand, after QA and CodeRabbit, and every push is scripts/jj-push.sh, through `zaf do push`. zaf
+# denies each line bare and with ` *` after it, and a `*` in a permission rule matches any text,
+# spaces included, so `jj -* push` is a push with global flags before the verb
+# (`jj --no-pager push -b x`), and `jj git -* push` one with flags after `git`. A `-*` deny
+# also catches a few commit messages that hold "push"; that is known and accepted. `jj util exec`
+# runs any program, and flags can sit between `util` and `exec`, so `jj util` is denied whole:
+# instances have no use for any of it. The `gh api` lines are a
+# raw merge through the REST endpoint (`.../pulls/<n>/merge`) or the GraphQL mutation.
+[forbidden]
+commands = [
+    "gh pr merge",
+    "gh api *pulls/*/merge",
+    "gh api *mergePullRequest*",
+    "zaf do pr-merge",
+    "zaf do --tier machine pr-merge",
+    "zaf do --more pr-merge",
+    "zaf do --json pr-merge",
+    "jj git push",
+    "jj -* git push",
+    "jj git -* push",
+    "git push",
+    "jj push",
+    "jj -* push",
+    "jj util",
+    "jj -* util",
+    "scripts/jj-push.sh",
+    "sh scripts/jj-push.sh",
+]
+
+[ask]
+ladder = ["haiku", "sonnet"]
+max = 5
+cache_hours = 24
+
+[spawn]
+slots = 2
+guard = [70, 85, 95]
+
+[isolation]
+kind = "process"

@@ -10,7 +10,7 @@ pbjson-build = "0.9.0"
 prost = "0.14.4"
 prost-build = "0.14.4"
 prost-types = "0.14.4"
-protox = "0.9.1"
+protox = "0.10.0"
 
 [lints]
 workspace = true

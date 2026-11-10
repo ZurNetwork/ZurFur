@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
+use rand::{RngExt as _, SeedableRng as _, rngs::StdRng};
 
 /// The seed of every bootstrap, so one series always has one interval.
 pub const BOOTSTRAP_SEED: u64 = 0x2026_1026_0F0F_5EED;
@@ -135,7 +135,7 @@ pub fn bootstrap_interval(differences: &[Micros], seed: u64) -> Interval {
     let mut medians = Vec::with_capacity(BOOTSTRAP_RESAMPLES);
     for _ in 0..BOOTSTRAP_RESAMPLES {
         for slot in &mut resample {
-            *slot = numbers[rng.gen_range(0..numbers.len())];
+            *slot = numbers[rng.random_range(0..numbers.len())];
         }
         medians.push(median_of(&mut resample));
     }

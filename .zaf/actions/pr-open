@@ -1,0 +1,142 @@
+#!/bin/sh
+# zaf description: open a pull request for a slice's branch against its base, titled `[release-<version>] <title>`, the body ending with the Claude Code line, handing back its number; a slice with an open one hands back that number
+# zaf 1: refused: the arguments are not <slice> <base> <title> <body>, ZAF_VERSION is unset or not a version, the slice is not a task branch of release ZAF_VERSION or is the base, or the base is not ZAF_BASE
+# zaf 2: a backend failed (gh is missing or refused, or printed no pull request number)
+# zaf mode: 750
+# zaf group: team
+slice=$1
+base=$2
+title=$3
+body=$4
+
+if [ -z "$ZAF_ROOT" ] || [ "$#" -ne 4 ]; then
+    echo "usage: pr-open <slice> <base> <title> <body>, with ZAF_ROOT, ZAF_VERSION and ZAF_BASE set" >&2
+    exit 1
+fi
+# A slice is a task branch as the manifest's task pattern writes it,
+# feature/release-<version>-<epic>-<task> with bare numbers for the epic and the task, and never
+# the base it merges into, so no pull request opens from the main or the integration branch.
+task_branch() {
+    case $1 in
+        feature/release-?*-?*-?*) ;;
+        *) return 1 ;;
+    esac
+    branch_rest=${1#feature/release-}
+    branch_task=${branch_rest##*-}
+    branch_rest=${branch_rest%-*}
+    branch_epic=${branch_rest##*-}
+    branch_version=${branch_rest%-*}
+    case $branch_task in "" | *[!0-9]*) return 1 ;; esac
+    case $branch_epic in "" | *[!0-9]*) return 1 ;; esac
+    case $branch_version in "" | *[!A-Za-z0-9.-]*) return 1 ;; esac
+}
+if ! task_branch "$slice"; then
+    echo "slice name $slice is not a task branch, feature/release-<version>-<epic>-<task>" >&2
+    exit 1
+fi
+if [ "$slice" = "$base" ] || { [ -n "$ZAF_BASE" ] && [ "$slice" = "$ZAF_BASE" ]; }; then
+    echo "slice name $slice is the base, not a task branch" >&2
+    exit 1
+fi
+case $base in
+    "" | -*)
+        echo "base $base is not a usable branch name" >&2
+        exit 1
+        ;;
+esac
+if [ -z "$title" ]; then
+    echo "a pull request needs a title" >&2
+    exit 1
+fi
+# The release the pull request belongs to, as the branch names write it (0-3).
+case $ZAF_VERSION in
+    "" | *[!A-Za-z0-9.-]*)
+        echo "ZAF_VERSION '$ZAF_VERSION' is not a version; the title's [release-<version>] needs one" >&2
+        exit 1
+        ;;
+esac
+# The pull request belongs to the release zaf runs: the slice's version part is ZAF_VERSION, and
+# the base is ZAF_BASE, the integration branch zaf fills from it. Nothing opens otherwise.
+if [ "$branch_version" != "$ZAF_VERSION" ]; then
+    echo "slice $slice is not a task branch of release $ZAF_VERSION" >&2
+    exit 1
+fi
+if [ -z "$ZAF_BASE" ] || [ "$base" != "$ZAF_BASE" ]; then
+    echo "base $base is not ZAF_BASE '$ZAF_BASE', the release's integration branch" >&2
+    exit 1
+fi
+
+# The title and body as Zurfur writes them: the release first in the title, the Claude Code line
+# and a blank line last in the body. Either one already there is kept once.
+prefix="[release-$ZAF_VERSION] "
+case $title in
+    "$prefix"*) ;;
+    *) title=$prefix$title ;;
+esac
+footer="🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+if [ -z "$body" ]; then
+    body=$footer
+elif ! printf '%s\n' "$body" | grep -qxF "$footer"; then
+    body=$(printf '%s\n\n%s' "$body" "$footer")
+fi
+
+# The forge repository the manifest names, the first manifest that names one, in the order zaf
+# reads them. With none, gh works the repository out from the root's remotes, as it does by hand.
+forge_repo() {
+    for manifest in "$ZAF_ROOT/.zaf.toml" "$ZAF_ROOT/.zaf/config.toml" "$ZAF_ROOT/ZAF.toml"; do
+        [ -f "$manifest" ] || continue
+        found=$(awk '
+            /^[ \t]*\[/ { in_forge = ($0 ~ /^[ \t]*\[forge\][ \t]*(#.*)?$/); next }
+            in_forge && /^[ \t]*repo[ \t]*=/ {
+                line = $0
+                sub(/^[^=]*=[ \t]*"/, "", line)
+                sub(/".*$/, "", line)
+                print line
+                exit
+            }
+        ' "$manifest")
+        if [ -n "$found" ]; then
+            echo "$found"
+            return
+        fi
+    done
+}
+
+# The slice's workspace is a jj workspace gh cannot read a repository from, so gh runs at the
+# project root, the repository itself.
+cd "$ZAF_ROOT" || exit 2
+
+repo=$(forge_repo)
+if [ -n "$repo" ]; then
+    set -- --repo "$repo"
+else
+    set --
+fi
+
+# A slice with an open pull request hands that one back, and opens nothing.
+open=$(gh pr list --head "$slice" --state open --json number --jq '.[].number' "$@") || exit 2
+number=$(printf '%s\n' "$open" | awk 'NF { print $1; exit }')
+if [ -n "$number" ]; then
+    case $number in
+        *[!0-9]*)
+            echo "gh listed $number, not a pull request number" >&2
+            exit 2
+            ;;
+    esac
+    echo "pull request #$number is already open for $slice" >&2
+    echo "$number"
+    exit 0
+fi
+
+# The body goes through stdin, so its closing blank line reaches the forge as written.
+created=$(printf '%s\n\n' "$body" | gh pr create --head "$slice" --base "$base" --title "$title" --body-file - "$@") || exit 2
+# gh prints the new pull request's URL as its last line.
+url=$(printf '%s\n' "$created" | awk 'NF { line = $0 } END { print line }')
+number=${url##*/}
+case $number in
+    "" | *[!0-9]*)
+        echo "gh printed no pull request number: $created" >&2
+        exit 2
+        ;;
+esac
+echo "$number"

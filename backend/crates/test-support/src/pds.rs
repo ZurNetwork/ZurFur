@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use anyhow::{Context as _, bail};
-use rand::RngCore as _;
+use rand::TryRng as _;
 use serde_json::{Value, json};
 use testcontainers::core::{Host, IntoContainerPort as _, Mount};
 use testcontainers::runners::AsyncRunner as _;
@@ -58,7 +58,7 @@ impl ThrowawayPds {
         // is not guaranteed to be one; an invalid key crashes the PDS boot).
         // Same vetted primitive the did:plc minter uses.
         use atrium_crypto::keypair::{Export as _, Secp256k1Keypair};
-        let rotation_key = Secp256k1Keypair::create(&mut rand::thread_rng());
+        let rotation_key = Secp256k1Keypair::create(&mut rand_core::OsRng);
         let rotation_key_hex = data_encoding::HEXLOWER.encode(&rotation_key.export());
 
         let image_ref = crate::pds_image();
@@ -193,6 +193,7 @@ async fn wait_for_health(client: &reqwest::Client, endpoint: &str) -> anyhow::Re
 /// `len` random bytes, hex-encoded — throwaway secrets for a throwaway PDS.
 fn random_hex(len: usize) -> String {
     let mut bytes = vec![0u8; len];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    let filled = rand::rngs::SysRng.try_fill_bytes(&mut bytes);
+    filled.expect("the OS random source is available");
     data_encoding::HEXLOWER.encode(&bytes)
 }
