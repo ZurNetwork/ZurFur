@@ -80,6 +80,8 @@
 - 2026102601 decided — A Home Screen Web App — the Manifest First, the Service Worker with Notifications and a First-Load Budget
 - 2026110701 decided — Zurfur Dogfoods Its Own Surfaces — First-Party Plugins Equal Third-Party Ones, the Frame on Every Plugin and Public Calls Only
 - 2026110901 decided — The Discovery Queue — Artists with Commissions Open, a Small-Artist Curve and the Viewer's Own Sliders
+- 2026110902 decided — One Application, One View — One Chrome, Server Pages and Named Reloads
+- 2026111101 decided — The Knowledge Base on Basic Memory — Local, Git as the Store and Pages as Observations
 
 ## entities/
 - 786439 current — User
@@ -130,6 +132,11 @@
 - 11763713 current — Domains and Applications
 - 37519361 current — Code Style — Semantic Rulings (Rust)
 - 2026101601 current — Where Each Zurfur Ruling Lives — the Ways Harvest
+- 2026110801 current — Design System Dialog
+- 2026110802 current — Design System Toast
+- 2026110803 current — Design System InlineMessage
+- 2026110804 current — Design System EmptyState
+- 2026110805 current — Design System MatureCover
 
 ## superseded/
 - 2490388 SUPERSEDED — Design decision
