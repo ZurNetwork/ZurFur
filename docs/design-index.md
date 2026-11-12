@@ -137,6 +137,7 @@
 - 2026110803 current — Design System InlineMessage
 - 2026110804 current — Design System EmptyState
 - 2026110805 current — Design System MatureCover
+- 2026111201 current — The Corpus Format
 
 ## superseded/
 - 2490388 SUPERSEDED — Design decision
