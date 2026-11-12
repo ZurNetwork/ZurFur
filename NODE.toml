@@ -20,7 +20,7 @@ notes = [
 
 [design]
 corpus = "${ZURFUR_DESIGN_DIR:-/home/zuri/code/zurfur-design}"
-rules = ["README.md", "migration/schema.md"]
+rules = ["README.md", "project/2026111201-the-corpus-format.md"]
 fmt = "cargo run -q -p design -- fmt --root ."
 check = "just gate"
 index_regen = "just design-index"
