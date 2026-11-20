@@ -42,7 +42,7 @@
 	},
 	"dependencies": {
 		"@bufbuild/protobuf": "^2.16.0",
-		"effect": "^3.22.0",
+		"effect": "^3.22.1",
 		"sveltekit-superforms": "^2.30.2"
 	}
 }
