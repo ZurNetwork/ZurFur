@@ -10,10 +10,17 @@ use std::any::type_name;
 /// the pin: a module that stops resolving fails to compile.
 #[allow(unused_imports, reason = "each import pins one façade path")]
 mod element_modules {
+    use domain::elements::account::{AccountFactKind, AccountFacts, UnknownAccountFactKind};
+    use domain::elements::commission::{AsOwner, AsParticipant, AsSystem};
+    use domain::elements::custody::{ForDidCustody, ForSigninSecrets, SealPurposeMarker};
+    use domain::elements::node::{
+        MAX_SEGMENT_BYTES, NewNode, NodeId, NodeRow, NodeSegment, NodeSegmentError, NodeType,
+        UnknownNodeType,
+    };
     use domain::elements::{
         account, account_keys, achievement, actor_identity, blob, bug_report, character,
-        commission, did, handle, invitation, markdown, maturity, plc_operation, profile,
-        public_record, role, text, user, user_account, workflow,
+        commission, custody, did, handle, invitation, level, markdown, maturity, name, node,
+        plc_operation, profile, public_record, role, text, user, user_account, workflow,
     };
     use domain::{datetime, string_builder};
 }
@@ -35,16 +42,19 @@ fn defining_crate(name: &str) -> &str {
 
 #[test]
 fn every_flat_port_name_resolves_to_its_crate() {
+    use domain::elements::custody::ForDidCustody;
     use domain::ports::{
-        AccountMismatch, AccountReads, AccountRepo, AccountStore, AccountWrites,
-        ActorIdentityStore, ActorIdentityWrites, Authenticator, BrowserBinding, BrowserMismatch,
-        BugReportStore, BugReportWrites, ChangelogStore, ChangelogWrites, CharacterStore,
-        CharacterWrites, ColumnStore, ColumnWrites, CommissionReads, CommissionRepo,
-        CommissionStore, CommissionWrites, Database, DidBelongsToAnotherActor, DidMinter,
-        ElementNotFound, FileStore, HandleTaken, IdentityResolver, KeyStore, PlcOperationLog,
-        ProfileCache, ProfileSource, PublicRecords, PublicRecordsError, ResolveError,
-        SigninStarted, Unit, UnitOfWork, UnknownSurface, UnknownTab, UserStore, UserWrites,
-        WorkflowStore, WorkflowWrites,
+        AccountDeactivated, AccountMismatch, AccountReads, AccountRepo, AccountStore,
+        AccountWrites, ActorIdentityStore, ActorIdentityWrites, Authenticator, BrowserBinding,
+        BrowserMismatch, BugReportStore, BugReportWrites, ChangelogStore, ChangelogWrites,
+        CharacterStore, CharacterWrites, ColumnStore, ColumnWrites, CommissionReads,
+        CommissionRepo, CommissionStore, CommissionWrites, Creator, Database,
+        DidBelongsToAnotherActor, DidMinter, ElementNotFound, FileStore, HandleTaken,
+        IdentityResolver, KeyCustodian, KeyStore, New, NodeReads, NodeRepo, NodeStore, NodeWrites,
+        PlcOperationLog, ProfileCache, ProfileSource, PublicRecords, PublicRecordsError,
+        ResolveError, ScopedMac, ScopedSealer, SegmentTaken, SigninStarted, Unit, UnitOfWork,
+        UnknownSurface, UnknownTab, UserStore, UserWrites, WorkflowStore, WorkflowWrites,
+        WriteCapability,
     };
 
     let identity_names = [
@@ -61,6 +71,7 @@ fn every_flat_port_name_resolves_to_its_crate() {
         type_name::<dyn BugReportWrites>(),
         type_name::<dyn CharacterStore>(),
         type_name::<dyn CharacterWrites>(),
+        type_name::<AccountDeactivated>(),
         type_name::<AccountMismatch>(),
         type_name::<BrowserMismatch>(),
         type_name::<DidBelongsToAnotherActor>(),
@@ -93,6 +104,19 @@ fn every_flat_port_name_resolves_to_its_crate() {
         type_name::<dyn WorkflowStore>(),
         type_name::<dyn WorkflowWrites>(),
     ];
+    let kernel_names = [
+        type_name::<dyn NodeReads>(),
+        type_name::<dyn NodeRepo>(),
+        type_name::<dyn NodeStore>(),
+        type_name::<dyn NodeWrites>(),
+        type_name::<SegmentTaken>(),
+        type_name::<WriteCapability<(), Creator>>(),
+        type_name::<New<()>>(),
+        type_name::<Creator>(),
+        type_name::<ScopedSealer<ForDidCustody>>(),
+        type_name::<ScopedMac>(),
+        type_name::<dyn KeyCustodian>(),
+    ];
     let facade_names = [
         type_name::<dyn Database>(),
         type_name::<dyn UnitOfWork>(),
@@ -106,6 +130,11 @@ fn every_flat_port_name_resolves_to_its_crate() {
             workflow_names
                 .iter()
                 .filter(|name| defining_crate(name) != "workflow"),
+        )
+        .chain(
+            kernel_names
+                .iter()
+                .filter(|name| defining_crate(name) != "kernel"),
         )
         .chain(
             facade_names

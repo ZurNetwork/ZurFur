@@ -4,7 +4,10 @@ use domain::elements::{account::AccountId, role::Role, user::UserId};
 
 use crate::{
     Ports,
-    account::{AccountError, AccountResult, invitation::Invitations, require_live_account},
+    account::{
+        AccountError, AccountResult, invitation::Invitations, lock_live_account,
+        require_live_account,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +48,7 @@ impl Invitations<'_> {
             .ok_or(AccountError::NoPendingInvitation)?;
 
         let uow = uow.open().await?;
+        lock_live_account(uow, &account_id).await?;
         let result = uow
             .accounts()
             .accept_invitation(invitation, listed_on_profile)

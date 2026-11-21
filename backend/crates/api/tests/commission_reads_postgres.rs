@@ -15,7 +15,8 @@ use test_support::{
     },
     recording::{
         CallLog, NEVER_FOR_A_MISSING_FILE, NEVER_FOR_A_STRANGER, RecordingChangelogStore,
-        RecordingCommissionStore, RecordingFileStore, assert_reads_none_of,
+        RecordingCommissionRows, RecordingCommissionStore, RecordingFileStore,
+        assert_reads_none_of,
     },
 };
 
@@ -88,7 +89,7 @@ async fn a_stranger_s_absent_commission_and_one_not_theirs_answer_alike_through_
     let world = pg_app::den_world(api::app).await;
 
     for (target, visibility) in stranger_targets(&world) {
-        world.set_visibility(target.id, visibility.clone()).await;
+        world.set_visibility(target.id, visibility).await;
         for pair in commission_read_stranger_pairs(&target) {
             assert_alice_opens_its_home(&world, &pair).await;
 
@@ -134,9 +135,7 @@ async fn on_a_live_public_or_listed_commission_a_stranger_s_causes_answer_alike(
     let world = pg_app::den_world(api::app).await;
 
     for (visibility, pair, code) in commission_read_live_pairs(&world) {
-        world
-            .set_visibility(world.untitled.id, visibility.clone())
-            .await;
+        world.set_visibility(world.untitled.id, visibility).await;
         assert_alice_opens_its_home(&world, &pair).await;
 
         let [absent, not_yours] = answers_of(&world.stranger, &world, &pair).await;
@@ -150,7 +149,7 @@ async fn on_a_live_public_or_listed_commission_a_stranger_s_causes_answer_alike(
 #[tokio::test]
 async fn with_old_sketch_s_visibility_unreadable_a_stranger_s_causes_still_answer_alike() {
     let world = pg_app::den_world(api::app).await;
-    world.store_unparsable_visibility(world.old_sketch.id).await;
+    world.store_unparsable_level(world.old_sketch.id).await;
 
     for pair in commission_read_stranger_pairs(&world.old_sketch) {
         let [absent, not_yours] = answers_of(&world.stranger, &world, &pair).await;
@@ -167,7 +166,7 @@ async fn with_old_sketch_s_visibility_unreadable_a_stranger_s_causes_still_answe
 #[tokio::test]
 async fn with_the_live_untitled_s_visibility_unreadable_a_stranger_s_causes_answer_alike() {
     let world = pg_app::den_world(api::app).await;
-    world.store_unparsable_visibility(world.untitled.id).await;
+    world.store_unparsable_level(world.untitled.id).await;
     let his_own = format!(
         "/commissions/{}/files/{}",
         world.untitled.id, world.untitled.file
@@ -190,7 +189,7 @@ async fn with_the_live_untitled_s_visibility_unreadable_a_stranger_s_causes_answ
 #[tokio::test]
 async fn with_old_sketch_s_visibility_unreadable_alice_still_downloads_and_reads_it() {
     let world = pg_app::den_world(api::app).await;
-    world.store_unparsable_visibility(world.old_sketch.id).await;
+    world.store_unparsable_level(world.old_sketch.id).await;
     let path = format!(
         "/commissions/{}/files/{}",
         world.old_sketch.id, world.old_sketch.file
@@ -250,9 +249,12 @@ async fn a_pair_s_two_causes_make_the_same_reads_and_a_stranger_s_never_read_by_
     let world = pg_app::den_world(move |mut runtime| {
         let commissions =
             RecordingCommissionStore::new(Arc::clone(&runtime.commissions), recorder.clone());
+        let rows =
+            RecordingCommissionRows::new(Arc::clone(&runtime.commission_rows), recorder.clone());
         let files = RecordingFileStore::new(Arc::clone(&runtime.files), recorder.clone());
         let changelog = RecordingChangelogStore::new(Arc::clone(&runtime.changelog), recorder);
         runtime.commissions = Arc::new(commissions);
+        runtime.commission_rows = Arc::new(rows);
         runtime.files = Arc::new(files);
         runtime.changelog = Arc::new(changelog);
         api::app(runtime)
@@ -260,25 +262,23 @@ async fn a_pair_s_two_causes_make_the_same_reads_and_a_stranger_s_never_read_by_
     .await;
 
     for (target, visibility) in stranger_targets(&world) {
-        world.set_visibility(target.id, visibility.clone()).await;
+        world.set_visibility(target.id, visibility).await;
         for pair in commission_read_stranger_pairs(&target) {
             let label = format!("{visibility}, {}", pair.label);
             let reads = reads_of_each_cause(&log, &world.stranger, &world, &label, &pair).await;
 
-            assert_eq!(reads.absent, ["find_summary", "is_participant"], "{label}");
+            assert_eq!(reads.absent, ["find_summary"], "{label}");
             assert_eq!(reads.not_yours, reads.absent, "{label}");
             assert_reads_none_of(&reads.absent, &NEVER_FOR_A_STRANGER, &label);
         }
     }
     for (visibility, pair, code) in commission_read_live_pairs(&world) {
-        world
-            .set_visibility(world.untitled.id, visibility.clone())
-            .await;
+        world.set_visibility(world.untitled.id, visibility).await;
         let label = format!("{visibility}, live, {}", pair.label);
         let reads = reads_of_each_cause(&log, &world.stranger, &world, &label, &pair).await;
 
         if code == STRANGER_CODE {
-            assert_eq!(reads.absent, ["find_summary", "is_participant"], "{label}");
+            assert_eq!(reads.absent, ["find_summary"], "{label}");
         }
         assert_eq!(reads.not_yours, reads.absent, "{label}");
         assert_reads_none_of(&reads.absent, &NEVER_FOR_A_STRANGER, &label);

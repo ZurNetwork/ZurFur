@@ -42,12 +42,10 @@
 
 <h1>Accounts</h1>
 
-<!-- The three arms are the whole DeleteOutcome vocabulary (narrowed in load);
-     'unknown' stays deliberately non-committal — R8 forbids reading the
-     fallback as confirming either deletion. The 'soft' arm is real but
-     CURRENTLY UNREACHABLE in a browser (⚠️ F2): the backend's evidence check
-     is a stub-false (accounts.rs `account_has_facts`), so every live delete
-     lands 'hard' until facts exist. -->
+<!-- The three arms are the whole DeleteOutcome vocabulary (narrowed in load).
+     'unknown' stays non-committal: the fallback never reads as confirming
+     either deletion. 'soft' shows for an Account that ever had a member
+     besides its founder; 'hard' for one that never did. -->
 {#if !submitFailed}
 	{#if data.deleted === 'soft'}
 		<p>The account was deactivated.</p>

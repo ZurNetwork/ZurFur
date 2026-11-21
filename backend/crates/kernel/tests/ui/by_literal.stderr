@@ -1,0 +1,9 @@
+error[E0451]: fields `thing` and `role` of struct `WriteCapability` are private
+  --> tests/ui/by_literal.rs:10:9
+   |
+ 9 |     let _forged: WriteCapability<New<u32>, Creator> = WriteCapability {
+   |                                                       --------------- in this type
+10 |         thing,
+   |         ^^^^^ private field
+11 |         role: PhantomData,
+   |         ^^^^ private field

@@ -8,15 +8,17 @@
 
 #![allow(clippy::disallowed_methods, reason = "test seeding")]
 
+use adapter_mem::CommissionSeed;
 use application::account::{self, AccountEntity, AccountError, workflow};
-use application::transaction;
+use application::commission;
 use chrono::Utc;
 use composition::Runtime;
 use domain::elements::{
     account::AccountId,
-    commission::{Commission, CommissionId, CommissionTitle},
+    commission::{CommissionId, GrantLevel},
     did::Did,
     handle::HandleDomain,
+    level::Level,
     role::Role,
     user::UserId,
     user_account::UserAccount,
@@ -231,21 +233,23 @@ async fn remove_column(
     accounts.workflows().columns().remove(command).await
 }
 
-/// Seed a commission owned by `owner`, directly (test seed, no use case
-/// involved) — owning it is enough to make it immediately visible to
-/// `insert_in_column`'s PUSH rail, without standing up a separate view
-/// grant.
+/// Seed a commission owned by `owner` through the create use case — owning it is enough to
+/// make it immediately visible to `insert_in_column`'s PUSH rail, without standing up a
+/// separate view grant.
 async fn seed_commission(runtime: &Runtime, owner: &UserId, title: &str) -> CommissionId {
-    let title: CommissionTitle = title.parse().expect("a valid commission title");
-    let owner = owner.clone();
-    transaction(&*runtime.database, async move |uow: &mut dyn UnitOfWork| {
-        let commission = Commission::create(title, owner, Utc::now(), None);
-        let id = commission.id;
-        uow.commissions().create(&commission).await?;
-        Ok(id)
-    })
-    .await
-    .expect("seeds a commission")
+    let command = commission::create::Command {
+        actor_id: owner.clone(),
+        title: title.parse().expect("a valid commission title"),
+        maturity: None,
+        deadline: None,
+    };
+    let created = runtime
+        .app()
+        .commissions()
+        .create(command, Utc::now())
+        .await
+        .expect("seeds a commission");
+    created.id
 }
 
 // --- delete: the role gate (F1 — the predicate was inverted, so the two
@@ -597,4 +601,113 @@ async fn inserting_a_commission_past_the_end_of_a_column_is_refused_as_index_out
         matches!(error, AccountError::IndexOutOfRange(_)),
         "{error:?}"
     );
+}
+
+// --- insert_in_column: the PULL rail is the shown rule, the PUSH rail the actor's own view ---
+
+/// Seed, through the backend, a commission at `level` owned by `owner`, archived when
+/// `archived` says so, answering its id.
+async fn seed_at(
+    fixture: &MemRuntime,
+    owner: &UserId,
+    title: &str,
+    level: Level,
+    archived: bool,
+) -> CommissionId {
+    let seed = CommissionSeed {
+        level,
+        ..CommissionSeed::private(title.parse().expect("a valid title"), owner.clone())
+    };
+    fixture
+        .backend
+        .seed_bound_commission(&seed)
+        .await
+        .expect("seeds the commission");
+    if archived {
+        let mut unit = fixture.runtime.database.begin().await.expect("begin");
+        let moved = unit
+            .commissions()
+            .set_archived(&seed.id, Some(Utc::now()))
+            .await
+            .expect("archives the commission");
+        assert!(moved, "the commission was live");
+        unit.commit().await.expect("commits the archive");
+    }
+    seed.id
+}
+
+/// Place `commission_id` first in `column_id` as `actor`.
+async fn place(
+    runtime: &Runtime,
+    actor: &UserId,
+    column_id: ColumnId,
+    commission_id: CommissionId,
+) -> Result<workflow::column::commission::set_in_column::Output, AccountError> {
+    let command = workflow::column::commission::set_in_column::Command {
+        commission_id,
+        column_id,
+        index: 0,
+        actor_id: actor.clone(),
+    };
+    runtime.app().commissions().insert_in_column(command).await
+}
+
+#[tokio::test]
+async fn someone_with_no_role_and_no_grant_places_only_a_live_listed_or_public_commission() {
+    let fixture = fixture("did:plc:card-pull-rail");
+    let runtime = &fixture.runtime;
+    let placer = recognized(&fixture, "did:plc:card-pull-rail").await;
+    let artist = recognized(&fixture, "did:plc:card-pull-artist").await;
+    let account_id = found(runtime, &placer, "card-pull-rail.zurfur.app").await;
+    let workflow_id = board(runtime, &placer, &account_id, "Queue").await;
+    let column = column_id(runtime, &placer, &workflow_id, "Inbox", 0).await;
+    let cases = [
+        (Level::Listed, false, true),
+        (Level::Public, false, true),
+        (Level::Listed, true, false),
+        (Level::Public, true, false),
+        (Level::Private, false, false),
+    ];
+
+    for (level, archived, placed) in cases {
+        let commission = seed_at(&fixture, &artist, "Not mine", level, archived).await;
+
+        let answer = place(runtime, &placer, column, commission).await;
+
+        let label = format!("{level:?}, archived {archived}");
+        if placed {
+            assert!(answer.is_ok(), "{label}: {answer:?}");
+        } else {
+            assert!(
+                matches!(
+                    answer,
+                    Err(AccountError::NotFound(AccountEntity::Commission))
+                ),
+                "{label}: {answer:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_view_grant_holder_places_an_archived_commission() {
+    let fixture = fixture("did:plc:card-push-rail");
+    let runtime = &fixture.runtime;
+    let placer = recognized(&fixture, "did:plc:card-push-rail").await;
+    let artist = recognized(&fixture, "did:plc:card-push-artist").await;
+    let account_id = found(runtime, &placer, "card-push-rail.zurfur.app").await;
+    let workflow_id = board(runtime, &placer, &account_id, "Queue").await;
+    let column = column_id(runtime, &placer, &workflow_id, "Inbox", 0).await;
+    let commission = seed_at(&fixture, &artist, "Granted", Level::Listed, true).await;
+    let mut unit = runtime.database.begin().await.expect("begin");
+    unit.commissions()
+        .grant_view(&commission, &placer, GrantLevel::Description)
+        .await
+        .expect("grants the view");
+    unit.commit().await.expect("commits the grant");
+
+    let answer = place(runtime, &placer, column, commission).await;
+
+    let placed = answer.expect("the grant holder places it");
+    assert_eq!(placed.commissions, [commission]);
 }

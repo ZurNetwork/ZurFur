@@ -1,10 +1,10 @@
 //! Den's arm for a poster's posts, `/post/<did>`: an empty, always-public stub that answers
 //! the same for every DID. It takes no ports, so it can read no store and call no host.
 
-use domain::elements::did::Did;
+use domain::elements::{did::Did, level::Level};
 
 use crate::den::{
-    DenMount, DenType, Level, Node, NodeState, Place, Segment, TopLevel,
+    DenMount, DenType, Node, NodeState, Place, Segment, TopLevel,
     names::{self, POSTS},
 };
 

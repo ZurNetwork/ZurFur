@@ -9,10 +9,10 @@ use domain::{
     elements::{
         account::AccountId,
         commission::{
-            ChangelogEntryKind, Commission, CommissionFile, CommissionId, CommissionTitle,
-            ElementId, FileKey, FileName, NewChangelogEntry, NewSlot, SlotTitle, SurfaceAddress,
-            SurfaceName, Visibility,
+            ChangelogEntryKind, CommissionFile, CommissionId, CommissionTitle, ElementId, FileKey,
+            FileName, NewChangelogEntry, NewSlot, OpenKind, SlotTitle, SurfaceAddress, SurfaceName,
         },
+        level::Level,
         user::UserId,
         workflow::{WorkflowId, WorkflowName},
     },
@@ -20,7 +20,7 @@ use domain::{
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::{MemBackend, workflow::StoredWorkflow};
+use crate::{CommissionSeed, MemBackend, SlotSeed, workflow::StoredWorkflow};
 
 /// "Untitled", the commission alice owns and bob takes part in.
 const UNTITLED: Uuid = Uuid::from_u128(0x01a0ef9c_4e00_7a00_8000_000000000001);
@@ -97,11 +97,11 @@ pub async fn seed_commission(
     Ok(())
 }
 
-/// "Untitled": created by `alice` through the commission write port, `bob`
+/// "Untitled": seeded for `alice` bound to its nodes, as the den's write gate writes it, `bob`
 /// added as a Participant, two files uploaded by `alice`, four open Slots.
 async fn seed_untitled(backend: &MemBackend, alice: &UserId, bob: &UserId) -> anyhow::Result<()> {
     let created_at = time_of(UNTITLED);
-    create_commission(backend, UNTITLED, "Untitled", alice).await?;
+    seed_fixed(backend, UNTITLED, "Untitled", alice).await?;
 
     // No route admits a second Participant yet, so bob's row is seeded.
     backend.seed_participant(untitled(), bob.clone(), created_at);
@@ -111,41 +111,36 @@ async fn seed_untitled(backend: &MemBackend, alice: &UserId, bob: &UserId) -> an
     }
 
     let address = only_address(backend, untitled()).await?;
-    let slots = SLOTS
-        .iter()
-        .map(|(id, title)| {
-            let title = title.parse::<SlotTitle>()?;
-            let mut slot = NewSlot::contributed_at(
-                untitled(),
-                address.clone(),
-                title,
-                None,
-                alice.clone(),
-                time_of(*id),
-            );
-            slot.id = ElementId::from(*id);
-            Ok(slot)
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let database = backend.database();
-    let mut uow = database.begin().await?;
-    uow.commissions().declare_slots(&slots).await?;
-    uow.commit().await?;
+    for (id, title) in SLOTS {
+        let seed = SlotSeed {
+            commission: untitled(),
+            element: ElementId::from(id),
+            title: title.parse::<SlotTitle>()?,
+            slot: NewSlot {
+                address: address.clone(),
+                notes: None,
+            },
+            created_by: alice.clone(),
+            created_at: time_of(id),
+        };
+        backend.seed_bound_slot(&seed).await?;
+    }
     Ok(())
 }
 
 /// "Old sketch": created by `alice` and archived by her a while later.
 async fn seed_old_sketch(backend: &MemBackend, alice: &UserId) -> anyhow::Result<()> {
-    create_commission(backend, OLD_SKETCH, "Old sketch", alice).await?;
+    seed_fixed(backend, OLD_SKETCH, "Old sketch", alice).await?;
 
     let archived_at = time_of(OLD_SKETCH) + OLD_SKETCH_ARCHIVED_AFTER;
-    let archived_entry = NewChangelogEntry::event(
+    let archived_entry: NewChangelogEntry = NewChangelogEntry::event(
         old_sketch(),
-        ChangelogEntryKind::Archived,
+        OpenKind::Archived,
         alice.clone(),
         json!({ "title": "Old sketch" }),
         archived_at,
-    );
+    )
+    .into();
     let database = backend.database();
     let mut uow = database.begin().await?;
     uow.commissions()
@@ -166,7 +161,7 @@ fn seed_queue(backend: &MemBackend, account: &AccountId) {
     let stored = StoredWorkflow {
         account_id: account.clone(),
         name,
-        visibility: Visibility::Private,
+        visibility: Level::Private,
     };
     backend
         .workflows
@@ -175,34 +170,33 @@ fn seed_queue(backend: &MemBackend, account: &AccountId) {
         .insert(queue(), stored);
 }
 
-/// Create the commission `id` titled `title` and owned by `owner`, with its
-/// `created` changelog entry, as the create use case writes them.
-async fn create_commission(
+/// Seed the commission `id` titled `title` and owned by `owner`, bound to its own nodes as
+/// the den's write gate writes them, then its `created` changelog entry.
+async fn seed_fixed(
     backend: &MemBackend,
     id: Uuid,
     title: &str,
     owner: &UserId,
 ) -> anyhow::Result<()> {
     let created_at = time_of(id);
-    let mut commission = Commission::create(
-        title.parse::<CommissionTitle>()?,
-        owner.clone(),
+    let seed = CommissionSeed {
+        id: CommissionId::from(id),
+        title: title.parse::<CommissionTitle>()?,
+        level: Level::Private,
+        owner_id: owner.clone(),
         created_at,
-        None,
-    );
-    commission.id = CommissionId::from(id);
-    let created_entry = NewChangelogEntry::event(
-        commission.id,
+        deadline: None,
+        maturity: None,
+    };
+    backend.seed_bound_commission(&seed).await?;
+    // The legacy `created` row names its title, a shape no constructor builds any more.
+    backend.seed_changelog_entry(
+        seed.id,
         ChangelogEntryKind::Created,
-        owner.clone(),
+        Some(owner.clone()),
         json!({ "title": title }),
         created_at,
     );
-    let database = backend.database();
-    let mut uow = database.begin().await?;
-    uow.commissions().create(&commission).await?;
-    uow.changelog().append(&created_entry).await?;
-    uow.commit().await?;
     Ok(())
 }
 
@@ -224,9 +218,9 @@ async fn upload_file(
         .put(file_key, &checked_name, CONTENT_TYPE, &mut content)
         .await?;
 
-    let file_added_entry = NewChangelogEntry::event(
+    let file_added_entry: NewChangelogEntry = NewChangelogEntry::event(
         untitled(),
-        ChangelogEntryKind::FileAdded,
+        OpenKind::FileAdded,
         uploader.clone(),
         json!({
             "file_id": key,
@@ -235,7 +229,8 @@ async fn upload_file(
             "byte_size": byte_size,
         }),
         uploaded_at,
-    );
+    )
+    .into();
     let file = CommissionFile {
         id: file_key,
         commission_id: untitled(),

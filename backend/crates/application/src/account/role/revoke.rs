@@ -4,7 +4,10 @@ use domain::elements::{account::AccountId, user::UserId};
 
 use crate::{
     Ports,
-    account::{AccountError, AccountResult, require_live_account, role::Roles},
+    account::{
+        AccountError, AccountResult, ActorLock, lock_actor_and_target, lock_live_account,
+        refused_after_a_race, require_live_account, role::Roles,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,8 +66,28 @@ impl Roles<'_> {
         }
 
         let uow = uow.open().await?;
-        // The store refuses the Owner, so a transfer that lands after the check above
-        // fails this unit instead of removing the new Owner.
+        lock_live_account(uow, &account_id).await?;
+        // Decided again on the locked rows, the actor's standing first as above: a
+        // demotion of the actor, the target's departure or a transfer to the target may
+        // have landed since.
+        let (actor_now, target_now) = lock_actor_and_target(
+            &mut *uow.accounts(),
+            &account_id,
+            &actor_id,
+            ActorLock::Share,
+            &target_id,
+        )
+        .await?;
+        // Standing is a role that may remove someone at all, so a demoted actor is refused
+        // the same way whether or not the target is still a member.
+        let actor_now = actor_now
+            .filter(|r| !r.grantable_roles().is_empty())
+            .ok_or_else(|| refused_after_a_race("revoke", AccountError::IncorrectRole))?;
+        let target_now =
+            target_now.ok_or_else(|| refused_after_a_race("revoke", AccountError::NotAMember))?;
+        if !actor_now.can_grant(&target_now) {
+            return Err(refused_after_a_race("revoke", AccountError::IncorrectRole));
+        }
         uow.accounts().revoke_role(&target_id, &account_id).await?;
 
         Ok(Output {

@@ -19,3 +19,14 @@ use serde::{Deserialize, Serialize};
 )]
 #[serde(transparent)]
 pub struct CommissionId(uuid::Uuid);
+
+impl CommissionId {
+    /// Mint a fresh UUIDv7 commission key. Inherent, not `Default`: each call is a new key, and
+    /// none is a default.
+    pub fn mint() -> Self {
+        Self(uuid::Uuid::now_v7())
+    }
+}
+
+#[cfg(test)]
+mod tests;

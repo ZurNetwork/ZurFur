@@ -18,52 +18,12 @@ use domain::{
     ports::Database,
 };
 
+use crate::migration_steps::{bare_pool, run_migrations_before, run_migrations_through};
+
 /// The delete's migration, as sqlx numbers it. The test runs everything before
-/// it, seeds, then runs it.
-const DELETE_STORED_OAUTH_SESSIONS: i64 = 20261012014616;
-
-/// A fresh, empty private database with no migrations applied; the second
-/// element keeps the shared container alive for the test's duration.
-async fn bare_pool() -> (PgPool, impl Sized) {
-    let db = test_support::pg::bare_db().await;
-    let pool = adapter_pg::connect(db.url()).await.expect("pool connects");
-    (pool, db)
-}
-
-/// Run every embedded migration older than the delete.
-async fn migrate_to_just_before_the_delete(pool: &PgPool) {
-    let mut before = adapter_pg::migrator();
-    let names_an_embedded_migration = before
-        .migrations
-        .iter()
-        .any(|migration| migration.version == DELETE_STORED_OAUTH_SESSIONS);
-    assert!(
-        names_an_embedded_migration,
-        "the version constant names an embedded migration"
-    );
-    let migrations: Vec<_> = before
-        .migrations
-        .iter()
-        .filter(|migration| migration.version < DELETE_STORED_OAUTH_SESSIONS)
-        .cloned()
-        .collect();
-    before.migrations = migrations.into();
-    before.run(pool).await.expect("the earlier migrations run");
-}
-
-/// Run the delete itself and nothing after it, so a later migration's new
+/// it, seeds, then runs it and nothing after it, so a later migration's new
 /// table never reads as a change the delete made.
-async fn migrate_through_the_delete(pool: &PgPool) {
-    let mut through = adapter_pg::migrator();
-    let migrations: Vec<_> = through
-        .migrations
-        .iter()
-        .filter(|migration| migration.version <= DELETE_STORED_OAUTH_SESSIONS)
-        .cloned()
-        .collect();
-    through.migrations = migrations.into();
-    through.run(pool).await.expect("the delete runs");
-}
+const DELETE_STORED_OAUTH_SESSIONS: i64 = 20261012014616;
 
 /// Recognize a visitor in its own committed unit of work.
 async fn provision(pool: &PgPool, did: &str) -> User {
@@ -193,7 +153,7 @@ async fn digest_of_every_other_table(pool: &PgPool) -> BTreeMap<String, Option<S
 #[tokio::test]
 async fn the_delete_empties_both_oauth_tables_and_touches_nothing_else() {
     let (pool, _container) = bare_pool().await;
-    migrate_to_just_before_the_delete(&pool).await;
+    run_migrations_before(&pool, DELETE_STORED_OAUTH_SESSIONS).await;
 
     let owner = provision(&pool, "did:plc:oauthpurgeowner").await;
     let other = provision(&pool, "did:plc:oauthpurgeother").await;
@@ -218,7 +178,7 @@ async fn the_delete_empties_both_oauth_tables_and_touches_nothing_else() {
         assert!(seeded, "{table} holds a row before the delete");
     }
 
-    migrate_through_the_delete(&pool).await;
+    run_migrations_through(&pool, DELETE_STORED_OAUTH_SESSIONS).await;
 
     let sessions_after = rows_in(&pool, "atproto_oauth.client_session").await;
     let requests_after = rows_in(&pool, "atproto_oauth.auth_request").await;

@@ -741,7 +741,7 @@ async fn a_leave_racing_a_transfer_keeps_the_new_owner() {
         .await
         .expect("DELETE /accounts/{id}/members/me is answered");
 
-    common::assert_problem(left, 500, "internal_error").await;
+    common::assert_problem(left, 409, "owner_cannot_leave").await;
     assert_bob_still_owns_supreme_arts(&world).await;
 }
 
@@ -764,6 +764,6 @@ async fn a_revoke_racing_a_transfer_keeps_the_new_owner() {
         .await
         .expect("DELETE /accounts/{id}/members is answered");
 
-    common::assert_problem(revoked, 500, "internal_error").await;
+    common::assert_problem(revoked, 403, "forbidden").await;
     assert_bob_still_owns_supreme_arts(&world).await;
 }

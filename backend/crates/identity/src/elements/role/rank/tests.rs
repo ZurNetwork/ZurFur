@@ -69,3 +69,24 @@ fn every_role_round_trips_through_its_token_and_parses_case_insensitively() {
         "declaration order IS the rank ladder — can_grant depends on it"
     );
 }
+
+// `grantable_roles` is exactly the roles `can_grant` allows, for every pair, and
+// the ladder it yields is the one the design states.
+#[test]
+fn grantable_roles_follow_can_grant() {
+    for actor in Role::VARIANTS {
+        let expected: Vec<Role> = Role::VARIANTS
+            .iter()
+            .filter(|target| actor.can_grant(target))
+            .cloned()
+            .collect();
+        assert_eq!(actor.grantable_roles(), expected, "{actor:?}");
+    }
+
+    let owner_offers = Role::Owner.grantable_roles();
+    let admin_offers = Role::Admin.grantable_roles();
+    assert_eq!(owner_offers, [Role::Admin, Role::Manager, Role::Member]);
+    assert_eq!(admin_offers, [Role::Manager, Role::Member]);
+    assert!(Role::Manager.grantable_roles().is_empty());
+    assert!(Role::Member.grantable_roles().is_empty());
+}

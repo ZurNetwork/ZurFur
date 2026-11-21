@@ -39,6 +39,7 @@ async fn serve(pool: PgPool, did: &str, backend: MemBackend) -> String {
     runtime.pool = pool.clone();
     runtime.accounts = backend.account_store();
     runtime.commissions = backend.commission_store();
+    runtime.commission_rows = backend.commission_rows();
     runtime.changelog = backend.changelog_store();
     runtime.files = backend.file_store();
     runtime.users = backend.user_store();

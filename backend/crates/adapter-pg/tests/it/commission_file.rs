@@ -6,15 +6,14 @@
 //! `commission.rs` proves `commission_file` is classified NON-FACT). Requires a
 //! container runtime socket (DOCKER_HOST honored).
 
+use crate::seed;
 use std::io::Cursor;
 
 use adapter_pg::{PgDatabase, PgFileStore, PgPool};
 use chrono::Utc;
 use domain::{
     elements::{
-        commission::{
-            Commission, CommissionFile, CommissionId, CommissionTitle, FileKey, FileName,
-        },
+        commission::{CommissionFile, CommissionId, FileKey, FileName},
         did::Did,
         user::User,
     },
@@ -42,18 +41,7 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 
 /// Create and commit a commission owned by `owner`, returning its id.
 async fn seed_commission(pool: &PgPool, owner: &User, title: &str) -> CommissionId {
-    let db = PgDatabase::new(pool.clone());
-    let commission = Commission::create(
-        title.parse::<CommissionTitle>().expect("title"),
-        owner.id.clone(),
-        Utc::now(),
-        None,
-    );
-    let id = commission.id;
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions().create(&commission).await.expect("create");
-    uow.commit().await.expect("commit");
-    id
+    seed::seed_titled(pool, &owner.id, title).await
 }
 
 // The link round-trips (written on the unit of work, read scoped to its

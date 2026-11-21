@@ -1,4 +1,4 @@
-use super::UnknownLifecycleStep;
+use super::{CommissionRefusal, CommissionState, UnknownLifecycleStep};
 
 /// The single lifecycle state a commission holds. Always exactly one, moved
 /// explicitly by a participant and never by a system event.
@@ -6,6 +6,7 @@ use super::UnknownLifecycleStep;
     Debug,
     Clone,
     PartialEq,
+    Eq,
     strum::Display,
     strum::EnumString,
     strum::IntoStaticStr,
@@ -13,7 +14,7 @@ use super::UnknownLifecycleStep;
 )]
 #[strum(serialize_all = "snake_case", parse_err_ty = UnknownLifecycleStep, parse_err_fn = unknown_token)]
 pub enum LifecycleStep {
-    /// Just created; no facts yet, so hard delete is possible.
+    /// Just created, before any work: the one step a hard delete is allowed on.
     Draft,
     /// Part of the workload but not active
     Batched,
@@ -38,6 +39,71 @@ impl LifecycleStep {
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Completed | Self::Cancelled)
     }
+
+    /// Whether a deadline missed on this step is swept Late: not on a terminal step, nor
+    /// while [`Disputed`](Self::Disputed).
+    pub fn lapses(&self) -> bool {
+        !self.is_terminal() && *self != Self::Disputed
+    }
+
+    /// Whether a commission on this step may be hard-deleted: only in
+    /// [`Draft`](Self::Draft). On every other step, Disputed included, it is refused.
+    pub fn allows_hard_delete(&self) -> bool {
+        *self == Self::Draft
+    }
+
+    /// Every step a missed deadline doesn't lapse on, in declaration order.
+    pub fn not_lapsing() -> Vec<LifecycleStep> {
+        use strum::VariantArray;
+        Self::VARIANTS
+            .iter()
+            .filter(|step| !step.lapses())
+            .cloned()
+            .collect()
+    }
+}
+
+/// A lifecycle move a rule passed: the step held and the step moved to. Built only by
+/// [`move_lifecycle`]; the value the store's lifecycle write takes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecycleMove {
+    from: LifecycleStep,
+    to: LifecycleStep,
+}
+
+impl LifecycleMove {
+    /// The step the commission held.
+    pub fn before(&self) -> &LifecycleStep {
+        &self.from
+    }
+
+    /// The step it moves to.
+    pub fn after(&self) -> &LifecycleStep {
+        &self.to
+    }
+}
+
+/// Moves `state` to `to`: `None` when it already holds `to`; refused while Disputed, and into
+/// Draft or Disputed, which no move enters.
+pub fn move_lifecycle(
+    state: &CommissionState,
+    to: LifecycleStep,
+) -> Result<Option<LifecycleMove>, CommissionRefusal> {
+    if state.is_disputed() {
+        return Err(CommissionRefusal::CommissionDisputed);
+    }
+    let from = state.lifecycle_step();
+    if *from == to {
+        return Ok(None);
+    }
+    if matches!(to, LifecycleStep::Draft | LifecycleStep::Disputed) {
+        return Err(CommissionRefusal::LifecycleMoveRefused);
+    }
+    let checked = LifecycleMove {
+        from: from.clone(),
+        to,
+    };
+    Ok(Some(checked))
 }
 
 #[cfg(test)]

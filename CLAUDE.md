@@ -83,7 +83,7 @@ Ports and adapters, per the design page "Domains and Applications" (`11763713`):
 ```
 backend/crates/
   shared/            # Build-time constants every layer may read, the domain crates included
-  kernel/            # The base domain crate: the clock, the string builder, Did, text, maturity, BlobId, Markdown
+  kernel/            # The base domain crate: the clock, the string builder, Did, text, maturity, BlobId, Markdown, key custody's vocabulary and port
   identity/          # User, Account, Character, actor identities, handles, roles, invitations, profiles, public records, bug reports; their ports
   workflow/          # Commission (elements, slots, seats, changelog, files) and Workflow boards; their ports
   gallery/           # Posts and the Gallery (a stub crate until the first post type)
@@ -94,6 +94,7 @@ backend/crates/
   adapter-pg/        # Private data boundary: PostgreSQL (app-owned rows, UUIDv7 keys, transactions)
   adapter-atproto/   # Public data boundary: the user's PDS (user-owned records, AT-URI via DID)
   adapter-mem/       # Both boundaries faked in-process; core development runs against this
+  adapter-hkdf/      # Key custody (dev): one HKDF-derived key per purpose, the v1 envelope, the Den MAC; not a data boundary; only composition links it
   composition/       # Composition root: config and the port bag; the only crate that knows which adapter is live
   api/  cli/         # The HTTP and terminal drivers
 ```

@@ -1,3 +1,5 @@
+use strum::VariantArray;
+
 use super::errors::UnknownRole;
 
 /// A member's rank inside one account. The derived [`Ord`] runs Owner < Admin <
@@ -53,6 +55,16 @@ impl Role {
         // but grants nothing), and the target must sit strictly below the actor
         // — with the derived Ord, "below" is the greater value.
         matches!(self, Role::Owner | Role::Admin) && target > self
+    }
+
+    /// The roles a member holding `self` may grant or offer, in rank order;
+    /// empty for a role that grants nothing.
+    pub fn grantable_roles(&self) -> Vec<Role> {
+        Role::VARIANTS
+            .iter()
+            .filter(|target| self.can_grant(target))
+            .cloned()
+            .collect()
     }
 }
 

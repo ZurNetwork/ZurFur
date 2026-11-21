@@ -1,6 +1,6 @@
 {
   "path": "backend/crates/identity/src/elements",
-  "charted": "2026-10-20",
+  "charted": "2026-11-07",
   "short": "Who acts: the identity nouns",
   "is": "The identity nouns: user, account, membership, invitation, role, actor identity, handle, custody keys, PLC operations, character, profile, public records and bug reports.",
   "type": "code",
@@ -19,7 +19,7 @@
   "fs": [
     {
       "name": "account.rs",
-      "role": "Account, AccountId, membership, ListingScope",
+      "role": "Account, AccountId, membership, ListingScope; AccountFactKind (the facts that keep an Account from a hard delete, `member` only, UnknownAccountFactKind on parse) and AccountFacts (the kinds an Account has reached, each once)",
       "node": false
     },
     {
@@ -114,7 +114,7 @@
     },
     {
       "name": "role.rs",
-      "role": "Role — data-less Owner/Admin/Manager/Member enum + can_grant rule; RoleAlias newtype + UnknownRole/InvalidRoleAlias errors; Display impls",
+      "role": "Role — data-less Owner/Admin/Manager/Member enum + can_grant rule and grantable_roles; RoleAlias newtype + UnknownRole/InvalidRoleAlias errors; Display impls",
       "node": false
     },
     {

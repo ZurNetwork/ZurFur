@@ -39,7 +39,7 @@ impl VisibilityMode {
     ///
     /// The effective visibility of an element: `min(tab, surface, element)`.
     /// Over-claiming is inert, never a leak. Composes under the commission's own
-    /// [`Visibility`](crate::elements::commission::Visibility), which the caller gates on first.
+    /// [`Level`](kernel::elements::level::Level), which the caller gates on first.
     ///
     /// ```
     /// use workflow::elements::commission::VisibilityMode;

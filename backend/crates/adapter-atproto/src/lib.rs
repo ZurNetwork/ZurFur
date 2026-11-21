@@ -18,7 +18,6 @@ mod plc_directory;
 mod profile;
 mod public_records;
 mod resolver;
-mod secret_vault;
 pub use auth_store::AtprotoAuthStore;
 pub use authenticator::AtprotoAuthenticator;
 pub use did_minter::{RealDidMinter, StubDidMinter};
@@ -26,4 +25,3 @@ pub use plc_directory::{DirectoryConfig, NoopPlcDirectory, plc_directory_from_co
 pub use profile::AtprotoProfileSource;
 pub use public_records::AtprotoPublicRecords;
 pub use resolver::AtprotoIdentityResolver;
-pub use secret_vault::SecretVault;

@@ -22,8 +22,8 @@ pub use authenticator::{Authenticator, BrowserBinding, SigninStarted};
 pub use bug_report::{BugReportStore, BugReportWrites};
 pub use character::{CharacterStore, CharacterWrites};
 pub use errors::{
-    AccountMismatch, BrowserMismatch, DidBelongsToAnotherActor, HandleTaken, PublicRecordsError,
-    ResolveError,
+    AccountDeactivated, AccountMismatch, BrowserMismatch, DidBelongsToAnotherActor, HandleTaken,
+    PublicRecordsError, ResolveError,
 };
 pub use identity::{DidMinter, DidOperations, KeyStore, PlcOperationLog};
 pub use identity_resolver::IdentityResolver;

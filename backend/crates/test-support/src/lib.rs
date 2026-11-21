@@ -6,21 +6,28 @@
 //! this crate's node for the usage recipe, the hermeticity guarantees, and
 //! the container-reuse escape hatch.
 
+pub mod account_deletion_contract;
+pub mod commission_standing_contract;
 pub mod contract;
+pub mod custody;
 pub mod cut;
 pub mod den;
 mod fixture;
 pub mod http;
 pub mod identity_resolver_contract;
+pub mod invitation_validity_contract;
 pub mod log_capture;
 pub mod membership;
+pub mod node_contract;
 mod pds;
 pub mod pg;
 pub mod pg_app;
 mod plc_stub;
 pub mod recording;
 pub mod runtime;
+pub mod seeder;
 pub mod store_doubles;
+pub mod timing;
 
 pub use fixture::{ActingCredential, FixtureAccount};
 pub use pds::ThrowawayPds;

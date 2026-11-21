@@ -1,4 +1,4 @@
-use crate::{Level, Metadata, RealPath, Segment, Type};
+use crate::{Checked, Level, Metadata, RealPath, Segment, Type};
 
 /// Who is reading: an opaque value Atta passes to every host call and never inspects.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::From, derive_more::AsRef)]
@@ -104,12 +104,23 @@ pub enum Admission {
 #[error(transparent)]
 pub struct HostError(#[from] Box<dyn std::error::Error + Send + Sync>);
 
+/// The default [`Host::apply`]'s refusal: this host applies no act.
+#[derive(Debug, thiserror::Error)]
+#[error("this host applies no act")]
+struct AppliesNoAct;
+
 /// How Atta reaches the application that embeds it: storage, standing and types.
 ///
 /// Every answer is in Atta's own values. A node the viewer may not know of is still answered
 /// for; Atta decides what the viewer sees.
 #[async_trait::async_trait]
 pub trait Host: Send + Sync {
+    /// What an act carries for this host to apply; opaque to Atta.
+    type Act: Send;
+
+    /// What this host returns once it applied an act.
+    type Applied: Send;
+
     /// The node at `key` in the real directory `parent`, with the viewer's lifts there.
     async fn child(
         &self,
@@ -138,4 +149,15 @@ pub trait Host: Send + Sync {
         access: Access,
         reach: Reach,
     ) -> Admission;
+
+    /// Applies an act that passed Atta's checks, for `viewer`. The checks prove nothing about
+    /// authority; the host decides that. By default the host applies no act and refuses.
+    async fn apply(
+        &mut self,
+        _viewer: &Viewer,
+        _checked: Checked<Self::Act>,
+    ) -> Result<Self::Applied, HostError> {
+        let refusal: Box<dyn std::error::Error + Send + Sync> = Box::new(AppliesNoAct);
+        Err(HostError::from(refusal))
+    }
 }

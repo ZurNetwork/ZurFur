@@ -19,8 +19,8 @@ pub struct UnknownSurface;
 /// Error source of [`CommissionWrites::remove_element`] when the element does not
 /// exist in that commission — an absent id and one belonging to another
 /// commission, indistinguishably. Adapters return it so the route can
-/// `downcast_ref` and answer `404`. There is no "cannot remove" sibling: every
-/// element is removable by construction.
+/// `downcast_ref` and answer `404`. An element that carries a Slot answers the
+/// same, so the removal never takes a Slot.
 #[derive(Debug, thiserror::Error)]
 #[error("element not found in this commission")]
 pub struct ElementNotFound;

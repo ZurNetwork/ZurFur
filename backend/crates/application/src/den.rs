@@ -1,11 +1,16 @@
 //! The Den read: a viewer's own root and the nodes below it, resolved by Atta through
-//! Zurfur's one host. Atta's types stay inside this module; its use cases take and answer
-//! the application's own values.
+//! Zurfur's one host; and the Den write, every typed write's one door, checked by Atta and
+//! applied through the write gate. Atta's types stay inside this module; its use cases take
+//! and answer the application's own values.
 
 pub(crate) mod access;
+pub(crate) mod act;
 mod admission;
+mod allowed;
+mod authority;
 mod context;
 mod den_type;
+mod gate;
 pub(crate) mod host;
 mod kind;
 mod level;
@@ -22,13 +27,16 @@ pub mod root;
 mod segment;
 mod soft_delete;
 mod state;
+#[cfg(test)]
+pub(crate) mod test_acts;
 mod thing;
+pub(crate) mod write;
 
 use crate::ports::WithPorts;
 
+pub use allowed::ActWord;
 pub use den_type::DenType;
 pub use kind::NodeKind;
-pub use level::NodeLevel;
 pub use name::{DenName, DenNameError};
 pub use name_ordinal::{NameOrdinal, NameOrdinalError};
 pub use output::{DenAccess, DenContent, DenCrumb, DenListing, DenNode};
@@ -37,11 +45,10 @@ pub use segment::DenSegment;
 pub use soft_delete::SoftDelete;
 pub use thing::DenThing;
 
-pub(crate) use atta::Level;
-pub(crate) use atta::NodeName;
+pub(crate) use allowed::{AllowedActs, allowed_acts};
 pub(crate) use atta::Segment;
-pub(crate) use atta::ShowableName;
 pub(crate) use context::{DenContext, RootNaming};
+pub(crate) use gate::{Handler, Lent, Unmade, needs};
 pub(crate) use name::showable_refusal;
 pub(crate) use place::STANDING;
 pub(crate) use place::{DenMount, Node, Place, TopLevel};

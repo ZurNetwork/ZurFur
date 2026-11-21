@@ -1,10 +1,13 @@
 use crate::LazyUnit;
 use crate::use_case;
-use domain::elements::{commission::CommissionId, user::UserId};
+use domain::elements::{
+    commission::{CommissionId, CommissionRole},
+    user::UserId,
+};
 
 use crate::{
     Ports,
-    commission::{CommissionResult, Commissions},
+    commission::{CommissionResult, Commissions, require_or_not_found},
     common_error::{CommonError, NotFoundEntity},
 };
 
@@ -21,10 +24,10 @@ pub struct Output {
 }
 
 impl Commissions<'_> {
-    /// Hard-deletes the commission, but only while it is fact-free. Owner-only;
-    /// every other caller gets the closed door's `CommissionNotFound`. A
-    /// fact-bearing commission is untouched and reported as
-    /// [`Outcome::HasFacts`].
+    /// Hard-deletes the commission, but only in Draft and fact-free, decided on its row read
+    /// under lock in the deleting unit. Owner-only; every other caller gets the closed door's
+    /// `CommissionNotFound`. A commission past Draft or bearing a fact is untouched and
+    /// reported as [`Outcome::HasFacts`].
     #[use_case]
     pub async fn delete(
         &self,
@@ -36,22 +39,33 @@ impl Commissions<'_> {
             actor_id,
             commission_id,
         } = cmd;
-        let commission = ports
-            .commissions
-            .find(&commission_id)
+        require_or_not_found(ports, &commission_id, &actor_id, CommissionRole::Owner).await?;
+
+        // One unit, closed on every branch: the step check, the fact gate and the delete
+        // they guard share a transaction over the locked row, or a move between the pool
+        // read and the delete would slip through.
+        let uow = uow.open().await?;
+        let locked = uow
+            .commissions()
+            .find_for_update(&commission_id)
             .await?
             .filter(|c| c.is_owned_by(&actor_id))
             .ok_or(CommonError::NotFound(NotFoundEntity::Commission))?;
-
-        // One unit, closed on BOTH branches: the fact gate and the delete it
-        // guards must share a transaction, or there is a TOCTOU window.
-        let uow = uow.open().await?;
+        if !locked.lifecycle_step.allows_hard_delete() {
+            return Ok(Output {
+                outcome: Outcome::HasFacts,
+            });
+        }
         let has_facts = uow
             .commissions()
-            .commission_has_facts(&commission.id)
+            .commission_has_facts(&commission_id)
             .await?;
         if !has_facts {
-            uow.commissions().delete(&commission.id).await?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the ungated delete site, frozen until its slice routes it through the den's write gate"
+            )]
+            uow.commissions().delete(&commission_id).await?;
         }
 
         let outcome = if has_facts {

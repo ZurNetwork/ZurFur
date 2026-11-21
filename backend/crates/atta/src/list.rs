@@ -37,7 +37,7 @@ fn card_order(real_path: &crate::RealPath) -> u64 {
         .hash_one(real_path)
 }
 
-impl Resolver<'_> {
+impl<A: Send, P: Send> Resolver<'_, A, P> {
     /// One page of the resolved node's entries, starting at `page`: `None` unless the viewer can
     /// open the node and it is a directory, and the one not-found for a node resolved for another
     /// viewer. Entries the viewer can't see or the host refuses go before the sort and the cut,

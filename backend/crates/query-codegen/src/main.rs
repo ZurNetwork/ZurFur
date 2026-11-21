@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
     let database_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 
     let pool = adapter_pg::connect(&database_url).await?;
-    adapter_pg::migrate(&pool).await?;
+    adapter_pg::migrate_fresh(&pool).await?;
     let mut conn = pool.acquire().await?;
 
     let config = query_codegen::config();

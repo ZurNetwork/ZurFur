@@ -3,7 +3,7 @@ use crate::use_case;
 use domain::{
     datetime::DateTimeUtc,
     elements::{
-        commission::{CommissionId, NewChangelogEntry},
+        commission::{CommissionId, CommissionRole, NewChangelogEntry},
         user::UserId,
     },
     string_builder::StringBuilder,
@@ -11,7 +11,7 @@ use domain::{
 
 use crate::{
     Ports,
-    commission::{CommissionError, CommissionResult, notes::Notes},
+    commission::{CommissionError, CommissionResult, notes::Notes, require},
 };
 
 pub struct Command {
@@ -34,13 +34,13 @@ impl Notes<'_> {
             commission_id,
             content,
         } = cmd;
-        if !ports
-            .commissions
-            .is_participant(&commission_id, &actor_id)
-            .await?
-        {
-            return Err(CommissionError::NotAMember);
-        };
+        require(
+            ports,
+            &commission_id,
+            &actor_id,
+            CommissionRole::Participant,
+        )
+        .await?;
 
         let text = StringBuilder::new(content)
             .trimmed()

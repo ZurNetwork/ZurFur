@@ -46,3 +46,28 @@ fn an_unreachable_database_is_a_distinct_infra_problem() {
             .contains("database unreachable")
     );
 }
+
+// `health` holds no purpose, so it never reads the custody root: a malformed one is
+// no `config` problem, and its value never reaches stderr.
+#[tokio::test]
+async fn health_never_reads_the_root() {
+    const MALFORMED_ROOT: &str = "987654321012345";
+    let db = test_support::pg::fresh_db().await;
+    let url = db.url().to_string();
+
+    let output = tokio::task::spawn_blocking(move || {
+        zurfur(&url)
+            .env(composition::ROOT_KEY_ENV, MALFORMED_ROOT)
+            .args(["--json", "health"])
+            .output()
+            .expect("zurfur runs")
+    })
+    .await
+    .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains(MALFORMED_ROOT), "{stderr}");
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["status"], "ok");
+}

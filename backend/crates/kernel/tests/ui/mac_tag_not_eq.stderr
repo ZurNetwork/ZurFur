@@ -1,0 +1,13 @@
+error[E0369]: binary operation `==` cannot be applied to type `MacTag`
+  --> tests/ui/mac_tag_not_eq.rs:10:21
+   |
+10 |     let _same = tag == other;
+   |                 --- ^^ ----- MacTag
+   |                 |
+   |                 MacTag
+   |
+note: `MacTag` does not implement `PartialEq`
+  --> src/elements/custody/values.rs
+   |
+   | pub struct MacTag {
+   | ^^^^^^^^^^^^^^^^^ `MacTag` is defined in another crate

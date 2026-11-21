@@ -1,5 +1,5 @@
 use crate::{
-    Access, Admission, Found, Host, HostError, Kind, Level, Lift, NameOrdinal, NodeName, Reach,
+    Access, Admission, DisplayName, Found, Host, HostError, Kind, Level, Lift, NameOrdinal, Reach,
     RealPath, Relationship, Scope, Segment, Type, Via, Viewer,
 };
 
@@ -56,7 +56,7 @@ pub enum View {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     /// Its display name; a mount shows its target's.
-    pub name: NodeName,
+    pub name: DisplayName,
     /// Its type; a mount shows its target's.
     pub typ: Type,
     /// Whether it is one of the viewer's mounts rather than a real child of its folder.
@@ -131,10 +131,11 @@ pub(crate) struct Located {
     pub(crate) below: Vec<Lift>,
 }
 
-/// Reads the tree for one viewer, through the host.
-pub struct Resolver<'h> {
+/// Reads the tree for one viewer, through the host; `A` and `P` are the host's act and applied
+/// types, which a read never uses.
+pub struct Resolver<'h, A = (), P = ()> {
     /// The application Atta asks about nodes.
-    pub host: &'h dyn Host,
+    pub host: &'h dyn Host<Act = A, Applied = P>,
     /// Who is reading.
     pub viewer: Viewer,
     /// The read caps.
@@ -199,7 +200,7 @@ impl From<&Error> for Outcome {
     }
 }
 
-impl Resolver<'_> {
+impl<A: Send, P: Send> Resolver<'_, A, P> {
     /// The node at `den_path` below the viewer's `root`, with its crumbs; any miss is
     /// [`Error::NotFound`]. Logs its outcome class and the path's depth at debug.
     #[tracing::instrument(level = "debug", skip_all)]

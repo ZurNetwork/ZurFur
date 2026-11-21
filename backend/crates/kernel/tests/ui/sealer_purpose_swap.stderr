@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+  --> tests/ui/sealer_purpose_swap.rs:12:22
+   |
+12 |     keep_did_custody(signin_secrets);
+   |     ---------------- ^^^^^^^^^^^^^^ expected `ScopedSealer<ForDidCustody>`, found `ScopedSealer<ForSigninSecrets>`
+   |     |
+   |     arguments to this function are incorrect
+   |
+   = note: expected struct `ScopedSealer<ForDidCustody>`
+              found struct `ScopedSealer<ForSigninSecrets>`
+note: function defined here
+  --> tests/ui/sealer_purpose_swap.rs:8:4
+   |
+ 8 | fn keep_did_custody(_sealer: ScopedSealer<ForDidCustody>) {}
+   |    ^^^^^^^^^^^^^^^^ ------------------------------------

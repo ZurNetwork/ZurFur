@@ -1,18 +1,20 @@
 //! Each pair of not-found causes at the same depth (absent; present but not the viewer's) runs
 //! the same SQL statements in the same order on PostgreSQL, through the den routes and through
-//! commission's reads behind den's check, with the profile cache warm and then cold. The
-//! statements are read off the wire by the recording proxy; only bound values may differ.
+//! commission's reads behind den's check, with the profile cache warm and then cold, and
+//! through the rename, the new field writes and the board card's placement. The statements are read off the wire by
+//! the recording proxy; only bound values may differ.
 //! Requires a container runtime socket.
 
-use domain::elements::did::Did;
+use domain::elements::{did::Did, level::Level};
 use strum::VariantArray as _;
 use test_support::{
-    den::get,
+    den::{get, patch_title},
     pg_app::{
-        self, COMMISSION_NOT_FOUND, DenWorld, MissPair, ProfileCacheState, Statement, StatementLog,
-        archived_participant_pairs, commission_read_live_pairs, commission_read_stranger_pairs,
-        den_account_pair, den_character_pair, den_participant_pairs, den_stranger_pairs,
-        den_stranger_targets, download_participant_pair, stranger_targets,
+        self, COMMISSION_NOT_FOUND, CommissionCall, DenWorld, MissPair, ProfileCacheState,
+        RENAME_TITLE, Statement, StatementLog, absent_commission, archived_participant_pairs,
+        commission_read_live_pairs, commission_read_stranger_pairs, den_account_pair,
+        den_character_pair, den_participant_pairs, den_stranger_pairs, den_stranger_targets,
+        download_participant_pair, new_write_calls, rename_stranger_pair, stranger_targets,
     },
 };
 
@@ -23,8 +25,12 @@ const WHOLE_COMMISSION: &str = "commission/find";
 const WORKFLOW_BY_KEY: &str = "workflow/find";
 
 /// What den's check reads of a commission for a stranger, and all of it: the narrow
-/// projection and the viewer's participant row.
-const STRANGER_CHECK: [&str; 2] = ["commission/find_summary", "commission/is_participant"];
+/// projection as the viewer reads it, their participation probed inside it.
+const STRANGER_CHECK: [&str; 1] = ["commission/find_summary"];
+
+/// What the den routes read of commission data for a stranger, and all of it: the viewer's own
+/// mounts, since `/den/commissions/{id}` is their own `commissions` folder.
+const STRANGER_MOUNTS: [&str; 1] = ["commission/list_participating"];
 
 /// What a stranger's causes must never run on commission's reads: the whole row, anything by
 /// key, a file's name or bytes, and the changelog's entries.
@@ -40,6 +46,15 @@ const NEVER_FOR_A_STRANGER: [&str; 6] = [
 /// What a download of a file the viewer's check can't find must never run: the file's row,
 /// its name or its bytes, by key.
 const NEVER_FOR_A_MISSING_FILE: [&str; 3] = ["commission/find_file", "file/filename", "file/get"];
+
+/// What placing a card reads of a commission the actor can't see, and all of it: the
+/// actor's standing, then the actor's own view grant.
+const BOARD_CARD_CHECK: [&str; 2] = ["commission/standing", "commission/view_grant"];
+
+/// Everything a write by someone outside the commission runs, a rename or a field write, and
+/// all of it: the session's load, then the actor's standing, read on the pool before any unit
+/// opens.
+const WRITE_MISS: [&str; 2] = ["session/load", "commission/standing"];
 
 /// The profile cache's read, by DID.
 const PROFILE_GET: &str = "profile/get";
@@ -230,7 +245,7 @@ async fn a_stranger_s_causes_run_the_same_statements_through_the_den_routes() {
     let stranger = stranger(world);
 
     for (target, visibility) in den_stranger_targets(world) {
-        world.set_visibility(target.id, visibility.clone()).await;
+        world.set_visibility(target.id, visibility).await;
         let lifecycle = world.archived_or_live(&target);
         for pair in den_stranger_pairs(&target) {
             let label = format!("{visibility} {lifecycle}, {}", pair.label);
@@ -240,6 +255,7 @@ async fn a_stranger_s_causes_run_the_same_statements_through_the_den_routes() {
 
             for statements in runs {
                 assert_runs_none_of(&statements, &[WHOLE_COMMISSION], &label);
+                assert_eq!(commission_data(&statements), STRANGER_MOUNTS, "{label}");
             }
         }
     }
@@ -286,7 +302,7 @@ async fn a_stranger_s_causes_run_the_same_statements_through_commission_s_reads(
     let stranger = stranger(world);
 
     for (target, visibility) in stranger_targets(world) {
-        world.set_visibility(target.id, visibility.clone()).await;
+        world.set_visibility(target.id, visibility).await;
         let lifecycle = world.archived_or_live(&target);
         for pair in commission_read_stranger_pairs(&target) {
             let label = format!("{visibility} {lifecycle}, {}", pair.label);
@@ -300,9 +316,7 @@ async fn a_stranger_s_causes_run_the_same_statements_through_commission_s_reads(
         }
     }
     for (visibility, pair, code) in commission_read_live_pairs(world) {
-        world
-            .set_visibility(world.untitled.id, visibility.clone())
-            .await;
+        world.set_visibility(world.untitled.id, visibility).await;
         let label = format!("{visibility}, live, {}", pair.label);
 
         let runs =
@@ -371,8 +385,8 @@ async fn with_a_visibility_no_parser_reads_each_pair_still_runs_the_same_stateme
     let world = &recorded.world;
     let stranger = stranger(world);
     let bob = bob(world);
-    world.store_unparsable_visibility(world.old_sketch.id).await;
-    world.store_unparsable_visibility(world.untitled.id).await;
+    world.store_unparsable_level(world.old_sketch.id).await;
+    world.store_unparsable_level(world.untitled.id).await;
 
     for target in [world.old_sketch, world.untitled] {
         for pair in den_stranger_pairs(&target) {
@@ -422,4 +436,268 @@ async fn the_recording_tells_a_node_alice_opens_from_a_miss_at_the_same_depth() 
     let missed = recorded.statements.since(missed_mark);
 
     assert_ne!(texts(&opened), texts(&missed), "{:?}", names(&opened));
+}
+
+/// The statements `POST /commissions/{commission}/placements` into `column` runs as `reader`,
+/// after checking it is answered `status`.
+async fn placement_statements(
+    recorded: &Recorded,
+    reader: &Reader<'_>,
+    commission: domain::elements::commission::CommissionId,
+    column: domain::elements::workflow::ColumnId,
+    status: u16,
+) -> Vec<Statement> {
+    let path = format!("/commissions/{commission}/placements");
+    let body = serde_json::json!({ "column_id": column.to_string(), "index": 0 });
+    let mark = recorded.statements.mark();
+    let response = reader
+        .client
+        .post(format!("{}{path}", recorded.world.base_url()))
+        .json(&body)
+        .send()
+        .await
+        .expect("the placement is answered");
+    assert_eq!(response.status(), status, "{path}");
+    let statements = recorded.statements.since(mark);
+    let unreadable = statements.iter().any(Statement::is_unreadable);
+    assert!(!unreadable, "{path}: {:?}", names(&statements));
+    statements
+}
+
+#[tokio::test]
+async fn a_stranger_s_board_card_and_a_made_up_id_s_run_the_same_statements() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let bob = bob(world);
+    let column = world.add_backlog_column("To do").await;
+
+    // bob owns "Night Shift"'s board and holds no role and no grant on the Private "Old sketch".
+    let not_yours = placement_statements(&recorded, &bob, world.old_sketch.id, column, 404).await;
+    let absent = placement_statements(&recorded, &bob, absent_commission(), column, 404).await;
+
+    assert_eq!(
+        texts(&absent),
+        texts(&not_yours),
+        "{:?} against {:?}",
+        names(&absent),
+        names(&not_yours)
+    );
+    assert_eq!(commission_data(&absent), BOARD_CARD_CHECK);
+    assert_eq!(commission_data(&not_yours), BOARD_CARD_CHECK);
+}
+
+// A Participant's card of a Private commission passes on the role, after the same commission
+// reads a miss takes: the standing, then the view grant.
+#[tokio::test]
+async fn a_participant_s_board_card_reads_what_a_miss_reads() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let bob = bob(world);
+    let column = world.add_backlog_column("To do").await;
+
+    let placed = placement_statements(&recorded, &bob, world.untitled.id, column, 204).await;
+
+    assert_eq!(commission_data(&placed), BOARD_CARD_CHECK);
+}
+
+/// The statements `PATCH {path}` with [`RENAME_TITLE`] runs as `reader`, after checking it is a
+/// `404`.
+async fn rename_statements(recorded: &Recorded, reader: &Reader<'_>, path: &str) -> Vec<Statement> {
+    let mark = recorded.statements.mark();
+    let response = patch_title(reader.client, recorded.world.base_url(), path, RENAME_TITLE).await;
+    assert_eq!(response.status(), 404, "{path}");
+    let statements = recorded.statements.since(mark);
+    let unreadable = statements.iter().any(Statement::is_unreadable);
+    assert!(!unreadable, "{path}: {:?}", names(&statements));
+    statements
+}
+
+/// Whether `statement` opens a transaction.
+fn begins(statement: &Statement) -> bool {
+    let words = statement.sql.trim_start().to_ascii_uppercase();
+    words.starts_with("BEGIN") || words.starts_with("START TRANSACTION")
+}
+
+#[tokio::test]
+async fn a_stranger_s_rename_and_a_made_up_id_s_run_the_same_statements() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let bob = bob(world);
+    let pair = rename_stranger_pair(world);
+
+    // bob takes no part in "Old sketch".
+    let not_yours = rename_statements(&recorded, &bob, &pair.not_yours).await;
+    let absent = rename_statements(&recorded, &bob, &pair.absent).await;
+
+    for (cause, statements) in [("not yours", &not_yours), ("absent", &absent)] {
+        assert_eq!(names(statements), WRITE_MISS, "{cause}");
+        let opened = statements.iter().find(|statement| begins(statement));
+        assert_eq!(opened, None, "{cause}: a unit opened");
+    }
+    assert_eq!(texts(&absent), texts(&not_yours));
+}
+
+/// Everything the commission read runs for someone it doesn't open to, and all of it: the
+/// session's load, then den's check, the narrow projection as the viewer reads it.
+const GET_COMMISSION_MISS: [&str; 2] = ["session/load", "commission/find_summary"];
+
+#[tokio::test]
+async fn get_commission_runs_the_check_s_pair_alike_for_a_stranger_and_a_made_up_id() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let stranger = stranger(world);
+    let absent = format!("/commissions/{}", absent_commission());
+    let mut targets = stranger_targets(world).to_vec();
+    targets.push((world.untitled, Level::Listed));
+
+    for (target, visibility) in targets {
+        world.set_visibility(target.id, visibility).await;
+        let lifecycle = world.archived_or_live(&target);
+        let label = format!("{visibility} {lifecycle}, the commission read");
+        let pair = MissPair {
+            label: "the commission read",
+            absent: absent.clone(),
+            not_yours: format!("/commissions/{}", target.id),
+            home: format!("/commissions/{}", target.id),
+        };
+
+        let runs =
+            assert_same_statements(&recorded, &stranger, Root::NotNamed, &label, &pair).await;
+
+        for statements in runs {
+            assert_eq!(names(&statements), GET_COMMISSION_MISS, "{label}");
+            assert_runs_none_of(&statements, &[WHOLE_COMMISSION], &label);
+        }
+    }
+}
+
+/// The statements `call` runs at `path` as `reader`, after checking it is a `404`.
+async fn call_statements(
+    recorded: &Recorded,
+    reader: &Reader<'_>,
+    call: &CommissionCall,
+    path: &str,
+) -> Vec<Statement> {
+    let mark = recorded.statements.mark();
+    let response = call
+        .send(reader.client, recorded.world.base_url(), path)
+        .await;
+    assert_eq!(response.status(), 404, "{}: {path}", call.label);
+    let statements = recorded.statements.since(mark);
+    let unreadable = statements.iter().any(Statement::is_unreadable);
+    assert!(
+        !unreadable,
+        "{}: {path}: {:?}",
+        call.label,
+        names(&statements)
+    );
+    statements
+}
+
+#[tokio::test]
+async fn a_stranger_and_a_made_up_id_run_the_same_statements_on_every_new_call() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let bob = bob(world);
+
+    for call in new_write_calls() {
+        let pair = call.pair(&world.old_sketch);
+
+        // bob takes no part in "Old sketch".
+        let not_yours = call_statements(&recorded, &bob, &call, &pair.not_yours).await;
+        let absent = call_statements(&recorded, &bob, &call, &pair.absent).await;
+
+        for (cause, statements) in [("not yours", &not_yours), ("absent", &absent)] {
+            assert_eq!(names(statements), WRITE_MISS, "{}, {cause}", call.label);
+            let opened = statements.iter().find(|statement| begins(statement));
+            assert_eq!(opened, None, "{}, {cause}: a unit opened", call.label);
+        }
+        assert_eq!(texts(&absent), texts(&not_yours), "{}", call.label);
+    }
+}
+
+// The tests below walk the router's whole table of commission calls.
+use test_support::pg_app::{CallKind, every_commission_call};
+
+/// Everything a read of a commission the viewer can't be shown runs, and all of it: the
+/// session's load, then the one summary statement.
+const READ_MISS: [&str; 2] = ["session/load", "commission/find_summary"];
+
+#[tokio::test]
+async fn every_commission_call_runs_one_standing_statement_for_both_causes() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let stranger = stranger(world);
+    let column = world.seed_stranger_board().await.column;
+    let table = every_commission_call(column);
+
+    for (target, visibility) in stranger_targets(world) {
+        world.set_visibility(target.id, visibility).await;
+        let lifecycle = world.archived_or_live(&target);
+        for call in table.iter().filter(|call| call.kind == CallKind::Call) {
+            let pair = call.pair(&target);
+            let label = format!("{visibility} {lifecycle}, {}", call.label);
+
+            let not_yours = call_statements(&recorded, &stranger, call, &pair.not_yours).await;
+            let absent = call_statements(&recorded, &stranger, call, &pair.absent).await;
+
+            for (cause, statements) in [("not yours", &not_yours), ("absent", &absent)] {
+                assert_eq!(names(statements), WRITE_MISS, "{label}, {cause}");
+                let opened = statements.iter().find(|statement| begins(statement));
+                assert_eq!(opened, None, "{label}, {cause}: a unit opened");
+                assert_runs_none_of(statements, &[WHOLE_COMMISSION], &label);
+            }
+            assert_eq!(texts(&absent), texts(&not_yours), "{label}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn every_commission_read_runs_the_summary_alone_for_both_causes() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let stranger = stranger(world);
+    let column = world.seed_stranger_board().await.column;
+    let table = every_commission_call(column);
+
+    for (target, visibility) in stranger_targets(world) {
+        world.set_visibility(target.id, visibility).await;
+        let lifecycle = world.archived_or_live(&target);
+        for call in table.iter().filter(|call| call.kind == CallKind::Read) {
+            let pair = call.pair(&target);
+            let label = format!("{visibility} {lifecycle}, {}", call.label);
+
+            let not_yours = call_statements(&recorded, &stranger, call, &pair.not_yours).await;
+            let absent = call_statements(&recorded, &stranger, call, &pair.absent).await;
+
+            for (cause, statements) in [("not yours", &not_yours), ("absent", &absent)] {
+                assert_eq!(names(statements), READ_MISS, "{label}, {cause}");
+                assert_runs_none_of(statements, &NEVER_FOR_A_STRANGER, &label);
+            }
+            assert_eq!(texts(&absent), texts(&not_yours), "{label}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_stranger_s_board_card_of_every_stranger_target_runs_the_same_commission_statements() {
+    let recorded = recorded_world().await;
+    let world = &recorded.world;
+    let stranger = stranger(world);
+    let column = world.seed_stranger_board().await.column;
+
+    // The stranger owns a board and holds no role and no grant on any target.
+    for (target, visibility) in stranger_targets(world) {
+        world.set_visibility(target.id, visibility).await;
+        let lifecycle = world.archived_or_live(&target);
+        let label = format!("{visibility} {lifecycle}");
+
+        let not_yours = placement_statements(&recorded, &stranger, target.id, column, 404).await;
+        let absent =
+            placement_statements(&recorded, &stranger, absent_commission(), column, 404).await;
+
+        assert_eq!(commission_data(&not_yours), BOARD_CARD_CHECK, "{label}");
+        assert_eq!(commission_data(&absent), BOARD_CARD_CHECK, "{label}");
+        assert_eq!(texts(&absent), texts(&not_yours), "{label}");
+    }
 }

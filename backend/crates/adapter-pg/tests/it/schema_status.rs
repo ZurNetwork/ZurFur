@@ -27,7 +27,7 @@ async fn bare_then_partial_then_current() {
         assert_eq!(status, SchemaStatus::Current);
     }
 
-    adapter_pg::migrate(&pool).await.unwrap();
+    adapter_pg::migrate_fresh(&pool).await.unwrap();
     assert_eq!(schema_status(&pool).await.unwrap(), SchemaStatus::Current);
 }
 
@@ -35,7 +35,7 @@ async fn bare_then_partial_then_current() {
 async fn a_newer_binarys_ledger_reads_as_ahead() {
     let db = test_support::pg::bare_db().await;
     let pool = adapter_pg::connect(db.url()).await.unwrap();
-    adapter_pg::migrate(&pool).await.unwrap();
+    adapter_pg::migrate_fresh(&pool).await.unwrap();
 
     // A version far past anything embedded, as a newer build would record.
     assert_eq!(migrator().table_name, "_sqlx_migrations");

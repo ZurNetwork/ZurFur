@@ -14,7 +14,7 @@ use shared::settings::{HANDLE_CHANGE_LIMIT, HANDLE_CHANGE_WINDOW};
 use crate::{
     Ports,
     account::{
-        AccountError, AccountResult, Accounts, ServedName, ensure_handle_claimable,
+        AccountEntity, AccountError, AccountResult, Accounts, ServedName, ensure_handle_claimable,
         require_live_account,
     },
 };
@@ -81,6 +81,12 @@ impl<'a> Accounts<'a> {
             .await?;
 
         let uow = uow.open().await?;
+        // The row is locked for the repoint's own update, so a delete that landed after
+        // the checks above answers as an absent account.
+        uow.accounts()
+            .find_for_update(&account_id)
+            .await?
+            .ok_or(AccountError::NotFound(AccountEntity::Account))?;
         uow.accounts()
             .change_handle(&account_id, &account.handle, &handle, now)
             .await?;

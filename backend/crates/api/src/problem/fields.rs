@@ -2,7 +2,7 @@
 //! refused. A refusal list cannot be empty, and a field's detail is fixed per
 //! code, so it can never echo what the caller sent.
 
-use application::den::DenNameError;
+use domain::elements::name::NodeNameError;
 
 use super::Problem;
 use crate::generated::FieldError;
@@ -26,6 +26,16 @@ impl FieldPointer {
         );
         Self(format!("#/{name}"))
     }
+
+    /// Points at the member with this ProtoJSON name of the item at `index` of a request body
+    /// that is an array: `#/0/title`.
+    pub fn item_member(index: usize, name: &'static str) -> Self {
+        debug_assert!(
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric()),
+            "a member name is non-empty ASCII letters and digits, got {name:?}"
+        );
+        Self(format!("#/{index}/{name}"))
+    }
 }
 
 /// Why one field was refused. Each code has one fixed, plain-words detail.
@@ -33,10 +43,6 @@ impl FieldPointer {
     Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::IntoStaticStr, strum::VariantArray,
 )]
 #[strum(serialize_all = "snake_case")]
-#[expect(
-    clippy::enum_variant_names,
-    reason = "each variant spells its wire token; codes for fields other than names join later"
-)]
 pub enum FieldCode {
     /// A name that is empty once trimmed, or once the name rule strips what it strips.
     NameEmpty,
@@ -50,6 +56,8 @@ pub enum FieldCode {
     NameSeparator,
     /// A name that holds a character that can't be shown.
     NameReserved,
+    /// A token outside the field's vocabulary.
+    UnknownValue,
 }
 
 impl FieldCode {
@@ -62,20 +70,21 @@ impl FieldCode {
             Self::NameInvisible => "Leave out invisible and direction-changing characters.",
             Self::NameSeparator => "Keep it on one line.",
             Self::NameReserved => "Leave out characters that can't be shown.",
+            Self::UnknownValue => "Choose one of the listed values.",
         }
     }
 }
 
-impl From<DenNameError> for FieldCode {
+impl From<NodeNameError> for FieldCode {
     /// Why the name rule refused a name, whichever field it was typed in.
-    fn from(rule: DenNameError) -> Self {
+    fn from(rule: NodeNameError) -> Self {
         match rule {
-            DenNameError::Empty => Self::NameEmpty,
-            DenNameError::TooLong => Self::NameTooLong,
-            DenNameError::Slash => Self::NameSlash,
-            DenNameError::Invisible => Self::NameInvisible,
-            DenNameError::Separator => Self::NameSeparator,
-            DenNameError::Reserved => Self::NameReserved,
+            NodeNameError::Empty => Self::NameEmpty,
+            NodeNameError::TooLong => Self::NameTooLong,
+            NodeNameError::Slash => Self::NameSlash,
+            NodeNameError::Invisible => Self::NameInvisible,
+            NodeNameError::Separator => Self::NameSeparator,
+            NodeNameError::Reserved => Self::NameReserved,
         }
     }
 }
@@ -103,6 +112,10 @@ impl From<FieldRefusal> for FieldError {
 /// The detail of every field refusal problem; each field error says why itself.
 const INVALID_FIELDS_DETAIL: &str = "Some fields need changing; each one says why.";
 
+/// The detail of a refused rating: the vocabulary, never the token sent.
+const UNKNOWN_RATING_DETAIL: &str =
+    "That isn't a maturity rating; choose one of: safe, suggestive, nudity, adult.";
+
 impl Problem {
     /// `422`, code `invalid_request` — the request's fields need changing.
     /// It is [`Problem::invalid_request`] with a fixed detail, plus `errors`,
@@ -119,6 +132,21 @@ impl Problem {
         Self {
             errors,
             ..invalid_request
+        }
+    }
+
+    /// `422`, code `unknown_maturity_rating` — the rating at `pointer` is outside the
+    /// vocabulary. Its detail is fixed and its one field error is `unknown_value` at `pointer`,
+    /// so it never echoes the token sent.
+    pub fn unknown_maturity_rating_at(pointer: FieldPointer) -> Self {
+        let refusal = FieldRefusal {
+            pointer,
+            code: FieldCode::UnknownValue,
+        };
+        let unknown = Self::unknown_maturity_rating(UNKNOWN_RATING_DETAIL);
+        Self {
+            errors: vec![FieldError::from(refusal)],
+            ..unknown
         }
     }
 }

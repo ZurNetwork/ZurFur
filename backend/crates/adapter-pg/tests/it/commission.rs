@@ -1,4 +1,6 @@
-//! The commission fact predicate over PostgreSQL, against a throwaway
+//! The commission create over PostgreSQL: it writes only the starting state, bound to the
+//! gate's node, and a node that isn't the commission's own fails at the statement. Then the
+//! commission fact predicate, against a throwaway
 //! container: `commission_has_facts` lives on the [`UnitOfWork`]'s commissions
 //! view — the same transaction a future delete/archive gate runs in
 //! — and, with no fact-minter wired, every commission answers `false`. The
@@ -9,18 +11,23 @@
 use std::collections::BTreeSet;
 
 use adapter_pg::{COMMISSION_FACT_TABLES, COMMISSION_NON_FACT_TABLES, PgDatabase, PgPool};
-use chrono::Utc;
-use domain::elements::commission::NewCommission;
+use chrono::{SubsecRound, Utc};
 use domain::{
     elements::{
         commission::{
-            ChangelogEntryKind, Commission, CommissionId, CommissionTitle, NewChangelogEntry,
+            CommissionBirth, CommissionId, CommissionStart, NewChangelogEntry, NewCommission,
         },
         did::Did,
+        level::Level,
+        maturity::{Maturity, MaturityRating},
+        node::{NewNode, NodeId, NodeType},
         user::User,
     },
-    ports::{CommissionStore, Database},
+    ports::{CommissionRows, CommissionStore, Database, UnitOfWork},
 };
+use test_support::seeder::{commission_node, entry_nodes, write_commission};
+
+use crate::seed::{self, MintingSeeder, seed_titled};
 
 /// A fresh, fully migrated private database — a clone of the shared template
 /// (see `test_support::pg`). The second element keeps the shared container
@@ -51,28 +58,27 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 async fn every_commission_answers_false_with_no_fact_minters_wired() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:factless-owner").await;
-    let title = "A ref sheet"
-        .parse::<CommissionTitle>()
-        .expect("valid title");
-    let commission = Commission::create(title, owner.id, Utc::now(), None);
-    let id = commission.id;
-
     let db = PgDatabase::new(pool.clone());
 
     // Same-transaction read: create and ask inside one unit of work.
     let mut uow = db.begin().await.expect("begin");
-    {
-        let mut commissions = uow.commissions();
-        commissions.create(&commission).await.expect("create");
-        let has_facts = commissions
-            .commission_has_facts(&id)
-            .await
-            .expect("has_facts in the creating unit");
-        assert!(
-            !has_facts,
-            "no fact-minter exists, so no commission can bear facts"
-        );
-    }
+    let id = write_commission(
+        &mut *uow,
+        &MintingSeeder,
+        &owner.id,
+        Level::Private,
+        "A ref sheet",
+    )
+    .await;
+    let has_facts = uow
+        .commissions()
+        .commission_has_facts(&id)
+        .await
+        .expect("has_facts in the creating unit");
+    assert!(
+        !has_facts,
+        "no fact-minter exists, so no commission can bear facts"
+    );
     uow.commit().await.expect("commit");
 
     // A later unit of work sees the committed commission and the same answer.
@@ -113,23 +119,20 @@ async fn an_unknown_commission_answers_false() {
 async fn hard_delete_reaps_the_row_and_cascades_the_changelog() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:deleting-owner").await;
-    let title = "Doomed".parse::<CommissionTitle>().expect("valid title");
-    let commission = Commission::create(title, owner.id.clone(), Utc::now(), None);
-    let id = commission.id;
-
     let db = PgDatabase::new(pool.clone());
 
     // Arrange: the commission plus a changelog entry (its child row).
     let mut uow = db.begin().await.expect("begin");
-    uow.commissions().create(&commission).await.expect("create");
+    let id = write_commission(
+        &mut *uow,
+        &MintingSeeder,
+        &owner.id,
+        Level::Private,
+        "Doomed",
+    )
+    .await;
     uow.changelog()
-        .append(&NewChangelogEntry::event(
-            id,
-            ChangelogEntryKind::Created,
-            owner.id,
-            serde_json::json!({ "title": "Doomed" }),
-            Utc::now(),
-        ))
+        .append(&NewChangelogEntry::created(id, owner.id, Utc::now()))
         .await
         .expect("append genesis entry");
     uow.commit().await.expect("commit");
@@ -196,22 +199,10 @@ async fn hard_delete_reaps_the_row_and_cascades_the_changelog() {
 async fn set_archived_round_trips_and_reports_transitions() {
     let (pool, _container) = fresh_pool().await;
     let owner = provision(&pool, "did:plc:archiving-owner").await;
-    let commission = Commission::create(
-        "A ref sheet"
-            .parse::<CommissionTitle>()
-            .expect("valid title"),
-        owner.id,
-        Utc::now(),
-        None,
-    );
-    let id = commission.id;
+    let id = seed_titled(&pool, &owner.id, "A ref sheet").await;
 
     let db = PgDatabase::new(pool.clone());
     let store = adapter_pg::PgCommissionStore::new(pool.clone());
-
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions().create(&commission).await.expect("create");
-    uow.commit().await.expect("commit");
     assert!(
         store
             .find(&id)
@@ -238,6 +229,11 @@ async fn set_archived_round_trips_and_reports_transitions() {
         .await
         .expect("find")
         .expect("the record survives archiving");
+    let viewed = store
+        .find_summary(&id, &owner.id)
+        .await
+        .expect("find_summary")
+        .expect("the record survives archiving");
     let stored_stamp = stored.archived_at.expect("the flag is set");
     assert_eq!(
         stored_stamp.timestamp_micros(),
@@ -245,7 +241,7 @@ async fn set_archived_round_trips_and_reports_transitions() {
         "the stamp round-trips (at the column's microsecond precision)",
     );
     assert_eq!(
-        stored.title.as_str(),
+        viewed.summary.title.as_str(),
         "A ref sheet",
         "the record survives intact"
     );
@@ -353,144 +349,161 @@ async fn every_commission_referencing_table_is_classified_as_fact_or_non_fact() 
     );
 }
 
-// --- ZMVP-157: `list_owned_by` against real SQL. ---
-//
-// `WHERE owner_id = $1 AND archived_at IS NULL` scopes the owner's active
-// listing. These tests prove the owner scoping and the active filter hold in
-// postgres.
-
-/// Create a commission owned by `owner` in its own committed unit of work.
-async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> NewCommission {
-    let commission = Commission::create(
-        title.parse::<CommissionTitle>().expect("valid title"),
-        owner.id.clone(),
-        Utc::now(),
-        None,
-    );
-    let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions().create(&commission).await.expect("create");
-    uow.commit().await.expect("commit");
-    commission
+/// Writes `nodes` on `unit`, in order.
+async fn write_nodes(unit: &mut dyn UnitOfWork, nodes: &[NewNode]) {
+    let mut repo = unit.nodes();
+    for node in nodes {
+        repo.create(node).await.expect("store a node");
+    }
 }
 
-// The listing is owner-scoped and active-only: another user's commission never
-// appears (the containment property an owner's listing rests on), and an
-// archived one of the caller's own is filtered out — the active-view filtering
-// `Commission::archived_at` documents as belonging to listing projections.
-#[tokio::test]
-async fn list_owned_by_returns_only_the_callers_active_commissions_in_id_order() {
-    let (pool, _container) = fresh_pool().await;
-
-    let owner = provision(&pool, "did:plc:pglist-comm-owner").await;
-    let stranger = provision(&pool, "did:plc:pglist-comm-stranger").await;
-    let store = adapter_pg::PgCommissionStore::new(pool.clone());
-
-    let first = create_commission(&pool, &owner, "A ref sheet").await;
-    let second = create_commission(&pool, &owner, "A full illustration").await;
-    let archived = create_commission(&pool, &owner, "An old job").await;
-    let theirs = create_commission(&pool, &stranger, "Someone else's job").await;
-
-    let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .set_archived(&archived.id, Some(Utc::now()))
-        .await
-        .expect("archive");
-    uow.commit().await.expect("commit");
-
-    let rows = store.list_owned_by(&owner.id).await.expect("list_owned_by");
-    let listed: Vec<CommissionId> = rows.iter().map(|commission| commission.id).collect();
-
-    assert!(
-        !listed.contains(&theirs.id),
-        "another user's commission is never listed, got {listed:?}"
-    );
-    assert!(
-        !listed.contains(&archived.id),
-        "an archived commission is filtered out of the active listing, got {listed:?}"
-    );
-    assert!(
-        listed.contains(&first.id) && listed.contains(&second.id),
-        "both of the caller's active commissions are listed, got {listed:?}"
-    );
-    assert_eq!(
-        listed.len(),
-        2,
-        "exactly the caller's two active commissions, got {listed:?}"
-    );
-
-    // Ordering is `ORDER BY id`, and commission ids are UUIDv7 — creation order.
-    let order: Vec<uuid::Uuid> = listed.iter().map(|id| uuid::Uuid::from(*id)).collect();
-    let mut expected = order.clone();
-    expected.sort();
-    assert_eq!(order, expected, "rows come back ascending by commission id");
-
-    let titles: Vec<&str> = rows
-        .iter()
-        .map(|commission| commission.title.as_str())
-        .collect();
-    assert!(
-        titles.contains(&"A ref sheet") && titles.contains(&"A full illustration"),
-        "rows are hydrated, not just ids: {titles:?}"
-    );
+/// A starting state chosen with no maturity and no deadline.
+fn unrated() -> NewCommission {
+    NewCommission {
+        maturity: None,
+        deadline: None,
+    }
 }
 
-// A user with nothing owns nothing: the empty listing is a plain empty vec, not
-// an error — what an owner's listing answers for a new account.
+// A create stores the domain's starting state and nothing else. Its title and level are its
+// node's; only the maturity and deadline are chosen.
 #[tokio::test]
-async fn list_owned_by_is_empty_for_a_user_with_no_commissions() {
+async fn a_created_commission_is_stored_in_the_domain_s_starting_state() {
     let (pool, _container) = fresh_pool().await;
-    let newcomer = provision(&pool, "did:plc:pglist-comm-newcomer").await;
-    let store = adapter_pg::PgCommissionStore::new(pool.clone());
-
-    let rows = store
-        .list_owned_by(&newcomer.id)
-        .await
-        .expect("list_owned_by");
-    assert!(rows.is_empty(), "a user with no commissions lists none");
-}
-
-// set_title answers true only when the stored title changes: a repeat of the
-// stored title and an absent commission both answer false, and the new title
-// is what a later read finds.
-#[tokio::test]
-async fn set_title_reports_only_a_real_change() {
-    let (pool, _container) = fresh_pool().await;
-    let owner = provision(&pool, "did:plc:pg-rename-owner").await;
-    let created = create_commission(&pool, &owner, "A ref sheet").await;
-    let renamed = "A full piece"
-        .parse::<CommissionTitle>()
-        .expect("valid title");
-    let absent = CommissionId::from(uuid::Uuid::now_v7());
+    let owner = provision(&pool, "did:plc:pg-born-owner").await;
+    let id = CommissionId::mint();
+    let node = commission_node(id, Level::Listed, "A moonlit piece");
+    let mut nodes = vec![node.clone()];
+    nodes.extend(entry_nodes(node.id));
+    // The columns keep microseconds, so the chosen instants are rounded to them.
+    let created_at = Utc::now().trunc_subsecs(6);
+    let deadline = created_at + chrono::Duration::days(30);
+    let birth = CommissionBirth {
+        node: node.id,
+        owner_id: owner.id.clone(),
+        created_at,
+    };
+    let maturity = Maturity {
+        rating: MaturityRating::Suggestive,
+        graphic: false,
+    };
+    let chosen = NewCommission {
+        maturity: Some(maturity),
+        deadline: Some(deadline.into()),
+    };
 
     let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin");
-    let first = uow
-        .commissions()
-        .set_title(&created.id, &renamed)
+    let mut unit = db.begin().await.expect("begin");
+    write_nodes(&mut *unit, &nodes).await;
+    seed::create(&mut *unit, id, &birth, &chosen)
         .await
-        .expect("first rename");
-    let repeat = uow
-        .commissions()
-        .set_title(&created.id, &renamed)
-        .await
-        .expect("repeat rename");
-    let missing = uow
-        .commissions()
-        .set_title(&absent, &renamed)
-        .await
-        .expect("rename of an absent commission");
-    uow.commit().await.expect("commit");
+        .expect("create");
+    unit.commit().await.expect("commit");
 
-    assert!(first, "a new title is a real change");
-    assert!(!repeat, "the title already stored answers false");
-    assert!(!missing, "an absent commission answers false");
     let store = adapter_pg::PgCommissionStore::new(pool.clone());
-    let stored = store
-        .find(&created.id)
+    let found = store
+        .find(&id)
         .await
         .expect("find")
-        .expect("the commission exists");
-    assert_eq!(stored.title.as_str(), "A full piece");
+        .expect("the commission is stored");
+    let stored_start = CommissionStart {
+        lifecycle_step: found.lifecycle_step.clone(),
+        dispute: found.dispute.clone(),
+        direction_status: found.direction_status,
+        delayed_flag: found.delayed_flag,
+        linked_channel: found.linked_channel.clone(),
+        archived_at: found.archived_at,
+    };
+    assert_eq!(
+        stored_start,
+        CommissionStart::default(),
+        "the domain's starting state"
+    );
+    assert_eq!(found.maturity, Some(maturity), "the chosen maturity");
+    assert_eq!(found.deadline, Some(deadline), "the chosen deadline");
+    assert_eq!(found.owner_id, owner.id, "the gate's owner");
+    assert_eq!(found.created_at, created_at, "the gate's time");
+    let viewed = store
+        .find_summary(&id, &owner.id)
+        .await
+        .expect("find_summary")
+        .expect("the commission is stored");
+    assert_eq!(
+        viewed.summary.title.as_str(),
+        "A moonlit piece",
+        "the node's name"
+    );
+    assert_eq!(viewed.summary.visibility, Level::Listed, "the node's level");
+    let node_id: Option<uuid::Uuid> =
+        sqlx::query_scalar("SELECT node_id FROM commission WHERE id = $1")
+            .bind(uuid::Uuid::from(id))
+            .fetch_one(&pool)
+            .await
+            .expect("read the bound node");
+    assert_eq!(
+        node_id,
+        Some(uuid::Uuid::from(node.id)),
+        "bound to its node"
+    );
+}
+
+// A create at a node that isn't the commission's own fails at the create's own statement,
+// before any commit, and ends the unit: another commission's node, one of its own entries,
+// and a top-level commission node whose segment isn't the id.
+#[tokio::test]
+async fn create_with_a_node_that_is_not_its_own_fails_at_the_statement() {
+    let (pool, _container) = fresh_pool().await;
+    let owner = provision(&pool, "did:plc:pg-misbound-owner").await;
+    let other = seed_titled(&pool, &owner.id, "Another piece").await;
+    let other_node: uuid::Uuid = sqlx::query_scalar("SELECT node_id FROM commission WHERE id = $1")
+        .bind(uuid::Uuid::from(other))
+        .fetch_one(&pool)
+        .await
+        .expect("the other commission's node");
+    let id = CommissionId::mint();
+    let own = commission_node(id, Level::Private, "Its own");
+    let entries = entry_nodes(own.id);
+    let stray = commission_node(CommissionId::mint(), Level::Private, "A stray");
+    let brief = entries
+        .iter()
+        .find(|entry| entry.node_type == NodeType::CommissionBrief)
+        .expect("the brief entry")
+        .id;
+    let mut nodes = vec![own, stray.clone()];
+    nodes.extend(entries);
+    let wrong_nodes = [
+        ("another commission's node", NodeId::from(other_node)),
+        ("an entry node", brief),
+        ("a node whose segment isn't the id", stray.id),
+    ];
+
+    let db = PgDatabase::new(pool.clone());
+    for (what, wrong) in wrong_nodes {
+        let mut unit = db.begin().await.expect("begin");
+        write_nodes(&mut *unit, &nodes).await;
+        let birth = CommissionBirth {
+            node: wrong,
+            owner_id: owner.id.clone(),
+            created_at: Utc::now(),
+        };
+        let created = seed::create(&mut *unit, id, &birth, &unrated()).await;
+        assert!(created.is_err(), "{what} fails at the create");
+        let committed = unit.commit().await;
+        assert!(
+            committed.is_err(),
+            "{what}: the refused create ends the unit"
+        );
+    }
+    let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM commission WHERE id = $1")
+        .bind(uuid::Uuid::from(id))
+        .fetch_one(&pool)
+        .await
+        .expect("count the commission");
+    assert_eq!(stored, 0, "no commission is stored");
+    let nodes: i64 = sqlx::query_scalar("SELECT count(*) FROM node WHERE segment = $1")
+        .bind(id.to_string())
+        .fetch_one(&pool)
+        .await
+        .expect("count its node");
+    assert_eq!(nodes, 0, "none of the ended units' nodes is kept");
 }

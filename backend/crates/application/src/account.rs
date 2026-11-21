@@ -5,9 +5,14 @@ use domain::{
     elements::{
         account::{Account, AccountId},
         handle::{Handle, HandleDomain, HandleError},
+        role::Role,
+        user::UserId,
         workflow::WorkflowError,
     },
-    ports::{DidBelongsToAnotherActor, DidMinter, HandleTaken},
+    ports::{
+        AccountDeactivated, AccountRepo, DidBelongsToAnotherActor, DidMinter, HandleTaken,
+        UnitOfWork,
+    },
 };
 use shared::settings::HANDLE_QUARANTINE_WINDOW;
 
@@ -15,7 +20,6 @@ pub mod change_handle;
 pub mod create;
 pub mod delete;
 pub(crate) mod den;
-pub mod facts;
 pub mod invitation;
 pub mod leave;
 pub mod list;
@@ -77,7 +81,7 @@ pub enum AccountEntity {
 /// [`source`](std::error::Error::source).
 #[derive(Debug)]
 pub enum AccountError {
-    /// The handle is claimed — live, tombstoned or quarantined.
+    /// The handle is claimed — by a live or deactivated account, or quarantined.
     HandleTaken,
     /// The handle's namespace isn't supported for this operation.
     UnsupportedHandle,
@@ -238,7 +242,8 @@ impl std::error::Error for AccountError {
 impl std::error::Error for AccountEntity {}
 
 /// The one place a store error becomes a use-case error: [`HandleTaken`] and
-/// [`DidBelongsToAnotherActor`] are recognized as state conflicts, anything
+/// [`DidBelongsToAnotherActor`] are recognized as state conflicts,
+/// [`AccountDeactivated`] answers as an absent Account, anything
 /// else stays [`Infrastructure`](AccountError::Infrastructure).
 impl From<anyhow::Error> for AccountError {
     fn from(err: anyhow::Error) -> Self {
@@ -246,6 +251,8 @@ impl From<anyhow::Error> for AccountError {
             Self::HandleTaken
         } else if err.downcast_ref::<DidBelongsToAnotherActor>().is_some() {
             Self::DidBelongsToAnotherActor
+        } else if err.downcast_ref::<AccountDeactivated>().is_some() {
+            Self::NotFound(AccountEntity::Account)
         } else {
             Self::Infrastructure(err)
         }
@@ -269,9 +276,87 @@ pub(crate) async fn require_live_account(
         .ok_or(AccountError::NotFound(AccountEntity::Account))
 }
 
+/// Lock the live account's row `FOR SHARE` until the unit ends, or refuse with `NotFound`.
+/// Must be the unit's first statement: holding the account row before any child row keeps
+/// a delete racing this write to one wait, never a deadlock.
+pub(crate) async fn lock_live_account(
+    uow: &mut dyn UnitOfWork,
+    account_id: &AccountId,
+) -> AccountResult<Account> {
+    uow.accounts()
+        .find_for_share(account_id)
+        .await?
+        .ok_or(AccountError::NotFound(AccountEntity::Account))
+}
+
+/// Lock the account's row `FOR SHARE` while it is live, and let a deactivated account
+/// through. Must be a departure's or a decline's first statement, for the same lock order
+/// as [`lock_live_account`]; nothing writes a deactivated account's row, so it needs no lock.
+pub(crate) async fn lock_account_row(
+    uow: &mut dyn UnitOfWork,
+    account_id: &AccountId,
+) -> AccountResult<()> {
+    uow.accounts().find_for_share(account_id).await?;
+    Ok(())
+}
+
+/// How an act locks its actor's membership row: `Share` for an actor who keeps their role,
+/// `Update` for one the act itself changes, as a transfer demotes its Owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ActorLock {
+    Share,
+    Update,
+}
+
+/// Locks both members' rows in one order every unit shares, so two acts on each other's
+/// rows wait instead of deadlocking. Returns the roles as (actor, target), each `None` for
+/// a non-member. Call it right after the Account row's lock.
+pub(crate) async fn lock_actor_and_target(
+    accounts: &mut dyn AccountRepo,
+    account: &AccountId,
+    actor: &UserId,
+    actor_lock: ActorLock,
+    target: &UserId,
+) -> anyhow::Result<(Option<Role>, Option<Role>)> {
+    let actor_first = AsRef::<str>::as_ref(actor) <= AsRef::<str>::as_ref(target);
+    if actor_first {
+        let actor_role = lock_actor(accounts, account, actor, actor_lock).await?;
+        let target_role = accounts.role_of_for_update(target, account).await?;
+        Ok((actor_role, target_role))
+    } else {
+        let target_role = accounts.role_of_for_update(target, account).await?;
+        let actor_role = lock_actor(accounts, account, actor, actor_lock).await?;
+        Ok((actor_role, target_role))
+    }
+}
+
+/// The actor's role, their row locked as `actor_lock` says.
+async fn lock_actor(
+    accounts: &mut dyn AccountRepo,
+    account: &AccountId,
+    actor: &UserId,
+    actor_lock: ActorLock,
+) -> anyhow::Result<Option<Role>> {
+    match actor_lock {
+        ActorLock::Share => accounts.role_of_for_share(actor, account).await,
+        ActorLock::Update => accounts.role_of_for_update(actor, account).await,
+    }
+}
+
+/// Logs, once at `warn`, that `act` passed its pre-check but was refused inside its unit
+/// because a concurrent change landed first, and hands the refusal back to return.
+pub(crate) fn refused_after_a_race(act: &'static str, refusal: AccountError) -> AccountError {
+    tracing::warn!(
+        act,
+        refusal = %refusal,
+        "an account act lost its race with a concurrent change and was refused"
+    );
+    refusal
+}
+
 /// The one handle-claim gate: refuse with `InvalidHandle` when `handle_domain`
 /// withholds `handle` (its apex or a reserved label), and with `HandleTaken`
-/// when a live account already holds it, or when, inside the Zurfur namespace,
+/// when an account, live or deactivated, already holds it, or when, inside the Zurfur namespace,
 /// another account vacated it within the quarantine window. `exempt` names the
 /// account whose own vacated handle does not count against it.
 // TODO(Engineer): Characters claim through this gate too once their handle

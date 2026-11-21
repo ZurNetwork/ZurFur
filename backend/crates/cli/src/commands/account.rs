@@ -115,9 +115,11 @@ pub async fn run(
                 .await
                 .map_err(|err| match err {
                     AccountError::HandleTaken => CliError::domain("handle_taken", err),
-                    // The terse `Display` is what the user sees; the cause goes to stderr.
-                    AccountError::Infrastructure(_) => {
-                        tracing::error!(error = ?err, "founding the account failed");
+                    // The terse `Display` is what the user sees. The cause may name the new
+                    // Account's DID, so it goes to stderr at debug only.
+                    AccountError::Infrastructure(ref cause) => {
+                        tracing::error!("founding the account failed");
+                        tracing::debug!(error = %cause, "the founding's failure");
                         CliError::infra("internal_error", err)
                     }
                     // Unreachable from founding; mapped to keep the match exhaustive.
@@ -169,12 +171,7 @@ pub async fn run(
             // Confirm only after resolving, and act only after confirming — a
             // declined prompt leaks nothing about whether the id names anything.
             if !yes {
-                let account_id_display = account_id.to_string();
-                let prompt = format!(
-                    "Delete account {account_id_display}? This frees its handle and \
-                     tombstones its did:plc; it cannot be undone after the PLC recovery \
-                     window. [y/N] "
-                );
+                let prompt = delete_prompt(&account_id);
                 confirm_destructive(&prompt)?;
             }
             let command = account::delete::Command {
@@ -194,9 +191,11 @@ pub async fn run(
                         // Unreachable from delete; mapped to keep the match exhaustive.
                         AccountError::NotFound(_) => CliError::domain("not_found", err),
                         AccountError::IncorrectRole => CliError::domain("forbidden", err),
-                        // The terse `Display` is what the user sees; the cause goes to stderr.
-                        AccountError::Infrastructure(_) => {
-                            tracing::error!(error = ?err, "deleting the account failed");
+                        // The terse `Display` is what the user sees. The cause may name the
+                        // Account's DID, so it goes to stderr at debug only.
+                        AccountError::Infrastructure(ref cause) => {
+                            tracing::error!("deleting the account failed");
+                            tracing::debug!(error = %cause, "the delete's failure");
                             CliError::infra("internal_error", err)
                         }
                         // Unreachable from delete (no handle is claimed here).
@@ -247,3 +246,17 @@ pub async fn run(
         }
     }
 }
+
+/// The delete's confirmation for `account_id`: what happens in each case, since the Account's
+/// history, read only after the answer, decides between a soft and a hard delete.
+fn delete_prompt(account_id: &AccountId) -> String {
+    format!(
+        "Delete account {account_id}? If it ever had a member besides its founder, it is \
+         switched off and kept, and its handle stays reserved. Otherwise it is removed for \
+         good: its handle is freed and its did:plc tombstoned, which can't be undone after \
+         the PLC recovery window. [y/N] "
+    )
+}
+
+#[cfg(test)]
+mod tests;

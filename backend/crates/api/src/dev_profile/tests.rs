@@ -1,3 +1,6 @@
+use domain::elements::custody::{MacMessage, MacUse};
+use test_support::custody::{root_of, test_custody, test_root};
+
 use super::*;
 
 #[test]
@@ -46,4 +49,45 @@ fn any_other_zurfur_env_is_refused_by_name() {
         let named = OutsideDev::Named(other.to_string());
         assert_eq!(refused.to_string(), named.to_string());
     }
+}
+
+/// A message for the Den MAC tests.
+fn den_node() -> MacMessage {
+    let parts: [&[u8]; 1] = [b"a den node"];
+    MacMessage::try_from(parts.as_slice()).expect("one short part encodes")
+}
+
+#[tokio::test]
+async fn dev_profile_derives_from_the_configured_root() {
+    let message = den_node();
+    let from_test_root = den_mac(test_root(), &Environment::DEV, false).expect("a dev root");
+    let from_another_root =
+        den_mac(root_of([0x11; 32]), &Environment::DEV, false).expect("a dev root");
+    let test_custodian = test_custody().den_mac;
+
+    let profile_tag = from_test_root
+        .mac(MacUse::DenNode, &message)
+        .await
+        .expect("the profile holds the Den's key");
+    let custodian_tag = test_custodian
+        .mac(MacUse::DenNode, &message)
+        .await
+        .expect("the test custodian holds the Den's key");
+    let other_tag = from_another_root
+        .mac(MacUse::DenNode, &message)
+        .await
+        .expect("the profile holds the Den's key");
+
+    assert_eq!(profile_tag.stored_bytes(), custodian_tag.stored_bytes());
+    assert_eq!(profile_tag.key_id(), custodian_tag.key_id());
+    assert_ne!(profile_tag.stored_bytes(), other_tag.stored_bytes());
+}
+
+#[test]
+fn the_custody_guard_runs_before_the_dev_profile_derives() {
+    let refusal = den_mac(test_root(), &Environment::PROD, false)
+        .expect_err("the custody guard refuses production");
+
+    let message = format!("{refusal:#}");
+    assert!(message.starts_with("refusing to boot in PROD"), "{message}");
 }

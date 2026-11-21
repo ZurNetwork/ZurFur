@@ -17,13 +17,28 @@ fn supreme_arts() -> AccountId {
     AccountId::from(Did::from("did:plc:t7nesupremeartsfixtureaa".to_owned()))
 }
 
-/// A backend holding commission's fixture rows.
+/// A backend holding commission's fixture rows, over alice and bob as Users.
 async fn seeded() -> MemBackend {
     let backend = MemBackend::new();
+    for person in [alice(), bob()] {
+        backend
+            .provision(person.did())
+            .await
+            .expect("the fixture people are Users");
+    }
     seed_commission(&backend, &alice(), &bob(), &supreme_arts())
         .await
         .expect("the commission fixtures seed");
     backend
+}
+
+/// Whether `user` holds a participant row on `id`: the unit's participation read, on a unit
+/// that keeps nothing.
+async fn participates(backend: &MemBackend, id: &CommissionId, user: &UserId) -> bool {
+    let mut unit = backend.database().begin().await.unwrap();
+    let participates = unit.commissions().is_participant(id, user).await.unwrap();
+    unit.rollback().await.unwrap();
+    participates
 }
 
 /// The stored titles of a listing, in order.
@@ -54,7 +69,7 @@ async fn alice_takes_part_in_untitled_and_the_archived_old_sketch() {
     assert!(
         listing
             .iter()
-            .all(|summary| summary.visibility == Visibility::Private),
+            .all(|summary| summary.visibility == Level::Private),
         "every fixture commission is Private"
     );
 }
@@ -69,9 +84,9 @@ async fn bob_takes_part_only_in_untitled() {
     let listing = store.list_participating(&bob()).await.unwrap();
 
     assert_eq!(titles(&listing), ["Untitled"]);
-    assert!(store.is_participant(&untitled(), &bob()).await.unwrap());
-    assert!(!store.is_participant(&old_sketch(), &bob()).await.unwrap());
-    assert!(store.is_participant(&old_sketch(), &alice()).await.unwrap());
+    assert!(participates(&backend, &untitled(), &bob()).await);
+    assert!(!participates(&backend, &old_sketch(), &bob()).await);
+    assert!(participates(&backend, &old_sketch(), &alice()).await);
 }
 
 // "Untitled" holds its two files, named and keyed as fixed, and the name read
@@ -137,7 +152,7 @@ async fn the_account_holds_the_workflow_queue() {
         .await
         .unwrap()
         .expect("Queue exists");
-    assert_eq!(board.visibility, Visibility::Private);
+    assert_eq!(board.visibility, Level::Private);
     assert!(workflows.columns(&queue()).await.unwrap().is_empty());
 }
 

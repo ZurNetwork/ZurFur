@@ -1,0 +1,9 @@
+error[E0599]: no method named `with_note` found for struct `NewChangelogEntry` in the current scope
+  --> tests/ui/a_gated_entry_takes_no_note.rs:10:10
+   |
+ 9 |       let _noted = NewChangelogEntry::renamed(CommissionId::mint(), actor, chrono::Utc::now())
+   |  __________________-
+10 | |         .with_note("A secret sketch".to_owned());
+   | |         -^^^^^^^^^ method not found in `NewChangelogEntry`
+   | |_________|
+   |

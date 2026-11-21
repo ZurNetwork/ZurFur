@@ -17,12 +17,12 @@ use application::{
 };
 use chrono::Utc;
 use domain::elements::{
-    commission::{SurfaceAddress, TabId},
+    commission::{CommissionTitle, SlotTitle, SurfaceAddress},
     did::Did,
     handle::{Handle, HandleDomain},
+    name::NodeNameError,
 };
 use test_support::recording::{CallLog, RecordingDidMinter};
-use uuid::Uuid;
 
 /// A name made only of the zero-width joiner, which the Den's rule counts as empty.
 const JOINER_ALONE: &str = "\u{200D}";
@@ -60,26 +60,13 @@ async fn world() -> composition::Runtime {
     built.runtime
 }
 
-#[tokio::test]
-async fn a_commission_titled_with_a_joiner_alone_is_refused_as_empty() {
-    let runtime = world().await;
-    let command = create::Command {
-        actor_id: alice(),
-        title: JOINER_ALONE.parse().expect("the title rule keeps a joiner"),
-        maturity: None,
-        deadline: None,
-    };
+// A commission title is the Den's name rule's from its parse on, so a create never carries a
+// refused one: the driver refuses it before any use case runs.
+#[test]
+fn a_commission_titled_with_a_joiner_alone_is_refused_as_empty() {
+    let title = JOINER_ALONE.parse::<CommissionTitle>();
 
-    let created = runtime
-        .app()
-        .commissions()
-        .create(command, Utc::now())
-        .await;
-
-    assert!(matches!(
-        created,
-        Err(CommissionError::InvalidName(DenNameError::Empty))
-    ));
+    assert_eq!(title, Err(NodeNameError::Empty));
 }
 
 #[tokio::test]
@@ -106,32 +93,11 @@ async fn a_file_named_with_a_joiner_alone_is_refused_as_empty() {
     ));
 }
 
-#[tokio::test]
-async fn a_slot_titled_with_a_joiner_alone_is_refused_as_empty() {
-    let runtime = world().await;
-    let tab = TabId::from(Uuid::from_u128(1));
-    let surface = SurfaceAddress::new(tab, "content".parse().expect("a surface name"));
-    let slot = SlotBody {
-        tab,
-        surface,
-        title: JOINER_ALONE
-            .parse()
-            .expect("the slot title rule keeps a joiner"),
-        notes: None,
-    };
-    let command = declare::Command {
-        user_id: alice(),
-        commission_id: untitled(),
-        slots: vec![slot],
-    };
+#[test]
+fn a_slot_titled_with_a_joiner_alone_is_refused_as_empty() {
+    let refused = JOINER_ALONE.parse::<SlotTitle>();
 
-    let app = runtime.app();
-    let declared = app.commissions().slots().declare(command, Utc::now()).await;
-
-    assert!(matches!(
-        declared,
-        Err(CommissionError::InvalidName(DenNameError::Empty))
-    ));
+    assert_eq!(refused, Err(NodeNameError::Empty));
 }
 
 #[tokio::test]
@@ -192,12 +158,12 @@ async fn a_commission_title_is_stored_as_the_den_s_rule_keeps_it() {
         .expect("the commission is created");
     let stored = runtime
         .commissions
-        .find(&created.id)
+        .find_summary(&created.id, &alice())
         .await
         .expect("no store fails")
         .expect("the commission is stored");
 
-    assert_eq!(stored.title.as_str(), AS_KEPT);
+    assert_eq!(stored.summary.title.as_str(), AS_KEPT);
 }
 
 #[tokio::test]
@@ -240,7 +206,6 @@ async fn a_slot_title_is_stored_as_the_den_s_rule_keeps_it() {
     let tab = composition.tabs.first().expect("Untitled has a tab").id;
     let surface = SurfaceAddress::new(tab, "content".parse().expect("a surface name"));
     let slot = SlotBody {
-        tab,
         surface,
         title: WITH_A_ZERO_WIDTH_SPACE.parse().expect("a valid slot title"),
         notes: None,
@@ -427,26 +392,5 @@ async fn an_account_name_unsafe_to_show_is_still_refused() {
             panic!("{name:?} is not refused as an invalid name");
         };
         assert_eq!(refused_as, refusal, "{name:?}");
-    }
-}
-
-/// The escaper's Unicode tables in `domain` are a copy of Atta's, which depends on no workspace
-/// crate; over every `char`, the two copies answer alike.
-#[test]
-fn the_escaper_s_tables_match_atta_s() {
-    let every_char = (0..=u32::from(char::MAX)).filter_map(char::from_u32);
-    for character in every_char {
-        assert_eq!(
-            domain::string_builder::is_format(character),
-            atta::is_format(character),
-            "is_format disagrees on U+{:04X}",
-            u32::from(character)
-        );
-        assert_eq!(
-            domain::string_builder::is_default_ignorable(character),
-            atta::is_default_ignorable(character),
-            "is_default_ignorable disagrees on U+{:04X}",
-            u32::from(character)
-        );
     }
 }

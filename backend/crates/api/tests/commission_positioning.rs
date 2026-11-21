@@ -25,11 +25,11 @@
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
-use adapter_mem::MemBackend;
+use adapter_mem::{CommissionSeed, MemBackend};
 use chrono::Utc;
 use domain::elements::{
     account::{Account, AccountId, AccountName},
-    commission::{Commission, CommissionId, CommissionTitle, GrantLevel},
+    commission::{CommissionId, CommissionTitle, GrantLevel},
     did::Did,
     handle::Handle,
     profile::Profile,
@@ -104,7 +104,7 @@ async fn seed_board(backend: &MemBackend, account: &AccountId) -> (WorkflowId, C
         .await
         .expect("create the board");
     let column_name = "Open".parse::<ColumnName>().expect("column name");
-    let column = workflow.new_column(column_name, workflow.visibility.clone());
+    let column = workflow.new_column(column_name, workflow.visibility);
     let column_id = column.id;
     workflow.insert(0, column).expect("the board is empty");
     uow.workflows()
@@ -123,10 +123,10 @@ async fn seed_foreign_commission(backend: &MemBackend) -> (uuid::Uuid, UserId) {
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
-    let commission = Commission::create(title, owner.id.clone(), Utc::now(), None);
-    let id = uuid::Uuid::from(commission.id);
+    let seed = CommissionSeed::private(title, owner.id.clone());
+    let id = uuid::Uuid::from(seed.id);
     backend
-        .create_commission(&commission)
+        .seed_bound_commission(&seed)
         .await
         .expect("seed foreign commission");
     (id, owner.id)
@@ -358,6 +358,10 @@ async fn a_granted_accounts_member_gains_no_in_commission_authority() {
     {
         let db = backend.database();
         let mut uow = db.begin().await.unwrap();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the test seeds a view grant no route writes"
+        )]
         uow.commissions()
             .grant_view(&cid, &member.id, GrantLevel::Total)
             .await
@@ -381,12 +385,14 @@ async fn a_granted_accounts_member_gains_no_in_commission_authority() {
         "the actor really is a member of the placed account",
     );
     // ...yet the grant/placement made them no Participant of the commission.
-    assert!(
-        !backend
-            .commission_store()
-            .is_participant(&cid, &member.id)
-            .await
-            .unwrap(),
+    let member_role = backend
+        .commission_store()
+        .standing(&cid, &member.id)
+        .await
+        .unwrap()
+        .and_then(|standing| standing.role);
+    assert_eq!(
+        member_role, None,
         "a view grant / placement never makes its holder a Participant (D8)",
     );
 

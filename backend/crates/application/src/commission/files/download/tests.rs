@@ -2,10 +2,7 @@ use std::sync::Arc;
 
 use adapter_mem::fixture::{alice, bob, old_sketch, untitled, untitled_files};
 use domain::{
-    elements::{
-        commission::{FileName, Visibility},
-        text::StoredText,
-    },
+    elements::{commission::FileName, level::Level, text::StoredText},
     ports::FileStore,
 };
 use test_support::recording::{
@@ -72,7 +69,7 @@ async fn a_stranger_s_absent_and_not_theirs_commission_are_one_refusal_with_the_
             matches!(not_theirs, Err(CommissionError::NotAMember)),
             "{label}: not theirs"
         );
-        assert_eq!(absent_reads, ["find_summary", "is_participant"], "{label}");
+        assert_eq!(absent_reads, ["find_summary"], "{label}");
         assert_eq!(not_theirs_reads, absent_reads, "{label}");
         assert_reads_none_of(&absent_reads, &NEVER_FOR_A_STRANGER, label);
     }
@@ -172,7 +169,7 @@ async fn a_stored_name_is_saved_as_the_den_names_it_with_what_the_rule_strips_le
 #[tokio::test]
 async fn a_stranger_s_absent_and_real_key_under_a_public_live_commission_are_one_file_not_found() {
     let (world, log) = recorded().await;
-    let public = seed_alice_s(&world, "Public, live", Visibility::Public, false).await;
+    let public = seed_alice_s(&world, "Public, live", Level::Public, false).await;
     let stranger = stranger();
 
     let (real, real_reads) =
@@ -189,13 +186,13 @@ async fn a_stranger_s_absent_and_real_key_under_a_public_live_commission_are_one
 #[tokio::test]
 async fn a_stranger_downloading_from_a_listed_live_commission_is_refused_at_the_commission() {
     let (world, log) = recorded().await;
-    let listed = seed_alice_s(&world, "Listed, live", Visibility::Listed, false).await;
+    let listed = seed_alice_s(&world, "Listed, live", Level::Listed, false).await;
 
     let (answer, reads) =
         recorded_download(&world, &log, &stranger(), listed.id, listed.file).await;
 
     assert!(matches!(answer, Err(CommissionError::NotAMember)));
-    assert_eq!(reads, ["find_summary", "is_participant"]);
+    assert_eq!(reads, ["find_summary"]);
 }
 
 /// A file store whose name read fails; the rest delegate.
@@ -228,9 +225,8 @@ impl FileStore for FailingFilename {
 
 #[tokio::test]
 async fn a_store_failure_inside_den_s_check_is_a_store_failure_not_a_miss() {
-    let World { runtime, mut ports } = test_world::world().await;
-    ports.files = Arc::new(FailingFilename(ports.files.clone()));
-    let world = World { runtime, ports };
+    let mut world = test_world::world().await;
+    world.ports.files = Arc::new(FailingFilename(world.ports.files.clone()));
     let [_, sketch_01] = untitled_files();
 
     let answer = download(&world, &bob(), untitled(), sketch_01).await;

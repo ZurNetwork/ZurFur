@@ -32,6 +32,13 @@ fn a_member_pointer_is_written_in_fragment_form() {
 }
 
 #[test]
+fn an_item_member_pointer_names_its_index_then_its_member() {
+    let pointer = FieldPointer::item_member(3, "title");
+
+    assert_eq!(pointer.to_string(), "#/3/title");
+}
+
+#[test]
 fn a_two_word_member_points_at_its_proto_json_name() {
     let response = CreateCommissionResponse {
         title: "A ref sheet".to_owned(),
@@ -107,6 +114,28 @@ fn invalid_fields_rides_on_invalid_request_with_a_fixed_detail() {
     assert_eq!(problem.detail, fixed_detail);
 }
 
+// A refused rating keeps its status and problem code, says the vocabulary in a fixed detail and
+// names the field it refused, whatever was sent.
+#[test]
+fn an_unknown_rating_keeps_its_code_and_echoes_nothing() {
+    let pointer = FieldPointer::member("rating");
+
+    let problem = Problem::unknown_maturity_rating_at(pointer);
+
+    let expected_errors = vec![FieldError {
+        pointer: "#/rating".to_owned(),
+        code: "unknown_value".to_owned(),
+        detail: "Choose one of the listed values.".to_owned(),
+    }];
+    let fixed_detail =
+        "That isn't a maturity rating; choose one of: safe, suggestive, nudity, adult.";
+    assert_eq!(problem.status, 422);
+    assert_eq!(problem.code, "unknown_maturity_rating");
+    assert_eq!(problem.r#type, "urn:zurfur:error:invalid-request");
+    assert_eq!(problem.detail, fixed_detail);
+    assert_eq!(problem.errors, expected_errors);
+}
+
 #[test]
 fn each_code_has_its_own_fixed_detail() {
     let details: Vec<&str> = FieldCode::VARIANTS
@@ -138,6 +167,7 @@ fn each_code_s_detail_is_these_words() {
         ),
         ("name_separator", "Keep it on one line."),
         ("name_reserved", "Leave out characters that can't be shown."),
+        ("unknown_value", "Choose one of the listed values."),
     ];
     assert_eq!(details, expected_details);
 }
@@ -145,12 +175,12 @@ fn each_code_s_detail_is_these_words() {
 #[test]
 fn each_name_rule_refusal_has_its_own_code() {
     let codes: Vec<FieldCode> = [
-        DenNameError::Empty,
-        DenNameError::TooLong,
-        DenNameError::Slash,
-        DenNameError::Invisible,
-        DenNameError::Separator,
-        DenNameError::Reserved,
+        NodeNameError::Empty,
+        NodeNameError::TooLong,
+        NodeNameError::Slash,
+        NodeNameError::Invisible,
+        NodeNameError::Separator,
+        NodeNameError::Reserved,
     ]
     .into_iter()
     .map(FieldCode::from)
@@ -185,6 +215,7 @@ fn field_codes_are_these_tokens() {
         "name_invisible",
         "name_separator",
         "name_reserved",
+        "unknown_value",
     ];
     assert_eq!(tokens, expected_tokens);
     assert_eq!(displayed, expected_tokens);

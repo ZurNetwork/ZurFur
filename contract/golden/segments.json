@@ -1,0 +1,101 @@
+{
+  "about": "Hand-written: the shared cases of the node segment rule (1 to 2048 bytes of A-Z, a-z, 0-9 and ._:%~-, never . or ..). Read by Atta's segment tests, kernel's NodeSegment tests and adapter-pg's node_segment_shape test. A case gives its segment, or repeat and times for a long one (the text repeated that many times). Every value is made up; non-ASCII is written as a \\u escape. Not a recorded answer, so it stays outside den/.",
+  "accepted": [
+    {
+      "description": "A UUID, as a commission's or a Slot's id.",
+      "segment": "01a0ef9c-5b3e-7c1d-9a2f-3e4d5c6b7a89"
+    },
+    {
+      "description": "A fixture-style DID.",
+      "segment": "did:plc:s3gmentcasefixtureaaaaaa"
+    },
+    {
+      "description": "A dot inside.",
+      "segment": "a.b"
+    },
+    {
+      "description": "An underscore inside.",
+      "segment": "a_b"
+    },
+    {
+      "description": "A colon inside.",
+      "segment": "a:b"
+    },
+    {
+      "description": "A percent sign inside.",
+      "segment": "a%b"
+    },
+    {
+      "description": "A tilde inside.",
+      "segment": "a~b"
+    },
+    {
+      "description": "A hyphen inside.",
+      "segment": "a-b"
+    },
+    {
+      "description": "Three dots: only . and .. are dot segments.",
+      "segment": "..."
+    },
+    {
+      "description": "A percent-encoded dot pair is not decoded.",
+      "segment": "%2e%2e"
+    },
+    {
+      "description": "Exactly 2048 bytes.",
+      "repeat": "a",
+      "times": 2048
+    }
+  ],
+  "refused": [
+    {
+      "description": "A Latin letter with an accent.",
+      "segment": "\u00e9"
+    },
+    {
+      "description": "A Cyrillic a that looks like a Latin one.",
+      "segment": "\u0430"
+    },
+    {
+      "description": "A fullwidth digit zero.",
+      "segment": "\uff10"
+    },
+    {
+      "description": "A slash.",
+      "segment": "/"
+    },
+    {
+      "description": "A space.",
+      "segment": " "
+    },
+    {
+      "description": "A line feed.",
+      "segment": "\n"
+    },
+    {
+      "description": "A trailing line feed.",
+      "segment": "a\n"
+    },
+    {
+      "description": "A tab.",
+      "segment": "\t"
+    },
+    {
+      "description": "One dot.",
+      "segment": "."
+    },
+    {
+      "description": "Two dots.",
+      "segment": ".."
+    },
+    {
+      "description": "Empty.",
+      "segment": ""
+    },
+    {
+      "description": "2049 bytes.",
+      "repeat": "a",
+      "times": 2049
+    }
+  ]
+}

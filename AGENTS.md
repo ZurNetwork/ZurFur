@@ -4,7 +4,7 @@ Zurfur is an AT Protocol-native art commission platform in Rust (edition 2024).
 Architecture is ports & adapters:
 
 - `backend/crates/shared` — build-time constants every layer may read, the domain crates included
-- `backend/crates/kernel` — the base domain crate: the clock, the string builder, `Did`, text, maturity, `BlobId`, `Markdown`
+- `backend/crates/kernel` — the base domain crate: the clock, the string builder, `Did`, text, maturity, `BlobId`, `Markdown`, key custody's vocabulary and port
 - `backend/crates/identity` — User, Account, Character, actor identities, handles, roles, invitations, profiles, public records, bug reports, and their ports
 - `backend/crates/workflow` — Commission and Workflow boards, and their ports
 - `backend/crates/gallery`, `backend/crates/moderation` — stub crates until their first types
@@ -14,6 +14,7 @@ Architecture is ports & adapters:
 - `backend/crates/adapter-pg` — PostgreSQL adapter (private data boundary; sqlx; migrations live here)
 - `backend/crates/adapter-atproto` — AT Protocol adapter (public data boundary)
 - `backend/crates/adapter-mem` — in-process fakes for both boundaries
+- `backend/crates/adapter-hkdf` — key custody (dev): one HKDF-derived key per purpose, the v1 envelope, the Den MAC; not a data boundary; only `composition` links it
 - `backend/crates/composition` — composition root: config and the port bag; the only crate that knows which adapter is live
 - `backend/crates/api`, `backend/crates/cli` — the HTTP and terminal drivers
 

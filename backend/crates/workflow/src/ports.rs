@@ -12,8 +12,8 @@ mod errors;
 
 pub use changelog::{ChangelogStore, ChangelogWrites};
 pub use commission::{
-    CommissionReads, CommissionRepo, CommissionStore, CommissionWrites, ElementNotFound,
-    UnknownSurface, UnknownTab,
+    CommissionReads, CommissionRepo, CommissionRows, CommissionStore, CommissionWrites,
+    ElementNotFound, UnknownSurface, UnknownTab,
 };
 pub use file::FileStore;
 pub use workflow::{ColumnStore, ColumnWrites, WorkflowStore, WorkflowWrites};

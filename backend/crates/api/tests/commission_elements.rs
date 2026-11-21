@@ -29,12 +29,12 @@
 //!
 //! Same in-process fakes as the other api e2e suites — no network, no database.
 
-use adapter_mem::MemBackend;
+use adapter_mem::{CommissionSeed, MemBackend};
 use chrono::Utc;
 use domain::elements::{
     commission::{
-        Commission, CommissionId, CommissionTitle, ElementPayload, ElementType, SKELETON,
-        VisibilityMode, declared_tabs,
+        CommissionId, CommissionTitle, ElementPayload, ElementType, SKELETON, VisibilityMode,
+        declared_tabs,
     },
     did::Did,
     profile::Profile,
@@ -119,10 +119,10 @@ async fn seed_foreign_commission(backend: &MemBackend) -> uuid::Uuid {
         .await
         .expect("provision foreign owner");
     let title = "Not yours".parse::<CommissionTitle>().expect("valid title");
-    let commission = Commission::create(title, owner.id, Utc::now(), None);
-    let id = uuid::Uuid::from(commission.id);
+    let seed = CommissionSeed::private(title, owner.id);
+    let id = uuid::Uuid::from(seed.id);
     backend
-        .create_commission(&commission)
+        .seed_bound_commission(&seed)
         .await
         .expect("seed foreign commission");
     id
@@ -612,6 +612,10 @@ async fn removing_an_unknown_or_foreign_element_is_element_not_found() {
         let element_id = uuid::Uuid::from(element.id);
         let database = backend.database();
         let mut uow = database.begin().await.expect("begin");
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the test seeds an element on a commission the caller doesn't own"
+        )]
         UnitOfWork::commissions(&mut *uow)
             .add_element(&element)
             .await

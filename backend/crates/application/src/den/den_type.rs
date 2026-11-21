@@ -53,9 +53,15 @@ pub enum DenType {
     /// A commission's `attachments` folder.
     #[strum(serialize = "commission.attachments")]
     CommissionAttachments,
+    /// A commission's `brief` file; not served yet.
+    #[strum(serialize = "commission.brief")]
+    CommissionBrief,
     /// A commission's `changelog` file.
     #[strum(serialize = "commission.changelog")]
     CommissionChangelog,
+    /// A commission's `participants` file; not served yet.
+    #[strum(serialize = "commission.participants")]
+    CommissionParticipants,
     /// A commission's `products` folder.
     #[strum(serialize = "commission.products")]
     CommissionProducts,
@@ -77,7 +83,10 @@ impl DenType {
     /// Whether nodes of this type hold entries or content.
     pub fn kind(self) -> NodeKind {
         match self {
-            DenType::CommissionChangelog | DenType::File => NodeKind::File,
+            DenType::CommissionBrief
+            | DenType::CommissionChangelog
+            | DenType::CommissionParticipants
+            | DenType::File => NodeKind::File,
             DenType::TopLevel
             | DenType::Posts
             | DenType::User
@@ -107,7 +116,9 @@ impl DenType {
             | DenType::Workflow
             | DenType::Slot
             | DenType::File
+            | DenType::CommissionBrief
             | DenType::CommissionChangelog
+            | DenType::CommissionParticipants
             | DenType::Character => true,
             DenType::TopLevel
             | DenType::User

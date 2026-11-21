@@ -1,0 +1,17 @@
+error[E0451]: fields `commission_id`, `kind`, `actor_id`, `payload`, `note` and `created_at` of struct `NewChangelogEntry` are private
+  --> tests/ui/new_changelog_entry_is_sealed.rs:10:9
+   |
+ 9 |     let _forged = NewChangelogEntry {
+   |                   ----------------- in this type
+10 |         commission_id: CommissionId::mint(),
+   |         ^^^^^^^^^^^^^ private field
+11 |         kind: ChangelogEntryKind::Renamed,
+   |         ^^^^ private field
+12 |         actor_id: Some(UserId::from(Did::from("did:plc:alice".to_owned()))),
+   |         ^^^^^^^^ private field
+13 |         payload: serde_json::json!({ "title": "A secret sketch" }),
+   |         ^^^^^^^ private field
+14 |         note: None,
+   |         ^^^^ private field
+15 |         created_at: chrono::Utc::now(),
+   |         ^^^^^^^^^^ private field

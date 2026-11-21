@@ -37,7 +37,7 @@ use serde_json::{Value, json};
 use test_support::{
     den::{Answer, PRIVATE_NO_STORE, cache_control, entry_names, get, ok_json},
     http::{client, serve, sign_in},
-    log_capture::CapturedLog,
+    log_capture::{self, CapturedLog},
 };
 use tracing_subscriber::EnvFilter;
 
@@ -706,7 +706,7 @@ async fn a_store_failure_is_the_house_500_logged_by_its_route_template_alone() {
     let log = CapturedLog::default();
     let subscriber =
         api::logging::subscriber(&api::Environment::DEV, EnvFilter::new("info"), log.clone());
-    let _guard = tracing::subscriber::set_default(subscriber);
+    let _guard = log_capture::set_default(subscriber);
     let failing = Arc::new(AtomicBool::new(false));
     let switch = Arc::clone(&failing);
     let (base, _backend) = world_over(move |mut runtime| {

@@ -13,7 +13,6 @@ dependencies = [
  "atrium-crypto",
  "base64",
  "bytes",
- "chacha20poly1305",
  "chrono",
  "cid",
  "data-encoding",
@@ -43,6 +42,24 @@ dependencies = [
  "tracing",
  "url",
  "wiremock",
+ "zeroize",
+]
+
+[[package]]
+name = "adapter-hkdf"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "chacha20poly1305",
+ "domain",
+ "hkdf 0.13.0",
+ "hmac 0.13.0",
+ "proptest",
+ "serde_json",
+ "sha2 0.11.0",
+ "strum",
+ "tokio",
  "zeroize",
 ]
 
@@ -81,6 +98,7 @@ dependencies = [
  "sqlx-rust-codegen",
  "strum",
  "test-support",
+ "thiserror 2.0.21",
  "time",
  "tokio",
  "tower-sessions-core",
@@ -256,6 +274,7 @@ dependencies = [
  "composition",
  "derive_more 2.1.1",
  "domain",
+ "proc-macro2",
  "proptest",
  "quote",
  "serde_json",
@@ -427,6 +446,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "trybuild",
 ]
 
 [[package]]
@@ -585,6 +605,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdd35008169921d80bc60d3d0ab416eecb028c4cd653352907921d95084790be"
 dependencies = [
  "hybrid-array",
+ "zeroize",
 ]
 
 [[package]]
@@ -979,6 +1000,8 @@ dependencies = [
  "anyhow",
  "application",
  "assert_cmd",
+ "async-trait",
+ "base64",
  "chrono",
  "clap",
  "clap_complete",
@@ -1034,19 +1057,24 @@ name = "composition"
 version = "0.1.0"
 dependencies = [
  "adapter-atproto",
+ "adapter-hkdf",
  "adapter-pg",
  "anyhow",
  "application",
+ "async-trait",
  "base64",
  "derive_more 2.1.1",
  "domain",
  "figment",
  "fluent-uri",
  "serde",
+ "strum",
  "thiserror 2.0.21",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "url",
+ "zeroize",
 ]
 
 [[package]]
@@ -1520,6 +1548,7 @@ dependencies = [
  "block-buffer 0.12.0",
  "crypto-common 0.2.2",
  "ctutils",
+ "zeroize",
 ]
 
 [[package]]
@@ -1592,7 +1621,10 @@ dependencies = [
  "async-trait",
  "identity",
  "kernel",
+ "proc-macro2",
+ "quote",
  "serde_json",
+ "syn 2.0.117",
  "workflow",
 ]
 
@@ -3141,13 +3173,19 @@ dependencies = [
 name = "kernel"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "chrono",
  "cid",
  "derive_more 2.1.1",
  "proptest",
  "serde",
+ "serde_json",
  "strum",
  "thiserror 2.0.21",
+ "trybuild",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -5846,6 +5884,8 @@ checksum = "8f50febec83f5ee1df3015341d8bd429f2d1cc62bcba7ea2076759d315084683"
 name = "test-support"
 version = "0.1.0"
 dependencies = [
+ "adapter-atproto",
+ "adapter-hkdf",
  "adapter-mem",
  "adapter-pg",
  "anyhow",
@@ -5853,17 +5893,22 @@ dependencies = [
  "async-trait",
  "atrium-crypto",
  "axum",
- "base64",
  "chrono",
  "composition",
  "data-encoding",
  "domain",
+ "fluent-uri",
+ "hmac 0.13.0",
  "http-cookies",
  "http-stack",
+ "jacquard-common",
+ "jacquard-oauth",
  "rand 0.10.1",
  "rand_core 0.6.4",
  "reqwest 0.13.4",
  "serde_json",
+ "sha2 0.11.0",
+ "smol_str",
  "sqlx",
  "strum",
  "testcontainers",
@@ -5872,9 +5917,11 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tower-sessions",
+ "tracing",
  "tracing-subscriber",
  "url",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -7195,6 +7242,7 @@ dependencies = [
  "strum",
  "thiserror 2.0.21",
  "tokio",
+ "trybuild",
  "uuid",
 ]
 

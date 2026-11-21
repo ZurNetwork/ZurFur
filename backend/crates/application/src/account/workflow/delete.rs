@@ -5,7 +5,8 @@ use domain::elements::{user::UserId, workflow::WorkflowId};
 use crate::{
     Ports,
     account::{
-        AccountEntity, AccountError, AccountResult, require_live_account, workflow::Workflows,
+        AccountEntity, AccountError, AccountResult, lock_live_account, require_live_account,
+        workflow::Workflows,
     },
 };
 
@@ -45,6 +46,7 @@ impl Workflows<'_> {
             .ok_or(AccountError::IncorrectRole)?;
 
         let uow = uow.open().await?;
+        lock_live_account(uow, &account_id).await?;
         uow.workflows().delete(&workflow_id).await?;
 
         Ok(Output)

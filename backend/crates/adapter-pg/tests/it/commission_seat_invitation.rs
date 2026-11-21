@@ -6,14 +6,14 @@
 //! offer. The Seat mirror of the account-invitation suite. Requires a container
 //! runtime socket (DOCKER_HOST honored).
 
+use crate::seed;
 use adapter_pg::{PgCommissionStore, PgDatabase, PgPool};
 use chrono::Utc;
-use domain::elements::commission::NewCommission;
 use domain::{
     elements::{
         commission::{
-            Commission, CommissionId, CommissionTitle, ElementId, NewSeat, SKELETON,
-            SeatInvitation, SeatKind, SurfaceAddress, SurfaceName,
+            Commission, CommissionId, ElementId, NewSeat, SKELETON, SeatInvitation, SeatKind,
+            SurfaceAddress, SurfaceName,
         },
         did::Did,
         invitation::InvitationState,
@@ -45,21 +45,8 @@ async fn provision(pool: &PgPool, did: &str) -> User {
 
 /// Create a commission (which mints its tabs and its owner's participant row) in
 /// one committed unit of work.
-async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> NewCommission {
-    let commission = Commission::create(
-        title.parse::<CommissionTitle>().expect("valid title"),
-        owner.id.clone(),
-        Utc::now(),
-        None,
-    );
-    let db = PgDatabase::new(pool.clone());
-    let mut uow = db.begin().await.expect("begin");
-    uow.commissions()
-        .create(&commission)
-        .await
-        .expect("create commission");
-    uow.commit().await.expect("commit");
-    commission
+async fn create_commission(pool: &PgPool, owner: &User, title: &str) -> Commission {
+    seed::seed_stored(pool, &owner.id, title).await
 }
 
 /// The commission's one skeleton address — the placeholder skeleton declares

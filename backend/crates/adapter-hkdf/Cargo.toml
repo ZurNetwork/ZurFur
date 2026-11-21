@@ -1,0 +1,36 @@
+[package]
+publish = false
+name = "adapter-hkdf"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# The custody port and its vocabulary, named through the façade only.
+domain = { path = "../domain/" }
+# The port trait is an `#[async_trait]` trait.
+async-trait = { workspace = true }
+# Derive each purpose's key and key-id fingerprint from the custody root.
+hkdf = { workspace = true }
+# The Den MAC: one pre-keyed HMAC-SHA256, cloned per tag.
+hmac = { workspace = true }
+# The hash under HKDF and HMAC; its state wipes on drop.
+sha2-0-11 = { workspace = true }
+# Seal and open the v1 envelope (XChaCha20-Poly1305, random 192-bit nonces).
+chacha20poly1305 = { workspace = true }
+# Wipe the root, each purpose key and the PRK from memory.
+zeroize = { workspace = true }
+
+[dev-dependencies]
+# The golden tests read custody-v1.json.
+serde_json = { workspace = true }
+# The port's async methods under test.
+tokio = { workspace = true }
+# Arbitrary bytes never open an envelope.
+proptest = { workspace = true }
+# Every purpose and use, through the vocabularies' `VARIANTS`.
+strum = { workspace = true }
+# The never-logged test looks for a key's base64 form too.
+base64 = { workspace = true }
+
+[lints]
+workspace = true

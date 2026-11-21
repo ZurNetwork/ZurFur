@@ -92,15 +92,25 @@ fn the_problem_is_the_last_stderr_line_even_under_verbose_logging() {
     assert_eq!(problem(&output.get_output().stderr)["code"], "config");
 }
 
-// A type-mismatched secret is reported by KEY only — figment's own message
-// would echo the parsed value (ZMVP-203 F4). The all-digit value is what
-// makes this a CONFIG error rather than a boot error: figment's `Env`
-// provider parses it as an integer, which then fails to deserialize into
-// the `String` field — before any database connection is attempted.
+// A malformed custody root is reported by its variable only, never echoed
+// (ZMVP-203 F4). The root is read by a command that holds a purpose, so the
+// case is `account create`: the read refuses the value as a CONFIG error
+// before any database connection is attempted.
 #[test]
 fn a_malformed_secret_is_never_echoed() {
+    let home = tempfile::tempdir().unwrap();
     let output = zurfur()
-        .args(["health", "--config-dir", "/nonexistent"])
+        .args([
+            "account",
+            "create",
+            "--name",
+            "Never Founded",
+            "--handle",
+            "never-founded.zurfur.app",
+            "--config-dir",
+            "/nonexistent",
+        ])
+        .env(cli::identity::HOME_ENV, home.path())
         .env("ZURFUR_ENV", "dev")
         .env("ZURFUR_PUBLIC_URL", "http://127.0.0.1:8080")
         .env("ZURFUR_LOG_LEVEL", "info")
@@ -116,7 +126,7 @@ fn a_malformed_secret_is_never_echoed() {
         problem["detail"]
             .as_str()
             .unwrap()
-            .contains("did_key_root_key"),
+            .contains("ZURFUR_DID_KEY_ROOT_KEY"),
         "{stderr}"
     );
 }
