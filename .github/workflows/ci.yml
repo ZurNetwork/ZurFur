@@ -208,13 +208,13 @@ jobs:
       # --locked matches the other jobs' lockfile assertion; --all-features
       # scans the full feature graph, not just default features. MPL-2.0
       # (jacquard family) is Engineer-allowed in deny.toml.
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1 (cargo-deny 0.20.2)
+      - uses: EmbarkStudios/cargo-deny-action@70f81531115945ba6eb6b941ec9d39d063438eb9 # v2.1.1 (cargo-deny 0.20.2)
         with:
           arguments: --locked --all-features
           command: check
           command-arguments: bans licenses sources
       - id: advisories
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1 (cargo-deny 0.20.2)
+        uses: EmbarkStudios/cargo-deny-action@70f81531115945ba6eb6b941ec9d39d063438eb9 # v2.1.1 (cargo-deny 0.20.2)
         continue-on-error: ${{ needs.changes.outputs.lock == 'false' }}
         with:
           arguments: --locked --all-features
