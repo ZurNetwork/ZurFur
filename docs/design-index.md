@@ -82,6 +82,7 @@
 - 2026110901 decided — The Discovery Queue — Artists with Commissions Open, a Small-Artist Curve and the Viewer's Own Sliders
 - 2026110902 decided — One Application, One View — One Chrome, Server Pages and Named Reloads
 - 2026111101 decided — The Knowledge Base on Basic Memory — Local, Git as the Store and Pages as Observations
+- 2026112401 decided — The Zurfur Mesh — Applications on the AT Protocol, One Topic Each, the Common Tongue and the Kill Test
 
 ## entities/
 - 786439 current — User
