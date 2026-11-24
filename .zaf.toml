@@ -64,6 +64,26 @@ profile = "build"
 turns = 200
 batch = 4
 
+# The machine actions' groups name these roles (`release`, and the phase roles `implement` and
+# `fix`), so each needs a table here for `zaf doctor` to accept the group.
+[roles.release]
+model = "opus"
+effort = "xhigh"
+profile = "build"
+turns = 200
+
+[roles.implement]
+model = "sonnet"
+effort = "high"
+profile = "lean"
+turns = 60
+
+[roles.fix]
+model = "sonnet"
+effort = "high"
+profile = "lean"
+turns = 60
+
 # CodeQL (default setup) and CodeRabbit run on PRs into main only, so neither is a slice step.
 [check.pr]
 steps = ["ci"]
